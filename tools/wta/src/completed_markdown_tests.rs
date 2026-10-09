@@ -1,0 +1,396 @@
+use super::*;
+use crate::app_contracts::PlanEntry;
+use ratatui::{backend::TestBackend, Terminal};
+use std::time::{Duration, Instant};
+
+fn app_with_reply(source: &str) -> App {
+    let mut app = super::tests::test_app();
+    app.state = ConnectionState::Connected;
+    let id = DEFAULT_TAB_ID.to_owned();
+    app.session_to_tab.insert(id.clone(), id.clone());
+    let tab = app.current_tab_mut();
+    tab.session_id = Some(id);
+    tab.turn = TurnState::Streaming {
+        prompt: SubmittedPrompt {
+            id: 42,
+            text: "test completion".into(),
+            submitted_at_unix_s: 0.0,
+            context: TurnContext::default(),
+            autofix: None,
+        },
+    };
+    tab.messages.push(ChatMessage::Agent(source.into()));
+    tab.reveal_chars = usize::MAX;
+    app
+}
+
+fn render(app: &mut App) -> String {
+    render_at(app, 90, 30)
+}
+
+fn render_at(app: &mut App, width: u16, height: u16) -> String {
+    let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
+    terminal
+        .draw(|frame| {
+            crate::ui::render(frame, app);
+            app.text_selection.snapshot_and_render(frame.buffer_mut());
+        })
+        .unwrap();
+    terminal
+        .backend()
+        .buffer()
+        .content
+        .chunks(usize::from(width).max(1))
+        .map(|row| row.iter().map(|cell| cell.symbol()).collect::<String>())
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+fn wait_for_render(app: &mut App, width: u16, height: u16, ready: impl Fn(&str) -> bool) -> String {
+    let deadline = Instant::now() + Duration::from_secs(5);
+    loop {
+        let text = render_at(app, width, height);
+        if ready(&text) {
+            return text;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "completed display did not become ready:\n{text}"
+        );
+        std::thread::sleep(Duration::from_millis(1));
+    }
+}
+
+#[test]
+fn completed_markdown_formats_only_normal_completed_turns() {
+    let _locale = crate::test_support::lock_locale();
+    rust_i18n::set_locale("en-US");
+    let source = "**COMPLETED_BOLD**";
+    let mut app = app_with_reply(source);
+    assert!(render(&mut app).contains(source));
+    assert_eq!(
+        app.current_tab()
+            .agent_markdown
+            .borrow()
+            .stats()
+            .batch_renders,
+        0
+    );
+    app.handle_event(AppEvent::AgentMessageEnd {
+        session_id: DEFAULT_TAB_ID.into(),
+    });
+    let final_text = wait_for_render(&mut app, 90, 30, |text| {
+        text.contains("COMPLETED_BOLD") && !text.contains(source)
+    });
+    assert!(final_text.contains("COMPLETED_BOLD"), "{final_text}");
+    assert!(!final_text.contains(source), "{final_text}");
+    assert_eq!(
+        app.current_tab().completed_turns[0].details,
+        [ChatMessage::Agent(source.into())]
+    );
+    let before = app.current_tab().agent_markdown.borrow().stats();
+    assert_eq!(before.batch_renders, 1);
+    assert_eq!(before.processed_source_bytes, source.len() as u64);
+    for _ in 0..5 {
+        assert_eq!(render(&mut app), final_text);
+        assert_eq!(app.current_tab().agent_markdown.borrow().stats(), before);
+    }
+}
+
+#[test]
+fn completed_markdown_cancelled_reply_remains_raw() {
+    let _locale = crate::test_support::lock_locale();
+    rust_i18n::set_locale("en-US");
+    let source = "**CANCELLED_BOLD**";
+    let mut app = app_with_reply(source);
+    app.turn_cancel(DEFAULT_TAB_ID);
+    assert!(render(&mut app).contains(source));
+    assert_eq!(
+        app.current_tab()
+            .agent_markdown
+            .borrow()
+            .stats()
+            .batch_renders,
+        0
+    );
+}
+
+#[test]
+fn completed_markdown_failed_reply_remains_raw() {
+    let _locale = crate::test_support::lock_locale();
+    rust_i18n::set_locale("en-US");
+    let source = "**FAILED_BOLD**";
+    let mut app = app_with_reply(source);
+    app.handle_event(AppEvent::PromptError {
+        tab_id: DEFAULT_TAB_ID.into(),
+        prompt_id: 42,
+        message: "test failure".into(),
+    });
+    assert!(render(&mut app).contains(source));
+    assert!(app.current_tab().completed_turns.is_empty());
+    assert_eq!(
+        app.current_tab()
+            .agent_markdown
+            .borrow()
+            .stats()
+            .batch_renders,
+        0
+    );
+}
+
+#[test]
+fn completed_markdown_keeps_active_segments_and_tool_text_raw_until_turn_end() {
+    let _locale = crate::test_support::lock_locale();
+    rust_i18n::set_locale("en-US");
+    let mut app = app_with_reply("**FIRST_SEGMENT**");
+    app.current_tab_mut()
+        .messages
+        .insert(0, ChatMessage::User("**USER_LITERAL**".into()));
+    app.handle_event(AppEvent::Plan {
+        session_id: DEFAULT_TAB_ID.into(),
+        entries: vec![PlanEntry {
+            content: "**PLAN_LITERAL**".into(),
+            status: PlanEntryStatus::InProgress,
+        }],
+    });
+    app.handle_event(AppEvent::AgentMessageChunk {
+        session_id: DEFAULT_TAB_ID.into(),
+        text: "**LAST_SEGMENT**".into(),
+    });
+    app.current_tab_mut().reveal_chars = usize::MAX;
+    let active = render(&mut app);
+    for text in [
+        "**FIRST_SEGMENT**",
+        "**USER_LITERAL**",
+        "**PLAN_LITERAL**",
+        "**LAST_SEGMENT**",
+    ] {
+        assert!(active.contains(text), "{active}");
+    }
+    assert_eq!(
+        app.current_tab()
+            .agent_markdown
+            .borrow()
+            .stats()
+            .batch_renders,
+        0
+    );
+    app.handle_event(AppEvent::AgentMessageEnd {
+        session_id: DEFAULT_TAB_ID.into(),
+    });
+    let final_text = wait_for_render(&mut app, 90, 30, |text| {
+        text.contains("LAST_SEGMENT")
+            && !text.contains("**FIRST_SEGMENT**")
+            && !text.contains("**LAST_SEGMENT**")
+    });
+    assert!(final_text.contains("**PLAN_LITERAL**"));
+    assert!(final_text.find("FIRST_SEGMENT") < final_text.find("PLAN_LITERAL"));
+    assert!(final_text.find("PLAN_LITERAL") < final_text.find("LAST_SEGMENT"));
+    assert_eq!(
+        app.current_tab()
+            .agent_markdown
+            .borrow()
+            .stats()
+            .batch_renders,
+        2
+    );
+    assert_eq!(app.current_tab().completed_turns[0].details.len(), 3);
+}
+
+#[test]
+fn completed_markdown_replayed_history_is_rendered_without_rewriting_source() {
+    let _locale = crate::test_support::lock_locale();
+    rust_i18n::set_locale("en-US");
+    let source = "**RESTORED_BOLD**";
+    let mut app = app_with_reply("");
+    let tab = app.current_tab_mut();
+    tab.turn = TurnState::Idle;
+    tab.messages = vec![
+        ChatMessage::User("restored prompt".into()),
+        ChatMessage::Agent(source.into()),
+    ];
+    tab.pack_replayed_messages_into_turns();
+    let text = wait_for_render(&mut app, 90, 30, |text| {
+        text.contains("RESTORED_BOLD") && !text.contains(source)
+    });
+    assert!(text.contains("restored prompt"), "{text}");
+    assert_eq!(
+        app.current_tab().completed_turns[0].details,
+        [ChatMessage::Agent(source.into())]
+    );
+    let json = serde_json::to_value(&app.current_tab().completed_turns[0]).unwrap();
+    let object = json.as_object().unwrap();
+    assert_eq!(object.len(), 4);
+    assert_eq!(object["details"][0]["Agent"], source);
+}
+
+#[test]
+fn completed_markdown_source_replacement_and_resize_do_not_reuse_stale_output() {
+    let _locale = crate::test_support::lock_locale();
+    rust_i18n::set_locale("en-US");
+    let source = "| A | B |\n| - | - |\n| LEFT_CELL | RIGHT_CELL |\n\n**FINAL_ROW**";
+    let mut app = app_with_reply(source);
+    app.handle_event(AppEvent::AgentMessageEnd {
+        session_id: DEFAULT_TAB_ID.into(),
+    });
+    let wide = wait_for_render(&mut app, 90, 30, |text| {
+        text.contains("FINAL_ROW") && !text.contains("**FINAL_ROW**")
+    });
+    let narrow = wait_for_render(&mut app, 40, 30, |text| {
+        text.contains("FINAL_ROW") && !text.contains("**FINAL_ROW**")
+    });
+    for text in [&wide, &narrow] {
+        assert!(
+            text.contains("LEFT_CELL") && text.contains("RIGHT_CELL"),
+            "{text}"
+        );
+    }
+    assert_eq!(
+        app.current_tab()
+            .agent_markdown
+            .borrow()
+            .stats()
+            .batch_renders,
+        2
+    );
+    app.current_tab_mut().completed_turns[0].details[0] =
+        ChatMessage::Agent("**REPLACED_ROW**".into());
+    app.current_tab().invalidate_completed_turn_height(0);
+    let replaced = wait_for_render(&mut app, 40, 30, |text| {
+        text.contains("REPLACED_ROW") && !text.contains("**REPLACED_ROW**")
+    });
+    assert!(
+        !replaced.contains("FINAL_ROW") && !replaced.contains("LEFT_CELL"),
+        "{replaced}"
+    );
+}
+
+#[test]
+fn completed_markdown_worker_redraws_idle_completed_history() {
+    let _locale = crate::test_support::lock_locale();
+    rust_i18n::set_locale("en-US");
+    let mut app = app_with_reply("**IDLE_RESULT**");
+    app.handle_event(AppEvent::AgentMessageEnd {
+        session_id: DEFAULT_TAB_ID.into(),
+    });
+    render(&mut app);
+    assert!(app.event_requires_redraw(&AppEvent::Tick));
+    wait_for_render(&mut app, 90, 30, |text| {
+        text.contains("IDLE_RESULT") && !text.contains("**IDLE_RESULT**")
+    });
+    assert!(!app.current_tab().agent_markdown.borrow().has_pending());
+}
+
+#[test]
+fn completed_markdown_collapsed_visible_history_reuses_its_cached_batch() {
+    let _locale = crate::test_support::lock_locale();
+    rust_i18n::set_locale("en-US");
+    let source = "**CACHED_HISTORY**";
+    let mut app = app_with_reply(source);
+    app.handle_event(AppEvent::AgentMessageEnd {
+        session_id: DEFAULT_TAB_ID.into(),
+    });
+    let formatted = wait_for_render(&mut app, 90, 30, |text| {
+        text.contains("CACHED_HISTORY") && !text.contains(source)
+    });
+    let before = app.current_tab().agent_markdown.borrow().stats();
+    app.current_tab_mut().completed_turns[0].expanded = false;
+    app.current_tab().invalidate_completed_turn_height(0);
+    assert!(!render(&mut app).contains("CACHED_HISTORY"));
+    app.current_tab_mut().completed_turns[0].expanded = true;
+    app.current_tab().invalidate_completed_turn_height(0);
+    assert_eq!(render(&mut app), formatted);
+    assert_eq!(app.current_tab().agent_markdown.borrow().stats(), before);
+}
+
+#[test]
+fn completed_markdown_defers_the_display_change_while_selecting_raw_text() {
+    use crossterm::event::{MouseButton, MouseEvent, MouseEventKind};
+    use unicode_width::UnicodeWidthStr;
+    let _locale = crate::test_support::lock_locale();
+    rust_i18n::set_locale("en-US");
+    let source = "**SELECT_RAW**";
+    let mut app = app_with_reply(source);
+    let text = render(&mut app);
+    let (row, column) = text
+        .lines()
+        .enumerate()
+        .find_map(|(row, line)| {
+            line.find(source)
+                .map(|byte| (row as u16, line[..byte].width() as u16))
+        })
+        .unwrap();
+    for (kind, offset) in [
+        (MouseEventKind::Down(MouseButton::Left), 0),
+        (
+            MouseEventKind::Drag(MouseButton::Left),
+            source.len() as u16 - 1,
+        ),
+        (
+            MouseEventKind::Up(MouseButton::Left),
+            source.len() as u16 - 1,
+        ),
+    ] {
+        app.text_selection.handle_mouse(MouseEvent {
+            kind,
+            column: column + offset,
+            row,
+            modifiers: KeyModifiers::NONE,
+        });
+    }
+    assert_eq!(app.text_selection.selected_text().as_deref(), Some(source));
+    app.handle_event(AppEvent::AgentMessageEnd {
+        session_id: DEFAULT_TAB_ID.into(),
+    });
+    let deadline = Instant::now() + Duration::from_secs(5);
+    loop {
+        let text = render(&mut app);
+        assert!(text.contains(source), "{text}");
+        assert_eq!(app.text_selection.selected_text().as_deref(), Some(source));
+        if !app.current_tab().agent_markdown.borrow().has_pending() {
+            break;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "selected raw completion did not settle"
+        );
+        std::thread::sleep(Duration::from_millis(1));
+    }
+    app.text_selection.clear();
+    wait_for_render(&mut app, 90, 30, |text| {
+        text.contains("SELECT_RAW") && !text.contains(source)
+    });
+    assert_eq!(
+        app.current_tab()
+            .agent_markdown
+            .borrow()
+            .stats()
+            .batch_renders,
+        1
+    );
+}
+
+#[test]
+fn completed_markdown_clear_discards_inflight_and_completed_derived_state() {
+    let _locale = crate::test_support::lock_locale();
+    rust_i18n::set_locale("en-US");
+    let source = "**OLD_CONTENT**\n\n".repeat(300);
+    let mut app = app_with_reply(&source);
+    app.handle_event(AppEvent::AgentMessageEnd {
+        session_id: DEFAULT_TAB_ID.into(),
+    });
+    render(&mut app);
+    app.current_tab_mut().clear_chat_history();
+    app.current_tab_mut().clear_completed_turns();
+    app.current_tab_mut()
+        .messages
+        .push(ChatMessage::Agent("new raw reply".into()));
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while app.current_tab().agent_markdown.borrow().has_pending() {
+        assert!(!render(&mut app).contains("OLD_CONTENT"));
+        assert!(Instant::now() < deadline);
+        std::thread::sleep(Duration::from_millis(1));
+    }
+    assert!(!render(&mut app).contains("OLD_CONTENT"));
+    assert!(app.current_tab().completed_markdown_turns.is_empty());
+}

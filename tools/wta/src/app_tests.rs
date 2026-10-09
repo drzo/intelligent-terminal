@@ -21669,7 +21669,15 @@ fn chat_reading_position_clamps_collapsed_and_removed_content() {
     app.handle_event(AppEvent::AgentMessageEnd {
         session_id: DEFAULT_TAB_ID.into(),
     });
-    let collapsed = render_to_text(&mut app, 48, 20);
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    let collapsed = loop {
+        let text = render_to_text(&mut app, 48, 20);
+        if !app.current_tab().agent_markdown.borrow().has_pending() {
+            break text;
+        }
+        assert!(std::time::Instant::now() < deadline);
+        std::thread::sleep(std::time::Duration::from_millis(1));
+    };
     assert!(!collapsed.contains("THOUGHT_"));
     assert!(collapsed.contains("Think"));
     assert!(app.current_tab().chat_scroll.offset <= app.current_tab().chat_scroll.max);

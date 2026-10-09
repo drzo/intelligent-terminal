@@ -20,6 +20,28 @@ The binary is output to
 target in this repo: the package project prefers that output over the host-target
 fallback.
 
+### Markdown after reply completion
+
+While an assistant turn is running, WTA keeps the existing raw-text reveal and
+wrapping behavior. It does not parse Markdown between chunks or tool events.
+After a normal turn ends, independent assistant text segments use the upstream
+`tui-markdown` 0.3.10 batch renderer. User prompts, thoughts, tool output and
+interrupted replies remain on their existing literal display paths.
+
+Batch rendering runs off the UI thread. Raw text stays visible until the result
+is ready; active text selection defers the display change. Height, drawing,
+scrolling and copying use the same displayed rows. Unchanged completed replies
+reuse their derived result. A changed width or source, or revisiting evicted
+history, can require another batch render. Only raw transcript content is
+persisted.
+
+This version consumes the crates.io release without Git dependencies or local
+patches. It does not depend on incremental rendering APIs. Heading markers and
+code fences keep upstream defaults; syntax highlighting is disabled and styles
+inherit the pane palette. In particular, the release's hidden-heading task-list
+panic is avoided by retaining its heading marker. Upstream CRLF/literal-line and
+extremely narrow Unicode layout limitations are not fixed by this host feature.
+
 ### How WTA runs
 
 WTA is normally launched **by Windows Terminal**, not by hand. WT spawns one

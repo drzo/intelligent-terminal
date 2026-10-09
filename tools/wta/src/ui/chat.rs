@@ -8,6 +8,7 @@ use ratatui::widgets::{
 };
 use unicode_width::UnicodeWidthStr;
 
+use crate::app::agent_markdown::MarkdownKey;
 #[cfg(test)]
 use crate::app::CompletedTurn;
 use crate::app::{
@@ -1614,6 +1615,7 @@ fn build_completed_turn_lines_with_prompt_rows<'a>(
         pane_focused,
         wrap_width,
         |_| false,
+        |_, _| None,
     );
     (built.lines, built.prompt_rows)
 }
@@ -1626,9 +1628,42 @@ fn build_completed_turn_lines_for_tab<'a>(
     wrap_width: usize,
 ) -> CompletedTurnLines<'a> {
     let turn = &tab.completed_turns[turn_index];
-    build_completed_turn_lines_with_geometry(turn, is_selected, pane_focused, wrap_width, |id| {
-        tab.completed_tool_call_expanded(id)
-    })
+    tab.agent_markdown.borrow_mut().touch_turn(turn_index);
+    let mut prepared = Vec::new();
+    let mut ready = true;
+    if turn.expanded && tab.completed_markdown_turns.contains(&turn_index) {
+        let mut cache = tab.agent_markdown.borrow_mut();
+        for (message, detail) in turn.details.iter().enumerate() {
+            if let ChatMessage::Agent(source) = detail {
+                if let Some(rows) = cache.render(
+                    MarkdownKey {
+                        turn: turn_index,
+                        message,
+                    },
+                    source,
+                    wrap_width,
+                    tab.allow_markdown_transition,
+                ) {
+                    prepared.push((message, rows.to_vec()));
+                } else {
+                    ready = false;
+                }
+            }
+        }
+    }
+    build_completed_turn_lines_with_geometry(
+        turn,
+        is_selected,
+        pane_focused,
+        wrap_width,
+        |id| tab.completed_tool_call_expanded(id),
+        |message, _| {
+            ready
+                .then(|| prepared.iter().find(|(index, _)| *index == message))
+                .flatten()
+                .map(|(_, lines)| lines.clone())
+        },
+    )
 }
 
 fn rendered_header_width(lines: &[Line<'_>], wrap_width: usize) -> usize {
@@ -1647,6 +1682,7 @@ fn build_completed_turn_lines_with_geometry<'a>(
     pane_focused: bool,
     wrap_width: usize,
     tool_expanded: impl Fn(&str) -> bool,
+    render_agent: impl Fn(usize, &str) -> Option<Vec<Line<'static>>>,
 ) -> CompletedTurnLines<'a> {
     #[cfg(test)]
     record_completed_turn_line_build();
@@ -1804,8 +1840,16 @@ fn build_completed_turn_lines_with_geometry<'a>(
             let display = tool_geometry.map_or(ToolDisplay::ActiveTurn, |(expanded, _)| {
                 ToolDisplay::Completed { expanded }
             });
-            let mut message_lines =
-                build_message_lines_with_details(msg, false, false, None, 0, wrap_width, display);
+            let markdown = match msg {
+                ChatMessage::Agent(source) => render_agent(detail_index, source),
+                _ => None,
+            };
+            let mut message_lines = if let Some(mut lines) = markdown {
+                lines.push(Line::default());
+                lines
+            } else {
+                build_message_lines_with_details(msg, false, false, None, 0, wrap_width, display)
+            };
             append_marker(&mut message_lines);
             let message_height = rendered_lines_height(&message_lines, wrap_width);
             message_rows.push(MessageRowGeometry {
@@ -2858,7 +2902,7 @@ mod tests {
         };
 
         reset_rendered_height_line_scan_count();
-        build_completed_turn_lines_with_geometry(&turn, false, false, 80, |_| false);
+        build_completed_turn_lines_with_geometry(&turn, false, false, 80, |_| false, |_, _| None);
 
         assert!(
             rendered_height_line_scan_count() <= 110,
@@ -2968,8 +3012,14 @@ mod tests {
                 expanded: true,
                 trailing_marker: Some("MARKER".repeat(4)),
             };
-            let built =
-                build_completed_turn_lines_with_geometry(&turn, false, false, 36, |_| false);
+            let built = build_completed_turn_lines_with_geometry(
+                &turn,
+                false,
+                false,
+                36,
+                |_| false,
+                |_, _| None,
+            );
             let mut terminal =
                 ratatui::Terminal::new(ratatui::backend::TestBackend::new(36, 30)).unwrap();
             terminal
@@ -3038,8 +3088,14 @@ mod tests {
                     expanded,
                     trailing_marker: Some("MARKER".into()),
                 };
-                let built =
-                    build_completed_turn_lines_with_geometry(&turn, false, false, 36, |_| false);
+                let built = build_completed_turn_lines_with_geometry(
+                    &turn,
+                    false,
+                    false,
+                    36,
+                    |_| false,
+                    |_, _| None,
+                );
                 let mut terminal =
                     ratatui::Terminal::new(ratatui::backend::TestBackend::new(36, 10)).unwrap();
                 terminal

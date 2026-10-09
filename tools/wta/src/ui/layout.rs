@@ -8,6 +8,7 @@ use super::{
 };
 
 pub fn render(frame: &mut Frame, app: &mut App) {
+    app.flush_deferred_agent_end();
     let area = frame.area();
     app.completed_turn_hits.clear();
     app.completed_turn_action_links.clear();
@@ -130,6 +131,9 @@ pub fn render(frame: &mut Frame, app: &mut App) {
     // height prediction and rendering in sync when a short pane switches
     // permission/recommendation content between full and compact forms.
     let chat_content_width = main_area.width.saturating_sub(2); // h_chat 1+1 padding
+    let allow_markdown_transition = !app.text_selection.has_selection();
+    app.current_tab_mut()
+        .begin_markdown_frame(allow_markdown_transition);
     let chat_estimate = chat::estimated_block_height(app, chat_content_width, main_area.height);
     let queued_count = app.pending_input_count();
     let recommendation_natural_height =
@@ -289,6 +293,7 @@ pub fn render(frame: &mut Frame, app: &mut App) {
         {
             app.recommendation_rendered = false;
         }
+        app.current_tab().agent_markdown.borrow_mut().end_frame();
     }
 
     // `/model` picker modal: same anchor as the autocomplete popup. The two

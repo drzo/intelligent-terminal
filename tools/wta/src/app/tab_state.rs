@@ -587,6 +587,10 @@ pub struct TabSession {
     // Conversation history
     pub messages: Vec<ChatMessage>,
     pub completed_turns: Vec<CompletedTurn>,
+    pub(crate) completed_markdown_turns: HashSet<usize>,
+    pub(crate) agent_markdown: RefCell<super::agent_markdown::BatchMarkdownCache>,
+    pub(crate) allow_markdown_transition: bool,
+    pub(crate) deferred_agent_end: Option<(String, u64)>,
     /// UI-only disclosure state keyed by the ACP session's tool-call IDs.
     pub(crate) expanded_completed_tool_calls: HashSet<String>,
     pub(crate) active_tool_viewport_anchor: Option<(String, u16)>,
@@ -875,10 +879,35 @@ impl TabSession {
 
     pub(crate) fn clear_completed_turns(&mut self) {
         self.completed_turns.clear();
+        self.completed_markdown_turns.clear();
+        self.agent_markdown.get_mut().clear();
         self.expanded_completed_tool_calls.clear();
         self.active_tool_viewport_anchor = None;
         self.chat_reading_position = None;
         self.completed_turn_layout = CompletedTurnLayoutState::default();
+    }
+
+    pub(crate) fn push_completed_turn(&mut self, turn: CompletedTurn, render_markdown: bool) {
+        if render_markdown
+            && turn.trailing_marker.is_none()
+            && !turn
+                .details
+                .iter()
+                .any(|message| matches!(message, ChatMessage::Error(_)))
+        {
+            self.completed_markdown_turns
+                .insert(self.completed_turns.len());
+        }
+        self.completed_turns.push(turn);
+    }
+
+    pub(crate) fn begin_markdown_frame(&mut self, allow_transition: bool) {
+        let cache = self.agent_markdown.get_mut();
+        if cache.poll() || self.allow_markdown_transition != allow_transition {
+            self.completed_turn_layout.height_cache.get_mut().clear();
+        }
+        self.allow_markdown_transition = allow_transition;
+        cache.begin_frame();
     }
 
     pub(crate) fn completed_tool_call_expanded(&self, id: &str) -> bool {
@@ -1117,6 +1146,7 @@ impl TabSession {
             self.active_prompt_cancellation = None;
         }
         self.messages.clear();
+        self.deferred_agent_end = None;
         self.streaming_thought = None;
         self.permission.clear();
         self.user_input.clear();
@@ -1449,12 +1479,15 @@ impl TabSession {
             match message {
                 ChatMessage::User(text) => {
                     if let Some((prompt, details)) = current.take() {
-                        self.completed_turns.push(CompletedTurn {
-                            prompt,
-                            details,
-                            expanded: true,
-                            trailing_marker: None,
-                        });
+                        self.push_completed_turn(
+                            CompletedTurn {
+                                prompt,
+                                details,
+                                expanded: true,
+                                trailing_marker: None,
+                            },
+                            true,
+                        );
                     }
                     // A replayed prompt still carries the terminal-agent
                     // template, so the header shows only the request the user
@@ -1492,12 +1525,15 @@ impl TabSession {
             }
         }
         if let Some((prompt, details)) = current.take() {
-            self.completed_turns.push(CompletedTurn {
-                prompt,
-                details,
-                expanded: true,
-                trailing_marker: None,
-            });
+            self.push_completed_turn(
+                CompletedTurn {
+                    prompt,
+                    details,
+                    expanded: true,
+                    trailing_marker: None,
+                },
+                true,
+            );
         }
         self.messages = kept;
     }

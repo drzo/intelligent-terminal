@@ -1,7 +1,8 @@
 param(
     [Parameter(Mandatory)][string]$LogPath,
     [string]$ResolverFixturePath,
-    [string]$TelemetryFixturePath
+    [string]$TelemetryFixturePath,
+    [string]$CompletedMarkdownGateDirectory
 )
 
 $ErrorActionPreference = 'Stop'
@@ -203,7 +204,53 @@ function Invoke-SessionMcpTool {
     Invoke-RestMethod -Method Post -Uri $Server.url -Headers $headers -ContentType 'application/json' -Body $body
 }
 
-while ($null -ne ($line = [Console]::In.ReadLine())) {
+$markdownTurn = $null
+if ($CompletedMarkdownGateDirectory) {
+    if (-not (Test-Path -LiteralPath $CompletedMarkdownGateDirectory -PathType Container)) {
+        throw 'The completed Markdown gate directory must already exist.'
+    }
+    $reader = [IO.StreamReader]::new([Console]::OpenStandardInput(), [Text.Encoding]::UTF8)
+    $readTask = $reader.ReadLineAsync()
+}
+while ($true) {
+    # Only the opt-in Markdown fixture needs to accept cancellation while a turn is held.
+    if ($markdownTurn) {
+        $abort = Test-Path -LiteralPath (Join-Path $CompletedMarkdownGateDirectory 'abort')
+        if ($abort -or [DateTime]::UtcNow -ge $markdownTurn.Deadline) {
+            Send-AcpMessage @{ jsonrpc = '2.0'; id = $markdownTurn.Id
+                error = @{ code = -32603; message = 'CM_GATE_ABORTED' } }
+            Write-FixtureLog -Message "markdown|$($markdownTurn.Marker)|aborted"
+            $markdownTurn = $null
+        }
+        elseif (-not $markdownTurn.TailSent -and
+            (Test-Path -LiteralPath (Join-Path $CompletedMarkdownGateDirectory "$($markdownTurn.Marker).tail"))) {
+            Send-TextUpdate -SessionId $markdownTurn.SessionId -Text $markdownTurn.Tail
+            $markdownTurn.TailSent = $true
+            Write-FixtureLog -Message "markdown|$($markdownTurn.Marker)|tail"
+        }
+        elseif ($markdownTurn.TailSent -and
+            (Test-Path -LiteralPath (Join-Path $CompletedMarkdownGateDirectory "$($markdownTurn.Marker).finish"))) {
+            if ($markdownTurn.Mode -eq 'ERROR') {
+                Send-AcpMessage @{ jsonrpc = '2.0'; id = $markdownTurn.Id
+                    error = @{ code = -32603; message = "**CM_$($markdownTurn.Marker)_ERROR**" } }
+                Write-FixtureLog -Message "markdown|$($markdownTurn.Marker)|error"
+            }
+            else {
+                Send-AcpMessage @{ jsonrpc = '2.0'; id = $markdownTurn.Id; result = @{ stopReason = 'end_turn' } }
+                Write-FixtureLog -Message "markdown|$($markdownTurn.Marker)|finished"
+            }
+            $markdownTurn = $null
+        }
+    }
+    if ($CompletedMarkdownGateDirectory) {
+        if (-not $readTask.Wait(50)) { continue }
+        $line = $readTask.GetAwaiter().GetResult()
+        if ($null -ne $line) { $readTask = $reader.ReadLineAsync() }
+    }
+    else {
+        $line = [Console]::In.ReadLine()
+    }
+    if ($null -eq $line) { break }
     $request = $line | ConvertFrom-Json
     switch ($request.method) {
         'initialize' {
@@ -278,6 +325,58 @@ while ($null -ne ($line = [Console]::In.ReadLine())) {
             $sessionId = [string]$request.params.sessionId
             $promptText = (@($request.params.prompt) | ForEach-Object text) -join "`n"
             Write-FixtureLog -Message "session/prompt|$sessionId|$promptText"
+
+            if ($CompletedMarkdownGateDirectory -and
+                $promptText -cmatch '\bCM_(STREAM|ORDER|CANCEL|ERROR|HISTORY)_([0-9a-f]{12})\b') {
+                if ($markdownTurn) { throw 'Only one held Markdown fixture turn is supported.' }
+                $mode = $Matches[1]
+                $marker = $Matches[2]
+                $prefix = "**CM_${marker}_PREFIX**"
+                $tail = " tail **CM_${marker}_TAIL**"
+                if ($mode -eq 'HISTORY') {
+                    if ($promptText -notmatch '\bROWS=(\d+)\b' -or [int]$Matches[1] -notin 12..160) {
+                        throw 'Markdown history requires a bounded ROWS=12..160 value.'
+                    }
+                    $rows = [int]$Matches[1]
+                    $prefix += "`n`n" + ((1..$rows | ForEach-Object {
+                        # Markdown hard breaks keep history taller than the measured viewport.
+                        "CM_${marker}_ROW_$('{0:D3}' -f $_) history row.  "
+                    }) -join "`n")
+                    $tail = "`n`nCM_${marker}_WRAP_START " + ('ordinary wrapped words ' * 8) +
+                        "CM_${marker}_WRAP_END`n`n| **Key** | Value |`n| :--- | ---: |`n" +
+                        "| CM_${marker}_CELL | 42 |`n`n**CM_${marker}_TAIL**"
+                }
+                Send-TextUpdate -SessionId $sessionId -Text $prefix
+                if ($mode -eq 'ORDER') {
+                    Send-AcpMessage @{ jsonrpc = '2.0'; method = 'session/update'; params = @{
+                        sessionId = $sessionId; update = @{
+                            sessionUpdate = 'tool_call'; toolCallId = "cm-tool-$marker"
+                            title = "**CM_${marker}_TOOL**"; kind = 'execute'; status = 'in_progress'
+                            rawInput = @{ command = "echo **CM_${marker}_COMMAND**" }
+                            content = @(); locations = @()
+                        }
+                    } }
+                    Send-AcpMessage @{ jsonrpc = '2.0'; method = 'session/update'; params = @{
+                        sessionId = $sessionId; update = @{
+                            sessionUpdate = 'tool_call_update'; toolCallId = "cm-tool-$marker"; status = 'failed'
+                            rawOutput = @{ stdout = "**CM_${marker}_OUTPUT**"; stderr = "**CM_${marker}_STDERR**"; exitCode = 7 }
+                        }
+                    } }
+                    Send-AcpMessage @{ jsonrpc = '2.0'; method = 'session/update'; params = @{
+                        sessionId = $sessionId; update = @{
+                            sessionUpdate = 'agent_thought_chunk'
+                            content = @{ type = 'text'; text = "**CM_${marker}_THOUGHT**" }
+                        }
+                    } }
+                    Send-TextUpdate -SessionId $sessionId -Text "**CM_${marker}_AFTER**"
+                }
+                $markdownTurn = @{
+                    Id = $request.id; SessionId = $sessionId; Mode = $mode; Marker = $marker
+                    Tail = $tail; TailSent = $false; Deadline = [DateTime]::UtcNow.AddSeconds(120)
+                }
+                Write-FixtureLog -Message "markdown|$marker|prefix"
+                continue
+            }
 
             $telemetryCase = if ($TelemetryFixturePath -and (Test-Path -LiteralPath $TelemetryFixturePath)) {
                 Get-Content -LiteralPath $TelemetryFixturePath -Raw | ConvertFrom-Json
@@ -496,6 +595,13 @@ while ($null -ne ($line = [Console]::In.ReadLine())) {
                     id = $request.id
                     result = @{ stopReason = 'end_turn' }
                 }
+            }
+        }
+        'session/cancel' {
+            if ($markdownTurn -and $markdownTurn.SessionId -eq $request.params.sessionId) {
+                Send-AcpMessage @{ jsonrpc = '2.0'; id = $markdownTurn.Id; result = @{ stopReason = 'cancelled' } }
+                Write-FixtureLog -Message "markdown|$($markdownTurn.Marker)|cancelled"
+                $markdownTurn = $null
             }
         }
         default {

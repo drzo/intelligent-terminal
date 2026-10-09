@@ -450,6 +450,18 @@ impl App {
             return;
         };
 
+        if session_is_current
+            && self.active_tab_key() == target_tab
+            && self.text_selection.has_selection()
+            && self.tab_sessions[&target_tab].turn.is_streaming()
+        {
+            if let Some(prompt_id) = self.tab_sessions[&target_tab].turn.prompt_id() {
+                self.tab_mut(&target_tab).deferred_agent_end =
+                    Some((session_id.to_owned(), prompt_id));
+            }
+            return;
+        }
+
         let cancelling_prompt_id =
             self.tab_sessions
                 .get(&target_tab)
@@ -495,6 +507,26 @@ impl App {
             == Some(session_id)
         {
             self.project_tab_state(&target_tab);
+        }
+    }
+
+    pub(crate) fn flush_deferred_agent_end(&mut self) {
+        if self.text_selection.has_selection() {
+            return;
+        }
+        let pending = self
+            .tab_sessions
+            .values_mut()
+            .filter_map(|tab| {
+                let (session, prompt) = tab.deferred_agent_end.take()?;
+                (tab.session_id.as_deref() == Some(session.as_str())
+                    && tab.turn.prompt_id() == Some(prompt)
+                    && tab.turn.is_streaming())
+                .then_some(session)
+            })
+            .collect::<Vec<_>>();
+        for session in pending {
+            self.turn_close_terminal_event(&session);
         }
     }
 
@@ -656,12 +688,15 @@ impl App {
         let prompt = tab.turn.prompt().cloned().expect("prompt set");
         let details = tab.take_current_turn_details();
         if !details.is_empty() {
-            tab.completed_turns.push(CompletedTurn {
-                prompt: t!("chat.autofix_prompt_label").into_owned(),
-                details,
-                expanded: true,
-                trailing_marker: None,
-            });
+            tab.push_completed_turn(
+                CompletedTurn {
+                    prompt: t!("chat.autofix_prompt_label").into_owned(),
+                    details,
+                    expanded: true,
+                    trailing_marker: None,
+                },
+                true,
+            );
         }
         tab.finish_active_prompt(prompt.id);
         tab.turn = TurnState::Surfaced {
@@ -685,12 +720,15 @@ impl App {
         let tab = self.session_tab_mut(session_id);
         let prompt = tab.turn.prompt().cloned().expect("prompt set");
         let details = tab.take_current_turn_details();
-        tab.completed_turns.push(CompletedTurn {
-            prompt: prompt.text.clone(),
-            details,
-            expanded: true,
-            trailing_marker: None,
-        });
+        tab.push_completed_turn(
+            CompletedTurn {
+                prompt: prompt.text.clone(),
+                details,
+                expanded: true,
+                trailing_marker: None,
+            },
+            true,
+        );
         tab.turn = TurnState::Surfaced {
             prompt,
             outcome: TurnOutcome::ChatTurn,
@@ -714,12 +752,15 @@ impl App {
         };
         let mut details = tab.take_current_turn_details();
         details.push(ChatMessage::Agent(summary));
-        tab.completed_turns.push(CompletedTurn {
-            prompt: prompt_label,
-            details,
-            expanded: true,
-            trailing_marker,
-        });
+        tab.push_completed_turn(
+            CompletedTurn {
+                prompt: prompt_label,
+                details,
+                expanded: true,
+                trailing_marker,
+            },
+            true,
+        );
     }
 
     /// Variant of `turn_release_end_pending` with a custom `via=` log tag
@@ -1071,12 +1112,15 @@ impl App {
             if let Some(summary) = summary {
                 details.push(ChatMessage::Agent(summary));
             }
-            tab.completed_turns.push(CompletedTurn {
-                prompt: prompt_label,
-                details,
-                expanded: true,
-                trailing_marker,
-            });
+            tab.push_completed_turn(
+                CompletedTurn {
+                    prompt: prompt_label,
+                    details,
+                    expanded: true,
+                    trailing_marker,
+                },
+                false,
+            );
         } else if let Some((summary, canceled_summary)) = canceled_card_summary {
             if let Some((index, last)) = tab.completed_turns.iter_mut().enumerate().next_back() {
                 if let Some(ChatMessage::Agent(text)) = last.details.last_mut() {
@@ -1320,12 +1364,15 @@ impl App {
             // clicks the Suggested pill they came here specifically to
             // read the explanation, so showing the collapsed preview
             // would force a second click.
-            tab.completed_turns.push(CompletedTurn {
-                prompt: turn_prompt_label,
-                details,
-                expanded: true,
-                trailing_marker: None,
-            });
+            tab.push_completed_turn(
+                CompletedTurn {
+                    prompt: turn_prompt_label,
+                    details,
+                    expanded: true,
+                    trailing_marker: None,
+                },
+                true,
+            );
         }
 
         let target_tab = self.tab_for_session(session_id);

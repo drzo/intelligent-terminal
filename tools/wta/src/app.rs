@@ -94,6 +94,7 @@ fn agent_command_on_enter(input: &str, selected: Option<&AvailableAgent>) -> Opt
     })
 }
 
+pub(crate) mod agent_markdown;
 mod attachments;
 mod autofix;
 mod input_edit;
@@ -5776,7 +5777,11 @@ mod app_events;
 impl App {
     fn event_requires_redraw(&self, event: &AppEvent) -> bool {
         match event {
-            AppEvent::Tick => self.has_activity_indicator() || self.show_notification_banner,
+            AppEvent::Tick => {
+                self.has_activity_indicator()
+                    || self.show_notification_banner
+                    || self.current_tab().agent_markdown.borrow().has_pending()
+            }
             // The reveal animation only needs a frame while there is still
             // unrevealed pending text on the *visible* tab. When the reveal
             // has caught up (or nothing is streaming) this is a cheap no-op
@@ -7785,3 +7790,7 @@ mod queue_lifecycle_tests;
 #[cfg(test)]
 #[path = "app_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "completed_markdown_tests.rs"]
+mod completed_markdown_tests;

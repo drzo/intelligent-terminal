@@ -46,6 +46,11 @@ pub(crate) struct TextSelection {
 }
 
 impl TextSelection {
+    pub(crate) fn has_selection(&self) -> bool {
+        self.selection
+            .is_some_and(|selection| selection.atomic || selection.moved)
+    }
+
     pub(crate) fn select_all(&mut self) {
         self.copied = false;
         let Some(buffer) = self.buffer.as_ref() else {

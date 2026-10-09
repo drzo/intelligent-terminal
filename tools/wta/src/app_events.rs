@@ -609,6 +609,7 @@ impl App {
                     return;
                 }
                 self.text_selection.clear();
+                self.flush_deferred_agent_end();
                 self.handle_key(key);
                 if !self.chat_input_has_edit_focus() && !self.current_tab().paste_pending {
                     self.current_tab_mut().input_all_selected = false;
