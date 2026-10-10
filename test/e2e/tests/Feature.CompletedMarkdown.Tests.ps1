@@ -294,13 +294,18 @@ Describe 'Feature: completed Markdown' -Tag @('Feature', 'CompletedMarkdown') {
             profiles = @{ list = @(@{
                 guid = $profile; name = 'Completed Markdown fixture'; commandline = "`"$pwsh`" -NoLogo -NoProfile -NoExit"
                 startingDirectory = $script:cmEvidence; shellIntegrationEnabled = $true; font = @{ size = 10 }
+                environment = @{
+                    PATH = "$($target.InstallLocation);$env:PATH"
+                    WT_WTCLI_PATH = $target.WtcliPath
+                    WTCLI_PATH = $target.WtcliPath
+                }
             }) }
             actions = @(@{ command = @{ action = 'resizePane'; direction = 'up' }; keys = 'ctrl+shift+f12' })
         }
         $script:cmApp | Add-Member -NotePropertyName RequireOwnedForeground -NotePropertyValue $true -Force
-        $shell = Get-ActivePane -App $script:cmApp
         Open-AgentPane -App $script:cmApp | Out-Null
-        $script:cmSession = Wait-NewAgentPaneSession -App $script:cmApp -OwnerPaneSessionId $shell.session_id -TimeoutSec 30
+        $script:cmSession = Wait-NewAgentPaneSession -App $script:cmApp -TimeoutSec 30
+        @(Get-AgentPaneSessions -App $script:cmApp) | Should -HaveCount 1 -Because 'this creation-owned fixture window has one new agent pane'
         $script:cmPane = $script:cmSession.PaneSessionId
         Wait-AgentReady -App $script:cmApp -PaneSessionId $script:cmPane -TimeoutSec 30 | Should -BeTrue
         [string]::Equals((Get-Process -Id $script:cmSession.HelperProcessId).Path,
