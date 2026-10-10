@@ -287,7 +287,7 @@ Describe 'Feature: completed Markdown' -Tag @('Feature', 'CompletedMarkdown') {
             initialCols = 160; initialRows = 64; launchMode = 'default'
             firstWindowPreference = 'defaultProfile'; windowingBehavior = 'useNew'
             acpAgent = 'custom:completed-markdown-fixture'; acpModel = ''
-            acpCustomCommand = "`"$pwsh`" -NoProfile -EncodedCommand $encoded"
+            acpCustomCommand = "pwsh -NoProfile -EncodedCommand $encoded"
             agentPanePosition = 'bottom'; autoErrorDetectionEnabled = $true; autoFixEnabled = $false
             copyOnSelect = $false; rightClickContextMenu = $false; 'warning.confirmOnClose' = 'never'
             defaultProfile = $profile
