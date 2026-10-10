@@ -46,6 +46,40 @@ fn render_at(app: &mut App, width: u16, height: u16) -> String {
         .join("\n")
 }
 
+fn select_visible_source(app: &mut App, source: &str) {
+    use crossterm::event::{MouseButton, MouseEvent, MouseEventKind};
+    use unicode_width::UnicodeWidthStr;
+
+    let text = render(app);
+    let (row, column) = text
+        .lines()
+        .enumerate()
+        .find_map(|(row, line)| {
+            line.find(source)
+                .map(|byte| (row as u16, line[..byte].width() as u16))
+        })
+        .unwrap();
+    for (kind, offset) in [
+        (MouseEventKind::Down(MouseButton::Left), 0),
+        (
+            MouseEventKind::Drag(MouseButton::Left),
+            source.len() as u16 - 1,
+        ),
+        (
+            MouseEventKind::Up(MouseButton::Left),
+            source.len() as u16 - 1,
+        ),
+    ] {
+        app.text_selection.handle_mouse(MouseEvent {
+            kind,
+            column: column + offset,
+            row,
+            modifiers: KeyModifiers::NONE,
+        });
+    }
+    assert_eq!(app.text_selection.selected_text().as_deref(), Some(source));
+}
+
 fn wait_for_render(app: &mut App, width: u16, height: u16, ready: impl Fn(&str) -> bool) -> String {
     let deadline = Instant::now() + Duration::from_secs(5);
     loop {
@@ -305,40 +339,11 @@ fn completed_markdown_collapsed_visible_history_reuses_its_cached_batch() {
 
 #[test]
 fn completed_markdown_defers_the_display_change_while_selecting_raw_text() {
-    use crossterm::event::{MouseButton, MouseEvent, MouseEventKind};
-    use unicode_width::UnicodeWidthStr;
     let _locale = crate::test_support::lock_locale();
     rust_i18n::set_locale("en-US");
     let source = "**SELECT_RAW**";
     let mut app = app_with_reply(source);
-    let text = render(&mut app);
-    let (row, column) = text
-        .lines()
-        .enumerate()
-        .find_map(|(row, line)| {
-            line.find(source)
-                .map(|byte| (row as u16, line[..byte].width() as u16))
-        })
-        .unwrap();
-    for (kind, offset) in [
-        (MouseEventKind::Down(MouseButton::Left), 0),
-        (
-            MouseEventKind::Drag(MouseButton::Left),
-            source.len() as u16 - 1,
-        ),
-        (
-            MouseEventKind::Up(MouseButton::Left),
-            source.len() as u16 - 1,
-        ),
-    ] {
-        app.text_selection.handle_mouse(MouseEvent {
-            kind,
-            column: column + offset,
-            row,
-            modifiers: KeyModifiers::NONE,
-        });
-    }
-    assert_eq!(app.text_selection.selected_text().as_deref(), Some(source));
+    select_visible_source(&mut app, source);
     app.handle_event(AppEvent::AgentMessageEnd {
         session_id: DEFAULT_TAB_ID.into(),
     });
@@ -368,6 +373,83 @@ fn completed_markdown_defers_the_display_change_while_selecting_raw_text() {
             .batch_renders,
         1
     );
+}
+
+#[test]
+fn completed_markdown_deferred_completion_releases_queued_prompts_once_in_order() {
+    let _locale = crate::test_support::lock_locale();
+    rust_i18n::set_locale("en-US");
+    let source = "**SELECTED_FIRST_REPLY**";
+    let mut app = app_with_reply(source);
+    let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+    app.prompt_tx = tx;
+    for text in ["second prompt", "third prompt"] {
+        let tab = app.current_tab_mut();
+        tab.input = text.into();
+        tab.cursor_pos = text.len();
+        tab.refresh_command_popup();
+        app.handle_event(AppEvent::Key(KeyEvent::new(
+            KeyCode::Enter,
+            KeyModifiers::NONE,
+        )));
+    }
+    assert_eq!(app.current_tab().prompt_queue.entries.len(), 2);
+    assert!(rx.try_recv().is_err());
+    select_visible_source(&mut app, source);
+    app.handle_event(AppEvent::AgentMessageEnd {
+        session_id: DEFAULT_TAB_ID.into(),
+    });
+    for _ in 0..3 {
+        app.handle_event(AppEvent::Tick);
+        assert!(render(&mut app).contains(source));
+        assert_eq!(app.text_selection.selected_text().as_deref(), Some(source));
+        assert!(app.current_tab().completed_turns.is_empty());
+        assert!(rx.try_recv().is_err());
+    }
+    assert_eq!(
+        app.current_tab()
+            .agent_markdown
+            .borrow()
+            .stats()
+            .batch_renders,
+        0
+    );
+
+    app.handle_event(AppEvent::Key(KeyEvent::new(
+        KeyCode::Esc,
+        KeyModifiers::NONE,
+    )));
+    let second = rx.try_recv().unwrap();
+    assert_eq!(second.text, "second prompt");
+    assert_eq!(app.current_tab().turn.prompt_id(), Some(second.id));
+    assert_eq!(app.current_tab().prompt_queue.entries.len(), 1);
+    assert!(app.current_tab().deferred_agent_end.is_none());
+    assert_eq!(app.current_tab().completed_turns.len(), 1);
+    assert_eq!(
+        app.current_tab().completed_turns[0].details[0],
+        ChatMessage::Agent(source.into())
+    );
+    wait_for_render(&mut app, 90, 30, |text| {
+        text.contains("SELECTED_FIRST_REPLY") && !text.contains(source)
+    });
+    for _ in 0..3 {
+        app.handle_event(AppEvent::Tick);
+        assert!(rx.try_recv().is_err());
+        assert_eq!(app.current_tab().completed_turns.len(), 1);
+    }
+    app.handle_event(AppEvent::AgentMessageChunk {
+        session_id: DEFAULT_TAB_ID.into(),
+        text: "**SECOND_REPLY**".into(),
+    });
+    app.handle_event(AppEvent::AgentMessageEnd {
+        session_id: DEFAULT_TAB_ID.into(),
+    });
+    let third = rx.try_recv().unwrap();
+    assert_eq!(third.text, "third prompt");
+    assert_eq!(app.current_tab().turn.prompt_id(), Some(third.id));
+    assert!(app.current_tab().prompt_queue.entries.is_empty());
+    assert_eq!(app.current_tab().completed_turns.len(), 2);
+    assert!(rx.try_recv().is_err());
 }
 
 #[test]
