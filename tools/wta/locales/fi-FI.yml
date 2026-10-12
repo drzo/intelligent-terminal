@@ -8,7 +8,7 @@ setup.title.sign_in: "Kirjautuminen vaaditaan"
 # %{agent} is replaced with the agent display name at runtime.
 setup.subtitle.copilot_missing: "Agenttiasi \"%{agent}\" ei ole asennettu. Asenna se seuraamalla alla olevia ohjeita. Vaihtaaksesi agenttia siirry kohtaan Älykäs Pääte Settings > Agent."
 setup.subtitle.agent_missing: "Agenttiasi \"%{agent}\" ei ole asennettu. Asenna se uudelleen manuaalisesti ja yritä sitten uudelleen. Vaihtaaksesi agenttia siirry kohtaan Älykäs Pääte Settings > Agent."
-setup.subtitle.authentication_required: "Agenttisi \"%{agent}\" vaatii todennuksen."  # Shared AI-agent auth intro; %{agent} is the display name. A space and flow-specific guidance follow.
+setup.subtitle.authentication_required: "Agenttisi \"%{agent}\" vaatii todennuksen."  # Shared AI-agent auth intro; %{agent} is the display name. May stand alone; when available, a space and flow-specific guidance follow.
 setup.auth.sign_in: "Kirjaudu sisään seuraamalla alla olevia ohjeita."  # Shared guidance for device login and initial protocol SignIn; follows the auth intro.
 setup.auth.external_sign_in: "Kirjaudu sisään agentin kautta ja valitse sitten alta \"Olen kirjautunut sisään\"."  # External-agent sign-in, then the setup.option.retry_auth confirmation; follows the auth intro.
 setup.auth.select_method: "Valitse kirjautumistapa jatkaaksesi tässä."  # Shown only inside the actual sign-in method picker; follows the auth intro.

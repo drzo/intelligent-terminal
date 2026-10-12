@@ -9,7 +9,7 @@ setup.title.sign_in: "[Ŝïğñ ïñ ŕéqûïŕéď!!]"
 # {Locked="Settings"} - refers to the Settings page, keep as-is in English UI.
 setup.subtitle.copilot_missing: "[Ÿöûŕ åğéñţ \"%{agent}\" ïś ñöţ ïñśţåĺĺéď. Ƒöĺĺöŵ ţĥé śţéṗś ƀéĺöŵ ţö ïñśţåĺĺ ïţ. Ţö śŵïţçĥ åğéñţś, ğö ţö Intelligent Terminal Settings > Agent.!!!! !!!! !!!! !!!! !!!!]"
 setup.subtitle.agent_missing: "[Ÿöûŕ åğéñţ \"%{agent}\" ïś ñöţ ïñśţåĺĺéď. Ṗĺéåśé ïñśţåĺĺ ïţ ḿåñûåĺĺÿ, ţĥéñ ţŕÿ åğåïñ. Ţö śŵïţçĥ åğéñţś, ğö ţö Intelligent Terminal Settings > Agent.!!!! !!!! !!!! !!!! !!!!]"
-setup.subtitle.authentication_required: "[Ÿöûŕ åğéñţ \"%{agent}\" ŕéqûïŕéś åûţĥéñţïçåţïöñ.!!!! !!!!]"  # Shared AI-agent auth intro; %{agent} is the display name. A space and flow-specific guidance follow.
+setup.subtitle.authentication_required: "[Ÿöûŕ åğéñţ \"%{agent}\" ŕéqûïŕéś åûţĥéñţïçåţïöñ.!!!! !!!!]"  # Shared AI-agent auth intro; %{agent} is the display name. May stand alone; when available, a space and flow-specific guidance follow.
 setup.auth.sign_in: "[Ƒöĺĺöŵ ţĥé śţéṗś ƀéĺöŵ ţö śïğñ ïñ.!!!! !!!!]"  # Shared guidance for device login and initial protocol SignIn; follows the auth intro.
 setup.auth.external_sign_in: "[Ṗĺéåśé śïğñ ïñ ṽïå ţĥé åğéñţ, ţĥéñ śéĺéçţ \"Ï'ṽé śïğñéð ïñ\" ɓéĺöŵ.!!!! !!!! !!!!]"  # External-agent sign-in, then the setup.option.retry_auth confirmation; follows the auth intro.
 setup.auth.select_method: "[Ŝéĺéçţ å śïğñ-ïñ ḿéţĥöď ţö çöñţïñûé ĥéŕé.!!!! !!!!]"  # Shown only inside the actual sign-in method picker; follows the auth intro.

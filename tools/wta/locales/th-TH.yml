@@ -8,7 +8,7 @@ setup.title.sign_in: "ต้องลงชื่อเข้าใช้"
 # %{agent} จะถูกแทนที่ด้วยชื่อที่แสดงของเอเจนต์ขณะรันไทม์
 setup.subtitle.copilot_missing: "เอเจนต์ \"%{agent}\" ของคุณยังไม่ได้ติดตั้ง ทำตามขั้นตอนด้านล่างเพื่อติดตั้ง หากต้องการสลับเอเจนต์ ให้ไปที่ เทอร์มินัลอัจฉริยะ Settings > Agent"
 setup.subtitle.agent_missing: "เอเจนต์ \"%{agent}\" ของคุณยังไม่ได้ติดตั้ง กรุณาติดตั้งใหม่ด้วยตนเอง แล้วลองอีกครั้ง หากต้องการสลับเอเจนต์ ให้ไปที่ เทอร์มินัลอัจฉริยะ Settings > Agent"
-setup.subtitle.authentication_required: "เอเจนต์ \"%{agent}\" ของคุณต้องการการยืนยันตัวตน"  # Shared AI-agent auth intro; %{agent} is the display name. A space and flow-specific guidance follow.
+setup.subtitle.authentication_required: "เอเจนต์ \"%{agent}\" ของคุณต้องการการยืนยันตัวตน"  # Shared AI-agent auth intro; %{agent} is the display name. May stand alone; when available, a space and flow-specific guidance follow.
 setup.auth.sign_in: "ทำตามขั้นตอนด้านล่างเพื่อลงชื่อเข้าใช้"  # Shared guidance for device login and initial protocol SignIn; follows the auth intro.
 setup.auth.external_sign_in: "กรุณาลงชื่อเข้าใช้ผ่านเอเจนต์ แล้วเลือก \"ลงชื่อเข้าใช้แล้ว\" ด้านล่าง"  # External-agent sign-in, then the setup.option.retry_auth confirmation; follows the auth intro.
 setup.auth.select_method: "เลือกวิธีลงชื่อเข้าใช้เพื่อดำเนินการต่อที่นี่"  # Shown only inside the actual sign-in method picker; follows the auth intro.

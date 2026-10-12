@@ -8,7 +8,7 @@ setup.title.sign_in: "Log masuk diperlukan"
 # %{agent} digantikan dengan nama paparan ejen AI semasa masa jalan.
 setup.subtitle.copilot_missing: "Ejen AI \"%{agent}\" anda belum dipasang. Ikuti langkah di bawah untuk memasangnya. Untuk menukar ejen AI, pergi ke Terminal Pintar Settings > Agent."
 setup.subtitle.agent_missing: "Ejen AI \"%{agent}\" anda belum dipasang. Sila pasang semula secara manual, kemudian cuba lagi. Untuk menukar ejen AI, pergi ke Terminal Pintar Settings > Agent."
-setup.subtitle.authentication_required: "Ejen AI \"%{agent}\" anda memerlukan pengesahan."  # Shared AI-agent auth intro; %{agent} is the display name. A space and flow-specific guidance follow.
+setup.subtitle.authentication_required: "Ejen AI \"%{agent}\" anda memerlukan pengesahan."  # Shared AI-agent auth intro; %{agent} is the display name. May stand alone; when available, a space and flow-specific guidance follow.
 setup.auth.sign_in: "Ikuti langkah di bawah untuk log masuk."  # Shared guidance for device login and initial protocol SignIn; follows the auth intro.
 setup.auth.external_sign_in: "Sila log masuk melalui ejen AI, kemudian pilih \"Saya telah log masuk\" di bawah."  # External-agent sign-in, then the setup.option.retry_auth confirmation; follows the auth intro.
 setup.auth.select_method: "Pilih kaedah log masuk untuk meneruskan di sini."  # Shown only inside the actual sign-in method picker; follows the auth intro.

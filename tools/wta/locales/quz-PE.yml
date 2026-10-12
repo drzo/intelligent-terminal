@@ -8,7 +8,7 @@ setup.title.sign_in: "Qallariy yaykuna"
 # %{agent} is replaced with the agent display name at runtime.
 setup.subtitle.copilot_missing: "Agentiyki \"%{agent}\" mana churasqachu. Churanaykipaq uraypi llamk'ankunata ruway. Agente t'ikranapaq Yuyaysapa Terminal Settings > Agent nisqaman riy."
 setup.subtitle.agent_missing: "Agentiyki \"%{agent}\" mana churasqachu. Ama hina kaspa makiykiwan churay, chaymanta watiqmanta qallariy. Agente t'ikranapaq Yuyaysapa Terminal Settings > Agent nisqaman riy."
-setup.subtitle.authentication_required: "Agentiyki \"%{agent}\" yaykunata munan."  # Shared AI-agent auth intro; %{agent} is the display name. A space and flow-specific guidance follow.
+setup.subtitle.authentication_required: "Agentiyki \"%{agent}\" yaykunata munan."  # Shared AI-agent auth intro; %{agent} is the display name. May stand alone; when available, a space and flow-specific guidance follow.
 setup.auth.sign_in: "Yaykunaykipaq uraypi llamk'ankunata ruway."  # Shared guidance for device login and initial protocol SignIn; follows the auth intro.
 setup.auth.external_sign_in: "Agentewan yaykuy, chaymanta uraypi \"Yaykurqaniña\" nisqata akllay."  # External-agent sign-in, then the setup.option.retry_auth confirmation; follows the auth intro.
 setup.auth.select_method: "Kaypi hinalla purinaykipaq huk yaykuna ñanta akllay."  # Shown only inside the actual sign-in method picker; follows the auth intro.

@@ -8,7 +8,7 @@ setup.title.sign_in: "سائن ان ضروری ہے"
 # %{agent} کو رن ٹائم پر ایجنٹ کے ڈسپلے نام سے بدل دیا جاتا ہے۔
 setup.subtitle.copilot_missing: "آپ کا ایجنٹ \"%{agent}\" انسٹال نہیں ہے۔ اسے انسٹال کرنے کے لیے نیچے دیے گئے اقدامات پر عمل کریں۔ ایجنٹ تبدیل کرنے کے لیے ذہین ٹرمینل Settings > Agent پر جائیں۔"
 setup.subtitle.agent_missing: "آپ کا ایجنٹ \"%{agent}\" انسٹال نہیں ہے۔ براہ کرم اسے دستی طور پر دوبارہ انسٹال کریں، پھر دوبارہ کوشش کریں۔ ایجنٹ تبدیل کرنے کے لیے ذہین ٹرمینل Settings > Agent پر جائیں۔"
-setup.subtitle.authentication_required: "آپ کے ایجنٹ \"%{agent}\" کو تصدیق کی ضرورت ہے۔"  # Shared AI-agent auth intro; %{agent} is the display name. A space and flow-specific guidance follow.
+setup.subtitle.authentication_required: "آپ کے ایجنٹ \"%{agent}\" کو تصدیق کی ضرورت ہے۔"  # Shared AI-agent auth intro; %{agent} is the display name. May stand alone; when available, a space and flow-specific guidance follow.
 setup.auth.sign_in: "سائن ان کرنے کے لیے نیچے دیے گئے اقدامات پر عمل کریں۔"  # Shared guidance for device login and initial protocol SignIn; follows the auth intro.
 setup.auth.external_sign_in: "براہ کرم ایجنٹ کے ذریعے سائن ان کریں، پھر نیچے \"میں نے سائن ان کر لیا\" منتخب کریں۔"  # External-agent sign-in, then the setup.option.retry_auth confirmation; follows the auth intro.
 setup.auth.select_method: "یہاں جاری رکھنے کے لیے سائن ان کا طریقہ منتخب کریں۔"  # Shown only inside the actual sign-in method picker; follows the auth intro.

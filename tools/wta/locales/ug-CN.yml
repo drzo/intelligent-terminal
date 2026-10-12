@@ -8,7 +8,7 @@ setup.title.sign_in: "كىرىش تەلەپ قىلىنىدۇ"
 # %{agent} is replaced with the agent display name at runtime.
 setup.subtitle.copilot_missing: "سىزنىڭ AI ئاگېنتىڭىز \"%{agent}\" ئورنىتىلمىغان. ئورنىتىش ئۈچۈن تۆۋەندىكى قەدەملەرنى بېسىڭ. AI ئاگېنتىنى الماشتۇرۇش ئۈچۈن ئەقلىي تېرمىنال Settings > Agent قا كىرىڭ."
 setup.subtitle.agent_missing: "سىزنىڭ AI ئاگېنتىڭىز \"%{agent}\" ئورنىتىلمىغان. قولدا قايتا ئورنىتىپ سىناڭ. AI ئاگېنتىنى الماشتۇرۇش ئۈچۈن ئەقلىي تېرمىنال Settings > Agent قا كىرىڭ."
-setup.subtitle.authentication_required: "سىزنىڭ AI ۋەكىلىڭىز \"%{agent}\" تونۇقتۇرۇش تەلەپ قىلىدۇ."  # Shared AI-agent auth intro; %{agent} is the display name. A space and flow-specific guidance follow.
+setup.subtitle.authentication_required: "سىزنىڭ AI ۋەكىلىڭىز \"%{agent}\" تونۇقتۇرۇش تەلەپ قىلىدۇ."  # Shared AI-agent auth intro; %{agent} is the display name. May stand alone; when available, a space and flow-specific guidance follow.
 setup.auth.sign_in: "كىرىش ئۈچۈن تۆۋەندىكى قەدەملەرنى بېسىڭ."  # Shared guidance for device login and initial protocol SignIn; follows the auth intro.
 setup.auth.external_sign_in: "AI ۋەكىلى ئارقىلىق كىرىپ تۆۋەندە \"كىردىم\" نى تاللاڭ."  # External-agent sign-in, then the setup.option.retry_auth confirmation; follows the auth intro.
 setup.auth.select_method: "بۇ يەردە داۋاملاشتۇرۇش ئۈچۈن كىرىش ئۇسۇلىنى تاللاڭ."  # Shown only inside the actual sign-in method picker; follows the auth intro.

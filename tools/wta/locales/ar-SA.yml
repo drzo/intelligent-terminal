@@ -8,9 +8,9 @@ setup.title.sign_in: "تسجيل الدخول مطلوب"
 # يتم استبدال %{agent} باسم عرض عامل الذكاء الاصطناعي في وقت التشغيل.
 setup.subtitle.copilot_missing: "عامل الذكاء الاصطناعي \"%{agent}\" غير مثبّت. اتبع الخطوات أدناه لتثبيته. لتبديل عوامل الذكاء الاصطناعي، انتقل إلى الوحدة الطرفية الذكية Settings > Agent."
 setup.subtitle.agent_missing: "عامل الذكاء الاصطناعي \"%{agent}\" غير مثبّت. يُرجى إعادة تثبيته يدويًا، ثم أعد المحاولة. لتبديل عوامل الذكاء الاصطناعي، انتقل إلى الوحدة الطرفية الذكية Settings > Agent."
-setup.subtitle.authentication_required: "يتطلب الوكيل \"%{agent}\" المصادقة."  # Shared AI-agent auth intro; %{agent} is the display name. A space and flow-specific guidance follow.
+setup.subtitle.authentication_required: "يتطلب عامل الذكاء الاصطناعي \"%{agent}\" المصادقة."  # Shared AI-agent auth intro; %{agent} is the display name. May stand alone; when available, a space and flow-specific guidance follow.
 setup.auth.sign_in: "اتبع الخطوات أدناه لتسجيل الدخول."  # Shared guidance for device login and initial protocol SignIn; follows the auth intro.
-setup.auth.external_sign_in: "يُرجى تسجيل الدخول عبر الوكيل، ثم حدد \"لقد سجّلت الدخول\" أدناه."  # External-agent sign-in, then the setup.option.retry_auth confirmation; follows the auth intro.
+setup.auth.external_sign_in: "يُرجى تسجيل الدخول عبر عامل الذكاء الاصطناعي، ثم حدد \"لقد سجّلت الدخول\" أدناه."  # External-agent sign-in, then the setup.option.retry_auth confirmation; follows the auth intro.
 setup.auth.select_method: "حدد طريقة لتسجيل الدخول للمتابعة هنا."  # Shown only inside the actual sign-in method picker; follows the auth intro.
 setup.subtitle.connection_failed: "تعذر بدء تشغيل %{agent}."
 

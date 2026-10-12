@@ -8,7 +8,7 @@ setup.title.sign_in: "সাইন ইন প্রয়োজন"
 # %{agent} রানটাইমে এজেন্ট প্রদর্শন নামে প্রতিস্থাপিত হয়।
 setup.subtitle.copilot_missing: "আপনার এজেন্ট \"%{agent}\" ইনস্টল করা নেই। ইনস্টল করতে নিচের ধাপগুলি অনুসরণ করুন। এজেন্ট পরিবর্তন করতে ইন্টেলিজেন্ট টার্মিনাল Settings > Agent-এ যান।"
 setup.subtitle.agent_missing: "আপনার এজেন্ট \"%{agent}\" ইনস্টল করা নেই। অনুগ্রহ করে নিজে পুনরায় ইনস্টল করুন, তারপর পুনরায় চেষ্টা করুন। এজেন্ট পরিবর্তন করতে ইন্টেলিজেন্ট টার্মিনাল Settings > Agent-এ যান।"
-setup.subtitle.authentication_required: "আপনার এজেন্ট \"%{agent}\"-এর প্রমাণীকরণ প্রয়োজন।"  # Shared AI-agent auth intro; %{agent} is the display name. A space and flow-specific guidance follow.
+setup.subtitle.authentication_required: "আপনার এজেন্ট \"%{agent}\"-এর প্রমাণীকরণ প্রয়োজন।"  # Shared AI-agent auth intro; %{agent} is the display name. May stand alone; when available, a space and flow-specific guidance follow.
 setup.auth.sign_in: "সাইন ইন করতে নিচের ধাপগুলি অনুসরণ করুন।"  # Shared guidance for device login and initial protocol SignIn; follows the auth intro.
 setup.auth.external_sign_in: "অনুগ্রহ করে এজেন্ট দিয়ে সাইন ইন করুন, তারপর নীচে \"আমি সাইন ইন করেছি\" নির্বাচন করুন।"  # External-agent sign-in, then the setup.option.retry_auth confirmation; follows the auth intro.
 setup.auth.select_method: "এখানে চালিয়ে যেতে একটি সাইন ইন পদ্ধতি নির্বাচন করুন।"  # Shown only inside the actual sign-in method picker; follows the auth intro.

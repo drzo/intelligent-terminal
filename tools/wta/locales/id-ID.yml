@@ -8,7 +8,7 @@ setup.title.sign_in: "Perlu masuk"
 # %{agent} diganti dengan nama tampilan agen AI saat runtime.
 setup.subtitle.copilot_missing: "Agen AI \"%{agent}\" Anda belum diinstal. Ikuti langkah-langkah di bawah untuk menginstalnya. Untuk mengganti agen AI, buka Terminal Cerdas Settings > Agent."
 setup.subtitle.agent_missing: "Agen AI \"%{agent}\" Anda belum diinstal. Silakan instal ulang secara manual, lalu coba lagi. Untuk mengganti agen AI, buka Terminal Cerdas Settings > Agent."
-setup.subtitle.authentication_required: "Agen AI \"%{agent}\" Anda memerlukan autentikasi."  # Shared AI-agent auth intro; %{agent} is the display name. A space and flow-specific guidance follow.
+setup.subtitle.authentication_required: "Agen AI \"%{agent}\" Anda memerlukan autentikasi."  # Shared AI-agent auth intro; %{agent} is the display name. May stand alone; when available, a space and flow-specific guidance follow.
 setup.auth.sign_in: "Ikuti langkah-langkah di bawah untuk masuk."  # Shared guidance for device login and initial protocol SignIn; follows the auth intro.
 setup.auth.external_sign_in: "Silakan masuk melalui agen AI, lalu pilih \"Saya sudah masuk\" di bawah."  # External-agent sign-in, then the setup.option.retry_auth confirmation; follows the auth intro.
 setup.auth.select_method: "Pilih metode masuk untuk melanjutkan di sini."  # Shown only inside the actual sign-in method picker; follows the auth intro.

@@ -13,7 +13,7 @@ setup.title.sign_in: "Պահանջվում է մուտք գործել"
 # %{agent} is replaced with the agent display name at runtime.
 setup.subtitle.copilot_missing: "Ձեր \"%{agent}\" ագենտը տեղադրված չէ։ Տեղադրելու համար հետեվեք ստորեվ նշված քայլերին։ Ագենտը փոխելու համար անցեք Խելացի տերմինալ Settings > Agent։"
 setup.subtitle.agent_missing: "Ձեր \"%{agent}\" ագենտը տեղադրված չէ։ Խնդրում ենք ձեռքով վերատեղադրել և կրկին փորձել։ Ագենտը փոխելու համար անցեք Խելացի տերմինալ Settings > Agent։"
-setup.subtitle.authentication_required: "Ձեր \"%{agent}\" գործակալը պահանջում է նույնականացում։"  # Shared AI-agent auth intro; %{agent} is the display name. A space and flow-specific guidance follow.
+setup.subtitle.authentication_required: "Ձեր \"%{agent}\" գործակալը պահանջում է նույնականացում։"  # Shared AI-agent auth intro; %{agent} is the display name. May stand alone; when available, a space and flow-specific guidance follow.
 setup.auth.sign_in: "Մուտք գործելու համար հետևեք ստորև նշված քայլերին։"  # Shared guidance for device login and initial protocol SignIn; follows the auth intro.
 setup.auth.external_sign_in: "Մուտք գործեք գործակալի միջոցով, ապա ընտրեք ստորև \"Մուտք եմ գործել\"։"  # External-agent sign-in, then the setup.option.retry_auth confirmation; follows the auth intro.
 setup.auth.select_method: "Այստեղ շարունակելու համար ընտրեք մուտք գործելու եղանակ։"  # Shown only inside the actual sign-in method picker; follows the auth intro.

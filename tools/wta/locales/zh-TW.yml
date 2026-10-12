@@ -7,7 +7,7 @@ setup.title.sign_in: "需要登入"
 # %{agent} 會在執行階段替換為智能體的顯示名稱。
 setup.subtitle.copilot_missing: "您的智能體 \"%{agent}\" 尚未安裝。請依照下列步驟進行安裝。若要切換智能體，請前往智能終端 Settings > Agent。"
 setup.subtitle.agent_missing: "您的智能體 \"%{agent}\" 尚未安裝。請手動重新安裝，然後重試。若要切換智能體，請前往智能終端 Settings > Agent。"
-setup.subtitle.authentication_required: "您的智能體 \"%{agent}\" 需要驗證。"  # Shared AI-agent auth intro; %{agent} is the display name. A space and flow-specific guidance follow.
+setup.subtitle.authentication_required: "您的智能體 \"%{agent}\" 需要驗證。"  # Shared AI-agent auth intro; %{agent} is the display name. May stand alone; when available, a space and flow-specific guidance follow.
 setup.auth.sign_in: "請依照下列步驟登入。"  # Shared guidance for device login and initial protocol SignIn; follows the auth intro.
 setup.auth.external_sign_in: "請透過智能體登入，然後選擇下方的 \"我已登入\"。"  # External-agent sign-in, then the setup.option.retry_auth confirmation; follows the auth intro.
 setup.auth.select_method: "請選擇登入方式以在此處繼續。"  # Shown only inside the actual sign-in method picker; follows the auth intro.

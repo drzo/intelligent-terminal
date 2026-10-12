@@ -8,7 +8,7 @@ setup.title.sign_in: "Connexion requise"
 # %{agent} est remplacé par le nom d'affichage de l'agent à l'exécution.
 setup.subtitle.copilot_missing: "Votre agent « %{agent} » n'est pas installé. Suivez les étapes ci-dessous pour l'installer. Pour changer d'agent, allez dans les paramètres Terminal Intelligent > Agent."
 setup.subtitle.agent_missing: "Votre agent « %{agent} » n'est pas installé. Veuillez le réinstaller manuellement, puis réessayer. Pour changer d'agent, allez dans les paramètres Terminal Intelligent > Agent."
-setup.subtitle.authentication_required: "Votre agent « %{agent} » nécessite une authentification."  # Shared AI-agent auth intro; %{agent} is the display name. A space and flow-specific guidance follow.
+setup.subtitle.authentication_required: "Votre agent « %{agent} » nécessite une authentification."  # Shared AI-agent auth intro; %{agent} is the display name. May stand alone; when available, a space and flow-specific guidance follow.
 setup.auth.sign_in: "Suivez les étapes ci-dessous pour vous connecter."  # Shared guidance for device login and initial protocol SignIn; follows the auth intro.
 setup.auth.external_sign_in: "Veuillez vous connecter via l'agent, puis sélectionnez « Je me suis connecté » ci-dessous."  # External-agent sign-in, then the setup.option.retry_auth confirmation; follows the auth intro.
 setup.auth.select_method: "Sélectionnez une méthode de connexion pour continuer ici."  # Shown only inside the actual sign-in method picker; follows the auth intro.

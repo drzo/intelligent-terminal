@@ -8,7 +8,7 @@ setup.title.sign_in: "[!! Sig_n in required !!]"
 # %{agent} is replaced with the agent display name at runtime.
 setup.subtitle.copilot_missing: "[!! You_r agent \"%{agent}\" is not installed. Follow the steps below to install it. To switch agents, go to Intelligent Terminal Settings > Agent. !!]"
 setup.subtitle.agent_missing: "[!! You_r agent \"%{agent}\" is not installed. Please install it manually, then try again. To switch agents, go to Intelligent Terminal Settings > Agent. !!]"
-setup.subtitle.authentication_required: "[!! \u202eYou_r agent \"%{agent}\" requires authentication.\u202c !!]"  # Shared AI-agent auth intro; %{agent} is the display name. A space and flow-specific guidance follow.
+setup.subtitle.authentication_required: "[!! \u202eYou_r agent \"%{agent}\" requires authentication.\u202c !!]"  # Shared AI-agent auth intro; %{agent} is the display name. May stand alone; when available, a space and flow-specific guidance follow.
 setup.auth.sign_in: "[!! \u202eFol_low the steps below to sign in.\u202c !!]"  # Shared guidance for device login and initial protocol SignIn; follows the auth intro.
 setup.auth.external_sign_in: "[!! \u202ePle_ase sign in via the agent, then select \"I've_ signed in\" below.\u202c !!]"  # External-agent sign-in, then the setup.option.retry_auth confirmation; follows the auth intro.
 setup.auth.select_method: "[!! \u202eSel_ect a sign-in method to continue here.\u202c !!]"  # Shown only inside the actual sign-in method picker; follows the auth intro.

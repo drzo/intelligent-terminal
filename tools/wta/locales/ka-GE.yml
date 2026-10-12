@@ -8,7 +8,7 @@ setup.title.sign_in: "საჭიროა შესვლა"
 # %{agent} is replaced with the agent display name at runtime.
 setup.subtitle.copilot_missing: "თქვენი აგენტი \"%{agent}\" არ არის დაინსტალირებული. მის დასაინსტალირებლად მიჰყევით ქვემოთ მოცემულ ნაბიჯებს. აგენტის შესაცვლელად გადადით ჭკვიანი ტერმინალი Settings > Agent-ში."
 setup.subtitle.agent_missing: "თქვენი აგენტი \"%{agent}\" არ არის დაინსტალირებული. ხელით ხელახლა დააინსტალირეთ და სცადეთ თავიდან. აგენტის შესაცვლელად გადადით ჭკვიანი ტერმინალი Settings > Agent-ში."
-setup.subtitle.authentication_required: "თქვენი აგენტი \"%{agent}\" მოითხოვს ავთენტიფიკაციას."  # Shared AI-agent auth intro; %{agent} is the display name. A space and flow-specific guidance follow.
+setup.subtitle.authentication_required: "თქვენი აგენტი \"%{agent}\" მოითხოვს ავთენტიფიკაციას."  # Shared AI-agent auth intro; %{agent} is the display name. May stand alone; when available, a space and flow-specific guidance follow.
 setup.auth.sign_in: "შესასვლელად მიჰყევით ქვემოთ მოცემულ ნაბიჯებს."  # Shared guidance for device login and initial protocol SignIn; follows the auth intro.
 setup.auth.external_sign_in: "შედით აგენტით და შემდეგ აირჩიეთ \"შევედი\" ქვემოთ."  # External-agent sign-in, then the setup.option.retry_auth confirmation; follows the auth intro.
 setup.auth.select_method: "აქ გასაგრძელებლად აირჩიეთ შესვლის მეთოდი."  # Shown only inside the actual sign-in method picker; follows the auth intro.

@@ -8,7 +8,7 @@ setup.title.sign_in: "Oturum açma gerekli"
 # %{agent} is replaced with the agent display name at runtime.
 setup.subtitle.copilot_missing: "Aracınız \"%{agent}\" yüklü değil. Yüklemek için aşağıdaki adımları izleyin. Aracı değiştirmek için Akıllı Terminal Settings > Agent'e gidin."
 setup.subtitle.agent_missing: "Aracınız \"%{agent}\" yüklü değil. Lütfen elle yeniden yükleyin, ardından tekrar deneyin. Aracı değiştirmek için Akıllı Terminal Settings > Agent'e gidin."
-setup.subtitle.authentication_required: "Aracınız \"%{agent}\" kimlik doğrulama gerektiriyor."  # Shared AI-agent auth intro; %{agent} is the display name. A space and flow-specific guidance follow.
+setup.subtitle.authentication_required: "Aracınız \"%{agent}\" kimlik doğrulama gerektiriyor."  # Shared AI-agent auth intro; %{agent} is the display name. May stand alone; when available, a space and flow-specific guidance follow.
 setup.auth.sign_in: "Oturum açmak için aşağıdaki adımları izleyin."  # Shared guidance for device login and initial protocol SignIn; follows the auth intro.
 setup.auth.external_sign_in: "Lütfen aracı üzerinden oturum açın, ardından aşağıda \"Oturum açtım\" seçeneğini belirleyin."  # External-agent sign-in, then the setup.option.retry_auth confirmation; follows the auth intro.
 setup.auth.select_method: "Burada devam etmek için bir oturum açma yöntemi seçin."  # Shown only inside the actual sign-in method picker; follows the auth intro.

@@ -8,7 +8,7 @@ setup.title.sign_in: "Sínigh isteach riachtanach"
 # Cuirtear %{agent} in ionad ainm taispeána an ghníomhaire ag am rite.
 setup.subtitle.copilot_missing: "Níl do ghníomhaire \"%{agent}\" suiteáilte. Lean na céimeanna thíos chun é a shuiteáil. Chun gníomhairí a athrú, téigh go Teirminéal Cliste Settings > Agent."
 setup.subtitle.agent_missing: "Níl do ghníomhaire \"%{agent}\" suiteáilte. Athshuiteáil de láimh é, ansin bain triail eile as. Chun gníomhairí a athrú, téigh go Teirminéal Cliste Settings > Agent."
-setup.subtitle.authentication_required: "Teastaíonn fíordheimhniú ó do ghníomhaire \"%{agent}\"."  # Shared AI-agent auth intro; %{agent} is the display name. A space and flow-specific guidance follow.
+setup.subtitle.authentication_required: "Teastaíonn fíordheimhniú ó do ghníomhaire \"%{agent}\"."  # Shared AI-agent auth intro; %{agent} is the display name. May stand alone; when available, a space and flow-specific guidance follow.
 setup.auth.sign_in: "Lean na céimeanna thíos chun síniú isteach."  # Shared guidance for device login and initial protocol SignIn; follows the auth intro.
 setup.auth.external_sign_in: "Sínigh isteach tríd an ngníomhaire, ansin roghnaigh \"Tá mé sínithe isteach\" thíos."  # External-agent sign-in, then the setup.option.retry_auth confirmation; follows the auth intro.
 setup.auth.select_method: "Roghnaigh modh sínithe isteach chun leanúint ar aghaidh anseo."  # Shown only inside the actual sign-in method picker; follows the auth intro.

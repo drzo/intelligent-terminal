@@ -8,7 +8,7 @@ setup.title.sign_in: "Nepieciešama pierakstīšanās"
 # %{agent} is replaced with the agent display name at runtime.
 setup.subtitle.copilot_missing: "Jūsu aģents \"%{agent}\" nav instalēts. Izpildiet tālāk norādītās darbības, lai to instalētu. Lai mainītu aģentu, dodieties uz Viedais Terminālis Settings > Agent."
 setup.subtitle.agent_missing: "Jūsu aģents \"%{agent}\" nav instalēts. Pārinstalējiet to manuāli un mēģiniet vēlreiz. Lai mainītu aģentu, dodieties uz Viedais Terminālis Settings > Agent."
-setup.subtitle.authentication_required: "Jūsu aģents \"%{agent}\" pieprasa autentifikāciju."  # Shared AI-agent auth intro; %{agent} is the display name. A space and flow-specific guidance follow.
+setup.subtitle.authentication_required: "Jūsu aģents \"%{agent}\" pieprasa autentifikāciju."  # Shared AI-agent auth intro; %{agent} is the display name. May stand alone; when available, a space and flow-specific guidance follow.
 setup.auth.sign_in: "Izpildiet tālāk norādītās darbības, lai pierakstītos."  # Shared guidance for device login and initial protocol SignIn; follows the auth intro.
 setup.auth.external_sign_in: "Pierakstieties, izmantojot aģentu, un izvēlieties \"Esmu pierakstījies\" zemāk."  # External-agent sign-in, then the setup.option.retry_auth confirmation; follows the auth intro.
 setup.auth.select_method: "Izvēlieties pierakstīšanās metodi, lai turpinātu šeit."  # Shown only inside the actual sign-in method picker; follows the auth intro.

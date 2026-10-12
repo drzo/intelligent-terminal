@@ -7,7 +7,7 @@ setup.title.sign_in: "サインインが必要です"
 # %{agent} は実行時にエージェントの表示名に置換されます。
 setup.subtitle.copilot_missing: "エージェント \"%{agent}\" がインストールされていません。以下の手順に従ってインストールしてください。エージェントを切り替えるにはインテリジェント ターミナル Settings > Agent に移動してください。"
 setup.subtitle.agent_missing: "エージェント \"%{agent}\" がインストールされていません。手動で再インストールしてから再試行してください。エージェントを切り替えるにはインテリジェント ターミナル Settings > Agent に移動してください。"
-setup.subtitle.authentication_required: "エージェント \"%{agent}\" には認証が必要です。"  # Shared AI-agent auth intro; %{agent} is the display name. A space and flow-specific guidance follow.
+setup.subtitle.authentication_required: "エージェント \"%{agent}\" には認証が必要です。"  # Shared AI-agent auth intro; %{agent} is the display name. May stand alone; when available, a space and flow-specific guidance follow.
 setup.auth.sign_in: "以下の手順に従ってサインインしてください。"  # Shared guidance for device login and initial protocol SignIn; follows the auth intro.
 setup.auth.external_sign_in: "エージェントからサインインし、下の \"サインイン済み\" を選択してください。"  # External-agent sign-in, then the setup.option.retry_auth confirmation; follows the auth intro.
 setup.auth.select_method: "ここで続行するには、サインイン方法を選択してください。"  # Shown only inside the actual sign-in method picker; follows the auth intro.

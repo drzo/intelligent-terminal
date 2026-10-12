@@ -8,7 +8,7 @@ setup.title.sign_in: "Inloggning krävs"
 # %{agent} is replaced with the agent display name at runtime.
 setup.subtitle.copilot_missing: "Din agent \"%{agent}\" är inte installerad. Följ stegen nedan för att installera den. Om du vill byta agent, gå till Intelligent Terminal Settings > Agent."
 setup.subtitle.agent_missing: "Din agent \"%{agent}\" är inte installerad. Installera om den manuellt och försök sedan igen. Om du vill byta agent, gå till Intelligent Terminal Settings > Agent."
-setup.subtitle.authentication_required: "Din agent \"%{agent}\" kräver autentisering."  # Shared AI-agent auth intro; %{agent} is the display name. A space and flow-specific guidance follow.
+setup.subtitle.authentication_required: "Din agent \"%{agent}\" kräver autentisering."  # Shared AI-agent auth intro; %{agent} is the display name. May stand alone; when available, a space and flow-specific guidance follow.
 setup.auth.sign_in: "Följ stegen nedan för att logga in."  # Shared guidance for device login and initial protocol SignIn; follows the auth intro.
 setup.auth.external_sign_in: "Logga in via agenten och välj sedan \"Jag har loggat in\" nedan."  # External-agent sign-in, then the setup.option.retry_auth confirmation; follows the auth intro.
 setup.auth.select_method: "Välj en inloggningsmetod för att fortsätta här."  # Shown only inside the actual sign-in method picker; follows the auth intro.

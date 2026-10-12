@@ -8,7 +8,7 @@ setup.title.sign_in: "Feumaidh tu clàradh a-steach"
 # Thèid %{agent} a chur an àite ainm-taisbeanaidh an àidseant aig àm ruith.
 setup.subtitle.copilot_missing: "Chan eil an àidseant agad \"%{agent}\" air a stàladh. Lean na ceumannan gu h-ìosal gus a stàladh. Airson àidseant atharrachadh, rach gu Tèirmineal Glic Settings > Agent."
 setup.subtitle.agent_missing: "Chan eil an àidseant agad \"%{agent}\" air a stàladh. Ath-stàlaich e le làimh, an uair sin feuch a-rithist. Airson àidseant atharrachadh, rach gu Tèirmineal Glic Settings > Agent."
-setup.subtitle.authentication_required: "Feumaidh an neach-gnìomha agad \"%{agent}\" dearbhadh."  # Shared AI-agent auth intro; %{agent} is the display name. A space and flow-specific guidance follow.
+setup.subtitle.authentication_required: "Feumaidh an neach-gnìomha agad \"%{agent}\" dearbhadh."  # Shared AI-agent auth intro; %{agent} is the display name. May stand alone; when available, a space and flow-specific guidance follow.
 setup.auth.sign_in: "Lean na ceumannan gu h-ìosal gus clàradh a-steach."  # Shared guidance for device login and initial protocol SignIn; follows the auth intro.
 setup.auth.external_sign_in: "Clàraich a-steach tron neach-gnìomha, an uair sin tagh \"Chlàraich mi a-steach\" gu h-ìosal."  # External-agent sign-in, then the setup.option.retry_auth confirmation; follows the auth intro.
 setup.auth.select_method: "Tagh dòigh clàraidh a-steach gus leantainn air adhart an seo."  # Shown only inside the actual sign-in method picker; follows the auth intro.

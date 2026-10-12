@@ -8,7 +8,7 @@ setup.title.sign_in: "உள்நுழைவு தேவை"
 # %{agent} இயக்க நேரத்தில் ஏஜெண்ட் காட்சிப் பெயரால் மாற்றப்படும்.
 setup.subtitle.copilot_missing: "உங்கள் ஏஜெண்ட் \"%{agent}\" நிறுவப்படவில்லை. நிறுவ கீழே உள்ள படிகளைப் பின்பற்றுங்கள். முகவரை மாற்ற அறிவாண் முனையம் Settings > Agent-க்குச் செல்லுங்கள்."
 setup.subtitle.agent_missing: "உங்கள் ஏஜெண்ட் \"%{agent}\" நிறுவப்படவில்லை. தயவுசெய்து கைமுறையாக மீண்டும் நிறுவி, மீண்டும் முயற்சிக்கவும். முகவரை மாற்ற அறிவாண் முனையம் Settings > Agent-க்குச் செல்லுங்கள்."
-setup.subtitle.authentication_required: "உங்கள் \"%{agent}\" முகவருக்கு அங்கீகாரம் தேவைப்படுகிறது."  # Shared AI-agent auth intro; %{agent} is the display name. A space and flow-specific guidance follow.
+setup.subtitle.authentication_required: "உங்கள் \"%{agent}\" முகவருக்கு அங்கீகாரம் தேவைப்படுகிறது."  # Shared AI-agent auth intro; %{agent} is the display name. May stand alone; when available, a space and flow-specific guidance follow.
 setup.auth.sign_in: "உள்நுழைய கீழே உள்ள படிகளைப் பின்பற்றுங்கள்."  # Shared guidance for device login and initial protocol SignIn; follows the auth intro.
 setup.auth.external_sign_in: "முகவர் மூலம் உள்நுழைந்து, பின்னர் கீழே \"நான் உள்நுழைந்துவிட்டேன்\" என்பதைத் தேர்ந்தெடுக்கவும்."  # External-agent sign-in, then the setup.option.retry_auth confirmation; follows the auth intro.
 setup.auth.select_method: "இங்கே தொடர உள்நுழையும் முறையைத் தேர்ந்தெடுக்கவும்."  # Shown only inside the actual sign-in method picker; follows the auth intro.

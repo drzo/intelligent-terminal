@@ -8,7 +8,7 @@ setup.title.sign_in: "Потрібен вхід"
 # %{agent} замінюється на відображуване ім'я агента під час виконання.
 setup.subtitle.copilot_missing: "Ваш агент \"%{agent}\" не встановлено. Виконайте наведені нижче кроки, щоб його встановити. Щоб змінити агента, перейдіть до Інтелектуальний Термінал Settings > Agent."
 setup.subtitle.agent_missing: "Ваш агент \"%{agent}\" не встановлено. Перевстановіть його вручну та повторіть спробу. Щоб змінити агента, перейдіть до Інтелектуальний Термінал Settings > Agent."
-setup.subtitle.authentication_required: "Ваш агент \"%{agent}\" потребує автентифікації."  # Shared AI-agent auth intro; %{agent} is the display name. A space and flow-specific guidance follow.
+setup.subtitle.authentication_required: "Ваш агент \"%{agent}\" потребує автентифікації."  # Shared AI-agent auth intro; %{agent} is the display name. May stand alone; when available, a space and flow-specific guidance follow.
 setup.auth.sign_in: "Виконайте наведені нижче кроки для входу."  # Shared guidance for device login and initial protocol SignIn; follows the auth intro.
 setup.auth.external_sign_in: "Увійдіть через агента та виберіть \"Я увійшов\" нижче."  # External-agent sign-in, then the setup.option.retry_auth confirmation; follows the auth intro.
 setup.auth.select_method: "Виберіть спосіб входу, щоб продовжити тут."  # Shown only inside the actual sign-in method picker; follows the auth intro.

@@ -8,7 +8,7 @@ setup.title.sign_in: "Tizimga kirish talab qilinadi"
 # %{agent} is replaced with the agent display name at runtime.
 setup.subtitle.copilot_missing: "Agentingiz \"%{agent}\" oʻrnatilmagan. Oʻrnatish uchun quyidagi qadamlarni bajaring. Agentni almashtirish uchun Aqlli terminal Settings > Agent boʻlimiga oʻting."
 setup.subtitle.agent_missing: "Agentingiz \"%{agent}\" oʻrnatilmagan. Iltimos, qoʻlda qayta oʻrnating, keyin qayta urinib koʻring. Agentni almashtirish uchun Aqlli terminal Settings > Agent boʻlimiga oʻting."
-setup.subtitle.authentication_required: "Agentingiz \"%{agent}\" autentifikatsiyani talab qiladi."  # Shared AI-agent auth intro; %{agent} is the display name. A space and flow-specific guidance follow.
+setup.subtitle.authentication_required: "Agentingiz \"%{agent}\" autentifikatsiyani talab qiladi."  # Shared AI-agent auth intro; %{agent} is the display name. May stand alone; when available, a space and flow-specific guidance follow.
 setup.auth.sign_in: "Tizimga kirish uchun quyidagi qadamlarni bajaring."  # Shared guidance for device login and initial protocol SignIn; follows the auth intro.
 setup.auth.external_sign_in: "Iltimos, agent orqali tizimga kiring, keyin pastda \"Men tizimga kirdim\" ni tanlang."  # External-agent sign-in, then the setup.option.retry_auth confirmation; follows the auth intro.
 setup.auth.select_method: "Bu yerda davom etish uchun kirish usulini tanlang."  # Shown only inside the actual sign-in method picker; follows the auth intro.

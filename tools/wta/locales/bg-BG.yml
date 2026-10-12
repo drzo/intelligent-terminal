@@ -8,7 +8,7 @@ setup.title.sign_in: "Изисква се влизане"
 # %{agent} is replaced with the agent display name at runtime.
 setup.subtitle.copilot_missing: "Вашият агент \"%{agent}\" не е инсталиран. Следвайте стъпките по-долу, за да го инсталирате. За да смените агента, отидете в Интелигентен Терминал Settings > Agent."
 setup.subtitle.agent_missing: "Вашият агент \"%{agent}\" не е инсталиран. Преинсталирайте го ръчно и опитайте отново. За да смените агента, отидете в Интелигентен Терминал Settings > Agent."
-setup.subtitle.authentication_required: "Вашият агент \"%{agent}\" изисква удостоверяване."  # Shared AI-agent auth intro; %{agent} is the display name. A space and flow-specific guidance follow.
+setup.subtitle.authentication_required: "Вашият агент \"%{agent}\" изисква удостоверяване."  # Shared AI-agent auth intro; %{agent} is the display name. May stand alone; when available, a space and flow-specific guidance follow.
 setup.auth.sign_in: "Следвайте стъпките по-долу, за да влезете."  # Shared guidance for device login and initial protocol SignIn; follows the auth intro.
 setup.auth.external_sign_in: "Влезте чрез агента и изберете \"Влязох\" по-долу."  # External-agent sign-in, then the setup.option.retry_auth confirmation; follows the auth intro.
 setup.auth.select_method: "Изберете метод за влизане, за да продължите тук."  # Shown only inside the actual sign-in method picker; follows the auth intro.

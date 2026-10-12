@@ -8,7 +8,7 @@ setup.title.sign_in: "Log ind påkrævet"
 # %{agent} is replaced with the agent display name at runtime.
 setup.subtitle.copilot_missing: "Din agent \"%{agent}\" er ikke installeret. Følg trinene nedenfor for at installere den. For at skifte agent, gå til Intelligent Terminal Settings > Agent."
 setup.subtitle.agent_missing: "Din agent \"%{agent}\" er ikke installeret. Geninstaller den manuelt, og prøv derefter igen. For at skifte agent, gå til Intelligent Terminal Settings > Agent."
-setup.subtitle.authentication_required: "Din agent \"%{agent}\" kræver godkendelse."  # Shared AI-agent auth intro; %{agent} is the display name. A space and flow-specific guidance follow.
+setup.subtitle.authentication_required: "Din agent \"%{agent}\" kræver godkendelse."  # Shared AI-agent auth intro; %{agent} is the display name. May stand alone; when available, a space and flow-specific guidance follow.
 setup.auth.sign_in: "Følg trinene nedenfor for at logge ind."  # Shared guidance for device login and initial protocol SignIn; follows the auth intro.
 setup.auth.external_sign_in: "Log ind via agenten, og vælg derefter \"Jeg har logget ind\" nedenfor."  # External-agent sign-in, then the setup.option.retry_auth confirmation; follows the auth intro.
 setup.auth.select_method: "Vælg en logonmetode for at fortsætte her."  # Shown only inside the actual sign-in method picker; follows the auth intro.

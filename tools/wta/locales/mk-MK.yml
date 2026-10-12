@@ -8,7 +8,7 @@ setup.title.sign_in: "Потребно е најавување"
 # %{agent} is replaced with the agent display name at runtime.
 setup.subtitle.copilot_missing: "Вашиот агент \"%{agent}\" не е инсталиран. Следете ги чекорите подолу за да го инсталирате. За промена на агентот, одете во Интелигентен Терминал Settings > Agent."
 setup.subtitle.agent_missing: "Вашиот агент \"%{agent}\" не е инсталиран. Реинсталирајте го рачно и обидете се повторно. За промена на агентот, одете во Интелигентен Терминал Settings > Agent."
-setup.subtitle.authentication_required: "Вашиот агент \"%{agent}\" бара автентикација."  # Shared AI-agent auth intro; %{agent} is the display name. A space and flow-specific guidance follow.
+setup.subtitle.authentication_required: "Вашиот агент \"%{agent}\" бара автентикација."  # Shared AI-agent auth intro; %{agent} is the display name. May stand alone; when available, a space and flow-specific guidance follow.
 setup.auth.sign_in: "Следете ги чекорите подолу за да се најавите."  # Shared guidance for device login and initial protocol SignIn; follows the auth intro.
 setup.auth.external_sign_in: "Најавете се преку агентот и потоа изберете \"Се најавив\" подолу."  # External-agent sign-in, then the setup.option.retry_auth confirmation; follows the auth intro.
 setup.auth.select_method: "Изберете начин на најавување за да продолжите тука."  # Shown only inside the actual sign-in method picker; follows the auth intro.

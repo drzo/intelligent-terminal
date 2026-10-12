@@ -8,7 +8,7 @@ setup.title.sign_in: "Vyžadováno přihlášení"
 # %{agent} is replaced with the agent display name at runtime.
 setup.subtitle.copilot_missing: "Váš agent \"%{agent}\" není nainstalován. Postupujte podle níže uvedených kroků a nainstalujte ho. Chcete-li přepnout agenta, přejděte do Inteligentní Terminál Settings > Agent."
 setup.subtitle.agent_missing: "Váš agent \"%{agent}\" není nainstalován. Přeinstalujte ho ručně a zkuste to znovu. Chcete-li přepnout agenta, přejděte do Inteligentní Terminál Settings > Agent."
-setup.subtitle.authentication_required: "Váš agent \"%{agent}\" vyžaduje ověření."  # Shared AI-agent auth intro; %{agent} is the display name. A space and flow-specific guidance follow.
+setup.subtitle.authentication_required: "Váš agent \"%{agent}\" vyžaduje ověření."  # Shared AI-agent auth intro; %{agent} is the display name. May stand alone; when available, a space and flow-specific guidance follow.
 setup.auth.sign_in: "Postupujte podle níže uvedených kroků a přihlaste se."  # Shared guidance for device login and initial protocol SignIn; follows the auth intro.
 setup.auth.external_sign_in: "Přihlaste se přes agenta a pak vyberte \"Přihlásil/a jsem se\" níže."  # External-agent sign-in, then the setup.option.retry_auth confirmation; follows the auth intro.
 setup.auth.select_method: "Vyberte způsob přihlášení a pokračujte zde."  # Shown only inside the actual sign-in method picker; follows the auth intro.

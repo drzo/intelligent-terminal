@@ -8,9 +8,9 @@ setup.title.sign_in: "Cần đăng nhập"
 # %{agent} được thay thế bằng tên hiển thị của tác nhân AI khi chạy.
 setup.subtitle.copilot_missing: "Tác nhân AI \"%{agent}\" của bạn chưa được cài đặt. Thực hiện theo các bước bên dưới để cài đặt. Để chuyển tác nhân AI, hãy đi tới Đầu cuối thông minh Settings > Agent."
 setup.subtitle.agent_missing: "Tác nhân AI \"%{agent}\" của bạn chưa được cài đặt. Vui lòng cài đặt lại thủ công, sau đó thử lại. Để chuyển tác nhân AI, hãy đi tới Đầu cuối thông minh Settings > Agent."
-setup.subtitle.authentication_required: "Tác tử AI \"%{agent}\" của bạn yêu cầu xác thực."  # Shared AI-agent auth intro; %{agent} is the display name. A space and flow-specific guidance follow.
+setup.subtitle.authentication_required: "Tác nhân AI \"%{agent}\" của bạn yêu cầu xác thực."  # Shared AI-agent auth intro; %{agent} is the display name. May stand alone; when available, a space and flow-specific guidance follow.
 setup.auth.sign_in: "Thực hiện theo các bước bên dưới để đăng nhập."  # Shared guidance for device login and initial protocol SignIn; follows the auth intro.
-setup.auth.external_sign_in: "Vui lòng đăng nhập qua tác tử AI, sau đó chọn \"Tôi đã đăng nhập\" bên dưới."  # External-agent sign-in, then the setup.option.retry_auth confirmation; follows the auth intro.
+setup.auth.external_sign_in: "Vui lòng đăng nhập qua tác nhân AI, sau đó chọn \"Tôi đã đăng nhập\" bên dưới."  # External-agent sign-in, then the setup.option.retry_auth confirmation; follows the auth intro.
 setup.auth.select_method: "Chọn phương thức đăng nhập để tiếp tục tại đây."  # Shown only inside the actual sign-in method picker; follows the auth intro.
 setup.subtitle.connection_failed: "Chúng tôi không thể khởi động %{agent}."
 

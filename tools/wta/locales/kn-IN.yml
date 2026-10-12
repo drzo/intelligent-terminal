@@ -8,7 +8,7 @@ setup.title.sign_in: "ಸೈನ್ ಇನ್ ಅಗತ್ಯವಿದೆ"
 # %{agent} ರನ್‌ಟೈಮ್‌ನಲ್ಲಿ ಏಜೆಂಟ್ ಪ್ರದರ್ಶನ ಹೆಸರಿನಿಂದ ಬದಲಾಯಿಸಲಾಗುತ್ತದೆ.
 setup.subtitle.copilot_missing: "ನಿಮ್ಮ ಏಜೆಂಟ್ \"%{agent}\" ಇನ್‌ಸ್ಟಾಲ್ ಆಗಿಲ್ಲ. ಇನ್‌ಸ್ಟಾಲ್ ಮಾಡಲು ಕೆಳಗಿನ ಹಂತಗಳನ್ನು ಅನುಸರಿಸಿ. ಏಜೆಂಟ್ ಬದಲಾಯಿಸಲು ಇಂಟೆಲಿಜೆಂಟ್ ಟರ್ಮಿನಲ್ Settings > Agent ಗೆ ಹೋಗಿ."
 setup.subtitle.agent_missing: "ನಿಮ್ಮ ಏಜೆಂಟ್ \"%{agent}\" ಇನ್‌ಸ್ಟಾಲ್ ಆಗಿಲ್ಲ. ದಯವಿಟ್ಟು ಹಸ್ತಚಾಲಿತವಾಗಿ ಮರುಸ್ಥಾಪಿಸಿ, ನಂತರ ಮರುಪ್ರಯತ್ನಿಸಿ. ಏಜೆಂಟ್ ಬದಲಾಯಿಸಲು ಇಂಟೆಲಿಜೆಂಟ್ ಟರ್ಮಿನಲ್ Settings > Agent ಗೆ ಹೋಗಿ."
-setup.subtitle.authentication_required: "ನಿಮ್ಮ ಏಜೆಂಟ್ \"%{agent}\" ಗೆ ದೃಢೀಕರಣ ಅಗತ್ಯವಿದೆ."  # Shared AI-agent auth intro; %{agent} is the display name. A space and flow-specific guidance follow.
+setup.subtitle.authentication_required: "ನಿಮ್ಮ ಏಜೆಂಟ್ \"%{agent}\" ಗೆ ದೃಢೀಕರಣ ಅಗತ್ಯವಿದೆ."  # Shared AI-agent auth intro; %{agent} is the display name. May stand alone; when available, a space and flow-specific guidance follow.
 setup.auth.sign_in: "ಸೈನ್ ಇನ್ ಮಾಡಲು ಕೆಳಗಿನ ಹಂತಗಳನ್ನು ಅನುಸರಿಸಿ."  # Shared guidance for device login and initial protocol SignIn; follows the auth intro.
 setup.auth.external_sign_in: "ದಯವಿಟ್ಟು ಏಜೆಂಟ್ ಮೂಲಕ ಸೈನ್ ಇನ್ ಮಾಡಿ, ನಂತರ ಕೆಳಗೆ \"ನಾನು ಸೈನ್ ಇನ್ ಮಾಡಿದ್ದೇನೆ\" ಆಯ್ಕೆಮಾಡಿ."  # External-agent sign-in, then the setup.option.retry_auth confirmation; follows the auth intro.
 setup.auth.select_method: "ಇಲ್ಲಿ ಮುಂದುವರಿಯಲು ಸೈನ್ ಇನ್ ವಿಧಾನವನ್ನು ಆಯ್ಕೆಮಾಡಿ."  # Shown only inside the actual sign-in method picker; follows the auth intro.

@@ -8,7 +8,7 @@ setup.title.sign_in: "נדרשת כניסה"
 # %{agent} מוחלף בשם התצוגה של הסוכן בזמן ריצה.
 setup.subtitle.copilot_missing: "הסוכן \"%{agent}\" אינו מותקן. בצע את השלבים שלהלן כדי להתקין אותו. כדי להחליף סוכנים, עבור אל מסוף חכם Settings > Agent."
 setup.subtitle.agent_missing: "הסוכן \"%{agent}\" אינו מותקן. התקן אותו מחדש באופן ידני ולאחר מכן נסה שוב. כדי להחליף סוכנים, עבור אל מסוף חכם Settings > Agent."
-setup.subtitle.authentication_required: "הסוכן \"%{agent}\" דורש אימות."  # Shared AI-agent auth intro; %{agent} is the display name. A space and flow-specific guidance follow.
+setup.subtitle.authentication_required: "הסוכן \"%{agent}\" דורש אימות."  # Shared AI-agent auth intro; %{agent} is the display name. May stand alone; when available, a space and flow-specific guidance follow.
 setup.auth.sign_in: "בצע את השלבים שלהלן כדי להיכנס."  # Shared guidance for device login and initial protocol SignIn; follows the auth intro.
 setup.auth.external_sign_in: "היכנס דרך הסוכן ולאחר מכן בחר \"נכנסתי\" למטה."  # External-agent sign-in, then the setup.option.retry_auth confirmation; follows the auth intro.
 setup.auth.select_method: "בחר שיטת כניסה כדי להמשיך כאן."  # Shown only inside the actual sign-in method picker; follows the auth intro.

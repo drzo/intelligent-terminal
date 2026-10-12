@@ -8,7 +8,7 @@ setup.title.sign_in: "साइन इन आवश्यक"
 # %{agent} रनटायमाक एजेंटाचें डिस्प्ले नांव घालतात.
 setup.subtitle.copilot_missing: "तुमचो एजेंट \"%{agent}\" इन्स्टॉल जावंक ना. ताका इन्स्टॉल करपाक सकयल दिल्ल्या पावलांक अनुसरण करात. एजेंट बदलपाक इंटेलिजंट टर्मिनल Settings > Agent कडेन वचात."
 setup.subtitle.agent_missing: "तुमचो एजेंट \"%{agent}\" इन्स्टॉल जावंक ना. उपकार करून ताका हातान परतून इन्स्टॉल करात, मागीर परतून यत्न करात. एजेंट बदलपाक इंटेलिजंट टर्मिनल Settings > Agent कडेन वचात."
-setup.subtitle.authentication_required: "तुमच्या एजेंट \"%{agent}\" खातीर प्रमाणीकरण जाय."  # Shared AI-agent auth intro; %{agent} is the display name. A space and flow-specific guidance follow.
+setup.subtitle.authentication_required: "तुमच्या एजेंट \"%{agent}\" खातीर प्रमाणीकरण जाय."  # Shared AI-agent auth intro; %{agent} is the display name. May stand alone; when available, a space and flow-specific guidance follow.
 setup.auth.sign_in: "साइन इन करपाक सकयल दिल्ल्या पावलांक अनुसरण करात."  # Shared guidance for device login and initial protocol SignIn; follows the auth intro.
 setup.auth.external_sign_in: "उपकार करून एजेंट वरवीं साइन इन करात, मागीर सकल \"म्हणें सायन इन केलां\" वेंचात."  # External-agent sign-in, then the setup.option.retry_auth confirmation; follows the auth intro.
 setup.auth.select_method: "हांगा फुडें वचपाक साइन इन करपाची पद्दत वेंचात."  # Shown only inside the actual sign-in method picker; follows the auth intro.

@@ -8,7 +8,7 @@ setup.title.sign_in: "Zahtevana je prijava"
 # %{agent} is replaced with the agent display name at runtime.
 setup.subtitle.copilot_missing: "Vaš agent \"%{agent}\" ni nameščen. Sledite spodnjim korakom za namestitev. Za zamenjavo agenta pojdite v Inteligentni Terminal Settings > Agent."
 setup.subtitle.agent_missing: "Vaš agent \"%{agent}\" ni nameščen. Znova ga namestite ročno in nato poskusite znova. Za zamenjavo agenta pojdite v Inteligentni Terminal Settings > Agent."
-setup.subtitle.authentication_required: "Vaš agent \"%{agent}\" zahteva preverjanje pristnosti."  # Shared AI-agent auth intro; %{agent} is the display name. A space and flow-specific guidance follow.
+setup.subtitle.authentication_required: "Vaš agent \"%{agent}\" zahteva preverjanje pristnosti."  # Shared AI-agent auth intro; %{agent} is the display name. May stand alone; when available, a space and flow-specific guidance follow.
 setup.auth.sign_in: "Sledite spodnjim korakom za prijavo."  # Shared guidance for device login and initial protocol SignIn; follows the auth intro.
 setup.auth.external_sign_in: "Prijavite se prek agenta in nato spodaj izberite \"Prijavil/a sem se\"."  # External-agent sign-in, then the setup.option.retry_auth confirmation; follows the auth intro.
 setup.auth.select_method: "Izberite način prijave, da nadaljujete tukaj."  # Shown only inside the actual sign-in method picker; follows the auth intro.

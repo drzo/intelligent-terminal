@@ -8,7 +8,7 @@ setup.title.sign_in: "Innskráning nauðsynleg"
 # %{agent} is replaced with the agent display name at runtime.
 setup.subtitle.copilot_missing: "Agentinn þinn \"%{agent}\" er ekki uppsettur. Fylgdu skrefunum hér að neðan til að setja hann upp. Til að skipta um agent, farðu í Snjallútstöð Settings > Agent."
 setup.subtitle.agent_missing: "Agentinn þinn \"%{agent}\" er ekki uppsettur. Settu hann upp aftur handvirkt og reyndu svo aftur. Til að skipta um agent, farðu í Snjallútstöð Settings > Agent."
-setup.subtitle.authentication_required: "Agentinn þinn \"%{agent}\" krefst auðkenningar."  # Shared AI-agent auth intro; %{agent} is the display name. A space and flow-specific guidance follow.
+setup.subtitle.authentication_required: "Agentinn þinn \"%{agent}\" krefst auðkenningar."  # Shared AI-agent auth intro; %{agent} is the display name. May stand alone; when available, a space and flow-specific guidance follow.
 setup.auth.sign_in: "Fylgdu skrefunum hér að neðan til að skrá þig inn."  # Shared guidance for device login and initial protocol SignIn; follows the auth intro.
 setup.auth.external_sign_in: "Skráðu þig inn í gegnum agentinn og veldu svo \"Ég hef skráð mig inn\" hér að neðan."  # External-agent sign-in, then the setup.option.retry_auth confirmation; follows the auth intro.
 setup.auth.select_method: "Veldu innskráningaraðferð til að halda áfram hér."  # Shown only inside the actual sign-in method picker; follows the auth intro.

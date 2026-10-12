@@ -8,7 +8,7 @@ setup.title.sign_in: "Απαιτείται σύνδεση"
 # %{agent} is replaced with the agent display name at runtime.
 setup.subtitle.copilot_missing: "Ο παράγοντάς σας \"%{agent}\" δεν είναι εγκατεστημένος. Ακολουθήστε τα παρακάτω βήματα για να τον εγκαταστήσετε. Για αλλαγή παράγοντα, μεταβείτε στο Έξυπνο Τερματικό Settings > Agent."
 setup.subtitle.agent_missing: "Ο παράγοντάς σας \"%{agent}\" δεν είναι εγκατεστημένος. Εγκαταστήστε τον ξανά χειροκίνητα και δοκιμάστε ξανά. Για αλλαγή παράγοντα, μεταβείτε στο Έξυπνο Τερματικό Settings > Agent."
-setup.subtitle.authentication_required: "Ο πράκτοράς σας \"%{agent}\" απαιτεί έλεγχο ταυτότητας."  # Shared AI-agent auth intro; %{agent} is the display name. A space and flow-specific guidance follow.
+setup.subtitle.authentication_required: "Ο πράκτοράς σας \"%{agent}\" απαιτεί έλεγχο ταυτότητας."  # Shared AI-agent auth intro; %{agent} is the display name. May stand alone; when available, a space and flow-specific guidance follow.
 setup.auth.sign_in: "Ακολουθήστε τα παρακάτω βήματα για να συνδεθείτε."  # Shared guidance for device login and initial protocol SignIn; follows the auth intro.
 setup.auth.external_sign_in: "Συνδεθείτε μέσω του πράκτορα και επιλέξτε \"Έχω συνδεθεί\" παρακάτω."  # External-agent sign-in, then the setup.option.retry_auth confirmation; follows the auth intro.
 setup.auth.select_method: "Επιλέξτε μια μέθοδο σύνδεσης για να συνεχίσετε εδώ."  # Shown only inside the actual sign-in method picker; follows the auth intro.

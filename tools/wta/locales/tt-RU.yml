@@ -8,7 +8,7 @@ setup.title.sign_in: "Керү таләп ителә"
 # %{agent} is replaced with the agent display name at runtime.
 setup.subtitle.copilot_missing: "Сезнең \"%{agent}\" агентыгыз урнатылмаган. Урнату өчен түбәндәге адымнарны үтәгез. Агентны алыштыру өчен Акыллы терминал Settings > Agent бүлегенә күчегез."
 setup.subtitle.agent_missing: "Сезнең \"%{agent}\" агентыгыз урнатылмаган. Зинһар, кулдан яңадан урнатыгыз, аннан яңадан тырышыгыз. Агентны алыштыру өчен Акыллы терминал Settings > Agent бүлегенә күчегез."
-setup.subtitle.authentication_required: "Сезнең \"%{agent}\" агентыгыз аутентификация таләп итә."  # Shared AI-agent auth intro; %{agent} is the display name. A space and flow-specific guidance follow.
+setup.subtitle.authentication_required: "Сезнең \"%{agent}\" агентыгыз аутентификация таләп итә."  # Shared AI-agent auth intro; %{agent} is the display name. May stand alone; when available, a space and flow-specific guidance follow.
 setup.auth.sign_in: "Керү өчен түбәндәге адымнарны үтәгез."  # Shared guidance for device login and initial protocol SignIn; follows the auth intro.
 setup.auth.external_sign_in: "Зинһар, агент аша керегез, аннан түбәндә \"Мин кердем\" сайлагыз."  # External-agent sign-in, then the setup.option.retry_auth confirmation; follows the auth intro.
 setup.auth.select_method: "Монда дәвам итү өчен керү ысулын сайлагыз."  # Shown only inside the actual sign-in method picker; follows the auth intro.

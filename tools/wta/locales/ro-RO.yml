@@ -8,7 +8,7 @@ setup.title.sign_in: "Autentificare necesară"
 # %{agent} is replaced with the agent display name at runtime.
 setup.subtitle.copilot_missing: "Agentul \"%{agent}\" nu este instalat. Urmați pașii de mai jos pentru a-l instala. Pentru a schimba agentul, accesați Terminal Inteligent Settings > Agent."
 setup.subtitle.agent_missing: "Agentul \"%{agent}\" nu este instalat. Reinstalați-l manual, apoi reîncercați. Pentru a schimba agentul, accesați Terminal Inteligent Settings > Agent."
-setup.subtitle.authentication_required: "Agentul \"%{agent}\" necesită autentificare."  # Shared AI-agent auth intro; %{agent} is the display name. A space and flow-specific guidance follow.
+setup.subtitle.authentication_required: "Agentul \"%{agent}\" necesită autentificare."  # Shared AI-agent auth intro; %{agent} is the display name. May stand alone; when available, a space and flow-specific guidance follow.
 setup.auth.sign_in: "Urmați pașii de mai jos pentru a vă conecta."  # Shared guidance for device login and initial protocol SignIn; follows the auth intro.
 setup.auth.external_sign_in: "Conectați-vă prin agent, apoi selectați \"M-am conectat\" mai jos."  # External-agent sign-in, then the setup.option.retry_auth confirmation; follows the auth intro.
 setup.auth.select_method: "Selectați o metodă de conectare pentru a continua aici."  # Shown only inside the actual sign-in method picker; follows the auth intro.

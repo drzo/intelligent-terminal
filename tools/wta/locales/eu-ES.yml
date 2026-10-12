@@ -8,7 +8,7 @@ setup.title.sign_in: "Saioa hastea beharrezkoa da"
 # %{agent} exekuzio-unean agentearen bistaratze-izenarekin ordezkatzen da.
 setup.subtitle.copilot_missing: "Zure agentea \"%{agent}\" ez dago instalatuta. Jarraitu beheko urratsak instalatzeko. Agenteak aldatzeko, joan Terminal Adimenduna Settings > Agent atalera."
 setup.subtitle.agent_missing: "Zure agentea \"%{agent}\" ez dago instalatuta. Birinstalatu eskuz, eta saiatu berriro. Agenteak aldatzeko, joan Terminal Adimenduna Settings > Agent atalera."
-setup.subtitle.authentication_required: "Zure agenteak \"%{agent}\" autentifikazioa behar du."  # Shared AI-agent auth intro; %{agent} is the display name. A space and flow-specific guidance follow.
+setup.subtitle.authentication_required: "Zure agenteak \"%{agent}\" autentifikazioa behar du."  # Shared AI-agent auth intro; %{agent} is the display name. May stand alone; when available, a space and flow-specific guidance follow.
 setup.auth.sign_in: "Jarraitu beheko urratsak saioa hasteko."  # Shared guidance for device login and initial protocol SignIn; follows the auth intro.
 setup.auth.external_sign_in: "Hasi saioa agentearen bidez, eta hautatu \"Saioa hasi dut\" behean."  # External-agent sign-in, then the setup.option.retry_auth confirmation; follows the auth intro.
 setup.auth.select_method: "Hautatu saioa hasteko metodo bat hemen jarraitzeko."  # Shown only inside the actual sign-in method picker; follows the auth intro.

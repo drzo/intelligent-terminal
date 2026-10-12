@@ -8,7 +8,7 @@ setup.title.sign_in: "ਸਾਈਨ ਇਨ ਲੋੜੀਂਦਾ ਹੈ"
 # %{agent} ਰਨਟਾਈਮ 'ਤੇ ਏਜੰਟ ਡਿਸਪਲੇ ਨਾਮ ਨਾਲ ਬਦਲਿਆ ਜਾਂਦਾ ਹੈ।
 setup.subtitle.copilot_missing: "ਤੁਹਾਡਾ ਏਜੰਟ \"%{agent}\" ਇੰਸਟਾਲ ਨਹੀਂ ਹੈ। ਇੰਸਟਾਲ ਕਰਨ ਲਈ ਹੇਠਾਂ ਦਿੱਤੇ ਕਦਮਾਂ ਦੀ ਪਾਲਣਾ ਕਰੋ। ਏਜੰਟ ਬਦਲਣ ਲਈ ਇੰਟੈਲੀਜੈਂਟ ਟਰਮੀਨਲ Settings > Agent 'ਤੇ ਜਾਓ।"
 setup.subtitle.agent_missing: "ਤੁਹਾਡਾ ਏਜੰਟ \"%{agent}\" ਇੰਸਟਾਲ ਨਹੀਂ ਹੈ। ਕਿਰਪਾ ਕਰਕੇ ਹੱਥੀਂ ਮੁੜ-ਇੰਸਟਾਲ ਕਰੋ, ਫਿਰ ਦੁਬਾਰਾ ਕੋਸ਼ਿਸ਼ ਕਰੋ। ਏਜੰਟ ਬਦਲਣ ਲਈ ਇੰਟੈਲੀਜੈਂਟ ਟਰਮੀਨਲ Settings > Agent 'ਤੇ ਜਾਓ।"
-setup.subtitle.authentication_required: "ਤੁਹਾਡੇ ਏਜੰਟ \"%{agent}\" ਨੂੰ ਪ੍ਰਮਾਣੀਕਰਨ ਦੀ ਲੋੜ ਹੈ।"  # Shared AI-agent auth intro; %{agent} is the display name. A space and flow-specific guidance follow.
+setup.subtitle.authentication_required: "ਤੁਹਾਡੇ ਏਜੰਟ \"%{agent}\" ਨੂੰ ਪ੍ਰਮਾਣੀਕਰਨ ਦੀ ਲੋੜ ਹੈ।"  # Shared AI-agent auth intro; %{agent} is the display name. May stand alone; when available, a space and flow-specific guidance follow.
 setup.auth.sign_in: "ਸਾਈਨ ਇਨ ਕਰਨ ਲਈ ਹੇਠਾਂ ਦਿੱਤੇ ਕਦਮਾਂ ਦੀ ਪਾਲਣਾ ਕਰੋ।"  # Shared guidance for device login and initial protocol SignIn; follows the auth intro.
 setup.auth.external_sign_in: "ਕਿਰਪਾ ਕਰਕੇ ਏਜੰਟ ਰਾਹੀਂ ਸਾਈਨ ਇਨ ਕਰੋ, ਫਿਰ ਹੇਠਾਂ \"ਮੈਂ ਸਾਈਨ ਇਨ ਕਰ ਲਿਆ\" ਚੁਣੋ।"  # External-agent sign-in, then the setup.option.retry_auth confirmation; follows the auth intro.
 setup.auth.select_method: "ਇੱਥੇ ਜਾਰੀ ਰੱਖਣ ਲਈ ਸਾਈਨ ਇਨ ਕਰਨ ਦਾ ਤਰੀਕਾ ਚੁਣੋ।"  # Shown only inside the actual sign-in method picker; follows the auth intro.
