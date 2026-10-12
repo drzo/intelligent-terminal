@@ -23,6 +23,9 @@ using namespace winrt::Microsoft::Terminal;
 using namespace winrt::Microsoft::Terminal::Control;
 using namespace winrt::Microsoft::Terminal::Settings::Model;
 using namespace winrt::Microsoft::Terminal::TerminalConnection;
+using ::Microsoft::Terminal::Settings::Model::AgentPaneBackend;
+using ::Microsoft::Terminal::Settings::Model::AgentPaneBackendSource;
+namespace AgentRegistry = ::Microsoft::Terminal::Settings::Model::AgentRegistry;
 
 namespace winrt::TerminalApp::implementation
 {
