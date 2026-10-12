@@ -137,7 +137,8 @@ function Get-WtaLocalizedTextRegex {
         machines (the running binary renders one locale; matching any locale's value covers it).
         Each value is normalized by stripping a trailing " (…)" key-hint and trailing "." run
         (e.g. "Select model (↑ ↓ • Enter • Esc)" -> "Select model", "Ask anything, / for
-        commands.." -> "Ask anything, / for commands"). Cached per key. Returns $null when the
+        commands.." -> "Ask anything, / for commands"). YAML x/u/U Unicode escapes are decoded;
+        escaped backslashes remain literal. Cached per key. Returns $null when the
         bundle/key can't be read so callers can fall back to an en-US literal.
     #>
     [CmdletBinding()] param([Parameter(Mandatory)][string]$Key)
@@ -154,13 +155,17 @@ function Get-WtaLocalizedTextRegex {
                     # YAML scalar: double-quoted (ignoring a trailing # comment / Locked hint),
                     # single-quoted (with '' escaping), or a bare scalar (strip a trailing # comment).
                     if ($raw -match '^"((?:[^"\\]|\\.)*)"') {
-                        # Unescape YAML double-quoted escapes (\" \\ \n \t \r) so the regex matches
+                        # Unescape YAML double-quoted and Unicode escapes so the regex matches
                         # the RENDERED text, not literal backslashes (e.g. setup.subtitle.* use \").
-                        $val = [regex]::Replace($Matches[1], '\\(.)', {
+                        $val = [regex]::Replace($Matches[1], '\\(u[0-9a-fA-F]{4}|U[0-9a-fA-F]{8}|x[0-9a-fA-F]{2}|.)', {
                             param($m)
+                            $escape = $m.Groups[1].Value
+                            if ($escape.Length -gt 1) {
+                                return [char]::ConvertFromUtf32([Convert]::ToInt32($escape.Substring(1), 16))
+                            }
                             switch ($m.Groups[1].Value) {
                                 'n' { "`n" } 't' { "`t" } 'r' { "`r" }
-                                default { $m.Groups[1].Value }  # \" -> " , \\ -> \ , \x -> x
+                                default { $m.Groups[1].Value }  # \" -> " , \\ -> \
                             }
                         })
                     }
@@ -177,7 +182,10 @@ function Get-WtaLocalizedTextRegex {
             if ($pats.Count) { $result = '(?i)(' + ($pats -join '|') + ')' }
         }
     }
-    catch { $result = $null }
+    catch {
+        Write-ItLog -Level WARN -Message "Could not read WTA locale key '$Key': $($_.Exception.Message)"
+        $result = $null
+    }
     $script:WtaLocaleRegexCache[$Key] = $result
     $result
 }

@@ -126,6 +126,10 @@ Describe 'JSON helpers' -Tag 'Unit' {
 }
 
 Describe 'Localized WTA text matching' -Tag 'Unit' {
+    BeforeEach {
+        InModuleScope ItE2E { $script:WtaLocaleRegexCache = @{} }
+    }
+
     It 'matches action labels without depending on the trailing Enter glyph encoding' {
         $pattern = Get-WtaLocalizedTextRegex -Key 'recommendations.button_open_tab'
 
@@ -141,6 +145,71 @@ Describe 'Localized WTA text matching' -Tag 'Unit' {
 
         $pattern | Should -Not -BeNullOrEmpty
         "/allow_all: Automatic approval is disabled by your organization's policy." | Should -Match $pattern
+    }
+
+    It 'matches rendered mirrored authentication guidance for <Key>' -TestCases @(
+        @{ Key = 'setup.auth.sign_in' }
+        @{ Key = 'setup.auth.select_method' }
+    ) {
+        param($Key)
+        $localePath = Join-Path $PSScriptRoot '..\..\..\tools\wta\locales\qps-plocm.yml'
+        $line = (Select-String -LiteralPath $localePath -Pattern ('^' + [regex]::Escape($Key) + ':')).Line
+        $scalar = [regex]::Match($line, ':\s*("(?:[^"\\]|\\.)*")').Groups[1].Value
+        $rendered = $scalar | ConvertFrom-Json
+        $pattern = Get-WtaLocalizedTextRegex -Key $Key
+
+        $pattern | Should -Not -BeNullOrEmpty
+        $rendered | Should -Match $pattern
+    }
+
+    It 'decodes the YAML <Escape> Unicode escape' -TestCases @(
+        @{ Escape = 'x'; Scalar = '"\x41"'; Rendered = 'A' }
+        @{ Escape = 'u'; Scalar = '"\u202eGuidance\u202c"'; Rendered = ([char]0x202e).ToString() + 'Guidance' + [char]0x202c }
+        @{ Escape = 'U'; Scalar = '"\U0001F680"'; Rendered = [char]::ConvertFromUtf32(0x1f680) }
+    ) {
+        param($Escape, $Scalar, $Rendered)
+        InModuleScope ItE2E -Parameters @{ Scalar = $Scalar; Rendered = $Rendered } {
+            $script:LocaleScalarMatch = [regex]::Match('unit.unicode: ' + $Scalar, '^unit\.unicode:\s*(\S.*)$')
+            Mock Select-String { [pscustomobject]@{ Matches = @($script:LocaleScalarMatch) } }
+
+            $pattern = Get-WtaLocalizedTextRegex -Key 'unit.unicode'
+            $pattern | Should -Not -BeNullOrEmpty
+            $Rendered | Should -Match $pattern
+        }
+    }
+
+    It 'does not decode a Unicode escape behind an escaped backslash' {
+        InModuleScope ItE2E {
+            $script:LocaleScalarMatch = [regex]::Match('unit.literal: "Literal \\u202e"', '^unit\.literal:\s*(\S.*)$')
+            Mock Select-String { [pscustomobject]@{ Matches = @($script:LocaleScalarMatch) } }
+
+            $pattern = Get-WtaLocalizedTextRegex -Key 'unit.literal'
+            'Literal \u202e' | Should -Match $pattern
+            ('Literal ' + [char]0x202e) | Should -Not -Match $pattern
+        }
+    }
+
+    It 'preserves existing double-quote, backslash and whitespace escapes' {
+        InModuleScope ItE2E {
+            $script:LocaleScalarMatch = [regex]::Match('unit.existing: "Quote \" Slash \\ Newline \n Tab \t Return \r End"', '^unit\.existing:\s*(\S.*)$')
+            Mock Select-String { [pscustomobject]@{ Matches = @($script:LocaleScalarMatch) } }
+
+            $pattern = Get-WtaLocalizedTextRegex -Key 'unit.existing'
+            "Quote `" Slash \ Newline `n Tab `t Return `r End" | Should -Match $pattern
+        }
+    }
+
+    It 'logs an invalid Unicode scalar before returning the unavailable-key result' {
+        InModuleScope ItE2E {
+            $script:LocaleScalarMatch = [regex]::Match('unit.invalid: "\U00110000"', '^unit\.invalid:\s*(\S.*)$')
+            Mock Select-String { [pscustomobject]@{ Matches = @($script:LocaleScalarMatch) } }
+            Mock Write-ItLog {}
+
+            Get-WtaLocalizedTextRegex -Key 'unit.invalid' | Should -BeNullOrEmpty
+            Should -Invoke Write-ItLog -Times 1 -Exactly -ParameterFilter {
+                $Level -eq 'WARN' -and $Message -like "*WTA locale key 'unit.invalid'*"
+            }
+        }
     }
 }
 

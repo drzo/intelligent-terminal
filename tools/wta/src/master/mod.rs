@@ -48,6 +48,7 @@ use std::sync::{Arc, OnceLock, Weak};
 /// back-pressure the agent CLI's I/O loop and freeze every other
 /// helper sharing this master.
 const NOTIF_CHANNEL_CAPACITY: usize = 1024;
+const AGENT_INITIALIZE_TIMEOUT_SECS: u64 = 60;
 const SESSION_NEW_TIMEOUT_SECS: u64 = 120;
 const SESSION_LOAD_TIMEOUT_SECS: u64 = 55;
 const SESSION_ROLLBACK_CLOSE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(2);
@@ -5822,6 +5823,26 @@ fn format_startup_stderr(lines: &[String]) -> String {
     out
 }
 
+async fn initialize_agent(
+    connection: &conn::ClientLink,
+) -> std::result::Result<
+    acp::Result<acp::schema::v1::InitializeResponse>,
+    tokio::time::error::Elapsed,
+> {
+    tokio::time::timeout(
+        std::time::Duration::from_secs(AGENT_INITIALIZE_TIMEOUT_SECS),
+        connection.initialize(
+            acp::schema::v1::InitializeRequest::new(acp::schema::ProtocolVersion::V1)
+                .client_capabilities(acp::schema::v1::ClientCapabilities::new().terminal(true))
+                .client_info(
+                    acp::schema::v1::Implementation::new("wta-master", env!("CARGO_PKG_VERSION"))
+                        .title("Windows Terminal Agent (master)"),
+                ),
+        ),
+    )
+    .await
+}
+
 async fn spawn_one_agent(
     state: &Arc<MasterStateInner>,
     cell: &AgentCell,
@@ -6030,19 +6051,8 @@ async fn spawn_one_agent(
 
     // Initialize this CLI. Native and npx cold starts can be slow, so keep
     // the same generous timeout the single-agent master used.
-    let init_timeout_secs = 60;
-    let init_outcome = tokio::time::timeout(
-        std::time::Duration::from_secs(init_timeout_secs),
-        conn.initialize(
-            acp::schema::v1::InitializeRequest::new(acp::schema::ProtocolVersion::V1)
-                .client_capabilities(acp::schema::v1::ClientCapabilities::new().terminal(true))
-                .client_info(
-                    acp::schema::v1::Implementation::new("wta-master", env!("CARGO_PKG_VERSION"))
-                        .title("Windows Terminal Agent (master)"),
-                ),
-        ),
-    )
-    .await;
+    let init_timeout_secs = AGENT_INITIALIZE_TIMEOUT_SECS;
+    let init_outcome = initialize_agent(&conn).await;
 
     let mut init_resp = match init_outcome {
         Ok(Ok(resp)) => {
