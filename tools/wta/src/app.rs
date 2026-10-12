@@ -5540,6 +5540,8 @@ impl App {
         self.mode = AppMode::Setup;
         self.state = ConnectionState::Disconnected;
         self.auth = None;
+        self.current_tab_mut()
+            .retain_current_messages(|message| !matches!(message, ChatMessage::Error(_)));
         if !agent_status.cli_found {
             self.show_preflight_setup(PreflightResult {
                 agent_id: agent_id.to_string(),
@@ -5562,7 +5564,7 @@ impl App {
                 agent_id: agent_id.to_string(),
                 display_name: profile.display_name.to_string(),
                 cli_status: CheckStatus::Passed,
-                cli_path: agent_status.cli_path.clone(),
+                cli_path: agent_status.cli_path,
                 auth_status: CheckStatus::Failed(t!("system.authentication_failed").into_owned()),
                 install_hint: profile.install_hint.to_string(),
                 install_url: String::new(),
@@ -5573,8 +5575,6 @@ impl App {
             title: t!("setup.title.sign_in").into_owned(),
             subtitle,
         });
-        let tab = self.current_tab_mut();
-        tab.retain_current_messages(|m| !matches!(m, ChatMessage::Error(_)));
     }
 
     // Keep the existing agent_paste_text wire event compatible with packaged Terminal.

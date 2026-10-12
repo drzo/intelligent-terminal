@@ -13316,6 +13316,9 @@ fn authentication_setup_missing_cli_recovery_does_not_advertise_sign_in() {
     let _locale = crate::test_support::lock_locale();
     let mut app = test_app();
     app.current_agent_id = "copilot".into();
+    app.current_tab_mut()
+        .messages
+        .push(ChatMessage::Error("Previous authentication failure".into()));
     app.show_signin_setup_screen_with_status(
         "copilot",
         agent_status_for_test("copilot", "GitHub Copilot", false),
@@ -13331,6 +13334,11 @@ fn authentication_setup_missing_cli_recovery_does_not_advertise_sign_in() {
         .options
         .iter()
         .any(|option| matches!(option, SetupOption::Recheck)));
+    assert!(!app
+        .current_tab()
+        .messages
+        .iter()
+        .any(|message| matches!(message, ChatMessage::Error(_))));
 }
 
 #[test]
