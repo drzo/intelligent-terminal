@@ -5881,8 +5881,6 @@ async fn spawn_one_agent(
         .stdout
         .take()
         .ok_or_else(|| anyhow!("agent CLI child has no stdout"))?;
-    let is_npx = spawn_result.is_npx;
-
     // Routine stderr stays at debug because it may contain prompt / file
     // content. Pre-initialize stderr is buffered and promoted to warning only
     // if startup fails, so release logs retain package-manager diagnostics.
@@ -6030,9 +6028,9 @@ async fn spawn_one_agent(
     // I/O task, and (via the empty `OnceCell`) triggered repeated respawns.
     let mut child = spawn_result.child;
 
-    // Initialize this CLI. npx adapter cold starts can be slow, so keep
+    // Initialize this CLI. Native and npx cold starts can be slow, so keep
     // the same generous timeout the single-agent master used.
-    let init_timeout_secs = if is_npx { 60 } else { 15 };
+    let init_timeout_secs = 60;
     let init_outcome = tokio::time::timeout(
         std::time::Duration::from_secs(init_timeout_secs),
         conn.initialize(
