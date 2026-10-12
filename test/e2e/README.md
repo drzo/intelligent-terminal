@@ -169,8 +169,19 @@ native-action regression suite. Nonlive discovery and synthetic report checks
 are not package acceptance.
 
 SearchTextBox assertions use `Get-UiValue -ValuePattern` to read the real UIA
-value, including empty text. The default display-text helper retains winapp's
+value, including empty text, from exactly one visible owned Raw-view peer.
+The default display-text helper retains winapp's
 Name fallback and is not an exact-empty query oracle.
+`Set-WtPaneFocus` verifies assistant focus through the owned window's actual
+UIA TermControl focus; `active-pane` intentionally reports the source shell.
+Owner-tab probes subscribe before emitting a successful OSC 133 mark, so
+`-NoProfile` shells do not need a prompt hook just to resolve the stable tab ID.
+Combined Sidebar tests retain ordinary shell/assistant fixtures and add a
+provider-labelled, non-agent-running native terminal for live-row coverage.
+Manual collapse and keyboard navigation use an empty query; nonempty search
+is separately checked to force expansion and disable manual collapse.
+History preservation targets a named fixture session, not its rank among
+legitimate external sessions, and realizes its owned row in the shared viewport.
 After the build owner proves the deployed
 feature-head App/WTA hashes, run with explicit Dev and prerequisite validation:
 

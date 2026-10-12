@@ -3145,14 +3145,6 @@ namespace winrt::TerminalApp::implementation
         {
             return;
         }
-        constexpr auto down = Windows::UI::Core::CoreVirtualKeyStates::Down;
-        if (WI_IsFlagSet(coreWindow.GetKeyState(Windows::System::VirtualKey::Control), down) ||
-            WI_IsFlagSet(coreWindow.GetKeyState(Windows::System::VirtualKey::Menu), down) ||
-            WI_IsFlagSet(coreWindow.GetKeyState(Windows::System::VirtualKey::Shift), down))
-        {
-            return;
-        }
-
         auto focused = WUX::Input::FocusManager::GetFocusedElement(root).try_as<DependencyObject>();
         while (focused)
         {
@@ -3165,7 +3157,15 @@ namespace winrt::TerminalApp::implementation
                 const auto item = container.Content().try_as<TerminalApp::TabStripHistoryItem>();
                 if (item && ItemsList().ContainerFromItem(item) == container)
                 {
+                    // Consume modified Enter too, so ListView cannot turn it into ItemClick.
                     e.Handled(true);
+                    constexpr auto down = Windows::UI::Core::CoreVirtualKeyStates::Down;
+                    if (WI_IsFlagSet(coreWindow.GetKeyState(Windows::System::VirtualKey::Control), down) ||
+                        WI_IsFlagSet(coreWindow.GetKeyState(Windows::System::VirtualKey::Menu), down) ||
+                        WI_IsFlagSet(coreWindow.GetKeyState(Windows::System::VirtualKey::Shift), down))
+                    {
+                        return;
+                    }
                     HistoryActivationRequested.raise(*this, winrt::make<TabStripHistoryActivationEventArgs>(item));
                 }
                 return;

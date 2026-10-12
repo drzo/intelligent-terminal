@@ -637,7 +637,18 @@ measures the interval since the preceding stage.
 Native `protocol_tab_create` records split UI dispatcher wait, pane creation,
 tab insertion, synchronous layout, and selection. `agent_pane_create` further
 splits native agent pane creation into settings, elevation, connection, control,
-and pane-content construction. Match the resulting `pane_id`
+and pane-content construction. Buffered `startup_timing` summaries in the same
+native log split `terminal_initialize` into core/rendering initialization,
+interactivity, connection startup, painting, appearance, and initialized-event
+handlers. `conpty_start` splits pseudoconsole creation, client launch, and release;
+`conpty_client_launch` splits process attributes, environment preparation,
+`CreateProcess`, and client-name resolution. Checkpoints are measured in memory
+and emitted together when each operation exits (including exception unwinding),
+so the line's UTC timestamp is its emission time, not its start time.
+`startup_first_output` records the first decoded nonempty output and
+`since_release_ms` measures from pseudoconsole release, not the sidebar click.
+These diagnostics apply to terminal startup generally, including prewarmed
+helpers, so use the pane identity rather than proximity alone. Match the resulting `pane_id`
 and `client_pid` with the master's `pane_created` record and the provider's own
 startup log. `wtcli_timing` records separately measure spawning and waiting for
 `new-tab` and `focus-pane` bridge processes. An unfinished `*_begin` stage

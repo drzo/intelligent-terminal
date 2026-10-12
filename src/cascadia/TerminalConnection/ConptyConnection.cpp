@@ -11,6 +11,7 @@
 #include "../../types/inc/utils.hpp"
 #include "../inc/IntelligentTerminalPaths.h"
 #include "../inc/TerminalProtocolEnvironment.h"
+#include "../inc/StartupTiming.h"
 
 #include "ConptyConnection.g.cpp"
 
@@ -33,6 +34,7 @@ namespace winrt::Microsoft::Terminal::TerminalConnection::implementation
     // - launches the client application attached to the new pseudoconsole
     void ConptyConnection::_LaunchAttachedClient()
     {
+        ::IntelligentTerminal::StartupTiming timing{ "conpty_client_launch", _sessionId };
         STARTUPINFOEX siEx{ 0 };
         siEx.StartupInfo.cb = sizeof(STARTUPINFOEX);
         siEx.StartupInfo.dwFlags = STARTF_USESTDHANDLES;
@@ -54,6 +56,7 @@ namespace winrt::Microsoft::Terminal::TerminalConnection::implementation
             nullptr,
             nullptr));
 
+        timing.Mark("process_attributes_ready");
         auto cmdline{ wil::ExpandEnvironmentStringsW<std::wstring>(_commandline.c_str()) }; // mutable copy -- required for CreateProcessW
         auto environment = _initialEnv;
 
@@ -205,6 +208,7 @@ namespace winrt::Microsoft::Terminal::TerminalConnection::implementation
         const auto hostClsid = wil::TryGetEnvironmentVariableW<std::wstring>(L"WT_COM_CLSID");
         ::Microsoft::Terminal::Protocol::ApplyHostClsid(environment, hostClsid);
 
+        timing.Mark("environment_ready");
         auto newEnvVars = environment.to_string();
         const auto lpEnvironment = newEnvVars.empty() ? nullptr : newEnvVars.data();
 
@@ -220,6 +224,7 @@ namespace winrt::Microsoft::Terminal::TerminalConnection::implementation
         auto [newCommandLine, newStartingDirectory] = Utils::MangleStartingDirectoryForWSL(cmdline, _startingDirectory);
         const auto startingDirectory = newStartingDirectory.size() > 0 ? newStartingDirectory.c_str() : nullptr;
 
+        timing.Mark("create_process_begin");
         THROW_IF_WIN32_BOOL_FALSE(CreateProcessW(
             nullptr,
             newCommandLine.data(),
@@ -232,11 +237,13 @@ namespace winrt::Microsoft::Terminal::TerminalConnection::implementation
             &siEx.StartupInfo, // lpStartupInfo
             &_piClient // lpProcessInformation
             ));
+        timing.Mark("create_process_end");
 
         DeleteProcThreadAttributeList(siEx.lpAttributeList);
 
         const std::filesystem::path processName = wil::GetModuleFileNameExW<std::wstring>(_piClient.hProcess, nullptr);
         _clientName = processName.filename().wstring();
+        timing.Mark("client_name_resolved");
 
 #pragma warning(suppress : 26477 26485 26494 26482 26446) // We don't control TraceLoggingWrite
         TraceLoggingWrite(
@@ -457,7 +464,9 @@ namespace winrt::Microsoft::Terminal::TerminalConnection::implementation
     void ConptyConnection::Start()
     try
     {
+        ::IntelligentTerminal::StartupTiming timing{ "conpty_start", _sessionId };
         _transitionToState(ConnectionState::Connecting);
+        timing.Mark("connecting");
 
         const til::size dimensions{ gsl::narrow<til::CoordType>(_cols), gsl::narrow<til::CoordType>(_rows) };
 
@@ -466,7 +475,9 @@ namespace winrt::Microsoft::Terminal::TerminalConnection::implementation
         if (!_pipe)
         {
             auto pipe = Utils::CreateOverlappedPipe(PIPE_ACCESS_DUPLEX, 128 * 1024);
+            timing.Mark("pseudo_console_begin");
             THROW_IF_FAILED(ConptyCreatePseudoConsole(til::unwrap_coord_size(dimensions), pipe.client.get(), pipe.client.get(), _flags, &_hPC));
+            timing.Mark("pseudo_console_end");
             _pipe = std::move(pipe.server);
 
             if (_initialParentHwnd != 0)
@@ -480,7 +491,9 @@ namespace winrt::Microsoft::Terminal::TerminalConnection::implementation
                 THROW_IF_FAILED(ConptyShowHidePseudoConsole(_hPC.get(), _initialVisibility));
             }
 
+            timing.Mark("client_launch_begin");
             _LaunchAttachedClient();
+            timing.Mark("client_launch_end");
         }
         // But if it was an inbound handoff... attempt to synchronize the size of it with what our connection
         // window is expecting it to be on the first layout.
@@ -505,7 +518,9 @@ namespace winrt::Microsoft::Terminal::TerminalConnection::implementation
             }
         }
 
+        timing.Mark("release_begin");
         THROW_IF_FAILED(ConptyReleasePseudoConsole(_hPC.get()));
+        timing.Mark("release_end");
 
         _startTime = std::chrono::high_resolution_clock::now();
 
@@ -532,6 +547,7 @@ namespace winrt::Microsoft::Terminal::TerminalConnection::implementation
         LOG_IF_FAILED(SetThreadDescription(_hOutputThread.get(), L"ConptyConnection Output Thread"));
 
         _transitionToState(ConnectionState::Connected);
+        timing.Mark("connected");
     }
     catch (...)
     {
@@ -847,6 +863,14 @@ namespace winrt::Microsoft::Terminal::TerminalConnection::implementation
                                       TraceLoggingKeyword(MICROSOFT_KEYWORD_MEASURES),
                                       TelemetryPrivacyDataTag(PDT_ProductAndServicePerformance));
                     _receivedFirstByte = true;
+                    try
+                    {
+                        ::IntelligentTerminal::_agentPaneLog(fmt::format("startup_first_output pane_id={} client_pid={} since_release_ms={}",
+                                                                         winrt::to_string(winrt::to_hstring(_sessionId)),
+                                                                         _piClient.dwProcessId,
+                                                                         std::chrono::duration_cast<std::chrono::milliseconds>(now - _startTime).count()));
+                    }
+                    CATCH_LOG();
                 }
 
                 try

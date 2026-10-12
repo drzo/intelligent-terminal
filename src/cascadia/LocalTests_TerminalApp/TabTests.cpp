@@ -3642,7 +3642,11 @@ namespace TerminalAppLocalTests
             event["params"]["wsl_distro"] = "Ubuntu";
             event["params"]["session_universe"] = "selected-universe";
             event["params"]["resume_commandline"] = winrt::to_string(command);
+            event["params"]["agent_backend"] = "wsl:Ubuntu:copilot";
+            event["params"]["cwd"] = "/home/u/project with spaces";
             _publishPaneAgentEvent(page, page->_manager, winrt::to_hstring(Json::writeString(Json::StreamWriterBuilder{}, event)));
+            VERIFY_ARE_EQUAL(winrt::hstring{ L"wsl:Ubuntu:copilot" }, _paneMetadata(page->_manager, id)->session.backend);
+            VERIFY_ARE_EQUAL(winrt::hstring{ L"/home/u/project with spaces" }, _paneMetadata(page->_manager, id)->session.cwd);
             std::vector<winrt::TerminalApp::TabStripHistoryItem> items;
             for (const auto universe : { L"selected-universe", L"other-universe" })
             {
@@ -3664,6 +3668,8 @@ namespace TerminalAppLocalTests
             VERIFY_IS_TRUE(page->_tabStrip.HistoryItems().GetAt(0) == items[1]);
             _publishPaneAgentEvent(page, page->_manager, _keepRunningHook(id, "agent.prompt.submit", "shared-session"));
             VERIFY_ARE_EQUAL(command, _paneMetadata(page->_manager, id)->session.resumeCommandline);
+            VERIFY_ARE_EQUAL(winrt::hstring{ L"wsl:Ubuntu:copilot" }, _paneMetadata(page->_manager, id)->session.backend);
+            VERIFY_ARE_EQUAL(winrt::hstring{ L"/home/u/project with spaces" }, _paneMetadata(page->_manager, id)->session.cwd);
             NewTerminalArgs args;
             args.SessionId(id);
             args.Commandline(L"copilot");
@@ -3694,18 +3700,20 @@ namespace TerminalAppLocalTests
         });
 
         winrt::com_ptr<TestConnection> connection;
+        std::shared_ptr<Pane> attachedPane;
         TestOnUIThread([&]() {
             auto settings = winrt::make_self<ControlUnitTests::MockControlSettings>();
             connection = winrt::make_self<TestConnection>(
                 liveSessionId,
                 winrt::Microsoft::Terminal::TerminalConnection::ConnectionState::Connected);
             const auto content = _contentManager->CreateCore(*settings, *settings, *connection);
+            _initializeTestContent(content);
 
             NewTerminalArgs args{};
             args.ContentId(content.Id());
             args.SessionId(fallbackSessionId);
 
-            const auto attachedPane = page->_MakeTerminalPane(args);
+            attachedPane = page->_MakeTerminalPane(args);
             VERIFY_IS_NOT_NULL(attachedPane);
         });
 
@@ -3722,6 +3730,7 @@ namespace TerminalAppLocalTests
             VERIFY_ARE_EQUAL(
                 0u,
                 static_cast<unsigned int>(_statesForPane(connectionStates, _formatPaneId(fallbackSessionId)).size()));
+            attachedPane.reset();
         });
     }
 
@@ -5178,11 +5187,12 @@ namespace TerminalAppLocalTests
         const auto connection = winrt::make_self<TestConnection>(
             paneId,
             winrt::Microsoft::Terminal::TerminalConnection::ConnectionState::Connected);
-        const auto page = _commonSetup(nullptr, nullptr, std::nullopt, true);
+        Grid host{ nullptr };
+        TestOnUIThread([&]() { host = Grid{}; });
+        const auto page = _commonSetup(*connection, host, std::nullopt, true);
 
         TestOnUIThread([&]() {
             page->_GetFocusedTabImpl()->SuppressAgentPrewarm();
-            page->_GetActiveControl().Connection(*connection);
             using Page = winrt::TerminalApp::implementation::TerminalPage;
             const auto strip = winrt::get_self<winrt::TerminalApp::implementation::TabStrip>(page->_tabStrip);
             const auto tab = page->_GetFocusedTabImpl();
@@ -6551,12 +6561,14 @@ namespace TerminalAppLocalTests
         const auto rootConnection = winrt::make_self<TestConnection>(
             winrt::guid{ L"{b7c8ba10-99df-41e5-a637-087f325cd186}" },
             winrt::Microsoft::Terminal::TerminalConnection::ConnectionState::Connected);
-        auto page = _commonSetup(*rootConnection, nullptr, std::nullopt, true);
+        Grid host{ nullptr };
+        TestOnUIThread([&]() { host = Grid{}; });
+        auto page = _commonSetup(*rootConnection, host, std::nullopt, true);
 
         TestOnUIThread([&]() {
             const auto tab = page->_GetFocusedTabImpl();
             VERIFY_IS_NOT_NULL(tab);
-            const auto rootPane = tab->GetActivePane();
+            auto rootPane = tab->GetActivePane();
             VERIFY_IS_NOT_NULL(rootPane);
             VERIFY_IS_TRUE(rootPane->Id().has_value());
 
@@ -6566,17 +6578,23 @@ namespace TerminalAppLocalTests
             const auto agentPane = page->_WrapInAgentPaneContent(
                 page->_MakePane(nullptr, page->_GetFocusedTab(), *agentConnection));
             VERIFY_IS_NOT_NULL(agentPane);
+            _initializeTestContent(page->_manager.TryLookupCore(agentPane->GetTerminalControl().ContentId()));
             agentPane->IsAgentPane(true);
             VERIFY_IS_TRUE(page->_SplitPane(tab, SplitDirection::Right, 0.5f, agentPane));
             VERIFY_IS_TRUE(agentPane->Id().has_value());
             VERIFY_IS_TRUE(tab->GetActivePane() == agentPane);
+            rootPane = tab->GetRootPane()->FindPaneBySessionId(rootConnection->SessionId());
+            VERIFY_IS_NOT_NULL(rootPane);
+            VERIFY_IS_TRUE(rootPane->Id().has_value());
 
             const auto stripImpl = winrt::get_self<winrt::TerminalApp::implementation::TabStrip>(page->_tabStrip);
             const auto display = stripImpl->DisplayItemForTab(tab->TabViewItem());
             VERIFY_IS_NOT_NULL(display);
             VERIFY_IS_FALSE(display.IsGroup());
             page->UpdateLayout();
-            const auto container = page->_tabStrip.ContainerFromIndex(0).as<ListViewItem>();
+            const auto containerVisibility = [&]() {
+                return page->_tabStrip.ContainerFromIndex(0).as<ListViewItem>().Visibility();
+            };
 
             const auto applyRichTabUpdate = [&](const std::shared_ptr<Pane>& pane,
                                                 const std::wstring_view text,
@@ -6604,47 +6622,53 @@ namespace TerminalAppLocalTests
             };
             const auto search = [&](const winrt::hstring& query) {
                 page->_tabStrip.SearchActive(true);
-                stripImpl->SearchTextBox().Text(query);
+                page->_tabStrip.SearchQuery(query);
                 page->UpdateLayout();
                 VERIFY_ARE_EQUAL(query, page->_tabSearchQuery);
             };
 
             search(L"Committed Search Title");
-            VERIFY_ARE_EQUAL(Visibility::Collapsed, container.Visibility());
+            Log::Comment(L"Checking title-based search projection");
+            VERIFY_ARE_EQUAL(Visibility::Collapsed, containerVisibility());
             tab->SetTabText(L"Committed Search Title");
             page->UpdateLayout();
-            VERIFY_ARE_EQUAL(Visibility::Visible, container.Visibility());
+            VERIFY_ARE_EQUAL(Visibility::Visible, containerVisibility());
             VERIFY_ARE_EQUAL(
                 winrt::hstring{ L"Committed Search Title" },
                 display.Presentation().SearchText());
 
             applyRichTabUpdate(agentPane, L"new-agent-metadata", 1);
+            Log::Comment(L"Checking shell-pane metadata search");
             VERIFY_IS_TRUE(tab->FocusPane(rootPane->Id().value()));
             applyRichTabUpdate(rootPane, L"old-shell-metadata", 1);
             VERIFY_IS_FALSE(display.IsGroup());
 
             search(L"old-shell-metadata");
-            VERIFY_ARE_EQUAL(Visibility::Visible, container.Visibility());
+            VERIFY_ARE_EQUAL(Visibility::Visible, containerVisibility());
             VERIFY_IS_TRUE(tab->FocusPane(agentPane->Id().value()));
             page->UpdateLayout();
-            VERIFY_ARE_EQUAL(Visibility::Collapsed, container.Visibility());
+            VERIFY_ARE_EQUAL(Visibility::Collapsed, containerVisibility());
 
             search(L"new-agent-metadata");
-            VERIFY_ARE_EQUAL(Visibility::Visible, container.Visibility());
+            Log::Comment(L"Checking agent-pane metadata search");
+            VERIFY_ARE_EQUAL(Visibility::Visible, containerVisibility());
             VERIFY_IS_TRUE(tab->FocusPane(rootPane->Id().value()));
             page->UpdateLayout();
-            VERIFY_ARE_EQUAL(Visibility::Collapsed, container.Visibility());
+            VERIFY_ARE_EQUAL(Visibility::Collapsed, containerVisibility());
 
             search(L"old-shell-metadata");
-            VERIFY_ARE_EQUAL(Visibility::Visible, container.Visibility());
-            const auto controlLessPane = std::make_shared<Pane>(page->_makeSettingsContent());
+            VERIFY_ARE_EQUAL(Visibility::Visible, containerVisibility());
+            Log::Comment(L"Creating non-terminal pane for search");
+            const auto controlLessPane = std::make_shared<Pane>(winrt::make<TestSettingsPaneContent>());
+            Log::Comment(L"Splitting non-terminal pane for search");
             controlLessPane->IsAgentPane(true);
             VERIFY_IS_TRUE(page->_SplitPane(tab, SplitDirection::Right, 0.5f, controlLessPane));
             VERIFY_IS_NULL(controlLessPane->GetTerminalControl());
             VERIFY_IS_TRUE(tab->GetActivePane() == controlLessPane);
             VERIFY_IS_FALSE(display.IsGroup());
             page->UpdateLayout();
-            VERIFY_ARE_EQUAL(Visibility::Collapsed, container.Visibility());
+            VERIFY_ARE_EQUAL(Visibility::Collapsed, containerVisibility());
+            Log::Comment(L"Completed active-pane metadata search");
         });
     }
 

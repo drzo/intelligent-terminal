@@ -120,8 +120,23 @@ function Set-WtPaneFocus {
     [CmdletBinding()]
     param([Parameter(Mandatory, ValueFromPipeline)]$App, [Parameter(Mandatory)][string]$SessionId)
     process {
+        $agentPane = Get-AgentPaneSession -App $App -PaneSessionId $SessionId
         Invoke-WtCli -App $App -Arguments @('focus-pane', '-t', $SessionId) | Out-Null
         Wait-Until -TimeoutSec 8 -Because "pane $SessionId to become active" -Condition {
+            if ($agentPane) {
+                # active-pane intentionally reports the source shell when an assistant is focused.
+                Add-Type -AssemblyName UIAutomationClient, UIAutomationTypes
+                $focused = [Windows.Automation.AutomationElement]::FocusedElement
+                if (-not $focused -or $focused.Current.ProcessId -ne $App.Pid -or
+                    -not $focused.Current.HasKeyboardFocus -or $focused.Current.ClassName -ne 'TermControl' -or
+                    $focused.Current.Name -ne 'Agent Pane') { return $false }
+                $root = [Windows.Automation.AutomationElement]::FromHandle([IntPtr][long]$App.Hwnd)
+                $root.Current.ProcessId | Should -Be $App.Pid
+                for ($ancestor = $focused; $ancestor; $ancestor = [Windows.Automation.TreeWalker]::RawViewWalker.GetParent($ancestor)) {
+                    if ([Windows.Automation.Automation]::Compare($ancestor, $root)) { return $true }
+                }
+                return $false
+            }
             (Get-ActivePane -App $App).session_id -eq $SessionId
         } | Out-Null
     }

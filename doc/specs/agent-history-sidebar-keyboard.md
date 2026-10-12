@@ -126,7 +126,8 @@ agent action, not an override of the normal new-tab control.
   known-provider shell session with no bound pane. A failed bound-pane focus
   never falls back to creating a new resumed session.
   Bare Enter activates the focused History row even with selection disabled;
-  modified Enter is ignored. A focused ownership button retains its native
+  Ctrl/Alt/Shift+Enter is consumed without activation, including ListView's
+  default ItemClick fallback. A focused ownership button retains its native
   activation, rather than also activating its containing row.
   Provider identity remains available through the icon tooltip, highlighted
   provider-name text, and shared search.
