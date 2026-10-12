@@ -8,7 +8,7 @@ the agent is a fixture, never a provider. No private test kit is imported.
 | --- | --- | --- | --- | --- | --- | --- |
 | Raw throughout an active turn; batch only after normal end | Prefix, tail and finish gates | ACP notifications/end -> completed display | Literal prefix and received tail before finish, then marker-free text and completed_markdown DEBUG work | Held finish has zero work, including after tail | AgentProtocolExperience; WTA completed_markdown units | Completed replies render Markdown after raw streaming |
 | Only normally completed agent segments format, without moving other messages | Agent/tool failure/thought/agent, then normal end; separate cancel and RPC-error turns | Mixed transcript and lifecycle -> visible history | Ordered independent formatted segments; user/tool/thought/error text stays literal; interrupted segments never render | Tool failure is not turn failure; cancellation and RPC failure are | AgentProtocolExperience; PromptHistory | Interrupted replies stay raw and preserve transcript order |
-| Cached history shares draw, wrap and copy geometry | Collapse/expand, narrow/wide owned window, wheel, ConPTY mouse selection and native copy | Completed cache -> Ratatui viewport -> UIA cells -> ConPTY input -> clipboard | Table and wrap anchors, exact visible-text copy, width-dependent reflow, unchanged work on settled redraws and stable identities | No work from unchanged frames or history navigation | CompletedTurnSelection; AgentMouse CompletedTurnMouse; MouseInput units | Completed Markdown keeps cached history and selection geometry |
+| Cached history shares draw, wrap and copy geometry | Collapse/expand, narrow/wide owned window, wheel, ConPTY mouse selection and native copy | Completed cache -> Ratatui viewport -> exact UIA anchor and verified single-cell prefix -> ConPTY input -> clipboard | Table and wrap anchors, exact visible-text copy, width-dependent reflow, unchanged work on settled redraws and stable identities | No work from unchanged frames or history navigation | CompletedTurnSelection; AgentMouse CompletedTurnMouse; MouseInput units | Completed Markdown keeps cached history and selection geometry |
 | Selection pins the raw snapshot, not already formatted history | ConPTY drag before finish, then release finish and copy | Mouse selection -> completion -> copied cells -> first Markdown display | Raw copy after normal end; formatted old history unchanged; clear/copy permits transition | Normal completion without selection transitions immediately | AgentMouse; AgentSelectAll; OwnedLaunchPointerSafety units | Selecting streamed text defers completed Markdown |
 
 Run only with ITE2E_PACKAGE=Dev and exact-source ITE2E_EXPECTED_APP_SHA256
@@ -186,9 +186,12 @@ Describe 'Feature: completed Markdown' -Tag @('Feature', 'CompletedMarkdown') {
                 if ($lines[$row].Contains($Text, [StringComparison]::Ordinal)) { $row }
             })
             $hits | Should -HaveCount 1
-            $lineBounds = @(Get-UiTextBounds -App $script:cmApp -Text $lines[$hits[0]].TrimEnd())
-            $lineBounds | Should -HaveCount 1
-            $column = [int][Math]::Round(($rect.Left - $lineBounds[0].Left) / $cell)
+            $line = $lines[$hits[0]]
+            $prefix = $line.Substring(0, $line.IndexOf($Text, [StringComparison]::Ordinal))
+            if ($prefix -notmatch '^[\x20-\x7e\u2500-\u257f\u2022\u25cf]*$') {
+                throw 'The fixture selection prefix must contain only single-cell ASCII, borders or reply markers.'
+            }
+            $column = $prefix.Length
             Send-AgentMouseEvent -App $script:cmApp -PaneSessionId $script:cmPane -Kind Down -Column $column -Row $hits[0] | Out-Null
             Send-AgentMouseEvent -App $script:cmApp -PaneSessionId $script:cmPane -Kind Drag -Column ($column + $Text.Length - 1) -Row $hits[0] | Out-Null
             Send-AgentMouseEvent -App $script:cmApp -PaneSessionId $script:cmPane -Kind Up -Column ($column + $Text.Length - 1) -Row $hits[0] | Out-Null
@@ -245,11 +248,29 @@ Describe 'Feature: completed Markdown' -Tag @('Feature', 'CompletedMarkdown') {
         }
 
         function Invoke-CmWheel {
-            param([string]$Anchor, [int]$Delta, [int]$Count)
-            $bounds = @(Get-UiTextBounds -App $script:cmApp -Text $Anchor)
-            $bounds | Should -HaveCount 1
-            Invoke-WtWindowWheel -App $script:cmApp -ScreenX ([int]($bounds[0].Left + $bounds[0].Width / 2)) `
-                -ScreenY ([int]($bounds[0].Top + $bounds[0].Height / 2)) -Delta $Delta -Count $Count | Out-Null
+            param([int]$Delta, [int]$Count, [string[]]$Present, [string[]]$Absent = @())
+            $state = @{ Steps = 0 }
+            Wait-Until -TimeoutSec 20 -IntervalSec 0.1 -Because 'native wheel navigation to the requested visible history' -Condition {
+                $text = Read-CmPane
+                $ready = $true
+                foreach ($value in $Present) {
+                    if (-not $text.Contains($value, [StringComparison]::Ordinal)) { $ready = $false }
+                }
+                foreach ($value in $Absent) {
+                    if ($text.Contains($value, [StringComparison]::Ordinal)) { $ready = $false }
+                }
+                if ($ready) { return $text }
+                if ($state.Steps -ge $Count) { throw 'Native wheel navigation exhausted its bounded input count.' }
+                $anchor = [regex]::Match($text,
+                    'CM_[0-9a-f]{12}_(?:ROW_\d{3}|PREFIX|TAIL|WRAP_START|WRAP_END|CELL)').Value
+                $anchor | Should -Not -BeNullOrEmpty
+                $bounds = @(Get-UiTextBounds -App $script:cmApp -Text $anchor)
+                $bounds | Should -HaveCount 1
+                Invoke-WtWindowWheel -App $script:cmApp -ScreenX ([int]($bounds[0].Left + $bounds[0].Width / 2)) `
+                    -ScreenY ([int]($bounds[0].Top + $bounds[0].Height / 2)) -Delta $Delta -Count 1 | Out-Null
+                $state.Steps++
+                $false
+            } | Out-Null
         }
     }
 
@@ -446,7 +467,8 @@ Describe 'Feature: completed Markdown' -Tag @('Feature', 'CompletedMarkdown') {
         Send-AgentKey -App $script:cmApp -PaneSessionId $script:cmPane -Key Escape | Out-Null
         if (-not (Read-CmPane).Contains($turn.Cell, [StringComparison]::Ordinal)) {
             Wait-CmPane -Present $turn.User | Out-Null
-            Invoke-CmWheel -Anchor $turn.User -Delta -120 -Count ([Math]::Min(100, $geometry.Rows * 2))
+            Invoke-CmWheel -Delta -120 -Count ([Math]::Min(100, $geometry.Rows * 2)) `
+                -Present @($turn.Cell, $turn.Tail, $turn.WrapStart, $turn.WrapEnd)
         }
         Wait-CmPane -Present @($turn.Cell, $turn.Tail, $turn.WrapStart, $turn.WrapEnd) -Completed | Out-Null
         Assert-CmWorkStable -Count 1
@@ -455,6 +477,9 @@ Describe 'Feature: completed Markdown' -Tag @('Feature', 'CompletedMarkdown') {
         try {
             $originalWidth = Set-CmWindowWidth -Scale 0.65
             Test-Until -TimeoutSec 10 -IntervalSec 0.2 -Condition { (Get-CmGeometry).Columns -lt $wide.Columns } | Should -BeTrue
+            Invoke-CmWheel -Delta -120 -Count ([Math]::Min(100, $geometry.Rows * 2)) `
+                -Present @($turn.Cell, $turn.Tail, $turn.WrapStart, $turn.WrapEnd) `
+                -Absent @("**$($turn.Tail)**", '| :--- | ---: |')
             Wait-CmPane -Present @($turn.Cell, $turn.Tail, $turn.WrapStart, $turn.WrapEnd) `
                 -Absent @("**$($turn.Tail)**", '| :--- | ---: |') -Completed | Out-Null
             $narrow = Get-CmGeometry
@@ -484,15 +509,18 @@ Describe 'Feature: completed Markdown' -Tag @('Feature', 'CompletedMarkdown') {
             if ($originalWidth) { Set-CmWindowWidth -Width $originalWidth | Out-Null }
         }
         Test-Until -TimeoutSec 10 -IntervalSec 0.2 -Condition { (Get-CmGeometry).Columns -eq $wide.Columns } | Should -BeTrue
+        Invoke-CmWheel -Delta -120 -Count ([Math]::Min(100, $geometry.Rows * 2)) `
+            -Present @($turn.Cell, $turn.Tail) -Absent "**$($turn.Tail)**"
         Wait-CmPane -Present @($turn.Cell, $turn.Tail) -Absent "**$($turn.Tail)**" -Completed | Out-Null
         $work = @(Get-CmWork).Count
         Assert-CmWorkStable -Count $work
         Select-CmVisibleText -Text $turn.Cell
         Copy-CmSelection -Expected $turn.Cell
-        Invoke-CmWheel -Anchor $turn.Cell -Delta 120 -Count ([Math]::Min(100, $geometry.Rows * 2))
+        Invoke-CmWheel -Delta 120 -Count ([Math]::Min(100, $geometry.Rows * 2)) `
+            -Present $turn.Prefix -Absent @($turn.Tail, "**$($turn.Prefix)**")
         Wait-CmPane -Present $turn.Prefix -Absent @($turn.Tail, "**$($turn.Prefix)**") | Out-Null
         Save-CmEvidence -Name history-manual-scroll
-        Invoke-CmWheel -Anchor $turn.Prefix -Delta -120 -Count ([Math]::Min(100, $geometry.Rows * 2))
+        Invoke-CmWheel -Delta -120 -Count ([Math]::Min(100, $geometry.Rows * 2)) -Present @($turn.Cell, $turn.Tail)
         Wait-CmPane -Present @($turn.Cell, $turn.Tail) -Completed | Out-Null
         Send-AgentKey -App $script:cmApp -PaneSessionId $script:cmPane -Key Left -Count 3 | Out-Null
         Assert-CmWorkStable -Count $work
