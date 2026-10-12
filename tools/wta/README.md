@@ -67,10 +67,6 @@ the host agent, WTA puts the current package family's alias directory first on
 therefore use short `wta.exe` commands without selecting another installed
 branding or reproducing a protected package path.
 
-Master allows up to 60 seconds for an ACP `initialize` reply from either a
-native agent or an `npx` adapter, including cold starts. Session creation,
-authentication and model-probe timeouts are separate and unchanged.
-
 ### Sidebar Agent sessions
 
 Master discovers installed, policy-allowed Windows-host agents in the background
@@ -181,6 +177,10 @@ window without reconnecting ACP. Push updates remain immediate in either layout,
 and returning to nonvertical layout immediately refreshes an already-open helper view.
 History-query retries do not restart or initialize agents; startup discovery retries
 are separate and retain the existing ACP initialization timeout.
+
+Master allows up to 60 seconds for an ACP `initialize` reply from either a
+native agent or an `npx` adapter, including cold starts. Session creation,
+authentication and model-probe timeouts are separate and unchanged.
 
 ### tmux-like CLI
 
