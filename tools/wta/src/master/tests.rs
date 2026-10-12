@@ -9,6 +9,104 @@ use crate::coordinator::mock_native_delegate_executables;
 use acp::schema::v1::{ContentChunk, SessionId, SessionNotification, SessionUpdate};
 use tokio_util::compat::{TokioAsyncReadCompatExt, TokioAsyncWriteCompatExt};
 
+#[tokio::test(flavor = "current_thread")]
+async fn auth_bridge_private_owner_and_shared_serialization_survive_disconnect() {
+    LocalSet::new().run_until(async {
+        const URL: &str = "https://accounts.google.com/o/oauth2/auth?redirect_uri=http%3A%2F%2F127.0.0.1%3A8181%2Fcallback&state=fixture";
+        let bridge = Arc::new(AgentAuthenticationBridge {
+            gate: Mutex::new(()),
+            stderr: AgentStderrLog::new("test-agent"),
+        });
+        let attempt = uuid::Uuid::new_v4();
+        let (owner, mut owner_rx) = mpsc::unbounded_channel();
+        let (peer, mut peer_rx) = mpsc::unbounded_channel();
+        let (arrived, arrival) = tokio::sync::oneshot::channel();
+        let (release, released) = tokio::sync::oneshot::channel::<()>();
+        let (reply, result) = tokio::sync::oneshot::channel();
+        let first = tokio::task::spawn_local(forward_shared_authentication(
+            Arc::clone(&bridge), Some(attempt), Some(owner),
+            async move {
+                arrived.send(()).unwrap();
+                released.await.unwrap();
+                Ok(acp::schema::v1::AuthenticateResponse::new())
+            }, reply,
+        ));
+        arrival.await.unwrap();
+        bridge.stderr.log_line(&format!("Open {URL}"));
+        let notification = owner_rx.recv().await.unwrap();
+        assert_eq!(
+            crate::protocol::acp::authentication::parse_browser_notification(&notification),
+            Some(Ok((attempt, URL.to_string())))
+        );
+        assert!(peer_rx.try_recv().is_err());
+        drop(owner_rx);
+        let (second_arrived, mut second_arrival) = tokio::sync::oneshot::channel();
+        let (second_reply, second_result) = tokio::sync::oneshot::channel();
+        let second = tokio::task::spawn_local(forward_shared_authentication(
+            Arc::clone(&bridge), None, Some(peer),
+            async move {
+                second_arrived.send(()).unwrap();
+                Ok(acp::schema::v1::AuthenticateResponse::new())
+            }, second_reply,
+        ));
+        tokio::task::yield_now().await;
+        assert!(second_arrival.try_recv().is_err(), "provider RPC must stay serialized after owner closes");
+        assert!(bridge.gate.try_lock().is_err());
+        release.send(()).unwrap();
+        assert!(result.await.unwrap().is_ok());
+        assert!(second_result.await.unwrap().is_ok(), "legacy authenticate needs no attempt metadata");
+        first.await.unwrap();
+        second.await.unwrap();
+        assert!(bridge.gate.try_lock().is_ok());
+        assert!(peer_rx.try_recv().is_err());
+    }).await;
+}
+
+#[tokio::test(flavor = "current_thread", start_paused = true)]
+async fn auth_bridge_bounds_provider_wait_and_releases_guard() {
+    LocalSet::new()
+        .run_until(async {
+            let bridge = Arc::new(AgentAuthenticationBridge {
+                gate: Mutex::new(()),
+                stderr: AgentStderrLog::new("test-agent"),
+            });
+            let (owner, _owner_rx) = mpsc::unbounded_channel();
+            let (arrived, arrival) = tokio::sync::oneshot::channel();
+            let (reply, result) = tokio::sync::oneshot::channel();
+            let task = tokio::task::spawn_local(forward_shared_authentication(
+                Arc::clone(&bridge),
+                Some(uuid::Uuid::new_v4()),
+                Some(owner),
+                async move {
+                    arrived.send(()).unwrap();
+                    futures::future::pending::<AuthenticationResult>().await
+                },
+                reply,
+            ));
+            arrival.await.unwrap();
+            tokio::time::advance(AUTH_TIMEOUT).await;
+            let error = result.await.unwrap().unwrap_err();
+            assert!(error.to_string().contains("timed out"));
+            task.await.unwrap();
+            assert!(bridge.gate.try_lock().is_ok());
+        })
+        .await;
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn auth_bridge_rejects_unadvertised_method_before_forwarding() {
+    LocalSet::new()
+        .run_until(async {
+            let handler = model_handler(unbound_test_agent("test-agent"), 1);
+            let request = acp::schema::v1::AuthenticateRequest::new(
+                acp::schema::v1::AuthMethodId::new("unadvertised"),
+            );
+            assert!(handler.authenticate(request).await.is_err());
+            assert!(handler.state.agent_authentication.lock().await.is_empty());
+        })
+        .await;
+}
+
 fn empty_agent_cell() -> AgentCell {
     Arc::new(OnceCell::new())
 }
@@ -642,7 +740,8 @@ fn resolve(
         None,
         None,
         HelperId(1),
-    );
+    )
+    .unwrap();
     (selection.command, selection.agent_id)
 }
 
@@ -666,7 +765,8 @@ fn known_agent_selection_preserves_wsl_source() {
         Some("wsl"),
         Some("Ubuntu"),
         HelperId(1),
-    );
+    )
+    .unwrap();
     assert_eq!(selection.command, "copilot --acp --stdio");
     assert_eq!(selection.agent_id.as_deref(), Some("copilot"));
     assert_eq!(
@@ -688,6 +788,58 @@ fn known_agent_selection_preserves_wsl_source() {
         agent_cmd_key(&selection.command, Some("copilot"), &selection.source),
         "host and WSL instances must occupy separate pool slots"
     );
+}
+
+#[test]
+fn antigravity_selection_uses_the_native_command_for_each_source() {
+    for (source, distro, expected_command) in [
+        (Some("host"), None, "agy_acp_server.exe"),
+        (Some("wsl"), Some("Ubuntu"), "agy_acp_server.par --uid="),
+    ] {
+        let selection = resolve_agent_selection(
+            DEFAULT_CMD,
+            Some("copilot"),
+            Some(&allow_set(&["antigravity"])),
+            Some("AnTiGrAvItY"),
+            Some("provider-model"),
+            source,
+            distro,
+            HelperId(1),
+        )
+        .unwrap();
+        assert_eq!(selection.command, expected_command);
+        assert_eq!(selection.agent_id.as_deref(), Some("antigravity"));
+        assert_eq!(
+            selection.explicit_selection,
+            ExplicitAgentSelection::Accepted
+        );
+        assert_eq!(
+            selection.source,
+            crate::agent_source::AgentSource::from_wire(source, distro).unwrap()
+        );
+    }
+}
+
+#[test]
+fn invalid_wsl_wire_selection_never_becomes_a_host_fallback() {
+    for agent_id in [Some("antigravity"), Some("copilot"), None] {
+        for distro in [None, Some(""), Some("Ubuntu extra"), Some("Ubuntu&bad")] {
+            let result = resolve_agent_selection(
+                DEFAULT_CMD,
+                Some("copilot"),
+                None,
+                agent_id,
+                None,
+                Some("wsl"),
+                distro,
+                HelperId(1),
+            );
+            let error = result
+                .err()
+                .expect("Invalid WSL metadata must reject selection.");
+            assert_eq!(error.code, acp::Error::invalid_params().code);
+        }
+    }
 }
 
 #[test]
@@ -1500,6 +1652,7 @@ fn make_state_with_retirement_pending_timeout(
         registry: crate::session_registry::InMemoryRegistry::shared(),
         session_activation_receipts: Mutex::new(HashMap::new()),
         helper_ext_subscribers: Mutex::new(HashMap::new()),
+        agent_authentication: Mutex::new(HashMap::new()),
         wt: None,
         agents: Mutex::new(HashMap::new()),
         history_refresh: Arc::new(Mutex::new(())),
@@ -11036,6 +11189,12 @@ async fn sidebar_cli_resume_binds_created_pane_for_agent_filtering() {
     })));
     let state = make_state_with_wt(mock.clone());
     let _capture = crate::wt_protocol_events::capture_test_published_events();
+    let (changes_tx, mut changes) = mpsc::unbounded_channel();
+    state
+        .helper_ext_subscribers
+        .lock()
+        .await
+        .insert(HelperId(1), changes_tx);
 
     let mut row = SessionInfo::new(SessionId::new("copilot-history"), PathBuf::from("C:\\repo"));
     row.provider_id = Some("copilot".to_string());
@@ -11077,11 +11236,52 @@ async fn sidebar_cli_resume_binds_created_pane_for_agent_filtering() {
         restored.pane_session_id.as_deref(),
         Some("aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee")
     );
+    assert_eq!(restored.status, Some(AgentStatus::Idle));
+    assert!(state
+        .registry
+        .lookup_active_by_pane("old-pane-binding")
+        .await
+        .is_none());
+    let lookup = crate::session_registry::build_source_pane_session_by_pane_request(
+        "{AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE}",
+    );
+    let lookup =
+        crate::session_registry::parse_source_pane_session_by_pane_params(&lookup.params).unwrap();
+    let lookup = handle_source_pane_session_by_pane(&state, &lookup)
+        .await
+        .unwrap();
+    assert_eq!(
+        crate::session_registry::parse_source_pane_session_by_pane_response(&lookup.0)
+            .unwrap()
+            .session_id,
+        Some(params.identity.session_id.clone())
+    );
+    assert!(
+        changes.try_recv().is_ok(),
+        "resume must invalidate subscribed session lists without a hook"
+    );
+    assert!(
+        changes.try_recv().is_err(),
+        "one activation publishes one structural change"
+    );
 
-    let events = crate::wt_protocol_events::take_test_published_events();
+    let events: Vec<serde_json::Value> = crate::wt_protocol_events::take_test_published_events()
+        .into_iter()
+        .map(|event| {
+            serde_json::from_str(&event)
+                .unwrap_or_else(|error| panic!("invalid published event JSON: {error}: {event}"))
+        })
+        .collect();
+    assert_eq!(
+        events
+            .iter()
+            .filter(|event| event["method"] == "session_registry_changed")
+            .count(),
+        1,
+        "Terminal must refresh the resumed tab's known status without a hook"
+    );
     let binding = events
         .iter()
-        .filter_map(|event| serde_json::from_str::<serde_json::Value>(event).ok())
         .find(|event| event["method"] == "pane_agent_session_changed")
         .expect("created pane binding is published to Terminal");
     assert_eq!(binding["params"]["agent"], "copilot");
@@ -11371,6 +11571,23 @@ async fn sidebar_cli_resume_reports_creation_and_focus_failures() {
             }
         );
         assert_eq!(mock.calls().len(), call_count);
+        let events: Vec<serde_json::Value> =
+            crate::wt_protocol_events::take_test_published_events()
+                .into_iter()
+                .map(|event| {
+                    serde_json::from_str(&event).unwrap_or_else(|error| {
+                        panic!("invalid published event JSON: {error}: {event}")
+                    })
+                })
+                .collect();
+        assert_eq!(
+            events
+                .iter()
+                .filter(|event| event["method"] == "session_registry_changed")
+                .count(),
+            usize::from(call_count == 2),
+            "only successful creation and binding publishes metadata, even if focus fails"
+        );
         let row = state.registry.lookup_identity(&identity).await.unwrap();
         if call_count == 2 {
             assert_eq!(
@@ -11391,6 +11608,146 @@ async fn sidebar_cli_resume_reports_creation_and_focus_failures() {
             crate::session_registry::parse_session_activate_response(&replay.0).unwrap()
         );
         assert_eq!(mock.calls().len(), call_count);
+    }
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn sidebar_antigravity_resume_preserves_interface_and_source() {
+    use crate::agent_sessions::{AgentStatus, CliSource, SessionLocation, SessionOrigin};
+    use crate::session_registry::{SessionActivateParams, SessionIdentity, SessionInfo};
+
+    let _resolver = mock_native_delegate_executables();
+    for location in [
+        SessionLocation::Host,
+        SessionLocation::Wsl {
+            distro: "Ubuntu".into(),
+        },
+    ] {
+        for origin in [SessionOrigin::AgentPane, SessionOrigin::Unknown] {
+            let mock = Arc::new(MockWtChannel::responding(serde_json::json!({
+                "session_id": "AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE"
+            })));
+            let state = make_state_with_wt(mock.clone());
+            let _capture = crate::wt_protocol_events::capture_test_published_events();
+            let cwd = if location.is_wsl() {
+                "/home/u/project with spaces"
+            } else {
+                r"C:\repo"
+            };
+            let mut row =
+                SessionInfo::new(SessionId::new("antigravity-history"), PathBuf::from(cwd));
+            row.provider_id = Some("antigravity".into());
+            row.cli_source = Some(CliSource::Antigravity);
+            row.location = location.clone();
+            row.origin = Some(origin.clone());
+            row.status = Some(AgentStatus::Historical);
+            let params = SessionActivateParams {
+                identity: SessionIdentity::from_info(&row),
+                window_id: 42,
+                activation_id: "antigravity-sidebar-activation".into(),
+            };
+            state.registry.upsert(row).await;
+            let response = tokio::task::LocalSet::new()
+                .run_until(handle_session_activate(&state, &params))
+                .await
+                .unwrap();
+            let response =
+                crate::session_registry::parse_session_activate_response(&response.0).unwrap();
+            assert!(response.accepted, "{response:?}");
+            if origin == SessionOrigin::AgentPane {
+                assert_eq!(response.action, "resume_agent_pane");
+                assert!(
+                    mock.calls().is_empty(),
+                    "ACP history must not start the ordinary CLI"
+                );
+                let event = crate::wt_protocol_events::take_test_published_events()
+                    .into_iter()
+                    .map(|raw| serde_json::from_str::<serde_json::Value>(&raw).unwrap())
+                    .find(|event| event["method"] == "resume_in_new_agent_tab")
+                    .unwrap();
+                assert_eq!(event["params"]["agent_id"], "antigravity");
+                assert_eq!(event["params"]["cwd"], cwd);
+                assert_eq!(
+                    event["params"]["agent_source"],
+                    if location.is_wsl() { "wsl" } else { "host" }
+                );
+                assert!(event["params"]["wsl_distro"].is_string());
+            } else {
+                assert_eq!(response.action, "resume_cli");
+                let calls = mock.calls();
+                assert_eq!(calls[0].0, "create_tab");
+                let command = calls[0].1["commandline"].as_str().unwrap();
+                if location.is_wsl() {
+                    assert!(
+                        command.contains("exec 'agy' '--conversation' 'antigravity-history'"),
+                        "{command}"
+                    );
+                    assert!(command.starts_with("wsl.exe -d Ubuntu --cd "), "{command}");
+                    assert!(
+                        command.contains(r#""/home/u/project with spaces""#),
+                        "{command}"
+                    );
+                } else {
+                    assert!(
+                        command.starts_with(r"C:\wta-unit-mock\agy.exe "),
+                        "{command}"
+                    );
+                    assert!(
+                        command.contains("--conversation antigravity-history"),
+                        "{command}"
+                    );
+                }
+                assert_eq!(calls[0].1["native_agent_provider_id"], "antigravity");
+                assert_eq!(calls[0].1["background"], true);
+                assert_eq!(calls[1].0, "focus_pane");
+            }
+        }
+    }
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn sidebar_antigravity_cli_resume_rejects_untrusted_identity_before_launch() {
+    use crate::agent_sessions::{AgentStatus, CliSource, SessionLocation, SessionOrigin};
+    use crate::session_registry::{SessionActivateParams, SessionIdentity, SessionInfo};
+
+    for (session_id, distro) in [
+        ("unsafe;echo marker", "Ubuntu"),
+        ("safe-session", "Ubuntu&echo marker"),
+    ] {
+        let mock = Arc::new(MockWtChannel::ok());
+        let state = make_state_with_wt(mock.clone());
+        let mut row = SessionInfo::new(SessionId::new(session_id), PathBuf::from("/tmp"));
+        row.provider_id = Some("antigravity".into());
+        row.cli_source = Some(CliSource::Antigravity);
+        row.location = SessionLocation::Wsl {
+            distro: distro.into(),
+        };
+        row.origin = Some(SessionOrigin::Unknown);
+        row.status = Some(AgentStatus::Historical);
+        let identity = SessionIdentity::from_info(&row);
+        state.registry.upsert(row).await;
+        let params = SessionActivateParams {
+            identity: identity.clone(),
+            window_id: 42,
+            activation_id: "untrusted-sidebar-resume".into(),
+        };
+        let response = tokio::task::LocalSet::new()
+            .run_until(handle_session_activate(&state, &params))
+            .await
+            .unwrap();
+        let response =
+            crate::session_registry::parse_session_activate_response(&response.0).unwrap();
+        assert!(!response.accepted);
+        assert!(mock.calls().is_empty());
+        assert_eq!(
+            state
+                .registry
+                .lookup_identity(&identity)
+                .await
+                .unwrap()
+                .status,
+            Some(AgentStatus::Historical)
+        );
     }
 }
 
@@ -11464,6 +11821,162 @@ async fn sidebar_cli_resume_updates_only_selected_collision_identity() {
         .expect("colliding row remains registered");
     assert_eq!(other.status, Some(AgentStatus::Historical));
     assert!(other.pane_session_id.is_none());
+    let events: Vec<serde_json::Value> = crate::wt_protocol_events::take_test_published_events()
+        .into_iter()
+        .map(|event| {
+            serde_json::from_str(&event)
+                .unwrap_or_else(|error| panic!("invalid published event JSON: {error}: {event}"))
+        })
+        .collect();
+    assert_eq!(
+        events
+            .iter()
+            .filter(|event| event["method"] == "session_registry_changed")
+            .count(),
+        1,
+        "qualified collisions require structural invalidation, not a raw-ID status delta"
+    );
+    assert!(state.hook_owned.lock().await.is_empty());
+    assert!(state.born_bound.lock().await.is_empty());
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn sidebar_cli_resume_accepts_a_matching_hook_binding_without_resetting_activity() {
+    use crate::agent_sessions::{
+        AgentStatus, CliSource, SessionEvent, SessionLocation, SessionOrigin,
+    };
+    use crate::session_registry::{SessionActivateParams, SessionIdentity, SessionInfo};
+    use std::sync::Mutex as StdMutex;
+    use std::time::Duration;
+
+    let _resolver = mock_native_delegate_executables();
+    struct PausedCreate {
+        entered: tokio::sync::Notify,
+        release: tokio::sync::Notify,
+        focused: StdMutex<Vec<serde_json::Value>>,
+    }
+    #[async_trait::async_trait]
+    impl crate::shell::wt_channel::WtChannel for PausedCreate {
+        async fn request(
+            &self,
+            method: &str,
+            params: serde_json::Value,
+        ) -> anyhow::Result<serde_json::Value> {
+            if method == "create_tab" {
+                assert_eq!(params["window_id"], 42);
+                self.entered.notify_one();
+                tokio::time::timeout(Duration::from_secs(5), self.release.notified())
+                    .await
+                    .context("test did not release native resume creation")?;
+            } else {
+                assert_eq!(method, "focus_pane");
+                self.focused.lock().unwrap().push(params);
+            }
+            Ok(serde_json::json!({ "session_id": "{AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE}" }))
+        }
+        fn is_available(&self) -> bool {
+            true
+        }
+    }
+
+    tokio::time::timeout(
+        Duration::from_secs(15),
+        tokio::task::LocalSet::new().run_until(async {
+            for (status, remove_target) in [
+                (AgentStatus::Idle, false),
+                (AgentStatus::Working, false),
+                (AgentStatus::Attention, false),
+                (AgentStatus::Error, false),
+                (AgentStatus::Idle, true),
+            ] {
+                let wt = Arc::new(PausedCreate {
+                    entered: tokio::sync::Notify::new(),
+                    release: tokio::sync::Notify::new(),
+                    focused: StdMutex::new(Vec::new()),
+                });
+                let state = make_state_with_wt(wt.clone());
+                let sid = SessionId::new("hook-wins-resume");
+                let mut row = SessionInfo::new(sid.clone(), "C:\\repo".into());
+                row.provider_id = Some("copilot".into());
+                row.cli_source = Some(CliSource::Copilot);
+                row.location = SessionLocation::Host;
+                row.origin = Some(SessionOrigin::Unknown);
+                row.status = Some(AgentStatus::Historical);
+                let identity = SessionIdentity::from_info(&row);
+                state.registry.upsert(row).await;
+                let params = SessionActivateParams {
+                    identity: identity.clone(),
+                    window_id: 42,
+                    activation_id: "hook-winner".into(),
+                };
+                let caller = tokio::task::spawn_local({
+                    let state = state.clone();
+                    let params = params.clone();
+                    async move { handle_session_activate(&state, &params).await }
+                });
+                tokio::time::timeout(Duration::from_secs(5), wt.entered.notified())
+                    .await
+                    .unwrap();
+                handle_session_hook(
+                    &state,
+                    SessionEvent::SessionStarted {
+                        key: sid.to_string(),
+                        cli_source: CliSource::Copilot,
+                        pane_session_id: "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee".into(),
+                        cwd: "C:\\repo".into(),
+                        title: "Current native session".into(),
+                    },
+                    false,
+                )
+                .await
+                .unwrap();
+                let mut current = state.registry.lookup_identity(&identity).await.unwrap();
+                current.status = Some(status.clone());
+                current.current_tool = Some("current-tool".into());
+                current.attention_reason = Some("current-attention".into());
+                current.last_error = Some("current-error".into());
+                state.registry.upsert(current.clone()).await;
+                if remove_target {
+                    state.registry.remove_identity(&identity).await;
+                }
+                wt.release.notify_one();
+                let response = caller.await.unwrap().unwrap();
+                let receipt =
+                    crate::session_registry::parse_session_activate_response(&response.0).unwrap();
+                if remove_target {
+                    assert!(
+                        !receipt.accepted,
+                        "a vanished target must not count as a matching binding"
+                    );
+                    assert!(state.registry.lookup_identity(&identity).await.is_none());
+                    assert!(wt.focused.lock().unwrap().is_empty());
+                    continue;
+                }
+                assert!(
+                    receipt.accepted,
+                    "matching hook binding must succeed for {status:?}: {receipt:?}"
+                );
+                assert_eq!(
+                    state.registry.lookup_identity(&identity).await.unwrap(),
+                    current
+                );
+                assert!(state.hook_owned.lock().await.contains(&sid));
+                assert!(!state.born_bound.lock().await.contains(&sid));
+                assert_eq!(
+                    wt.focused.lock().unwrap()[0]["session_id"],
+                    "AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE"
+                );
+                let replay = handle_session_activate(&state, &params).await.unwrap();
+                assert_eq!(
+                    crate::session_registry::parse_session_activate_response(&replay.0).unwrap(),
+                    receipt
+                );
+                assert_eq!(wt.focused.lock().unwrap().len(), 1);
+            }
+        }),
+    )
+    .await
+    .expect("hook-winner matrix completes within 15 seconds");
 }
 
 #[tokio::test]
@@ -11694,6 +12207,7 @@ fn make_state_with_wt(wt: Arc<dyn crate::shell::wt_channel::WtChannel>) -> Arc<M
         registry: crate::session_registry::InMemoryRegistry::shared(),
         session_activation_receipts: Mutex::new(HashMap::new()),
         helper_ext_subscribers: Mutex::new(HashMap::new()),
+        agent_authentication: Mutex::new(HashMap::new()),
         wt: Some(wt),
         agents: Mutex::new(HashMap::new()),
         history_refresh: Arc::new(Mutex::new(())),
@@ -11821,7 +12335,8 @@ async fn assert_rejected_selection_uses_native_provider(
         None,
         None,
         HelperId(1),
-    );
+    )
+    .unwrap();
 
     assert_eq!(selection.command, DEFAULT_CMD);
     assert_eq!(selection.agent_id.as_deref(), Some("copilot"));
@@ -12347,7 +12862,10 @@ fn sidebar_history_discovery_excludes_gemini_but_allows_explicit_chat() {
         checked.push(id.to_owned());
         true
     });
-    assert_eq!(ids, ["copilot", "claude", "codex", "opencode"]);
+    assert_eq!(
+        ids,
+        ["copilot", "claude", "codex", "opencode", "antigravity"]
+    );
     assert_eq!(checked, ids);
 
     let allowed = allow_set(&["gemini"]);
@@ -14510,6 +15028,7 @@ fn listing_agent_from(
         Some(crate::agent_sessions::CliSource::Copilot) => "copilot".to_string(),
         Some(crate::agent_sessions::CliSource::Gemini) => "gemini".to_string(),
         Some(crate::agent_sessions::CliSource::OpenCode) => "opencode".to_string(),
+        Some(crate::agent_sessions::CliSource::Antigravity) => "antigravity".to_string(),
         Some(crate::agent_sessions::CliSource::Unknown(id)) => id.clone(),
         None => "unknown".to_string(),
     };
@@ -15502,6 +16021,505 @@ async fn born_bound_delegate_clears_a_stale_hook_ownership_claim() {
 /// The authoritative hook path is the master's own COM subscription, not a
 /// helper's pipe. One `agent_event` for an unseen session must create the row,
 /// apply the reported transition, and claim hook ownership in one pass.
+#[tokio::test]
+async fn antigravity_wsl_hook_keeps_its_execution_source() {
+    let state = make_state();
+    let sid = acp::schema::v1::SessionId::new("antigravity-wsl-hook");
+    handle_master_wt_event(
+        &state,
+        serde_json::json!({
+            "method": "agent_event",
+            "params": {
+                "event": "agent.prompt.submit",
+                "cli_source": "antigravity",
+                "agent_session_id": "antigravity-wsl-hook",
+                "pane_id": "wsl-owner",
+                "wsl_distro": "Ubuntu",
+                "payload": { "cwd": "/home/u/project" }
+            }
+        }),
+    )
+    .await;
+    let row = state.registry.lookup(&sid).await.unwrap();
+    assert_eq!(
+        row.cli_source,
+        Some(crate::agent_sessions::CliSource::Antigravity)
+    );
+    assert_eq!(
+        row.location,
+        crate::agent_sessions::SessionLocation::Wsl {
+            distro: "Ubuntu".into()
+        }
+    );
+}
+
+#[tokio::test]
+async fn master_com_hook_source_rejects_invalid_metadata_without_mutation() {
+    use crate::agent_sessions::{AgentStatus, CliSource, SessionLocation};
+    use crate::session_registry::SessionInfo;
+
+    for distro in [
+        serde_json::Value::Null,
+        serde_json::json!(42),
+        serde_json::json!(true),
+        serde_json::json!([]),
+        serde_json::json!({}),
+        serde_json::json!(""),
+        serde_json::json!(" "),
+        serde_json::json!("Ubuntu:other"),
+        serde_json::json!("Ubuntu&echo marker"),
+        serde_json::json!("x".repeat(257)),
+    ] {
+        for existing in [false, true] {
+            let state = make_state();
+            let sid = SessionId::new("source-validation");
+            if existing {
+                let mut row = SessionInfo::new(sid.clone(), PathBuf::from("/home/u/project"));
+                row.cli_source = Some(CliSource::Antigravity);
+                row.location = SessionLocation::Wsl {
+                    distro: "Ubuntu".into(),
+                };
+                row.status = Some(AgentStatus::Idle);
+                row.pane_session_id = Some("owner".into());
+                state.registry.upsert(row).await;
+                state.born_bound.lock().await.insert(sid.clone());
+            }
+            let before = state.registry.snapshot().await;
+            let (tx, mut notifications) = mpsc::unbounded_channel();
+            state
+                .helper_ext_subscribers
+                .lock()
+                .await
+                .insert(HelperId(1), tx);
+            handle_master_wt_event(
+                &state,
+                serde_json::json!({
+                    "method": "agent_event",
+                    "params": {
+                        "event": "agent.prompt.submit",
+                        "cli_source": "antigravity",
+                        "agent_session_id": "source-validation",
+                        "pane_id": "owner",
+                        "wsl_distro": distro,
+                        "payload": { "cwd": "/different", "prompt": "changed" }
+                    }
+                }),
+            )
+            .await;
+            assert_eq!(
+                state.registry.snapshot().await,
+                before,
+                "distro={distro}, existing={existing}"
+            );
+            assert!(state.hook_owned.lock().await.is_empty());
+            assert_eq!(state.born_bound.lock().await.contains(&sid), existing);
+            assert!(notifications.try_recv().is_err());
+        }
+    }
+}
+
+#[tokio::test]
+async fn master_com_hook_source_rejects_known_source_or_owner_mismatch() {
+    use crate::agent_sessions::{AgentStatus, CliSource, SessionLocation};
+    use crate::session_registry::SessionInfo;
+
+    for (location, owner, incoming_id) in [
+        (SessionLocation::Host, "owner", "existing"),
+        (
+            SessionLocation::Wsl {
+                distro: "Debian".into(),
+            },
+            "owner",
+            "existing",
+        ),
+        (
+            SessionLocation::Wsl {
+                distro: "Ubuntu".into(),
+            },
+            "other-pane",
+            "existing",
+        ),
+        (SessionLocation::Host, "owner", "new-session"),
+        (
+            SessionLocation::Wsl {
+                distro: "Debian".into(),
+            },
+            "owner",
+            "new-session",
+        ),
+    ] {
+        let state = make_state();
+        let mut row = SessionInfo::new(SessionId::new("existing"), PathBuf::from("/home/u"));
+        row.cli_source = Some(CliSource::Antigravity);
+        row.location = location;
+        row.status = Some(AgentStatus::Idle);
+        row.pane_session_id = Some(owner.into());
+        state.registry.upsert(row).await;
+        let before = state.registry.snapshot().await;
+        handle_master_wt_event(
+            &state,
+            serde_json::json!({
+                "method": "agent_event",
+                "params": {
+                    "event": "agent.prompt.submit",
+                    "cli_source": "antigravity",
+                    "agent_session_id": incoming_id,
+                    "pane_id": "owner",
+                    "wsl_distro": "Ubuntu",
+                    "payload": { "cwd": "/different" }
+                }
+            }),
+        )
+        .await;
+        assert_eq!(state.registry.snapshot().await, before);
+        assert!(state.hook_owned.lock().await.is_empty());
+    }
+}
+
+#[tokio::test]
+async fn master_com_hook_source_checks_pane_context_without_requiring_shell_metadata() {
+    for (shell, accepted) in [
+        ("wsl:Ubuntu", true),
+        ("wsl:ubuntu", true),
+        ("wsl:Debian", false),
+        ("pwsh.exe", false),
+        ("", true),
+    ] {
+        let wt = Arc::new(MockWtChannel::responding(serde_json::json!({
+            "pane": { "session_id": "owner", "shell": shell }
+        })));
+        let state = make_state_with_wt(wt.clone());
+        handle_master_wt_event(
+            &state,
+            serde_json::json!({
+                "method": "agent_event",
+                "params": {
+                    "event": "agent.prompt.submit",
+                    "cli_source": "antigravity",
+                    "agent_session_id": "source-validation",
+                    "pane_id": "owner",
+                    "wsl_distro": "Ubuntu",
+                    "payload": { "cwd": "/home/u/project" }
+                }
+            }),
+        )
+        .await;
+        let row = state
+            .registry
+            .lookup(&SessionId::new("source-validation"))
+            .await;
+        assert_eq!(row.is_some(), accepted, "shell={shell}");
+        if let Some(row) = row {
+            assert_eq!(
+                row.location,
+                crate::agent_sessions::SessionLocation::Wsl {
+                    distro: "Ubuntu".into()
+                }
+            );
+        } else {
+            assert!(state.hook_owned.lock().await.is_empty());
+        }
+        assert_eq!(
+            wt.calls(),
+            vec![(
+                "get_pane_context".into(),
+                serde_json::json!({
+                    "session_id": "owner", "max_lines": 0, "max_chars": 0
+                })
+            )]
+        );
+    }
+}
+
+#[tokio::test]
+async fn master_com_hook_source_preserves_known_wsl_without_external_lookup() {
+    use crate::agent_sessions::{AgentStatus, CliSource, SessionLocation};
+    use crate::session_registry::SessionInfo;
+
+    let wt = Arc::new(MockWtChannel::failing("context unavailable"));
+    let state = make_state_with_wt(wt.clone());
+    let sid = SessionId::new("source-validation");
+    let mut row = SessionInfo::new(sid.clone(), PathBuf::from("/home/u/project"));
+    row.cli_source = Some(CliSource::Antigravity);
+    row.location = SessionLocation::Wsl {
+        distro: "Ubuntu".into(),
+    };
+    row.status = Some(AgentStatus::Idle);
+    row.pane_session_id = Some("{AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE}".into());
+    state.registry.upsert(row).await;
+    handle_master_wt_event(
+        &state,
+        serde_json::json!({
+            "method": "agent_event",
+            "params": {
+                "event": "agent.prompt.submit",
+                "cli_source": "antigravity",
+                "agent_session_id": "source-validation",
+                "pane_id": "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
+                "wsl_distro": "ubuntu",
+                "payload": { "cwd": "/home/u/project" }
+            }
+        }),
+    )
+    .await;
+    let row = state.registry.lookup(&sid).await.unwrap();
+    assert_eq!(row.status, Some(AgentStatus::Working));
+    assert_eq!(
+        row.location,
+        SessionLocation::Wsl {
+            distro: "Ubuntu".into()
+        }
+    );
+    assert!(state.hook_owned.lock().await.contains(&sid));
+    assert!(wt.calls().is_empty());
+}
+
+#[tokio::test]
+async fn master_com_hook_source_preserves_host_and_unavailable_context_hooks() {
+    for distro in [None, Some("Ubuntu")] {
+        let wt = Arc::new(MockWtChannel::failing("context unavailable"));
+        let state = make_state_with_wt(wt.clone());
+        let mut params = serde_json::json!({
+            "event": "agent.prompt.submit",
+            "agent_session_id": "source-validation",
+            "pane_id": "owner",
+            "payload": { "cwd": "/home/u/project" }
+        });
+        if let Some(distro) = distro {
+            params["wsl_distro"] = serde_json::json!(distro);
+            params["cli_source"] = serde_json::json!("antigravity");
+        }
+        handle_master_wt_event(
+            &state,
+            serde_json::json!({
+                "method": "agent_event", "params": params
+            }),
+        )
+        .await;
+        let row = state
+            .registry
+            .lookup(&SessionId::new("source-validation"))
+            .await
+            .unwrap();
+        assert_eq!(
+            row.status,
+            Some(crate::agent_sessions::AgentStatus::Working)
+        );
+        assert_eq!(
+            row.location,
+            match distro {
+                Some(distro) => crate::agent_sessions::SessionLocation::Wsl {
+                    distro: distro.into()
+                },
+                None => crate::agent_sessions::SessionLocation::Host,
+            }
+        );
+        assert_eq!(wt.calls().len(), usize::from(distro.is_some()));
+    }
+}
+
+#[tokio::test]
+async fn master_com_hook_source_rejects_foreign_raw_id_before_reduction() {
+    use crate::agent_sessions::{AgentStatus, CliSource, SessionLocation};
+    use crate::session_registry::SessionInfo;
+
+    for own_row_exists in [false, true] {
+        for wsl_metadata in [true, false] {
+            for event in ["agent.prompt.submit", "agent.session.start"] {
+                let state = make_state();
+                let sid = SessionId::new("colliding-hook-id");
+                let mut foreign = SessionInfo::new(sid.clone(), PathBuf::from("/foreign/cwd"));
+                foreign.provider_id = Some("copilot".into());
+                foreign.cli_source = Some(CliSource::Copilot);
+                foreign.location = SessionLocation::Wsl {
+                    distro: "Ubuntu".into(),
+                };
+                foreign.status = Some(AgentStatus::Idle);
+                foreign.pane_session_id = Some("owner".into());
+                state.registry.upsert(foreign.clone()).await;
+                if own_row_exists {
+                    let mut own = foreign;
+                    own.provider_id = Some("antigravity".into());
+                    own.cli_source = Some(CliSource::Antigravity);
+                    state.registry.upsert(own).await;
+                }
+                state.born_bound.lock().await.insert(sid.clone());
+                let before = state.registry.snapshot().await;
+                assert_eq!(before.len(), if own_row_exists { 2 } else { 1 });
+                let (tx, mut notifications) = mpsc::unbounded_channel();
+                state
+                    .helper_ext_subscribers
+                    .lock()
+                    .await
+                    .insert(HelperId(1), tx);
+                let mut params = serde_json::json!({
+                    "event": event,
+                    "cli_source": "antigravity",
+                    "agent_session_id": "colliding-hook-id",
+                    "pane_id": "owner",
+                    "payload": {"cwd": "/incoming/cwd", "title": "incoming title"}
+                });
+                if wsl_metadata {
+                    params["wsl_distro"] = serde_json::json!("Ubuntu");
+                }
+                // Source corroboration cannot disambiguate the downstream raw-ID
+                // reducer, even when an Antigravity-qualified row also exists.
+                handle_master_wt_event(
+                    &state,
+                    serde_json::json!({
+                        "method": "agent_event", "params": params
+                    }),
+                )
+                .await;
+                assert_eq!(
+                    state.registry.snapshot().await,
+                    before,
+                    "{event}, own={own_row_exists}, wsl={wsl_metadata}"
+                );
+                assert!(state.hook_owned.lock().await.is_empty());
+                assert!(state.born_bound.lock().await.contains(&sid));
+                assert!(notifications.try_recv().is_err());
+            }
+        }
+    }
+}
+
+#[tokio::test]
+async fn master_antigravity_cli_hook_cannot_mutate_acp_owned_raw_id() {
+    use crate::agent_sessions::{AgentStatus, CliSource, SessionLocation, SessionOrigin};
+    use crate::session_registry::SessionInfo;
+
+    let state = make_state();
+    let sid = SessionId::new("antigravity-shared-id");
+    let mut row = SessionInfo::new(sid.clone(), PathBuf::from(r"C:\acp-workspace"));
+    row.provider_id = Some("antigravity".into());
+    row.cli_source = Some(CliSource::Antigravity);
+    row.location = SessionLocation::Host;
+    row.origin = Some(SessionOrigin::AgentPane);
+    row.status = Some(AgentStatus::Idle);
+    row.pane_session_id = Some("acp-owner".into());
+    row.title = Some("ACP conversation".into());
+    state.registry.upsert(row).await;
+    state.born_bound.lock().await.insert(sid.clone());
+    let before = state.registry.snapshot().await;
+    let (tx, mut notifications) = mpsc::unbounded_channel();
+    state
+        .helper_ext_subscribers
+        .lock()
+        .await
+        .insert(HelperId(1), tx);
+
+    handle_master_wt_event(
+        &state,
+        serde_json::json!({
+            "method": "agent_event",
+            "params": {
+                "event": "agent.prompt.submit",
+                "cli_source": "antigravity",
+                "agent_session_id": "antigravity-shared-id",
+                "pane_id": "cli-owner",
+                "payload": {"cwd": "C:\\cli-workspace", "title": "CLI conversation"}
+            }
+        }),
+    )
+    .await;
+
+    assert_eq!(
+        state.registry.snapshot().await,
+        before,
+        "ordinary CLI hooks must not mutate an ACP-owned conversation with the same raw ID"
+    );
+    assert!(state.hook_owned.lock().await.is_empty());
+    assert!(state.born_bound.lock().await.contains(&sid));
+    assert!(notifications.try_recv().is_err());
+}
+
+#[tokio::test]
+async fn master_com_hook_source_unique_id_preserves_live_pane_corroboration() {
+    use crate::agent_sessions::{AgentStatus, CliSource, SessionLocation};
+    use crate::session_registry::SessionInfo;
+
+    for (location, pane, accepted) in [
+        (SessionLocation::Host, "other-pane", true),
+        (SessionLocation::Host, "owner", false),
+        (
+            SessionLocation::Wsl {
+                distro: "Debian".into(),
+            },
+            "owner",
+            false,
+        ),
+        (
+            SessionLocation::Wsl {
+                distro: "Ubuntu".into(),
+            },
+            "owner",
+            true,
+        ),
+    ] {
+        let state = make_state();
+        let mut foreign = SessionInfo::new(
+            SessionId::new("copilot-distinct-id"),
+            PathBuf::from("/foreign/cwd"),
+        );
+        foreign.provider_id = Some("copilot".into());
+        foreign.cli_source = Some(CliSource::Copilot);
+        foreign.location = location;
+        foreign.status = Some(AgentStatus::Idle);
+        foreign.pane_session_id = Some(pane.into());
+        state.registry.upsert(foreign).await;
+        let before = state.registry.snapshot().await;
+        let params = serde_json::json!({
+            "event": "agent.prompt.submit",
+            "cli_source": "antigravity",
+            "agent_session_id": "antigravity-unique-id",
+            "pane_id": "owner",
+            "wsl_distro": "Ubuntu",
+            "payload": {"cwd": "/incoming/cwd"}
+        });
+        assert_eq!(
+            validate_master_hook_source(
+                &state,
+                &params,
+                "antigravity-unique-id",
+                "owner",
+                &CliSource::Antigravity,
+            )
+            .await
+            .is_ok(),
+            accepted,
+        );
+        handle_master_wt_event(
+            &state,
+            serde_json::json!({
+                "method": "agent_event",
+                "params": params
+            }),
+        )
+        .await;
+        let row = state
+            .registry
+            .lookup(&SessionId::new("antigravity-unique-id"))
+            .await;
+        // Main preserves an already attributed pane's root owner independently
+        // of source validation; a nested foreign-provider prompt cannot replace it.
+        assert_eq!(row.is_some(), accepted && pane != "owner");
+        if let Some(row) = row {
+            assert_eq!(row.cli_source, Some(CliSource::Antigravity));
+            assert_eq!(row.status, Some(AgentStatus::Working));
+            assert_eq!(
+                row.location,
+                SessionLocation::Wsl {
+                    distro: "Ubuntu".into()
+                }
+            );
+        } else {
+            assert_eq!(state.registry.snapshot().await, before);
+            assert!(state.hook_owned.lock().await.is_empty());
+        }
+    }
+}
+
 #[tokio::test]
 async fn master_com_agent_event_routes_directly_into_the_registry() {
     let state = make_state();

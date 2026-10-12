@@ -43,26 +43,39 @@ namespace Microsoft::Terminal::Settings::Model::AgentRegistry
         // Describes whether and how the agent consumes the shared BYOK
         // provider selected in settings.
         ByokMode byokMode;
+        bool supportsSessionHooks{ true };
+        std::wstring_view cliExecutable{ id };
     };
 
-    // ACP-capable agents. Either the CLI itself speaks the Agent Control
+    // ACP-capable agents. Either the CLI itself speaks the Agent Client
     // Protocol (copilot, gemini, opencode), or an npm-distributed adapter does
     // (claude via @agentclientprotocol/claude-agent-acp, codex via
-    // @agentclientprotocol/codex-acp).
+    // @agentclientprotocol/codex-acp), or a separate native server does (Antigravity).
     // Only these agents can be hosted in an agent pane.
-    inline constexpr std::array<BuiltinAgent, 5> BuiltinAcpAgents{ {
+    inline constexpr std::array<BuiltinAgent, 6> BuiltinAcpAgents{ {
         { L"copilot", L"GitHub Copilot", ByokMode::CopilotProviderEnvironment },
         { L"claude", L"Claude", ByokMode::Unsupported },
         { L"codex", L"Codex", ByokMode::Unsupported },
         { L"gemini", L"Gemini", ByokMode::Unsupported },
         { L"opencode", L"OpenCode", ByokMode::OpenCodeConfigContent },
+        { L"antigravity", L"Google Antigravity", ByokMode::Unsupported, true, L"agy" },
     } };
 
     // Delegate agents. Invoked for `?<prompt>` background delegation and
     // similar flows. The set is broader than ACP because delegation doesn't
     // require an ACP-speaking agent — any CLI agent that accepts a prompt
     // as input works.
-    inline constexpr std::array<BuiltinAgent, 5> BuiltinDelegateAgents{ {
+    inline constexpr std::array<BuiltinAgent, 6> BuiltinDelegateAgents{ {
+        { L"copilot", L"GitHub Copilot", ByokMode::CopilotProviderEnvironment },
+        { L"claude", L"Claude", ByokMode::Unsupported },
+        { L"codex", L"Codex", ByokMode::Unsupported },
+        { L"gemini", L"Gemini", ByokMode::Unsupported },
+        { L"opencode", L"OpenCode", ByokMode::OpenCodeConfigContent },
+        { L"antigravity", L"Google Antigravity", ByokMode::Unsupported, true, L"agy" },
+    } };
+
+    // Managed native profiles have a narrower command/schema contract than ACP and delegation.
+    inline constexpr std::array<BuiltinAgent, 5> BuiltinNativeProfileAgents{ {
         { L"copilot", L"GitHub Copilot", ByokMode::CopilotProviderEnvironment },
         { L"claude", L"Claude", ByokMode::Unsupported },
         { L"codex", L"Codex", ByokMode::Unsupported },
@@ -112,8 +125,45 @@ namespace Microsoft::Terminal::Settings::Model::AgentRegistry
         return AgentIdEquals(agentId, L"opencode");
     }
 
+    inline constexpr std::wstring_view CliExecutable(const std::wstring_view agentId) noexcept
+    {
+        for (const auto& agent : BuiltinAcpAgents)
+        {
+            if (AgentIdEquals(agent.id, agentId))
+            {
+                return agent.cliExecutable;
+            }
+        }
+        return agentId;
+    }
+
+    inline constexpr bool SupportsDelegate(const std::wstring_view agentId) noexcept
+    {
+        for (const auto& agent : BuiltinDelegateAgents)
+        {
+            if (AgentIdEquals(agent.id, agentId))
+            {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    inline constexpr bool SupportsSessionHooks(const std::wstring_view agentId) noexcept
+    {
+        for (const auto& agent : BuiltinAcpAgents)
+        {
+            if (AgentIdEquals(agent.id, agentId))
+            {
+                return agent.supportsSessionHooks;
+            }
+        }
+        return false;
+    }
+
     inline constexpr std::wstring_view CanonicalNativeAgentProviderId(const std::wstring_view providerId) noexcept
     {
+        // CLI-pane metadata includes delegation/resume providers, not just managed profiles.
         for (const auto& agent : BuiltinDelegateAgents)
         {
             if (AgentIdEquals(agent.id, providerId))
@@ -128,6 +178,18 @@ namespace Microsoft::Terminal::Settings::Model::AgentRegistry
             return providerId;
         }
         return {};
+    }
+
+    inline constexpr bool SupportsNativeProfile(const std::wstring_view providerId) noexcept
+    {
+        for (const auto& agent : BuiltinNativeProfileAgents)
+        {
+            if (agent.id == providerId)
+            {
+                return true;
+            }
+        }
+        return false;
     }
 
     inline bool IsNativeAgentProviderAllowed(const std::wstring_view providerId, const AgentPolicy::PolicySnapshot& policy)

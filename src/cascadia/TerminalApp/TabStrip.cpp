@@ -1228,6 +1228,7 @@ namespace winrt::TerminalApp::implementation
     {
         if (const auto root = sender.try_as<FrameworkElement>())
         {
+            _updateTabHeaderToolTipPlacement(root);
             if (const auto display = root.DataContext().try_as<TerminalApp::TabStripDisplayItem>())
             {
                 _updateDisplayItemVisuals(root, display);
@@ -1237,6 +1238,41 @@ namespace winrt::TerminalApp::implementation
                     ToolTipService::SetToolTip(close, box_value(RS_(L"TabCloseToolTip")));
                 }
             }
+        }
+    }
+
+    void TabStrip::OnTabHeaderSizeChanged(IInspectable const& sender, SizeChangedEventArgs const&)
+    {
+        if (const auto root = sender.try_as<FrameworkElement>())
+        {
+            _updateTabHeaderToolTipPlacement(root);
+        }
+    }
+
+    void TabStrip::OnTabHeaderPointerEntered(IInspectable const& sender, Input::PointerRoutedEventArgs const&)
+    {
+        _updateTabHeaderToolTipPlacement(sender.as<FrameworkElement>());
+    }
+
+    void TabStrip::OnTabHeaderGotFocus(IInspectable const& sender, RoutedEventArgs const&)
+    {
+        _updateTabHeaderToolTipPlacement(sender.as<FrameworkElement>());
+    }
+
+    void TabStrip::_updateTabHeaderToolTipPlacement(FrameworkElement const& header)
+    {
+        const auto xamlRoot = header.XamlRoot();
+        if (!xamlRoot)
+        {
+            return;
+        }
+        const auto target = xamlRoot.Content();
+        if (const auto tooltip = ToolTipService::GetToolTip(header).try_as<ToolTip>())
+        {
+            tooltip.Placement(header.FlowDirection() == FlowDirection::RightToLeft ? Primitives::PlacementMode::Left : Primitives::PlacementMode::Right);
+            ToolTipService::SetPlacementTarget(header, target);
+            tooltip.PlacementRect(header.TransformToVisual(target).TransformBounds(
+                Rect{ 0, 0, static_cast<float>(header.ActualWidth()), static_cast<float>(header.ActualHeight()) }));
         }
     }
 
@@ -1556,6 +1592,22 @@ namespace winrt::TerminalApp::implementation
                 _applyHistoryRowForeground(container.ContentTemplateRoot().try_as<FrameworkElement>(), item);
                 _applyHistoryRowAutomation(container, item);
             }
+        }
+    }
+
+    void TabStrip::UpdateHistoryKeepRunning(const std::function<bool(const winrt::hstring&)>& isPaneKeepRunning)
+    {
+        const auto update = [&](const TerminalApp::TabStripHistoryItem& item) {
+            item.IsKeepRunning(!item.PaneSessionId().empty() && isPaneKeepRunning(item.PaneSessionId()));
+        };
+        for (const auto& item : _historySnapshot)
+        {
+            update(item);
+        }
+        // Equal snapshots can retain distinct visible row objects.
+        for (const auto& item : _historyItems)
+        {
+            update(item);
         }
     }
 
@@ -2084,6 +2136,13 @@ namespace winrt::TerminalApp::implementation
     {
         const auto root = sender.as<FrameworkElement>();
         const auto item = root.DataContext().try_as<TerminalApp::TabStripHistoryItem>();
+        if (const auto icon = root.FindName(L"HistoryKeepRunningIcon").try_as<FontIcon>())
+        {
+            const auto help = RS_(L"KeepTabRunningToolTip");
+            WUX::Automation::AutomationProperties::SetName(icon, RS_(L"KeepTabRunningText"));
+            WUX::Automation::AutomationProperties::SetHelpText(icon, help);
+            ToolTipService::SetToolTip(icon, box_value(help));
+        }
         _applyHistoryRowForeground(root, item);
     }
 

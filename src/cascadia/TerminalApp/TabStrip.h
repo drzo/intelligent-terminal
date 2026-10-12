@@ -103,6 +103,7 @@ namespace winrt::TerminalApp::implementation
         WINRT_OBSERVABLE_PROPERTY(bool, IsCurrent, PropertyChanged.raise, false);
         WINRT_OBSERVABLE_PROPERTY(winrt::Windows::UI::Xaml::Media::Brush, CurrentBackground, PropertyChanged.raise, nullptr);
         WINRT_OBSERVABLE_PROPERTY(winrt::Windows::UI::Xaml::Media::Brush, CurrentForeground, PropertyChanged.raise, nullptr);
+        WINRT_OBSERVABLE_PROPERTY(bool, IsKeepRunning, PropertyChanged.raise, false);
 
     public:
         bool RefreshAge(uint64_t nowMs);
@@ -362,6 +363,7 @@ namespace winrt::TerminalApp::implementation
         void SetRepresentedHistorySessions(std::vector<RepresentedHistorySession> sessions);
         void SetCurrentHistoryItem(TerminalApp::TabStripHistoryItem const& item,
                                    winrt::Microsoft::UI::Xaml::Controls::TabViewItem const& tab);
+        void UpdateHistoryKeepRunning(const std::function<bool(const winrt::hstring&)>& isPaneKeepRunning);
         bool ApplyHistoryStatusDelta(winrt::hstring const& sessionId,
                                      winrt::hstring const& paneSessionId,
                                      winrt::hstring const& status,
@@ -470,6 +472,12 @@ namespace winrt::TerminalApp::implementation
                                         winrt::Windows::UI::Xaml::Controls::ContainerContentChangingEventArgs const& e);
         void OnTabHeaderLoaded(winrt::Windows::Foundation::IInspectable const& sender,
                                winrt::Windows::UI::Xaml::RoutedEventArgs const& e);
+        void OnTabHeaderSizeChanged(winrt::Windows::Foundation::IInspectable const& sender,
+                                    winrt::Windows::UI::Xaml::SizeChangedEventArgs const& e);
+        void OnTabHeaderPointerEntered(winrt::Windows::Foundation::IInspectable const& sender,
+                                       winrt::Windows::UI::Xaml::Input::PointerRoutedEventArgs const& e);
+        void OnTabHeaderGotFocus(winrt::Windows::Foundation::IInspectable const& sender,
+                                 winrt::Windows::UI::Xaml::RoutedEventArgs const& e);
         void OnRowHeaderLoaded(winrt::Windows::Foundation::IInspectable const& sender,
                                winrt::Windows::UI::Xaml::RoutedEventArgs const& e);
         void OnHeaderRenameEnded(winrt::Windows::Foundation::IInspectable const& sender,
@@ -666,6 +674,7 @@ namespace winrt::TerminalApp::implementation
         void _refreshPaneRowVisuals(TerminalApp::TabStripDisplayItem const& display);
         void _refreshPaneRowVisuals(TerminalApp::TabStripDisplayItem const& display,
                                     bool highContrastActive);
+        void _updateTabHeaderToolTipPlacement(winrt::Windows::UI::Xaml::FrameworkElement const& header);
         void _updateDisplayItemVisuals(winrt::Windows::UI::Xaml::FrameworkElement const& root,
                                        TerminalApp::TabStripDisplayItem const& display);
         void _updatePaneRowVisuals(winrt::Windows::UI::Xaml::FrameworkElement const& root,

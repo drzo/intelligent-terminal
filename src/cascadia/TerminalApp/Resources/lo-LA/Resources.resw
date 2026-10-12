@@ -258,6 +258,14 @@
     <value>ເພື່ອປະສົບການຈັດການເຊດຊັນທີ່ດີທີ່ສຸດ, ໃຫ້ເປີດ Sessions ໃນ Settings &gt; Agents.</value>
     <comment>Subtle hint below the agent sessions title, shown only in session management when Sessions is off and policy permits changes. Navigation is Settings &gt; Agents, then turn on Sessions. Match the displayed labels: Settings uses SettingsMenuItem/SettingsTab, Agents uses Nav_AIAgents.Content, and Sessions uses AIAgents_SessionManagement.Header, including fallback labels where a locale has no translation. Turning Sessions off only prevents hook updates; existing hooks and session functionality can keep working. Do not imply that tracking, data refresh, or functionality stops.</comment>
   </data>
+  <data name="SplitProfileUnavailableTitle" xml:space="preserve">
+    <value>ບໍ່ມີໂປຣໄຟລ໌ສຳລັບການແບ່ງ</value>
+    <comment>Title of a warning shown when a configured default split profile is missing or hidden.</comment>
+  </data>
+  <data name="SplitProfileUnavailableMessage" xml:space="preserve">
+    <value>ໂປຣໄຟລ໌ທີ່ຕັ້ງຄ່າໄວ້ສຳລັບການແບ່ງບໍ່ສາມາດໃຊ້ໄດ້. ລະບົບຈະໃຊ້ໂປຣໄຟລ໌ເລີ່ມຕົ້ນລວມແທນ. ເພື່ອປ່ຽນໂປຣໄຟລ໌ເປົ້າໝາຍຂອງການແບ່ງ, ໃຫ້ແກ້ໄຂ defaultSplitProfile ຂອງໂປຣໄຟລ໌ນີ້ໃນ settings.json.</value>
+    <comment>Warning for a default split target that is missing, hidden, or invalid. Recovery requires editing the profile's JSON in settings.json; there is no Settings UI control for defaultSplitProfile. {Locked="defaultSplitProfile"} {Locked="settings.json"}</comment>
+  </data>
   <data name="TabCloseBelow" xml:space="preserve">
     <value>ປິດແທັບຢູ່ລຸ່ມ</value>
   </data>
@@ -445,8 +453,12 @@
     <comment>Command in the notification-area menu that brings a background tab and its still-running terminal panes back into a window. It does not restart the processes or restore a file backup.</comment>
   </data>
   <data name="KeepTabRunningText" xml:space="preserve">
-    <value>ໃຫ້ແທັບເຮັດວຽກຕໍ່ໄປ</value>
-    <comment>Command at the top of a vertical terminal tab's context menu that enables keeping all panes running after the tab or window is closed. Also labels the tab's keep-running status indicator. This does not pin the tab or save it for a restart.</comment>
+    <value>ເປີດໂໝດບໍ່ມີອິນເຕີເຟດ</value>
+    <comment>Command at the top of a vertical terminal tab&apos;s context menu that enables headless mode. Headless mode keeps all existing panes running after the tab or window is closed; it does not immediately hide or pin the tab.</comment>
+  </data>
+  <data name="HeadlessModeOnName" xml:space="preserve">
+    <value>ໂໝດບໍ່ມີອິນເຕີເຟດເປີດຢູ່</value>
+    <comment>Accessibility name for the status icon shown on a terminal tab when headless mode is enabled. Describes the current state, not a command. Headless mode keeps existing panes running after the tab or window is closed.</comment>
   </data>
   <data name="PinTabText" xml:space="preserve">
     <value>ປັກໝຸດແທັບ</value>
@@ -472,15 +484,15 @@
   </data>
   <data name="KeepTabRunningToolTip" xml:space="preserve">
     <value>ໃຫ້ແທັບນີ້ເຮັດວຽກຕໍ່ໄປໃນພື້ນຫຼັງ ຫຼັງຈາກປິດແທັບ ຫຼື ໜ້າຕ່າງ.</value>
-    <comment>Tooltip and accessibility help for Keep tab running. Includes shell panes and the AI assistant; their current processes and sessions stay alive, rather than restarting later.</comment>
+    <comment>Tooltip and accessibility help for Turn on headless mode. Includes shell panes and the AI assistant; their current processes and sessions stay alive, rather than restarting later.</comment>
   </data>
   <data name="TurnOffKeepTabRunningText" xml:space="preserve">
-    <value>ປິດການໃຫ້ເຮັດວຽກຕໍ່ໄປ</value>
-    <comment>Command shown instead of Keep tab running when that tab already has keep running enabled. It only turns off the background-running behavior; it does not close the tab or stop its current processes immediately.</comment>
+    <value>ປິດໂໝດບໍ່ມີອິນເຕີເຟດ</value>
+    <comment>Command shown instead of Turn on headless mode when that tab already has headless mode enabled. It only turns off the background-running behavior; it does not close the tab or stop its current processes immediately.</comment>
   </data>
   <data name="TurnOffKeepTabRunningToolTip" xml:space="preserve">
     <value>ແທັບນີ້ຈະບໍ່ເຮັດວຽກຕໍ່ໄປອີກ ຫຼັງຈາກທ່ານປິດແທັບ ຫຼື ໜ້າຕ່າງ.</value>
-    <comment>Tooltip and accessibility help for Turn off keep running. After this action, closing the tab or its window closes its panes normally instead of retaining them in the background. The current tab and processes are not closed by this action.</comment>
+    <comment>Tooltip and accessibility help for Turn off headless mode. After this action, closing the tab or its window closes its panes normally instead of retaining them in the background. The current tab and processes are not closed by this action.</comment>
   </data>
   <data name="VerticalTabsHistoryStatusIdle" xml:space="preserve">
     <value>ວ່າງ</value>
@@ -540,7 +552,7 @@
   </data>
   <data name="NotificationIconCloseAllKeptTabs" xml:space="preserve">
     <value>ປິດແທັບທັງໝົດທີ່ກຳລັງເຮັດວຽກຢູ່ເບື້ອງຫຼັງ</value>
-    <comment>Command below the background tabs in the notification-area menu. Closes all detached tabs retained by Keep tab running and terminates their panes and processes. Does not close tabs still in a window or only turn off keep running.</comment>
+    <comment>Command below the background tabs in the notification-area menu. Closes all detached tabs retained by headless mode and terminates their panes and processes. Does not close tabs still in a window or only turn off headless mode.</comment>
   </data>
   <data name="PaneProgressStatusNormal" xml:space="preserve">
     <value>ຄວາມຄືບໜ້າ</value>
