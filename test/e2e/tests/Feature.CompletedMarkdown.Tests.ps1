@@ -8,7 +8,7 @@ the agent is a fixture, never a provider. No private test kit is imported.
 | --- | --- | --- | --- | --- | --- | --- |
 | Raw throughout an active turn; batch only after normal end | Prefix, tail and finish gates | ACP notifications/end -> completed display | Literal prefix and received tail before finish, then marker-free text and completed_markdown DEBUG work | Held finish has zero work, including after tail | AgentProtocolExperience; WTA completed_markdown units | Completed replies render Markdown after raw streaming |
 | Only normally completed agent segments format, without moving other messages | Agent/tool failure/thought/agent, then normal end; separate cancel and RPC-error turns | Mixed transcript and lifecycle -> visible history | Ordered independent formatted segments; user/tool/thought/error text stays literal; interrupted segments never render | Tool failure is not turn failure; cancellation and RPC failure are | AgentProtocolExperience; PromptHistory | Interrupted replies stay raw and preserve transcript order |
-| Cached history shares draw, wrap and copy geometry | Collapse/expand, narrow/wide owned window, wheel, ConPTY mouse selection and native copy | Completed cache -> Ratatui viewport -> exact UIA anchor and verified single-cell prefix -> ConPTY input -> clipboard | Table and wrap anchors, exact visible-text copy, width-dependent reflow, unchanged work on settled redraws and stable identities | No work from unchanged frames or history navigation | CompletedTurnSelection; AgentMouse CompletedTurnMouse; MouseInput units | Completed Markdown keeps cached history and selection geometry |
+| Cached history shares draw, wrap and copy geometry | Collapse/expand, narrow/wide owned window, wheel, ConPTY mouse selection, native copy and eviction/revisit | Completed cache -> Ratatui viewport -> exact UIA anchor and verified single-cell prefix -> ConPTY input -> clipboard | Table and wrap anchors, exact visible-text copy, width-dependent reflow, one rebuild of evicted history and stable identities | No work from unchanged frames or offscreen height queries | CompletedTurnSelection; AgentMouse CompletedTurnMouse; MouseInput units | Completed Markdown keeps cached history and selection geometry |
 | Selection pins the raw snapshot, not already formatted history | ConPTY drag before finish, then release finish and copy | Mouse selection -> completion -> copied cells -> first Markdown display | Raw copy after normal end; formatted old history unchanged; clear/copy permits transition | Normal completion without selection transitions immediately | AgentMouse; AgentSelectAll; OwnedLaunchPointerSafety units | Selecting streamed text defers completed Markdown |
 
 Run only with ITE2E_PACKAGE=Dev and exact-source ITE2E_EXPECTED_APP_SHA256
@@ -525,6 +525,21 @@ Describe 'Feature: completed Markdown' -Tag @('Feature', 'CompletedMarkdown') {
         Send-AgentKey -App $script:cmApp -PaneSessionId $script:cmPane -Key Left -Count 3 | Out-Null
         Assert-CmWorkStable -Count $work
         Save-CmEvidence -Name history-wide-restored
+
+        $newer = Start-CmTurn -Mode HISTORY -Rows ([Math]::Min(160, $geometry.Rows * 2))
+        Release-CmGate -Turn $newer -Gate tail
+        Release-CmGate -Turn $newer -Gate finish
+        Wait-CmFixture -Turn $newer -Event finished
+        Wait-CmPane -Present @($newer.Cell, $newer.Tail) -Absent "**$($newer.Tail)**" -Completed | Out-Null
+        Wait-CmWork -Count ($work + 1)
+        Assert-CmWorkStable -Count ($work + 1)
+        Save-CmEvidence -Name history-old-offscreen
+        Send-AgentKey -App $script:cmApp -PaneSessionId $script:cmPane -Key Escape | Out-Null
+        Send-AgentKey -App $script:cmApp -PaneSessionId $script:cmPane -Key Tab -Count 2 | Out-Null
+        Wait-CmPane -Present @($turn.User, $turn.Prefix) -Absent "**$($turn.Prefix)**" -Completed | Out-Null
+        Wait-CmWork -Count ($work + 2)
+        Assert-CmWorkStable -Count ($work + 2)
+        Save-CmEvidence -Name history-old-rebuilt
         Assert-CmIdentity
     }
 
