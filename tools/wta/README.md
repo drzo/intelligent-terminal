@@ -35,6 +35,12 @@ reuse their derived result. A changed width or source, or revisiting evicted
 history, can require another batch render. Only raw transcript content is
 persisted.
 
+Every chat frame releases unseen derived entries and their associated height
+cache. Revisiting that history measures the same raw snapshot it initially draws,
+then installs the rebuilt Markdown rows and height together.
+Height-only queries never queue a Markdown job or keep an offscreen entry alive;
+only display preparation requests the derived rows.
+
 This version consumes the crates.io release without Git dependencies or local
 patches. It does not depend on incremental rendering APIs. Heading markers and
 code fences keep upstream defaults; syntax highlighting is disabled and styles

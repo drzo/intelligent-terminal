@@ -106,6 +106,23 @@ impl Worker {
 }
 
 impl BatchMarkdownCache {
+    pub(crate) fn snapshot(
+        &self,
+        key: MarkdownKey,
+        source: &str,
+        width: usize,
+        allow_transition: bool,
+    ) -> Option<&[Line<'static>]> {
+        self.entries
+            .get(&key)
+            .filter(|document| {
+                document.source.as_ref() == source
+                    && document.width == width
+                    && (document.published || allow_transition)
+            })
+            .and_then(|document| document.rows.as_deref())
+    }
+
     pub(crate) fn render(
         &mut self,
         key: MarkdownKey,
@@ -200,8 +217,17 @@ impl BatchMarkdownCache {
         }
     }
 
-    pub(crate) fn end_frame(&mut self) {
-        self.entries.retain(|_, document| document.seen);
+    pub(crate) fn end_frame(&mut self) -> Vec<usize> {
+        let mut evicted_turns = Vec::new();
+        self.entries.retain(|key, document| {
+            if !document.seen {
+                evicted_turns.push(key.turn);
+            }
+            document.seen
+        });
+        evicted_turns.sort_unstable();
+        evicted_turns.dedup();
+        evicted_turns
     }
 
     pub(crate) fn clear(&mut self) {
@@ -702,6 +728,38 @@ mod tests {
     }
 
     #[test]
+    fn height_snapshots_do_not_schedule_publish_or_retain_offscreen_documents() {
+        let mut cache = BatchMarkdownCache::default();
+        let source = "**snapshot**";
+        assert!(cache.snapshot(KEY, source, 40, true).is_none());
+        assert!(cache.entries.is_empty());
+        assert!(cache.worker.is_none());
+        assert!(cache.render(KEY, source, 40, true).is_none());
+        cache.wait_until_idle();
+        let stats = cache.stats();
+        let pointer = cache.snapshot(KEY, source, 40, true).unwrap().as_ptr();
+        assert!(cache.snapshot(KEY, source, 40, false).is_none());
+        assert_eq!(
+            cache.render(KEY, source, 40, true).unwrap().as_ptr(),
+            pointer
+        );
+        assert_eq!(
+            cache.snapshot(KEY, source, 40, false).unwrap().as_ptr(),
+            pointer
+        );
+        assert!(cache.snapshot(KEY, "**replaced**", 40, true).is_none());
+        assert!(cache.snapshot(KEY, source, 41, true).is_none());
+        assert!(!cache.has_pending());
+        cache.begin_frame();
+        assert!(cache.snapshot(KEY, source, 40, false).is_some());
+        assert_eq!(cache.end_frame(), vec![KEY.turn]);
+        assert!(cache.snapshot(KEY, source, 40, true).is_none());
+        assert!(cache.entries.is_empty());
+        assert!(!cache.has_pending());
+        assert_eq!(cache.stats(), stats);
+    }
+
+    #[test]
     fn unchanged_frames_borrow_the_same_snapshot_without_more_work() {
         let mut cache = BatchMarkdownCache::default();
         let source = "**cached**";
@@ -718,7 +776,7 @@ mod tests {
                 cache.render(KEY, source, 30, true).unwrap().as_ptr(),
                 pointer
             );
-            cache.end_frame();
+            assert!(cache.end_frame().is_empty());
             assert_eq!(cache.source(KEY).unwrap().as_ptr(), raw_pointer);
             assert_eq!(cache.stats(), stats);
             assert!(!cache.has_pending());
@@ -831,12 +889,12 @@ mod tests {
         cache.render(OTHER, "**never dispatched**", 40, true);
         cache.begin_frame();
         cache.render(KEY, "**kept**", 40, true);
-        cache.end_frame();
+        assert_eq!(cache.end_frame(), vec![OTHER.turn]);
         assert_eq!(cache.source(OTHER), None);
         let old = completed(&mut cache, KEY, "**kept**", 40);
         assert_eq!(cache.stats().batch_renders, 1);
         cache.begin_frame();
-        cache.end_frame();
+        assert_eq!(cache.end_frame(), vec![KEY.turn]);
         assert_eq!(cache.source(KEY), None);
         assert_eq!(completed(&mut cache, KEY, "**kept**", 40), old);
         assert_eq!(cache.stats().batch_renders, 2);
@@ -847,7 +905,7 @@ mod tests {
         let mut cache = BatchMarkdownCache::default();
         cache.begin_frame();
         cache.touch_turn(KEY.turn);
-        cache.end_frame();
+        assert!(cache.end_frame().is_empty());
         assert!(cache.entries.is_empty());
         assert!(cache.worker.is_none());
         assert!(!cache.has_pending());
@@ -858,10 +916,13 @@ mod tests {
         let second = completed(&mut cache, sibling, "**second segment**", 40);
         completed(&mut cache, OTHER, "**offscreen turn**", 40);
         let stats = cache.stats();
-        for _ in 0..2 {
+        for frame in 0..2 {
             cache.begin_frame();
             cache.touch_turn(KEY.turn);
-            cache.end_frame();
+            assert_eq!(
+                cache.end_frame(),
+                if frame == 0 { vec![OTHER.turn] } else { vec![] }
+            );
             assert_eq!(cache.source(KEY), Some("**first segment**"));
             assert_eq!(cache.source(sibling), Some("**second segment**"));
             assert_eq!(cache.source(OTHER), None);
@@ -1094,6 +1155,7 @@ mod tests {
             // Parallel tests can register these callsites without this scoped subscriber.
             let mut warmup = BatchMarkdownCache::default();
             completed(&mut warmup, KEY, "", 0);
+            completed(&mut warmup, KEY, "中", 3);
             completed(&mut warmup, KEY, "**A中e\u{301}👩\u{200d}💻B 文 end**", 5);
             tracing::callsite::rebuild_interest_cache();
             logs.lock().unwrap().clear();

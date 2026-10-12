@@ -293,8 +293,8 @@ pub fn render(frame: &mut Frame, app: &mut App) {
         {
             app.recommendation_rendered = false;
         }
-        app.current_tab().agent_markdown.borrow_mut().end_frame();
     }
+    app.current_tab_mut().end_markdown_frame();
 
     // `/model` picker modal: same anchor as the autocomplete popup. The two
     // are mutually exclusive — opening the picker clears the input, so the

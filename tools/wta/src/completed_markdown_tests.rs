@@ -337,6 +337,167 @@ fn completed_markdown_collapsed_visible_history_reuses_its_cached_batch() {
     assert_eq!(app.current_tab().agent_markdown.borrow().stats(), before);
 }
 
+fn formatted_history_with_newer_raw_reply(show_popup: bool) -> (App, String, usize, usize) {
+    let source = "**OLD_WORD** ".repeat(80) + "\n\n**OLD_END**";
+    let mut app = app_with_reply(&source);
+    app.handle_event(AppEvent::AgentMessageEnd {
+        session_id: DEFAULT_TAB_ID.into(),
+    });
+    wait_for_render(&mut app, 40, 18, |text| {
+        text.contains("OLD_END") && !text.contains("**OLD_END**")
+    });
+    let wrap_width = 38;
+    let formatted_height = app
+        .current_tab()
+        .cached_completed_turn_height(0, wrap_width)
+        .expect("the rendered turn has a height at the chat's actual width");
+    app.turn_submit_prompt(
+        DEFAULT_TAB_ID,
+        SubmittedPrompt {
+            id: 43,
+            text: "newer prompt".into(),
+            submitted_at_unix_s: 0.0,
+            context: TurnContext::default(),
+            autofix: None,
+        },
+    );
+    app.handle_event(AppEvent::AgentMessageChunk {
+        session_id: DEFAULT_TAB_ID.into(),
+        text: "NEWER_RAW_ROW\n".repeat(60),
+    });
+    app.current_tab_mut().reveal_chars = usize::MAX;
+    app.turn_cancel(DEFAULT_TAB_ID);
+    app.handle_event(AppEvent::AgentMessageEnd {
+        session_id: DEFAULT_TAB_ID.into(),
+    });
+    assert_eq!(app.current_tab().completed_turns.len(), 2);
+    if show_popup {
+        let tab = app.current_tab_mut();
+        tab.input = "/".into();
+        tab.cursor_pos = 1;
+        tab.refresh_command_popup();
+        assert!(app.command_popup_state().is_some());
+    }
+    let frame = render_at(&mut app, 40, 18);
+    assert!(!frame.contains("OLD_END"), "{frame}");
+    (app, source, wrap_width, formatted_height)
+}
+
+#[test]
+fn completed_markdown_evicted_history_is_pruned_without_a_command_popup() {
+    let _locale = crate::test_support::lock_locale();
+    rust_i18n::set_locale("en-US");
+    let (app, _, width, _) = formatted_history_with_newer_raw_reply(false);
+    let key = super::agent_markdown::MarkdownKey {
+        turn: 0,
+        message: 0,
+    };
+    assert_eq!(app.current_tab().agent_markdown.borrow().source(key), None);
+    assert_eq!(
+        app.current_tab().cached_completed_turn_height(0, width),
+        None
+    );
+}
+
+#[test]
+fn completed_markdown_evicted_history_rebuilds_raw_geometry_before_selection() {
+    let _locale = crate::test_support::lock_locale();
+    rust_i18n::set_locale("en-US");
+    let (mut app, source, width, formatted_height) = formatted_history_with_newer_raw_reply(true);
+    let key = super::agent_markdown::MarkdownKey {
+        turn: 0,
+        message: 0,
+    };
+    assert_eq!(app.current_tab().agent_markdown.borrow().source(key), None);
+    assert_eq!(
+        app.current_tab().cached_completed_turn_height(0, width),
+        None
+    );
+    app.current_tab_mut().input.clear();
+    app.current_tab_mut().refresh_command_popup();
+
+    let mut raw = app_with_reply(&source);
+    raw.handle_event(AppEvent::AgentMessageEnd {
+        session_id: DEFAULT_TAB_ID.into(),
+    });
+    raw.current_tab_mut().completed_markdown_turns.clear();
+    render_at(&mut raw, 40, 18);
+    let raw_height = raw
+        .current_tab()
+        .cached_completed_turn_height(0, width)
+        .unwrap();
+    assert_ne!(raw_height, formatted_height);
+
+    assert!(app.current_tab_mut().select_completed_turn(0));
+    let revisited = render_at(&mut app, 40, 18);
+    assert!(revisited.contains("**OLD_WORD**"), "{revisited}");
+    assert_eq!(
+        app.current_tab().cached_completed_turn_height(0, width),
+        Some(raw_height)
+    );
+    wait_for_render(&mut app, 40, 18, |text| {
+        text.contains("OLD_WORD") && !text.contains("**OLD_WORD**")
+    });
+    assert_eq!(
+        app.current_tab().cached_completed_turn_height(0, width),
+        Some(formatted_height)
+    );
+    let stats = app.current_tab().agent_markdown.borrow().stats();
+    assert_eq!(stats.batch_renders, 2);
+    for _ in 0..3 {
+        render_at(&mut app, 40, 18);
+        assert_eq!(app.current_tab().agent_markdown.borrow().stats(), stats);
+    }
+}
+
+#[test]
+fn completed_markdown_evicted_newer_history_does_not_rebuild_during_older_navigation() {
+    let _locale = crate::test_support::lock_locale();
+    rust_i18n::set_locale("en-US");
+    let mut app = app_with_reply(&("**OLDER_WORD** ".repeat(80) + "\n\n**OLDER_END**"));
+    app.handle_event(AppEvent::AgentMessageEnd {
+        session_id: DEFAULT_TAB_ID.into(),
+    });
+    wait_for_render(&mut app, 40, 18, |text| {
+        text.contains("OLDER_END") && !text.contains("**OLDER_END**")
+    });
+    app.turn_submit_prompt(
+        DEFAULT_TAB_ID,
+        SubmittedPrompt {
+            id: 43,
+            text: "newer prompt".into(),
+            submitted_at_unix_s: 0.0,
+            context: TurnContext::default(),
+            autofix: None,
+        },
+    );
+    app.handle_event(AppEvent::AgentMessageChunk {
+        session_id: DEFAULT_TAB_ID.into(),
+        text: "**NEWER_WORD** ".repeat(80) + "\n\n**NEWER_END**",
+    });
+    app.handle_event(AppEvent::AgentMessageEnd {
+        session_id: DEFAULT_TAB_ID.into(),
+    });
+    wait_for_render(&mut app, 40, 18, |text| {
+        text.contains("NEWER_END") && !text.contains("**NEWER_END**")
+    });
+    assert!(app.current_tab_mut().select_completed_turn(0));
+    wait_for_render(&mut app, 40, 18, |text| {
+        text.contains("OLDER_WORD") && !text.contains("**OLDER_WORD**")
+    });
+    assert!(
+        !app.current_tab().agent_markdown.borrow().has_pending(),
+        "measuring evicted offscreen history must not queue another Markdown job"
+    );
+    let stats = app.current_tab().agent_markdown.borrow().stats();
+    for _ in 0..5 {
+        let frame = render_at(&mut app, 40, 18);
+        assert_eq!(app.current_tab().agent_markdown.borrow().stats(), stats);
+        assert!(!app.current_tab().agent_markdown.borrow().has_pending());
+        assert!(frame.contains("OLDER_WORD") && !frame.contains("**OLDER_WORD**"));
+    }
+}
+
 #[test]
 fn completed_markdown_defers_the_display_change_while_selecting_raw_text() {
     let _locale = crate::test_support::lock_locale();

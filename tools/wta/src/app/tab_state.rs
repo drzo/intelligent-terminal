@@ -910,6 +910,15 @@ impl TabSession {
         cache.begin_frame();
     }
 
+    pub(crate) fn end_markdown_frame(&mut self) {
+        for index in self.agent_markdown.get_mut().end_frame() {
+            self.completed_turn_layout
+                .height_cache
+                .get_mut()
+                .invalidate(index);
+        }
+    }
+
     pub(crate) fn completed_tool_call_expanded(&self, id: &str) -> bool {
         self.expanded_completed_tool_calls.contains(id)
     }

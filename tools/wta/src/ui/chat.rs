@@ -610,7 +610,15 @@ fn completed_turn_height(tab: &crate::app::TabSession, index: usize, wrap_width:
         return 0;
     }
     let height = rendered_lines_height(
-        &build_completed_turn_lines_for_tab(tab, index, false, false, wrap_width).lines,
+        &build_completed_turn_lines_for_tab(
+            tab,
+            index,
+            false,
+            false,
+            wrap_width,
+            MarkdownAccess::Measure,
+        )
+        .lines,
         wrap_width,
     );
     tab.cache_completed_turn_height(index, wrap_width, height);
@@ -1148,6 +1156,7 @@ pub fn render(frame: &mut Frame, app: &mut App, area: Rect, scrollbar_area: Rect
                     tab.selected_completed_turn_idx == Some(position.turn_index),
                     app.pane_focused,
                     wrap_width,
+                    MarkdownAccess::Display,
                 );
                 let height = rendered_lines_height(&built.lines, wrap_width);
                 let row_offset = position
@@ -1213,6 +1222,7 @@ pub fn render(frame: &mut Frame, app: &mut App, area: Rect, scrollbar_area: Rect
                     tab.selected_completed_turn_idx == Some(planned.index),
                     app.pane_focused,
                     wrap_width,
+                    MarkdownAccess::Display,
                 )
             };
             for row in message_rows {
@@ -1620,30 +1630,43 @@ fn build_completed_turn_lines_with_prompt_rows<'a>(
     (built.lines, built.prompt_rows)
 }
 
+#[derive(Clone, Copy)]
+enum MarkdownAccess {
+    Measure,
+    Display,
+}
+
 fn build_completed_turn_lines_for_tab<'a>(
     tab: &'a crate::app::TabSession,
     turn_index: usize,
     is_selected: bool,
     pane_focused: bool,
     wrap_width: usize,
+    access: MarkdownAccess,
 ) -> CompletedTurnLines<'a> {
     let turn = &tab.completed_turns[turn_index];
-    tab.agent_markdown.borrow_mut().touch_turn(turn_index);
+    if matches!(access, MarkdownAccess::Display) {
+        tab.agent_markdown.borrow_mut().touch_turn(turn_index);
+    }
     let mut prepared = Vec::new();
     let mut ready = true;
     if turn.expanded && tab.completed_markdown_turns.contains(&turn_index) {
         let mut cache = tab.agent_markdown.borrow_mut();
         for (message, detail) in turn.details.iter().enumerate() {
             if let ChatMessage::Agent(source) = detail {
-                if let Some(rows) = cache.render(
-                    MarkdownKey {
-                        turn: turn_index,
-                        message,
-                    },
-                    source,
-                    wrap_width,
-                    tab.allow_markdown_transition,
-                ) {
+                let key = MarkdownKey {
+                    turn: turn_index,
+                    message,
+                };
+                let rows = match access {
+                    MarkdownAccess::Measure => {
+                        cache.snapshot(key, source, wrap_width, tab.allow_markdown_transition)
+                    }
+                    MarkdownAccess::Display => {
+                        cache.render(key, source, wrap_width, tab.allow_markdown_transition)
+                    }
+                };
+                if let Some(rows) = rows {
                     prepared.push((message, rows.to_vec()));
                 } else {
                     ready = false;
