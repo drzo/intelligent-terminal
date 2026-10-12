@@ -1,7 +1,7 @@
 //! Completed-response batch Markdown cache. Active replies never enter this module.
 //!
 //! Only `poll` installs worker results; `render` borrows the current UI-owned snapshot.
-//! Unseen viewport/overscan entries are evicted each frame, so reopening evicted history rebuilds
+//! Entries outside the viewport and its render margin are evicted each frame, so revisiting history rebuilds
 //! from its original source. There is no separate retained-history or source-size budget here.
 //! The registry renderer's heading markers and code fences are deliberately retained.
 //!
@@ -703,7 +703,7 @@ mod tests {
         let mut cache = BatchMarkdownCache::default();
         for source in [
             "# Heading\n\n- [x] Task\n- [ ] Another\n\n**bold** and *italic*",
-            "> quoted `code` and [link](https://example.invalid)\n\n~~gone~~",
+            "> quoted `code` and [guide](https://example.invalid)\n\n~~gone~~",
             "```rust\nlet text = \"**literal**\";\n```\n\nA soft\nbreak",
             "| Header | Value |\n| --- | --- |\n| **strong** | CJK 中 |\n| last | cell |",
         ] {
@@ -1152,7 +1152,7 @@ mod tests {
             .without_time()
             .finish();
         tracing::subscriber::with_default(subscriber, || {
-            // Parallel tests can register these callsites without this scoped subscriber.
+            // Parallel tests can register these call sites without this scoped subscriber.
             let mut warmup = BatchMarkdownCache::default();
             completed(&mut warmup, KEY, "", 0);
             completed(&mut warmup, KEY, "中", 3);
