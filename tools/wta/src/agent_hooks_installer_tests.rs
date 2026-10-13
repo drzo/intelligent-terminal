@@ -2241,6 +2241,8 @@ fn native_hook_bundle_versions_match_their_marketplaces() {
         GEMINI_EXTENSION_JSON,
         CODEX_PLUGIN_JSON,
         OPENCODE_PLUGIN_JSON,
+        include_str!("../wt-agent-hooks/antigravity/intelligent-terminal.json"),
+        include_str!("../wt-agent-hooks/antigravity-wsl/intelligent-terminal.json"),
     ];
     for manifest in manifests {
         let value: Value = serde_json::from_str(manifest).unwrap();
