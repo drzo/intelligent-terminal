@@ -508,6 +508,52 @@ Describe 'Dev-only automatic cold start' -Tag 'Unit' {
     }
 }
 
+Describe 'Combined sidebar cold-start observation' -Tag Unit {
+    BeforeAll {
+        $source = Get-Content -LiteralPath (Join-Path $PSScriptRoot '..\tests\Feature.CombinedAgentsSidebar.Tests.ps1') -Raw
+        $start = $source.IndexOf('$script:target = Resolve-ItApp -Package Dev', [StringComparison]::Ordinal)
+        $end = $source.IndexOf('if (-not $env:ITE2E_EXPECTED_APP_SHA256', $start, [StringComparison]::Ordinal)
+        if ($start -lt 0 -or $end -le $start) { throw 'Combined sidebar preflight boundaries were not found.' }
+        $script:combinedPreflight = [scriptblock]::Create($source.Substring($start, $end - $start))
+    }
+
+    BeforeEach {
+        $script:cleanupCompleted = $false
+        $script:initialProcessCheckAt = $null
+        $script:initialProcesses = $null
+        Mock Resolve-ItApp { [pscustomobject]@{ Package = 'IntelligentTerminal_rd9vj3e6a2mbr' } }
+        Mock Stop-StaleItInstances { $script:cleanupCompleted = $true }
+        Mock Get-WtProcessesForApp {
+            if (-not $script:cleanupCompleted) { throw 'Inactivity was observed before Dev preflight cleanup.' }
+            @()
+        }
+    }
+
+    It 'records a fresh package-wide inactivity observation after Dev cleanup' {
+        . $script:combinedPreflight
+
+        $script:initialProcessCheckAt | Should -Not -BeNullOrEmpty
+        $script:initialProcesses | Should -HaveCount 0
+        Should -Invoke Stop-StaleItInstances -Times 1 -Exactly
+        Should -Invoke Get-WtProcessesForApp -Times 1 -Exactly -ParameterFilter { $IncludePackageExecutables }
+    }
+
+    It 'refuses a late Dev arrival instead of fabricating an inactive recovery receipt' {
+        Mock Get-WtProcessesForApp { [pscustomobject]@{ Id = 51002 } }
+
+        { . $script:combinedPreflight } | Should -Throw '*existing Dev process*'
+
+        $script:initialProcesses.Id | Should -Be 51002
+        Should -Invoke Stop-StaleItInstances -Times 1 -Exactly
+    }
+
+    It 'surfaces an unreadable post-cleanup package observation' {
+        Mock Get-WtProcessesForApp { throw 'post-cleanup discovery unavailable' }
+
+        { . $script:combinedPreflight } | Should -Throw '*post-cleanup discovery unavailable*'
+    }
+}
+
 Describe 'Feature suites honor Dev-only cold start policy' -Tag Unit {
     It 'keeps PromptQueue failure recovery refusal-only after the preflight' {
         $path = Join-Path $PSScriptRoot '..\tests\Feature.PromptQueue.Tests.ps1'

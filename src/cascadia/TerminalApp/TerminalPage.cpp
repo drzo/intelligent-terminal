@@ -24,6 +24,8 @@
 #include "../inc/AcpModelUtils.h"
 #include "../inc/AgentAvailability.h"
 #include "../inc/AgentRegistry.h"
+#include "../inc/AgentIconUtils.h"
+#include "../inc/AgentProfileUtils.h"
 #include "../inc/AgentPolicy.h"
 #include "../inc/AgentPaneBackend.h"
 #include "../inc/AgentSourceUtils.h"
@@ -274,11 +276,28 @@ namespace winrt::TerminalApp::implementation
                     page->_UpdateSidebarHistoryCurrentSession();
                 }
             });
+        _paneWindowChangedToken = winrt::get_self<implementation::ContentManager>(_manager)->PaneWindowChanged(
+            [weakThis{ get_weak() }](const winrt::guid& paneId, const uint64_t ownerWindowId) {
+                if (const auto page = weakThis.get(); page && page->_tabStrip)
+                {
+                    const auto currentWindowId = page->_WindowProperties.WindowId();
+                    const auto strip = winrt::get_self<implementation::TabStrip>(page->_tabStrip);
+                    strip->UpdateHistoryPaneOwnership([&](const winrt::hstring& rowPaneId) -> std::optional<bool> {
+                        if (_TryParsePaneSessionId(winrt::to_string(rowPaneId)) == paneId)
+                        {
+                            return currentWindowId != 0 && ownerWindowId != 0 && currentWindowId != ownerWindowId;
+                        }
+                        return std::nullopt;
+                    });
+                    page->_ApplyTabListProjection();
+                }
+            });
     }
 
     TerminalPage::~TerminalPage()
     {
         winrt::get_self<implementation::ContentManager>(_manager)->KeepRunningTabsChanged(_keepRunningTabsChangedToken);
+        winrt::get_self<implementation::ContentManager>(_manager)->PaneWindowChanged(_paneWindowChangedToken);
         _sidebarIntroductionShuttingDown = true;
         _ReleaseSidebarIntroduction(false);
         if (_sidebarIntroductionTimer)
@@ -3550,6 +3569,7 @@ namespace winrt::TerminalApp::implementation
              status != "Working" &&
              status != "Attention" &&
              status != "Error" &&
+             status != "InUse" &&
              status != "Ended" &&
              status != "Historical"))
         {
@@ -6611,10 +6631,15 @@ namespace winrt::TerminalApp::implementation
 
         const auto strip = winrt::get_self<implementation::TabStrip>(_tabStrip);
         const auto manager = winrt::get_self<implementation::ContentManager>(_manager);
-        strip->UpdateHistoryKeepRunning([&](const winrt::hstring& paneSessionId) {
-            const auto paneId = _TryParsePaneSessionId(winrt::to_string(paneSessionId));
-            return paneId && manager->IsPaneKeepRunning(*paneId);
-        });
+        strip->UpdateHistoryKeepRunning(
+            [&](const winrt::hstring& paneSessionId) {
+                const auto paneId = _TryParsePaneSessionId(winrt::to_string(paneSessionId));
+                return paneId && manager->IsPaneKeepRunning(*paneId);
+            },
+            [&](const winrt::hstring& paneSessionId) {
+                const auto paneId = _TryParsePaneSessionId(winrt::to_string(paneSessionId));
+                return paneId && manager->KeptGroupForPane(*paneId) != winrt::guid{};
+            });
 
         TerminalApp::TabStripHistoryItem current{ nullptr };
         MUX::Controls::TabViewItem tabItem{ nullptr };
@@ -6736,6 +6761,10 @@ namespace winrt::TerminalApp::implementation
         {
             return RS_(L"VerticalTabsHistoryStatusIdle");
         }
+        if (status == "InUse")
+        {
+            return RS_(L"VerticalTabsHistoryStatusInUse");
+        }
         if (status == "Working")
         {
             return RS_(L"VerticalTabsHistoryStatusWorking");
@@ -6819,6 +6848,7 @@ namespace winrt::TerminalApp::implementation
         }
         try
         {
+            const auto effectiveLanguage = languageTag.empty() ? _SidebarHistoryLanguageTag() : winrt::hstring{ languageTag };
             auto unit = UDAT_REL_UNIT_MINUTE;
             auto count = static_cast<double>(seconds / 60);
             if (seconds >= 3600)
@@ -6832,35 +6862,6 @@ namespace winrt::TerminalApp::implementation
                 count = static_cast<double>(seconds / 86400);
             }
             UErrorCode status = U_ZERO_ERROR;
-            if (seconds >= 7 * 86400)
-            {
-                unit = UDAT_REL_UNIT_WEEK;
-                count = static_cast<double>(seconds / (7 * 86400));
-
-                // Completed Gregorian UTC months/years, not fixed 30/365-day approximations.
-                using Calendar = wistd::unique_ptr<UCalendar, wil::function_deleter<decltype(&ucal_close), &ucal_close>>;
-                const UChar utc[]{ u'U', u'T', u'C' };
-                Calendar calendar{ ucal_open(utc, ARRAYSIZE(utc), "en_US", UCAL_GREGORIAN, &status) };
-                THROW_HR_IF_MSG(E_FAIL, U_FAILURE(status) != 0, "ICU calendar: %hs", u_errorName(status));
-                const auto completed = [&](UCalendarDateFields field) {
-                    ucal_setMillis(calendar.get(), static_cast<UDate>(*lastActivityAtMs), &status);
-                    const auto difference = ucal_getFieldDifference(calendar.get(), static_cast<UDate>(nowMs), field, &status);
-                    THROW_HR_IF_MSG(E_FAIL, U_FAILURE(status) != 0, "ICU calendar difference: %hs", u_errorName(status));
-                    return difference;
-                };
-                if (const auto years = completed(UCAL_YEAR); years > 0)
-                {
-                    unit = UDAT_REL_UNIT_YEAR;
-                    count = years;
-                }
-                else if (const auto months = completed(UCAL_MONTH); months > 0)
-                {
-                    unit = UDAT_REL_UNIT_MONTH;
-                    count = months;
-                }
-            }
-
-            const auto effectiveLanguage = languageTag.empty() ? _SidebarHistoryLanguageTag() : winrt::hstring{ languageTag };
             const auto tag = winrt::to_string(effectiveLanguage);
             std::string locale(ULOC_FULLNAME_CAPACITY, '\0');
             if (!tag.empty())
@@ -6876,8 +6877,26 @@ namespace winrt::TerminalApp::implementation
                 THROW_HR_IF_MSG(E_INVALIDARG, U_FAILURE(status) || parsedLength != static_cast<int32_t>(tag.size()), "Invalid ICU language tag: %hs", u_errorName(status));
                 locale.resize(length);
             }
+            if (seconds >= 7 * 86400)
+            {
+                using DateFormatter = wistd::unique_ptr<UDateFormat, wil::function_deleter<decltype(&udat_close), &udat_close>>;
+                const UChar utc[]{ u'U', u'T', u'C' };
+                DateFormatter formatter{ udat_open(UDAT_NONE, UDAT_LONG, tag.empty() ? nullptr : locale.c_str(), utc, ARRAYSIZE(utc), nullptr, 0, &status) };
+                THROW_HR_IF_MSG(E_FAIL, U_FAILURE(status) != 0, "ICU calendar date formatter: %hs", u_errorName(status));
+                std::vector<UChar> buffer(128);
+                auto length = udat_format(formatter.get(), static_cast<UDate>(*lastActivityAtMs), buffer.data(), static_cast<int32_t>(buffer.size()), nullptr, &status);
+                if (status == U_BUFFER_OVERFLOW_ERROR)
+                {
+                    status = U_ZERO_ERROR;
+                    buffer.resize(static_cast<size_t>(length) + 1);
+                    length = udat_format(formatter.get(), static_cast<UDate>(*lastActivityAtMs), buffer.data(), static_cast<int32_t>(buffer.size()), nullptr, &status);
+                }
+                THROW_HR_IF_MSG(E_FAIL, U_FAILURE(status) != 0, "ICU calendar date: %hs", u_errorName(status));
+                return winrt::hstring{ std::wstring{ buffer.data(), buffer.data() + length } };
+            }
+
             using Formatter = wistd::unique_ptr<URelativeDateTimeFormatter, wil::function_deleter<decltype(&ureldatefmt_close), &ureldatefmt_close>>;
-            Formatter formatter{ ureldatefmt_open(tag.empty() ? nullptr : locale.c_str(), nullptr, UDAT_STYLE_SHORT, UDISPCTX_CAPITALIZATION_NONE, &status) };
+            Formatter formatter{ ureldatefmt_open(tag.empty() ? nullptr : locale.c_str(), nullptr, UDAT_STYLE_LONG, UDISPCTX_CAPITALIZATION_NONE, &status) };
             THROW_HR_IF_MSG(E_FAIL, U_FAILURE(status) != 0, "ICU relative formatter: %hs", u_errorName(status));
             std::vector<UChar> buffer(128);
             auto length = ureldatefmt_formatNumeric(formatter.get(), -count, unit, buffer.data(), static_cast<int32_t>(buffer.size()), &status);
@@ -7071,7 +7090,6 @@ namespace winrt::TerminalApp::implementation
             const auto otherWindow = isLive && backgroundTab.isBool() && !backgroundTab.asBool() &&
                 currentWindowId != 0 && ownerWindow.isUInt64() &&
                 ownerWindow.asUInt64() != 0 && ownerWindow.asUInt64() != currentWindowId;
-            item.StatusText(statusText);
             item.Cwd(winrt::to_hstring(cwd));
             item.PaneSessionId(winrt::to_hstring(row.get("pane_session_id", "").asString()));
             item.AgentId(winrt::to_hstring(providerId));
@@ -7080,13 +7098,14 @@ namespace winrt::TerminalApp::implementation
             item.WslDistro(winrt::to_hstring(wslDistro));
             item.SessionUniverse(winrt::to_hstring(row.get("session_universe", "").asString()));
             item.Status(winrt::to_hstring(status));
-            item.IsLive(isLive);
+            item.IsLive(isLive || status == "InUse");
             item.IsHistorical(isHistorical);
             item.IsAgentPane(isAgentPane);
             const auto nativeItem = winrt::get_self<TerminalApp::implementation::TabStripHistoryItem>(item);
             nativeItem->LastActivityAtMs(lastActivityAtMs);
             nativeItem->BackgroundTab(background);
             nativeItem->OtherWindow(otherWindow);
+            nativeItem->UpdateStatusText(statusText);
             snapshot.items.emplace_back(std::move(item));
         }
         return snapshot;
@@ -8546,6 +8565,28 @@ namespace winrt::TerminalApp::implementation
         {
             const auto icon = _CreateNewTabFlyoutIcon(iconPath);
             profileMenuItem.Icon(icon);
+            if (const auto image = icon.try_as<winrt::MUX::Controls::ImageIcon>())
+            {
+                if (const auto source = image.Source().try_as<WUX::Media::Imaging::SvgImageSource>())
+                {
+                    // The menu's IconContent foreground states must not tint SVG artwork.
+                    profileMenuItem.Loaded([source](const auto& sender, const auto&) {
+                        const auto item = sender.template as<WUX::Controls::MenuFlyoutItem>();
+                        const auto root = WUX::Media::VisualTreeHelper::GetChild(item, 0).as<FrameworkElement>();
+                        const auto host = root.FindName(L"IconContent").as<ContentPresenter>();
+                        WUX::Controls::Image artwork;
+                        artwork.Source(source);
+                        ::Microsoft::Terminal::BindAgentIconTheme(artwork, source);
+                        artwork.Width(16);
+                        artwork.Height(16);
+                        artwork.Stretch(WUX::Media::Stretch::Uniform);
+                        artwork.IsHitTestVisible(false);
+                        Automation::AutomationProperties::SetAccessibilityView(artwork, Automation::Peers::AccessibilityView::Raw);
+                        host.Content(artwork);
+                        _agentPaneLog("New-tab SVG image presented: " + winrt::to_string(source.UriSource().AbsoluteUri()), AgentPaneLogLevel::Debug);
+                    });
+                }
+            }
         }
 
         if (profile.Guid() == _settings.GlobalSettings().DefaultProfile())
@@ -8664,6 +8705,26 @@ namespace winrt::TerminalApp::implementation
         }
 
         auto icon = UI::IconPathConverter::IconWUX(iconSource);
+        if (std::wstring_view{ iconSource }.starts_with(L"ms-appx:///AgentIcons/"))
+        {
+            _agentPaneLog("New-tab agent icon: " + winrt::to_string(iconSource) +
+                              " control=" + winrt::to_string(winrt::get_class_name(icon)),
+                          AgentPaneLogLevel::Debug);
+            if (const auto image = icon.try_as<winrt::MUX::Controls::ImageIcon>())
+            {
+                if (const auto svg = image.Source().try_as<winrt::Windows::UI::Xaml::Media::Imaging::SvgImageSource>())
+                {
+                    svg.Opened([iconSource](auto&&, auto&&) {
+                        _agentPaneLog("New-tab agent SVG loaded: " + winrt::to_string(iconSource), AgentPaneLogLevel::Debug);
+                    });
+                    svg.OpenFailed([iconSource](auto&&, auto&& args) {
+                        _agentPaneLog("New-tab agent SVG failed: " + winrt::to_string(iconSource) +
+                                      " status=" + std::to_string(static_cast<int>(args.Status())));
+                        LOG_HR_MSG(E_FAIL, "New-tab agent SVG failed to load");
+                    });
+                }
+            }
+        }
         Automation::AutomationProperties::SetAccessibilityView(icon, Automation::Peers::AccessibilityView::Raw);
 
         return icon;
@@ -8826,6 +8887,13 @@ namespace winrt::TerminalApp::implementation
         {
             auto settingsInternal{ winrt::get_self<Settings::TerminalSettings>(settings) };
             auto environment = settingsInternal->EnvironmentVariables();
+            if (settingsInternal->UsesManagedAgentCommand())
+            {
+                ::Microsoft::Terminal::Settings::Model::AgentPolicy::Reload();
+                ::Microsoft::Terminal::AgentProfiles::CheckLaunchPolicy(
+                    profile.AgentProfileId(), *::Microsoft::Terminal::Settings::Model::AgentPolicy::GetSnapshot());
+                settingsInternal->Commandline(winrt::hstring{ ::Microsoft::Terminal::AgentProfiles::Command(profile, true) });
+            }
 
             // Update the path to be relative to whatever our CWD is.
             //
@@ -8912,6 +8980,9 @@ namespace winrt::TerminalApp::implementation
             // TODO GH#5047 If we cache the NewTerminalArgs, we no longer need to do this.
             profile = GetClosestProfileForDuplicationOfProfile(profile);
             controlSettings = Settings::TerminalSettings::CreateWithProfile(_settings, profile);
+            controlSettings.DefaultSettings()->UsesManagedAgentCommand(
+                controlSettings.DefaultSettings()->UsesManagedAgentCommand() &&
+                winrt::get_self<Settings::TerminalSettings>(control.Settings())->UsesManagedAgentCommand());
 
             // Replace the Starting directory with the CWD, if given
             const auto workingDirectory = control.WorkingDirectory();
@@ -11046,7 +11117,8 @@ namespace winrt::TerminalApp::implementation
         }
 
         const auto action = cmd.ActionAndArgs();
-        const auto handled = action.Action() == ShortcutAction::ToggleSidebar ?
+        const auto handled = (action.Action() == ShortcutAction::ToggleSidebar ||
+                              action.Action() == ShortcutAction::SwitchToTab) ?
                                  _actionDispatch->DoAction(chord, action) :
                                  _actionDispatch->DoAction(action);
         if (!handled)
@@ -12243,6 +12315,10 @@ namespace winrt::TerminalApp::implementation
                     {
                         strip->SetTabPresentation(display, tab->Title(), tab->Icon(), true);
                     }
+                    if (propertyName == L"ToolTip")
+                    {
+                        page->_ApplyTabListProjection(*tab, false, false);
+                    }
                 }
                 else if (propertyName == L"Content")
                 {
@@ -13077,17 +13153,33 @@ namespace winrt::TerminalApp::implementation
         }
 
         const auto direction = args.Direction();
-        if (direction != MoveTabDirection::None && !_IsTabListPositionOperationBlocked())
+        if (direction != MoveTabDirection::None)
         {
-            // Use the requested tab, if provided. Otherwise, use the currently
-            // focused tab.
-            const auto tabIndex = til::coalesce(_GetTabIndex(*tab),
-                                                _GetFocusedTabIndex());
-            if (tabIndex)
+            if (_rearranging || _mutatingTabCollections)
             {
-                const auto currentTabIndex = tabIndex.value();
-                const auto delta = direction == MoveTabDirection::Forward ? 1 : -1;
-                _TryMoveTab(currentTabIndex, gsl::narrow_cast<int32_t>(currentTabIndex) + delta);
+                return false;
+            }
+            const auto criteria = _ReadTabListCriteria();
+            const auto owners = _BuildTabListSnapshot();
+            const ::TerminalApp::TabListViewModel list{ owners, criteria };
+            if (!list.Policy().searchEffective)
+            {
+                const auto state = list.StateFor(tab.get());
+                if (!state || !state->navigationOrdinal)
+                {
+                    return false;
+                }
+            }
+            const auto target = list.MoveTarget(tab.get(), direction == MoveTabDirection::Forward ? ::TerminalApp::TabListViewModel::MoveDirection::Next : ::TerminalApp::TabListViewModel::MoveDirection::Previous);
+            if (target)
+            {
+                const auto current = _GetTabIndex(*tab);
+                if (!current || target->canonicalIndex >= _tabs.Size() ||
+                    _GetTabImpl(_tabs.GetAt(target->canonicalIndex)).get() != target->identity)
+                {
+                    return false;
+                }
+                _TryMoveTab(*current, gsl::narrow_cast<int32_t>(target->canonicalIndex));
             }
         }
 
@@ -13286,15 +13378,15 @@ namespace winrt::TerminalApp::implementation
             return;
         }
 
-        if (winrt::get_abi(_selectedTabItem()) != winrt::get_abi(args.Tab()))
-        {
-            _selectedTabItem(args.Tab());
-        }
-
         const auto active = tab->GetActivePane();
         if (tab->IsZoomed() && (!active || active->ContentId() != pane->ContentId()))
         {
             tab->ExitZoom();
+        }
+        if (winrt::get_abi(_selectedTabItem()) != winrt::get_abi(args.Tab()))
+        {
+            tab->PreparePaneFocus(pane->Id().value());
+            _selectedTabItem(args.Tab());
         }
         tab->FocusPane(pane->Id().value());
         if (const auto content = pane->GetContent())
@@ -13445,10 +13537,12 @@ namespace winrt::TerminalApp::implementation
         };
         transfer.firstContentId = firstArgs ? firstArgs.ContentId() : 0;
         std::vector<TermControl> sourceControls;
+        std::vector<winrt::guid> sourcePaneIds;
         sourcePane->WalkTree([&](const auto& pane) {
             if (const auto control = pane->GetTerminalControl())
             {
                 sourceControls.push_back(control);
+                sourcePaneIds.push_back(pane->GetSessionId());
                 if (const auto sessionId = source._FindSessionIdForControl(control); !sessionId.empty())
                 {
                     transfer.sessionIds.emplace(sessionId);
@@ -13667,6 +13761,23 @@ namespace winrt::TerminalApp::implementation
                 destinationTab->AllowAgentPrewarm();
             }
         }
+        if (&source != this)
+        {
+            const auto moveBindings = [&](auto& sourceBindings, auto& destinationBindings) {
+                for (const auto& paneId : sourcePaneIds)
+                {
+                    if (const auto binding = sourceBindings.find(paneId); binding != sourceBindings.end())
+                    {
+                        destinationBindings.insert_or_assign(paneId, binding->second);
+                        sourceBindings.erase(binding);
+                    }
+                }
+            };
+            moveBindings(source._paneAgentSessions, _paneAgentSessions);
+            moveBindings(source._interactiveResumeSessions, _interactiveResumeSessions);
+            moveBindings(source._pendingRestoredSessionBindings, _pendingRestoredSessionBindings);
+            moveBindings(source._activeCliAgentPanes, _activeCliAgentPanes);
+        }
         try
         {
             if (sourceTab->GetRootPane() == sourcePane)
@@ -13726,6 +13837,14 @@ namespace winrt::TerminalApp::implementation
                 {
                     OnPaneAgentSessionChanged(binding);
                 }
+            }
+            CATCH_LOG()
+        }
+        for (const auto& paneId : sourcePaneIds)
+        {
+            try
+            {
+                winrt::get_self<implementation::ContentManager>(_manager)->NotifyPaneWindowChanged(paneId, _WindowProperties.WindowId());
             }
             CATCH_LOG()
         }
@@ -15053,7 +15172,13 @@ namespace winrt::TerminalApp::implementation
             }
         }
 
-        const auto control = _CreateNewControlAndContent(controlSettings, connection, newTerminalArgs ? newTerminalArgs.NativeAgentProviderId() : winrt::hstring{});
+        const auto profileAgentId = profile.AgentProfileId();
+        const auto profileProvider = ::Microsoft::Terminal::Settings::Model::AgentRegistry::CanonicalNativeAgentProviderId(
+            std::wstring_view{ profileAgentId });
+        const auto nativeAgentProvider = !profileProvider.empty() ?
+                                             winrt::hstring{ profileProvider } :
+                                             newTerminalArgs ? newTerminalArgs.NativeAgentProviderId() : winrt::hstring{};
+        const auto control = _CreateNewControlAndContent(controlSettings, connection, nativeAgentProvider);
 
         // Two kinds of pane replay their own history and must not also be
         // seeded from the saved buffer: one running an agent resume command,
@@ -15347,6 +15472,8 @@ namespace winrt::TerminalApp::implementation
             auto tabImpl{ winrt::get_self<Tab>(tab) };
             tabImpl->SetActionMap(_settings.ActionMap());
         }
+
+        _ApplyTabListProjection(nullptr, false);
 
         if (const auto focusedTab{ _GetFocusedTabImpl() })
         {
@@ -16313,6 +16440,12 @@ namespace winrt::TerminalApp::implementation
 
         if (newTerminalArgs.NativeAgentProviderId().empty())
         {
+            newTerminalArgs.NativeAgentProviderId(winrt::hstring{
+                ::Microsoft::Terminal::Settings::Model::AgentRegistry::CanonicalNativeAgentProviderId(
+                    std::wstring_view{ profile.AgentProfileId() }) });
+        }
+        if (newTerminalArgs.NativeAgentProviderId().empty())
+        {
             const auto resume = ::Microsoft::Terminal::AgentPaneRestore::ParseResumeCommandline(newTerminalArgs.Commandline());
             if (!resume.agent.empty())
             {
@@ -16328,6 +16461,10 @@ namespace winrt::TerminalApp::implementation
             THROW_HR_IF(E_INVALIDARG, id.empty());
             Policy::Reload();
             THROW_HR_IF(E_ACCESSDENIED, !Registry::IsNativeAgentProviderAllowed(id, *Policy::_GetSnapshot()));
+            if (controlSettings.DefaultSettings()->UsesManagedAgentCommand())
+            {
+                ::Microsoft::Terminal::AgentProfiles::CheckLaunchPolicy(id, *Policy::_GetSnapshot());
+            }
             newTerminalArgs.NativeAgentProviderId(winrt::hstring{ id });
         }
 
@@ -17038,6 +17175,8 @@ namespace winrt::TerminalApp::implementation
         const auto splitPaneUpText = RS_(L"SplitPaneUpText");
         const auto splitPaneLeftText = RS_(L"SplitPaneLeftText");
         const auto splitPaneToolTipText = RS_(L"SplitPaneToolTipText");
+        makeItem(RS_(L"SplitPaneText"), L"\xF246",
+                 ActionAndArgs{ ShortcutAction::SplitPane, SplitPaneArgs{ SplitType::Profile } }, splitPaneMenu);
 
         // GetFocusedProfile can return null if no child of the focused tab
         // was the last control to be focused (e.g. transient focus states).
