@@ -508,6 +508,50 @@ Describe 'Dev-only automatic cold start' -Tag 'Unit' {
     }
 }
 
+Describe 'Chat ancestry with transient Dev clients' -Tag Unit {
+    InModuleScope ItE2E {
+        BeforeEach {
+            Mock Get-CimInstance {
+                if ($Filter -eq "ProcessId=$PID") {
+                    [pscustomobject]@{
+                        ProcessId = $PID
+                        ParentProcessId = 111
+                        CreationDate = [datetime]'2026-09-28T00:00:00Z'
+                    }
+                }
+            }
+        }
+
+        It 'ignores an exited client whose start time is no longer available' {
+            $dead = [pscustomobject]@{ Id = 51002; HasExited = $true; StartTime = $null }
+            $live = [pscustomobject]@{ Id = 51003; HasExited = $false; StartTime = [datetime]'2026-10-08T00:00:00Z' }
+
+            { Assert-ItDevProcessesNotChat -Processes @($dead, $live) } | Should -Not -Throw
+        }
+
+        It 'does not require ancestry discovery when every candidate has exited' {
+            Mock Get-CimInstance { throw 'No live shutdown target remains.' }
+            $dead = [pscustomobject]@{ Id = 51002; HasExited = $true; StartTime = $null }
+
+            { Assert-ItDevProcessesNotChat -Processes @($dead) } | Should -Not -Throw
+            Should -Invoke Get-CimInstance -Times 0
+        }
+
+        It 'ignores a client that exits while its start time is being read' {
+            $exiting = [pscustomobject]@{ Id = 51002; HasExited = $false }
+            $exiting | Add-Member ScriptProperty StartTime { $this.HasExited = $true; $null }
+
+            { Assert-ItDevProcessesNotChat -Processes @($exiting) } | Should -Not -Throw
+        }
+
+        It 'still refuses a live client with an unavailable start time' {
+            $live = [pscustomobject]@{ Id = 51002; HasExited = $false; StartTime = $null }
+
+            { Assert-ItDevProcessesNotChat -Processes @($live) } | Should -Throw '*chat ancestry*'
+        }
+    }
+}
+
 Describe 'Combined sidebar cold-start observation' -Tag Unit {
     BeforeAll {
         $source = Get-Content -LiteralPath (Join-Path $PSScriptRoot '..\tests\Feature.CombinedAgentsSidebar.Tests.ps1') -Raw

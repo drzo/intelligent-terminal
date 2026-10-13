@@ -1198,6 +1198,49 @@ Describe 'Yolo Settings localization contract' -Tag 'Unit' {
     }
 }
 
+Describe 'Live command execution oracle' -Tag 'Unit' {
+    BeforeAll {
+        $ast = [Management.Automation.Language.Parser]::ParseFile(
+            (Join-Path $PSScriptRoot 'ItE2E.Live.Tests.ps1'), [ref]$null, [ref]$null)
+        $case = $ast.Find({
+            param($node)
+            $node -is [Management.Automation.Language.CommandAst] -and
+                $node.GetCommandName() -eq 'It' -and
+                $node.CommandElements[1].Value -eq 'runs a command and captures its output'
+        }, $true)
+        if (-not $case) { throw 'Live command round-trip case was not found.' }
+        $body = $case.CommandElements[-1].ScriptBlock.Extent.Text
+        $script:liveCommandCase = [scriptblock]::Create($body.Substring(1, $body.Length - 2))
+    }
+    BeforeEach {
+        $script:app = @{}
+        $script:sentCommand = ''
+        $script:outputPattern = ''
+        Mock Get-Random { 123456 }
+        Mock Get-ActivePane { @{ session_id = '11111111-1111-1111-1111-111111111111' } }
+        Mock Invoke-RunCommand { $script:sentCommand = $Command; $Command }
+        Mock Assert-Pane { $script:outputPattern = $Match }
+    }
+
+    It 'cannot satisfy its output oracle with only echoed input' {
+        . $script:liveCommandCase
+
+        $script:outputPattern | Should -Not -BeNullOrEmpty
+        $script:sentCommand.Contains($script:outputPattern) | Should -BeFalse
+    }
+
+    It 'executes an encoded payload that really emits the expected marker' {
+        . $script:liveCommandCase
+
+        $match = [regex]::Match($script:sentCommand, '-EncodedCommand (?<Payload>[A-Za-z0-9+/=]+)$')
+        $match.Success | Should -BeTrue
+        $payload = $match.Groups['Payload'].Value
+        $text = & (Get-Command pwsh -ErrorAction Stop).Source -NoLogo -NoProfile -NonInteractive -EncodedCommand $payload
+        $LASTEXITCODE | Should -Be 0
+        $text | Should -Be $script:outputPattern
+    }
+}
+
 Describe 'Start-Terminal startup ordering' -Tag 'Unit' {
     It 'waits for the first window before probing COM' {
         InModuleScope ItE2E {

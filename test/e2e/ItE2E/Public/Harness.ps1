@@ -227,6 +227,8 @@ function Assert-WtPackageInactive {
 
 function Assert-ItDevProcessesNotChat {
     param([Parameter(Mandatory)][object[]]$Processes)
+    $Processes = @($Processes | Where-Object { -not $_.HasExited })
+    if (-not $Processes.Count) { return }
     $ancestors = [Collections.Generic.HashSet[int]]::new()
     $oldestObserved = $null
     $childStart = $null
@@ -241,9 +243,11 @@ function Assert-ItDevProcessesNotChat {
                 throw "Cannot establish current chat ancestry for pid=$id."
             }
             foreach ($process in $Processes) {
+                if ($process.HasExited) { continue }
                 if (-not $process.StartTime -or
                     $process.StartTime.ToUniversalTime() -le $oldestObserved) {
-                    throw "Cannot establish current chat ancestry for pid=${id}: Dev may predate an observed ancestor."
+                    if ($process.HasExited) { continue }
+                    throw "Cannot establish current chat ancestry for pid=${id}: live Dev pid=$($process.Id) may predate an observed ancestor or have an unreadable start time."
                 }
             }
             break
@@ -265,7 +269,7 @@ function Assert-ItDevProcessesNotChat {
         $id = $parent
     }
     foreach ($process in $Processes) {
-        if ($ancestors.Contains([int]$process.Id)) {
+        if (-not $process.HasExited -and $ancestors.Contains([int]$process.Id)) {
             throw "Refusing to close the current chat process tree (pid=$($process.Id))."
         }
     }

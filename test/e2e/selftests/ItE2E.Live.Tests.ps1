@@ -43,7 +43,9 @@ Describe 'ItE2E live primitives' -Tag 'Live' -Skip:(-not $script:HasPackage) {
         It 'runs a command and captures its output' {
             $sid = (Get-ActivePane -App $script:app).session_id
             $tag = "ITE2E_$(Get-Random)"
-            Invoke-RunCommand -App $script:app -SessionId $sid -Command "echo $tag" -SettleSec 8 | Out-Null
+            $encoded = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes("[Console]::WriteLine('$tag')"))
+            $command = "pwsh.exe -NoLogo -NoProfile -NonInteractive -EncodedCommand $encoded"
+            Invoke-RunCommand -App $script:app -SessionId $sid -Command $command -SettleSec 8 | Out-Null
             Assert-Pane -App $script:app -SessionId $sid -Match $tag -TimeoutSec 10
         }
         It 'creates and closes a tab' {
