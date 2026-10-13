@@ -18,7 +18,7 @@ Describe 'Feature: Bash semantic prompt integration' -Tag 'Feature' -Skip:(-not 
         $script:app = $null
         $script:bashProfile = Join-Path $HOME '.bashrc'
         $script:integrationDir = Join-Path $HOME '.intelligent-terminal'
-        $script:integrationScript = Join-Path $script:integrationDir 'shell-integration_v3.sh'
+        $script:integrationScript = Join-Path $script:integrationDir 'shell-integration_v4.sh'
         $script:profileExisted = Test-Path $script:bashProfile
         $script:profileBytes = if ($script:profileExisted) { [IO.File]::ReadAllBytes($script:bashProfile) } else { $null }
         $script:scriptExisted = Test-Path $script:integrationScript
@@ -38,7 +38,7 @@ Describe 'Feature: Bash semantic prompt integration' -Tag 'Feature' -Skip:(-not 
             defaults = [pscustomobject]@{}
             list     = @($profile)
         }
-        $script:app = Start-Terminal -Package Dev -PassFre $true -Settings @{
+        $script:app = Start-Terminal -Package (Get-ItTestPackage) -PassFre $true -Settings @{
             autoErrorDetectionEnabled = $true
             profiles                  = $profiles
         }

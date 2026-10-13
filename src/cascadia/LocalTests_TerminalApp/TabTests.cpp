@@ -504,6 +504,7 @@ namespace TerminalAppLocalTests
         TEST_METHOD(AgentSessionRestoreRequiresPersistedBufferPath);
         TEST_METHOD(InteractiveResumeCommandPublishesSessionLifecycle);
         TEST_METHOD(InteractiveResumeOscPersistsSessionWithoutHooks);
+        TEST_METHOD(InteractiveWslResumeOscPersistsDistroWithoutHooks);
         TEST_METHOD(AgentPaneRestoreRecordRoundTrips);
         TEST_METHOD(AgentPaneRestorePreservesSettingsBinding);
         TEST_METHOD(RestoredAgentSelectionBecomesExplicitOnlyAfterUserChoice);
@@ -1172,6 +1173,66 @@ namespace TerminalAppLocalTests
             VERIFY_ARE_EQUAL(
                 std::wstring{ L"resume-without-conversation" },
                 ::Microsoft::Terminal::AgentPaneRestore::ParseResumeCommandline(terminalArgs.Commandline()).sessionId);
+        });
+    }
+
+    void TabTests::InteractiveWslResumeOscPersistsDistroWithoutHooks()
+    {
+        const winrt::guid paneId{ L"{5d9cc4ac-1a11-4bb0-99ca-82a71e94fa79}" };
+        const auto connection = winrt::make_self<TestConnection>(
+            paneId,
+            winrt::Microsoft::Terminal::TerminalConnection::ConnectionState::Connected);
+        Grid host{ nullptr };
+        TestOnUIThread([&]() { host = Grid{}; });
+        const auto page = _commonSetup(*connection, host);
+        ::details::Event bound;
+        Json::Value birth;
+        winrt::event_token token{};
+        const auto cleanup = wil::scope_exit([&]() {
+            TestOnUIThread([&]() {
+                page->ProtocolVtSequenceReceived(token);
+                page->ShutdownPanes();
+            });
+        });
+        TestOnUIThread([&]() {
+            page->_settings.GlobalSettings().AutoErrorDetectionEnabled(false);
+            page->_settings.GlobalSettings().AutoFixEnabled(false);
+            token = page->ProtocolVtSequenceReceived([&](auto&&, const winrt::hstring& payload) {
+                Json::Value event;
+                Json::CharReaderBuilder reader;
+                std::istringstream stream{ winrt::to_string(payload) };
+                std::string errors;
+                if (Json::parseFromStream(reader, stream, &event, &errors) &&
+                    event["method"] == "session_born_bound")
+                {
+                    birth = std::move(event);
+                    bound.Set();
+                }
+            });
+        });
+        const std::u16string_view resume{
+            u"\x1b]9001;ShellType;wsl:Ubuntu-24.04;5.2\x07"
+            u"\x1b]9;9;/home/user/project with spaces\x07"
+            u"\x1b]9001;Resume;copilot;wsl-resume-before-conversation\x07" };
+        connection->WriteInput({ resume.data(), resume.data() + resume.size() });
+        VERIFY_ARE_EQUAL(static_cast<DWORD>(WAIT_OBJECT_0), WaitForSingleObject(bound.m_handle, 10000));
+        TestOnUIThread([&]() {
+            VERIFY_ARE_EQUAL(_formatPaneId(paneId), birth["params"]["pane_id"].asString());
+            VERIFY_ARE_EQUAL(std::string{ "copilot" }, birth["params"]["agent"].asString());
+            VERIFY_ARE_EQUAL(std::string{ "Ubuntu-24.04" }, birth["params"]["wsl_distro"].asString());
+            VERIFY_ARE_EQUAL(std::string{ "/home/user/project with spaces" }, birth["params"]["cwd"].asString());
+            const auto& binding = page->_paneAgentSessions.at(paneId);
+            VERIFY_ARE_EQUAL(winrt::hstring{ L"wsl:Ubuntu-24.04:copilot" }, binding.backend);
+            const auto layout = page->GetWindowLayout();
+            VERIFY_IS_NOT_NULL(layout);
+            const auto saved = WindowLayout::FromJson(WindowLayout::ToJson(layout));
+            const auto args = _getTerminalArgs(saved.TabLayout().GetAt(0));
+            const auto target = ::Microsoft::Terminal::AgentPaneRestore::ParseResumeCommandline(args.Commandline());
+            VERIFY_ARE_EQUAL(std::wstring{ L"wsl:Ubuntu-24.04:copilot" }, target.backend);
+            VERIFY_ARE_EQUAL(std::wstring{ L"/home/user/project with spaces" }, target.cwd);
+            VERIFY_ARE_EQUAL(std::wstring{ L"wsl-resume-before-conversation" }, target.sessionId);
+            page->_CompleteInteractiveResumeBinding(_formatPaneId(paneId), birth["params"]["tab_id"].asString());
+            VERIFY_IS_FALSE(page->_paneAgentSessions.contains(paneId));
         });
     }
 

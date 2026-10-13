@@ -208,7 +208,7 @@ and Gemini use the same resume flag; Codex uses `resume <id>` and OpenCode uses
 not ACP sessions, and emits the canonical agent ID `antigravity`. Only a single
 foreground command with literal arguments is inspected. Variables, expressions,
 pipelines, compound commands, and duplicate resume flags are not evaluated or
-guessed. Bash/WSL and CMD do not emit this PowerShell-specific mark.
+guessed. CMD does not emit this mark.
 
 Resume flags and Codex's `resume` subcommand must be unquoted `BareWord` AST
 arguments. Both `copilot --resume="id"` and `copilot --resume "id"` are recognized:
@@ -230,6 +230,32 @@ PowerShell session to load the updated script; an already-running shell keeps
 its previously loaded functions. Existing development copies already named v11
 must be refreshed separately. This binding path does not require automatic
 error detection or Autofix to be enabled once the script is loaded.
+
+### User-typed Bash resume
+
+The versioned Bash integration shared by Git Bash and WSL also emits
+`OSC 9001;Resume;<agent>;<session-id>` before a literal foreground resume
+command starts. It recognizes the same built-in agents and resume arguments,
+quoted literal IDs, additional literal options, and executable paths. It never
+evaluates input: substitutions, expansions, escaped words, redirects, pipelines,
+background jobs, and compound commands are deliberately ignored. Windows
+interop `.exe`/`.cmd`/`.bat` launchers in WSL are not treated as Linux agents.
+
+Without bash-preexec, a DEBUG callback inspects a new, complete history entry,
+once per prompt. Commands excluded by `HISTCONTROL`/`HISTIGNORE`, disabled
+history, and multiline entries are not guessed from `BASH_COMMAND`, which
+cannot distinguish a foreground command from a pipeline or background job.
+An installed bash-preexec framework instead supplies the submitted line through
+its `preexec_functions` callback array. Other existing DEBUG traps remain
+untouched; automatic resume recognition is disabled in that configuration
+(`__IT_SHELLINTEG_RESUME_MODE=existing-debug-trap`), while existing prompt marks,
+Autofix, agent hooks, and chat keep their original behavior.
+
+For WSL, Terminal uses the emitting pane's reported `wsl:<distro>` shell identity
+and Linux CWD to register the session's location and save a
+`wsl.exe -d <distro> --cd <cwd> --exec bash -lc ...` resume command. No hook,
+conversation, or enabled error detection is needed. CMD remains unchanged.
+Open a new Bash session after upgrading the integration script.
 
 ### Liveness gate: scoping to this IT window
 

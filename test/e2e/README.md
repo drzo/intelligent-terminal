@@ -125,6 +125,7 @@ authenticated ACP agents. Available suites (results depend on the selected packa
 | `Feature.AgentRestart.Tests.ps1` | agent restart after a settings change (/restart reconnects and answers) | 1 |
 | `Feature.ShellIntegration.Tests.ps1` | §3 shell-integration OSC 133 marks (success/failure, ParserError dedup, handled errors, WinPS 5.1 errors) + non-integrated cmd.exe safety | 6 |
 | `Feature.BashPromptIntegration.Tests.ps1` | PR #468: Bash `PROMPT_COMMAND` PS1 rewrites preserve D/A/B boundaries; non-IT hosts remain gated | 1 (Git Bash-gated) |
+| `Feature.BashResume.Tests.ps1` | Literal Git Bash/WSL resume before hooks or conversations: pane-scoped binding, command-like-output suppression, persisted native/in-distro invocation, and completion cleanup with detection/Autofix disabled. Uses a held local CLI fixture and source-generated integration, no model quota or user shell-profile edits; exact feature-build App hash required | 2 (WSL requires `ITE2E_BASH_RESUME_WSL_DISTRO`) |
 | `Feature.AgentProposedCommand.Tests.ps1` | §2 Direct Helper Proposal Insert/Run into the shell pane | 2 |
 | `Feature.YoloMode.Tests.ps1` | Default-provider-scoped automatic approval persistence across global, `/agent`, and profile bindings; deterministic permission boundary; hidden unsupported/policy states; retained Gemini guidance; and live policy reconciliation | 8 (OpenCode, Gemini, `/agent`, profile, and policy gated) |
 | `Feature.AgentProposalFocus.Tests.ps1` | PR #533: Insert returns real window keyboard focus to the target shell pane | 1 |

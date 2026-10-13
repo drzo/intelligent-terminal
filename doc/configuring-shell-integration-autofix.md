@@ -27,6 +27,24 @@ The downstream pipeline (autofix detection, classification, VT-event forwarding)
 
 ## Enabling Shell Integration
 
+### Resumed agent sessions
+
+The installed PowerShell and Bash integrations also recognize literal foreground
+resume commands such as `copilot --resume="session-id"`. Before the CLI starts,
+they notify Intelligent Terminal which session belongs to that pane. This lets
+saved layouts resume the session even if you close Terminal before the first
+conversation or agent hook. WSL Bash preserves the distro and Linux working
+directory instead of restoring the Windows CLI. Error detection and Autofix do
+not need to be enabled once the integration is loaded.
+
+Recognition is conservative: dynamic arguments, pipelines, redirects, background
+jobs, and compound commands are not evaluated or guessed. Bash needs a recorded
+history entry, or a bash-preexec callback; arbitrary existing DEBUG traps are
+preserved and disable this additional recognition path. Agent hooks and ordinary
+CLI resume still work without it. Open a new shell after installing or upgrading.
+The simplified manual snippets below emit command marks only; use the installed
+integration for automatic resume binding.
+
 The FRE wizard and the Settings UI "Install" button handle this for you. The snippets below are a simplified manual-install reference — useful for auditing what shell integration looks like or for installing by hand. The installer writes a slightly more careful version (preserving any existing `PROMPT_COMMAND`, guarding on `$BASH_VERSION` so the block silently no-ops in non-bash shells, and using the sentinel-bracketed `# >>> intelligent-terminal shell-integration >>>` markers so a later Uninstall finds the block byte-precisely).
 
 ### PowerShell (manual)

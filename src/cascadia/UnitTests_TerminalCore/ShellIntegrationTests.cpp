@@ -192,6 +192,7 @@ class TerminalCoreUnitTests::ShellIntegrationTests final
     TEST_METHOD(Bash_BuildBlock_UsesHomeAndGuardsOnBashVersion);
     TEST_METHOD(Bash_ScriptContent_HasIdempotencyGuardAndOscSequences);
     TEST_METHOD(Bash_ScriptContent_GatesAndRepairsPromptMarks);
+    TEST_METHOD(Bash_ResumeCommand_EmitsOscBeforeExecution);
 
     // InstallBash / UninstallBash scenarios.
     TEST_METHOD(Bash_Install_EmptyProfilePath_Fails);
@@ -699,6 +700,122 @@ foreach ($case in $cases) {
         VERIFY_ARE_EQUAL(DWORD{ 0 }, result.exitCode);
         VERIFY_ARE_EQUAL(std::wstring{ L"passed" }, result.output);
     }
+}
+
+void ShellIntegrationTests::Bash_ResumeCommand_EmitsOscBeforeExecution()
+{
+    const auto host = Powershell::details::ResolvePwshExecutableFromExplicitPath();
+    const auto bash = wil::ExpandEnvironmentStringsW<std::wstring>(L"%ProgramFiles%\\Git\\bin\\bash.exe");
+    if (host.empty() || !std::filesystem::is_regular_file(bash))
+    {
+        Log::Result(TestResults::Skipped, L"Git Bash and PowerShell 7 are required for the Bash process regression");
+        return;
+    }
+    _WriteFile(_scratchDir / "integration.sh", ShellIntegrationBashScriptContent());
+    const auto runner = _scratchDir / "bash-resume-test.ps1";
+    _WriteFile(runner, R"PS(
+$ErrorActionPreference = 'Stop'
+$bash = Join-Path $env:ProgramFiles 'Git\bin\bash.exe'
+if (-not (Test-Path -LiteralPath $bash)) { throw 'Git Bash is required for the Bash execution regression.' }
+$integration = (Join-Path $PSScriptRoot 'integration.sh').Replace('\', '/')
+$cases = @(
+    @{ Line = 'copilot --resume=resume-test'; Agent = 'copilot' }
+    @{ Line = 'copilot --resume "resume-test" --model gpt-5'; Agent = 'copilot' }
+    @{ Line = "copilot --model gpt-5 --resume='resume-test'"; Agent = 'copilot' }
+    @{ Line = 'claude --resume resume-test --system-prompt "--resume=other"'; Agent = 'claude' }
+    @{ Line = 'gemini --resume=resume-test'; Agent = 'gemini' }
+    @{ Line = 'codex resume "resume-test" --yolo'; Agent = 'codex' }
+    @{ Line = 'opencode --session=resume-test'; Agent = 'opencode' }
+    @{ Line = 'agy --conversation resume-test'; Agent = 'antigravity' }
+    @{ Line = 'copilot "--resume=resume-test"'; Agent = '' }
+    @{ Line = 'copilot --prompt "--resume=resume-test"'; Agent = '' }
+    @{ Line = 'copilot --resume resume-test --resume=other'; Agent = '' }
+    @{ Line = 'copilot --resume "$session"'; Agent = '' }
+    @{ Line = 'copilot --resume "$(printf resume-test)"'; Agent = '' }
+    @{ Line = 'copilot --resume resume-test | cat'; Agent = '' }
+    @{ Line = 'copilot --resume resume-test &'; Agent = '' }
+    @{ Line = 'true && copilot --resume resume-test'; Agent = '' }
+    @{ Line = 'copilot --resume resume-test; true'; Agent = '' }
+    @{ Line = 'copilot --resume resume-test >/dev/null'; Agent = '' }
+    @{ Line = 'copilot -- --resume resume-test'; Agent = '' }
+    @{ Line = 'copilot --resume sidekick-test'; Agent = '' }
+    @{ Line = 'copilot --resume "--last"'; Agent = '' }
+    @{ Line = 'copilot --resume "bad;id"'; Agent = '' }
+    @{ Line = "copilot --resume $('a' * 257)"; Agent = '' }
+    @{ Line = 'printf "copilot --resume resume-test\n"'; Agent = '' }
+)
+foreach ($mode in @('host', 'wsl', 'outside', 'trap', 'no-history')) {
+    $modeCases = if ($mode -eq 'host') { $cases }
+                 elseif ($mode -eq 'wsl') { @($cases[0], $cases[2], $cases[5], $cases[13], $cases[14]) }
+                 else { @($cases[0], $cases[13]) }
+    $inputLines = [System.Collections.Generic.List[string]]::new()
+    $inputLines.Add("HISTFILE=/dev/null; HISTCONTROL=; HISTIGNORE=; session=resume-test; PS1='TEST> '; PROMPT_COMMAND='PS1=`"TEST> `"'")
+    $inputLines.Add("copilot() { printf 'CLI_START\n'; }; claude() { copilot; }; gemini() { copilot; }; codex() { copilot; }; opencode() { copilot; }; agy() { copilot; }")
+    $inputLines.Add("export INTELLIGENT_TERMINAL=1; unset WSL_DISTRO_NAME")
+    if ($mode -eq 'wsl') { $inputLines.Add('export WSL_DISTRO_NAME=Ubuntu') }
+    if ($mode -eq 'outside') { $inputLines.Add('unset INTELLIGENT_TERMINAL') }
+    if ($mode -eq 'trap') { $inputLines.Add("trap 'printf USER_DEBUG_TRAP' DEBUG") }
+    $inputLines.Add("source '$integration'")
+    $inputLines.Add("source '$integration'")
+    if ($mode -eq 'no-history') { $inputLines.Add('set +o history') }
+    $inputLines.Add('set -u')
+    for ($i = 0; $i -lt $modeCases.Count; $i++) {
+        $inputLines.Add("printf 'CASE_${i}\n'")
+        $inputLines.Add($modeCases[$i].Line)
+        $inputLines.Add('wait')
+        $inputLines.Add("printf 'END_${i}\n'")
+    }
+    $inputLines.Add('false')
+    $inputLines.Add('printf "SAVED_STATUS:%s\n" "$?"')
+    $inputLines.Add('exit')
+    $start = [System.Diagnostics.ProcessStartInfo]::new($bash)
+    $start.Arguments = '--noprofile --norc --noediting -i'
+    $start.UseShellExecute = $false
+    $start.RedirectStandardInput = $true
+    $start.RedirectStandardOutput = $true
+    $start.RedirectStandardError = $true
+    $process = [System.Diagnostics.Process]::Start($start)
+    try {
+        $stdout = $process.StandardOutput.ReadToEndAsync()
+        $stderr = $process.StandardError.ReadToEndAsync()
+        $process.StandardInput.WriteLine(($inputLines -join "`n"))
+        $process.StandardInput.Close()
+        if (-not $process.WaitForExit(30000)) { $process.Kill(); throw "Bash timed out in $mode" }
+        $output = $stdout.Result
+        if ($process.ExitCode -ne 0) { throw "Bash failed in ${mode}: $($stderr.Result)" }
+        if ($stderr.Result -match 'unbound variable|syntax error') { throw $stderr.Result }
+        for ($i = 0; $i -lt $modeCases.Count; $i++) {
+            $segment = [regex]::Match($output, "(?s)CASE_$i\n(.*?)END_$i\n")
+            if (-not $segment.Success) { throw "Case $i did not execute in ${mode}: $output" }
+            $marks = [regex]::Matches($segment.Groups[1].Value, "`e\]9001;Resume;[^`a]*`a")
+            $agent = if ($mode -in @('host', 'wsl')) { $modeCases[$i].Agent } else { '' }
+            if ($agent) {
+                $expected = "`e]9001;Resume;$agent;resume-test`a"
+                if ($marks.Count -ne 1 -or $marks[0].Value -cne $expected -or
+                    $marks[0].Index -ge $segment.Groups[1].Value.IndexOf('CLI_START')) {
+                    throw "Missing, duplicate, or late Resume OSC in ${mode}: $($modeCases[$i].Line)"
+                }
+            }
+            elseif ($marks.Count) { throw "False Resume OSC in ${mode}: $($modeCases[$i].Line)" }
+        }
+        if ($output -notmatch 'SAVED_STATUS:1') { throw "DEBUG changed the exit code in $mode" }
+        if ($mode -ne 'outside' -and $output -notmatch "`e\]133;D;1`a") { throw "Missing failure mark in $mode" }
+        if ($mode -eq 'trap' -and $output -notmatch 'USER_DEBUG_TRAP') { throw 'Existing DEBUG trap was lost' }
+    }
+    finally { $process.Dispose() }
+}
+'passed'
+)PS");
+    const auto result = Powershell::details::RunPowerShellCommand(
+        host.c_str(), L"-NoLogo -NoProfile -NonInteractive -File \"" + runner.wstring() + L"\"", 60000);
+    if (result.exitCode != 0)
+    {
+        Log::Comment(result.output.c_str());
+    }
+    VERIFY_ARE_EQUAL(DWORD{ ERROR_SUCCESS }, result.error);
+    VERIFY_IS_FALSE(result.timedOut);
+    VERIFY_ARE_EQUAL(DWORD{ 0 }, result.exitCode);
+    VERIFY_ARE_EQUAL(std::wstring{ L"passed" }, result.output);
 }
 
 void ShellIntegrationTests::PowerShell_ScriptContent_GatesRestrictedLanguageFeatures()

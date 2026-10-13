@@ -38,7 +38,8 @@ namespace Microsoft::Terminal::ShellIntegration::Bash
     // OSC 133;A/B pair after the user's PROMPT_COMMAND rebuilds PS1. The
     // version bump rewrites existing v2 profile blocks; WSL inherits this
     // version via WslBashFlavor.
-    inline constexpr int kVersion = 3;
+    // v4: bind literal foreground resume commands before the CLI starts.
+    inline constexpr int kVersion = 4;
 
     inline std::wstring ScriptFileName()
     {
@@ -90,7 +91,7 @@ namespace Microsoft::Terminal::ShellIntegration::Bash
     inline std::string ScriptContent()
     {
         return std::string{
-            R"(# Shell Integration for Intelligent Terminal — bash
+            R"BASH(# Shell Integration for Intelligent Terminal — bash
 # Emits OSC 133 (command marks / exit code) and OSC 9;9 (CWD) sequences
 # WITHOUT altering the visual appearance of the user's prompt.
 #
@@ -137,8 +138,129 @@ for __it_pc_entry in ${PROMPT_COMMAND[@]+"${PROMPT_COMMAND[@]}"}; do
 done
 unset __it_pc_entry
 
+# Tokenize literals only. Never evaluate submitted input or expand its words.
+__it_shellinteg_resume() {
+    local LC_ALL=C
+    local __line="${1:-}" __word="" __quote="" __ch="" __started=0 __literal=1
+    local __i __n=0 __agent __flag __session="" __seen=0
+    local -a __words=() __literals=()
+    [ "${#__line}" -le 16384 ] || return 0
+    for ((__i=0; __i<${#__line}; __i++)); do
+        __ch="${__line:__i:1}"
+        if [ -n "$__quote" ]; then
+            if [ "$__ch" = "$__quote" ]; then
+                __quote=""
+            else
+                case "$__ch" in
+                    $'\n'|$'\r'|$'\033'|$'\007') return 0 ;;
+                esac
+                if [ "$__quote" = '"' ]; then
+                    case "$__ch" in '$'|'`'|'\') return 0 ;; esac
+                fi
+                __word="$__word$__ch"
+            fi
+        else
+            case "$__ch" in
+                ' '|$'\t')
+                    if [ "$__started" = 1 ]; then
+                        __words[__n]="$__word"
+                        __literals[__n]="$__literal"
+                        __n=$((__n+1))
+                        __word="" __started=0 __literal=1
+                    fi ;;
+                "'"|'"')
+                    [ "$__started" = 1 ] || __literal=0
+                    __quote="$__ch" __started=1 ;;
+                [a-zA-Z0-9_./:=+,-])
+                    __word="$__word$__ch" __started=1 ;;
+                *) return 0 ;;
+            esac
+        fi
+    done
+    [ -z "$__quote" ] || return 0
+    if [ "$__started" = 1 ]; then
+        __words[__n]="$__word"
+        __literals[__n]="$__literal"
+        __n=$((__n+1))
+    fi
+    [ "$__n" -ge 2 ] || return 0
+    __agent="${__words[0]##*/}"
+    # A Windows interop executable in WSL is not a distro-local agent.
+    if [ -n "${WSL_DISTRO_NAME:-}" ]; then
+        case "$__agent" in *.exe|*.cmd|*.bat) return 0 ;; esac
+    fi
+    __agent="${__agent%.exe}"
+    __agent="${__agent%.cmd}"
+    __agent="${__agent%.bat}"
+    case "$__agent" in
+        copilot|claude|gemini) __flag=--resume ;;
+        codex)
+            [ "$__n" -ge 3 ] && [ "${__literals[1]}" = 1 ] &&
+                [ "${__words[1]}" = resume ] || return 0
+            __session="${__words[2]}" ;;
+        opencode) __flag=--session ;;
+        agy) __agent=antigravity; __flag=--conversation ;;
+        *) return 0 ;;
+    esac
+    if [ "$__agent" != codex ]; then
+        for ((__i=1; __i<__n; __i++)); do
+            [ "${__literals[__i]}" = 1 ] || continue
+            __word="${__words[__i]}"
+            [ "$__word" != -- ] || break
+            case "$__word" in
+                "$__flag")
+                    [ "$__seen" = 0 ] && [ "$((__i+1))" -lt "$__n" ] || return 0
+                    __i=$((__i+1))
+                    __session="${__words[__i]}" __seen=1 ;;
+                "$__flag="*)
+                    [ "$__seen" = 0 ] || return 0
+                    __session="${__word#*=}" __seen=1 ;;
+            esac
+        done
+    fi
+    [ -n "$__session" ] && [ "${#__session}" -le 256 ] || return 0
+    case "$__session" in -*|sidekick-*|*[!a-zA-Z0-9_.:-]*) return 0 ;; esac
+    printf '\033]9001;Resume;%s;%s\007' "$__agent" "$__session"
+}
+
+__it_shellinteg_preexec() {
+    [ "${__IT_SHELLINTEG_PREEXEC_READY:-0}" = 1 ] &&
+        [ "${BASH_SUBSHELL:-0}" = 0 ] || return 0
+    __IT_SHELLINTEG_PREEXEC_READY=0
+    [ "${1:-}" != __it_shellinteg_prompt ] || return 0
+    # BASH_COMMAND alone omits pipeline/background/compound syntax. Require a
+    # new, complete history entry instead; ignored/disabled history is inert.
+    local __entry __line
+    __entry="$(HISTTIMEFORMAT= builtin history 1)"
+    [ -n "$__entry" ] && [ "$__entry" != "${__IT_SHELLINTEG_LAST_HISTORY:-}" ] || return 0
+    __line="${__entry#*[0-9]  }"
+    [ "$__line" != "$__entry" ] || return 0
+    __it_shellinteg_resume "$__line"
+}
+
+# Capture DEBUG at the top-level prompt boundary: sourced scripts/functions
+# hide a caller's non-inherited trap, so inspecting it at install time is unsafe.
+__it_shellinteg_arm_resume() {
+    if declare -F __bp_preexec_invoke_exec >/dev/null; then
+        if [ "${__IT_SHELLINTEG_RESUME_MODE:-}" != bash-preexec ]; then
+            preexec_functions+=(__it_shellinteg_resume)
+        fi
+        __IT_SHELLINTEG_RESUME_MODE=bash-preexec
+    elif [ -z "${1:-}" ]; then
+        trap '__it_shellinteg_preexec "$BASH_COMMAND"' DEBUG
+        __IT_SHELLINTEG_RESUME_MODE=debug
+    else
+        case "$1" in
+            *'__it_shellinteg_preexec "$BASH_COMMAND"'*) __IT_SHELLINTEG_RESUME_MODE=debug ;;
+            *) __IT_SHELLINTEG_RESUME_MODE=existing-debug-trap ;;
+        esac
+    fi
+    __IT_SHELLINTEG_PREEXEC_READY=1
+}
+
 __it_shellinteg_prompt() {
     local __ec=$?
+    __IT_SHELLINTEG_PREEXEC_READY=0
     local __it_b=$'\033]133;B\007'
     local __it_suffix="\[${__it_b}\]"
 
@@ -189,9 +311,10 @@ __it_shellinteg_prompt() {
     case "${PS1:-}" in
         *"$__it_suffix") printf '\033]133;A\007' ;;
     esac
+    __IT_SHELLINTEG_LAST_HISTORY="$(HISTTIMEFORMAT= builtin history 1)"
 }
-PROMPT_COMMAND=__it_shellinteg_prompt
-)"
+PROMPT_COMMAND='__it_shellinteg_prompt; __it_shellinteg_arm_resume "$(trap -p DEBUG)"'
+)BASH"
         };
     }
 

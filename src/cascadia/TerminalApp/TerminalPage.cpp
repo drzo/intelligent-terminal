@@ -10734,7 +10734,24 @@ namespace winrt::TerminalApp::implementation
         const std::wstring_view sessionId)
     {
         const auto paneSessionId = _TryParsePaneSessionId(paneId);
-        const auto resumeCommandline = ::Microsoft::Terminal::AgentPaneRestore::BuildResumeCommandline(agent, sessionId);
+        const auto cwd = control.WorkingDirectory();
+        const auto shellName = control.ShellName();
+        const std::wstring_view shell{ shellName };
+        winrt::hstring backend;
+        winrt::hstring wslDistro;
+        if (shell.starts_with(L"wsl:"))
+        {
+            wslDistro = winrt::hstring{ shell.substr(4) };
+            backend = winrt::hstring{ ::Microsoft::Terminal::Settings::Model::AgentPaneBackend::Wsl(wslDistro, agent) };
+            if (!::Microsoft::Terminal::Settings::Model::AgentPaneBackend::Parse(backend) ||
+                !std::wstring_view{ cwd }.starts_with(L'/'))
+            {
+                _agentPaneLog("_TryPublishInteractiveResumeBinding: invalid WSL identity or working directory");
+                return;
+            }
+        }
+        const auto resumeCommandline = ::Microsoft::Terminal::AgentPaneRestore::BuildResumeCommandline(
+            backend.empty() ? agent : std::wstring_view{ backend }, sessionId, cwd);
         if (!paneSessionId || resumeCommandline.empty())
         {
             return;
@@ -10743,11 +10760,15 @@ namespace winrt::TerminalApp::implementation
         _PaneAgentSession binding{
             winrt::hstring{ sessionId },
             winrt::hstring{ agent },
-            winrt::hstring{ resumeCommandline } };
+            winrt::hstring{ resumeCommandline },
+            backend,
+            cwd };
         if (const auto existing = _interactiveResumeSessions.find(*paneSessionId);
             existing != _interactiveResumeSessions.end() &&
             existing->second.sessionId == binding.sessionId &&
-            existing->second.agent == binding.agent)
+            existing->second.agent == binding.agent &&
+            existing->second.backend == binding.backend &&
+            existing->second.cwd == binding.cwd)
         {
             return;
         }
@@ -10759,7 +10780,11 @@ namespace winrt::TerminalApp::implementation
         params["pane_id"] = std::string{ paneId };
         params["agent_session_id"] = winrt::to_string(binding.sessionId);
         params["agent"] = winrt::to_string(binding.agent);
-        params["cwd"] = winrt::to_string(control.WorkingDirectory());
+        params["cwd"] = winrt::to_string(cwd);
+        if (!wslDistro.empty())
+        {
+            params["wsl_distro"] = winrt::to_string(wslDistro);
+        }
         if (!tabId.empty())
         {
             params["tab_id"] = std::string{ tabId };
