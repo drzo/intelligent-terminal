@@ -307,14 +307,60 @@ async fn resolve_pane_id(channel: &CliChannel, target: &Option<String>) -> Resul
 
 async fn get_first_window_id(channel: &CliChannel) -> Result<String> {
     let result = channel.request("list_windows", json!({})).await?;
+    first_window_id(&result).ok_or_else(|| anyhow::anyhow!("{}", t!("output.no_windows_in_list")))
+}
+
+fn first_window_id(result: &serde_json::Value) -> Option<String> {
     result
         .get("windows")
         .and_then(|v| v.as_array())
         .and_then(|arr| arr.first())
         .and_then(|w| w.get("window_id"))
-        .and_then(|v| v.as_str())
-        .map(str::to_string)
-        .ok_or_else(|| anyhow::anyhow!("{}", t!("output.no_windows_in_list")))
+        .and_then(|id| {
+            id.as_str()
+                .map(str::to_string)
+                .or_else(|| id.as_u64().map(|value| value.to_string()))
+        })
+}
+
+#[cfg(test)]
+mod window_id_tests {
+    use super::*;
+
+    #[test]
+    fn accepts_numeric_window_ids_from_wtcli() {
+        assert_eq!(
+            first_window_id(&json!({"windows": [{"window_id": 1}]})),
+            Some("1".to_owned())
+        );
+        assert_eq!(
+            first_window_id(&json!({"windows": [{"window_id": u64::MAX}]})),
+            Some(u64::MAX.to_string())
+        );
+    }
+
+    #[test]
+    fn preserves_string_window_ids_and_first_window_selection() {
+        assert_eq!(
+            first_window_id(&json!({"windows": [{"window_id": "7"}, {"window_id": "9"}]})),
+            Some("7".to_owned())
+        );
+    }
+
+    #[test]
+    fn rejects_missing_or_invalid_window_ids() {
+        for result in [
+            json!({}),
+            json!({"windows": []}),
+            json!({"windows": [{}]}),
+            json!({"windows": [{"window_id": null}, {"window_id": "2"}]}),
+            json!({"windows": [{"window_id": true}]}),
+            json!({"windows": [{"window_id": -1}]}),
+            json!({"windows": [{"window_id": 1.5}]}),
+        ] {
+            assert_eq!(first_window_id(&result), None, "{result}");
+        }
+    }
 }
 
 async fn get_first_tab_id(channel: &CliChannel, window_id: &str) -> Result<String> {

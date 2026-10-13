@@ -333,6 +333,10 @@ wta list-windows --json                   # raw JSON output
 Short aliases are supported: `lsw`, `lst`, `lsp`, `neww`, `splitw`, `capturep`,
 `killp`, `setenv`, and `mon`.
 
+`list-tabs` and `list-panes` can use `-w <window-id>` to select a window explicitly.
+Without it, discovery accepts both native numeric window IDs and string IDs from
+the protocol, while retaining the first-listed-window selection.
+
 When `-t` (target pane) is omitted, the active pane is used automatically.
 
 ### Protocol Discovery & Environment Setup
