@@ -345,6 +345,7 @@ namespace TerminalAppLocalTests
         TEST_METHOD(VerticalRailVisibilityRestoresWidth);
         TEST_METHOD(VerticalRailCollapseRestoresWidth);
         TEST_METHOD(SidebarHotkeyFocusesSearchAndReturnsToInput);
+        TEST_METHOD(AgentHotkeyFocusesVisiblePaneBeforeStashing);
         TEST_METHOD(SidebarRecentPreferencePreservesSearchAndInputFocus);
         TEST_METHOD(AgentsViewFiltersLiveTabsAndHistoryConcurrently);
         TEST_METHOD(SidebarFiltersViewModelCombinationsAndNotifications);
@@ -4940,6 +4941,58 @@ namespace TerminalAppLocalTests
             toggle();
             VERIFY_IS_TRUE(page->_isVerticalRailCollapsed);
             VERIFY_IS_TRUE(terminal.FocusState() != FocusState::Unfocused);
+        });
+    }
+
+    void TabTests::AgentHotkeyFocusesVisiblePaneBeforeStashing()
+    {
+        const auto shellConnection = winrt::make_self<TestConnection>(
+            winrt::guid{ L"{6239a42c-ff01-49a3-80bd-e8fdd045185c}" },
+            winrt::Microsoft::Terminal::TerminalConnection::ConnectionState::Connected);
+        const auto agentConnection = winrt::make_self<TestConnection>(
+            winrt::guid{ L"{6239a42c-ff02-49a3-80bd-e8fdd045185c}" },
+            winrt::Microsoft::Terminal::TerminalConnection::ConnectionState::Connected);
+        const auto page = _commonSetup(*shellConnection);
+
+        TestOnUIThread([&]() {
+            const auto tab = page->_GetFocusedTabImpl();
+            tab->SuppressAgentPrewarm();
+            const auto shell = page->_GetActiveControl();
+            const auto agentPane = page->_WrapInAgentPaneContent(
+                page->_MakePane(nullptr, nullptr, *agentConnection));
+            const auto agentContent = agentPane->GetContent().as<winrt::TerminalApp::AgentPaneContent>();
+            tab->SplitPaneAtRoot(SplitDirection::Down, agentPane, 0.5f);
+            page->UpdateLayout();
+            const auto agent = tab->FindAgentPane()->GetTerminalControl();
+            VERIFY_IS_NOT_NULL(agent);
+            VERIFY_IS_FALSE(page->_DetectWtaPath().empty());
+            const auto chord = KeyChordSerialization::FromString(L"ctrl+shift+period");
+            const auto invoke = [&](const winrt::Windows::Foundation::IInspectable& sender) {
+                ActionEventArgs args{};
+                page->_HandleOpenAgentPane(sender, args);
+                VERIFY_IS_TRUE(args.Handled());
+            };
+
+            VERIFY_IS_TRUE(shell.Focus(FocusState::Programmatic));
+            VERIFY_IS_FALSE(tab->FindAgentPane()->IsHidden());
+            invoke(chord);
+            VERIFY_IS_FALSE(tab->FindAgentPane()->IsHidden());
+            VERIFY_IS_TRUE(agent.FocusState() != FocusState::Unfocused);
+            VERIFY_IS_TRUE(tab->FindAgentPaneContent() == agentContent);
+
+            invoke(chord);
+            VERIFY_IS_TRUE(tab->FindAgentPane()->IsHidden());
+            VERIFY_IS_TRUE(shell.FocusState() != FocusState::Unfocused);
+
+            invoke(chord);
+            VERIFY_IS_FALSE(tab->FindAgentPane()->IsHidden());
+            VERIFY_IS_TRUE(agent.FocusState() != FocusState::Unfocused);
+            VERIFY_IS_TRUE(tab->FindAgentPaneContent() == agentContent);
+
+            VERIFY_IS_TRUE(shell.Focus(FocusState::Programmatic));
+            invoke(nullptr);
+            VERIFY_IS_TRUE(tab->FindAgentPane()->IsHidden());
+            VERIFY_IS_TRUE(tab->FindAgentPaneContent() == agentContent);
         });
     }
 

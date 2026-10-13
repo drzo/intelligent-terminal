@@ -112,6 +112,7 @@ Describe 'Feature: layout-aware agent history and sidebar hotkeys' -Tag @('Featu
     BeforeAll {
         Import-Module (Join-Path $PSScriptRoot '..\ItE2E\ItE2E.psd1') -Force
         . (Join-Path $PSScriptRoot 'helpers\SidebarExpansionEvents.ps1')
+        . (Join-Path $PSScriptRoot 'helpers\TestWindowKeyboardLayout.ps1')
         Add-Type -AssemblyName UIAutomationClient
         Add-Type -AssemblyName UIAutomationTypes
         $fixture = (Resolve-Path (Join-Path $PSScriptRoot '..\fixtures\Mock-AcpChatAgent.ps1')).Path
@@ -218,6 +219,105 @@ Describe 'Feature: layout-aware agent history and sidebar hotkeys' -Tag @('Featu
                 acpAgent = 'custom:layout-hotkey-fixture'
                 acpCustomCommand = $script:fixtureCommand
                 acpModel = ''
+            }
+        }
+    }
+
+    It 'Agent pane hotkey focuses visible chat before hiding' -Tag 'AgentFocusToggle' {
+        $app = $null
+        $layout = $null
+        try {
+            $app = & $script:StartLayoutApp 'horizontal'
+            if (-not (Test-WtWindowKeyFocusable -App $app)) {
+                Set-ItResult -Skipped -Because 'physical input requires foreground before the shortcut'
+                return
+            }
+            $layout = Enable-TestWindowEnglishKeyboardLayout -App $app
+            $shell = Get-ActivePane -App $app
+            Test-AgentPaneOpen -App $app | Should -BeFalse
+
+            Send-WtWindowKey -App $app -Vk 0xBE -Ctrl -Shift -RequireForeground | Out-Null
+            Wait-Until -TimeoutSec 15 -Because 'the hidden-pane hotkey to show chat' -Condition {
+                Test-AgentPaneOpen -App $app
+            } | Out-Null
+            Wait-AgentReady -App $app -TimeoutSec 30 | Should -BeTrue
+            $agent = Get-AgentPaneSession -App $app
+            $agent.AcpSessionId | Should -Match '^chat-fixture-\d+-\d+$'
+            $agentFocus = Wait-Until -TimeoutSec 5 -Because 'the opened chat input to receive keyboard focus' -Condition {
+                $focused = [Windows.Automation.AutomationElement]::FocusedElement
+                if ($focused -and $focused.Current.ProcessId -eq $app.Pid -and
+                    $focused.Current.ClassName -eq 'TermControl' -and $focused.Current.Name -eq 'Agent Pane') { $focused }
+            }
+            $turnMarker = "SCROLL_TURN_01_$([guid]::NewGuid().ToString('N'))"
+            Send-AgentPrompt -App $app -PaneSessionId $agent.PaneSessionId -Text $turnMarker | Out-Null
+            Assert-AgentPaneText -App $app -PaneSessionId $agent.PaneSessionId -Pattern ([regex]::Escape("ACK_$turnMarker")) -TimeoutSec 15
+            $draft = "FOCUS_DRAFT_$([guid]::NewGuid().ToString('N').Substring(0, 8))"
+            Send-AgentPrompt -App $app -PaneSessionId $agent.PaneSessionId -Text $draft -NoSubmit | Out-Null
+            Assert-AgentPaneText -App $app -PaneSessionId $agent.PaneSessionId -Pattern ([regex]::Escape($draft)) -TimeoutSec 8
+
+            Set-WtPaneFocus -App $app -SessionId $shell.session_id
+            $shellFocus = Wait-Until -TimeoutSec 5 -Because 'the shell to own keyboard focus before the regression action' -Condition {
+                $focused = [Windows.Automation.AutomationElement]::FocusedElement
+                if ($focused -and $focused.Current.ProcessId -eq $app.Pid -and
+                    $focused.Current.ClassName -eq 'TermControl' -and
+                    -not [Windows.Automation.Automation]::Compare($agentFocus, $focused)) { $focused }
+            }
+            Test-AgentPaneOpen -App $app | Should -BeTrue
+            Save-UiScreenshot -App $app -Path (Join-Path $script:evidenceDir 'agent-focus-shell-before.png') | Out-Null
+            Send-WtWindowKey -App $app -Vk 0xBE -Ctrl -Shift -RequireForeground | Out-Null
+            Save-UiScreenshot -App $app -Path (Join-Path $script:evidenceDir 'agent-focus-shortcut-after.png') | Out-Null
+            Test-AgentPaneOpen -App $app | Should -BeTrue -Because 'a visible inactive chat must be focused, not stashed'
+            Wait-Until -TimeoutSec 5 -Because 'the shortcut to focus chat without another focus action' -Condition {
+                [Windows.Automation.Automation]::Compare(
+                    $agentFocus, [Windows.Automation.AutomationElement]::FocusedElement)
+            } | Out-Null
+
+            Send-WtWindowKey -App $app -Vk 0x58 -Shift -RequireForeground | Out-Null
+            $draftPattern = '(?m)^\s*[│║|]\s*>\s*' + [regex]::Escape($draft + 'X') + '\s*[│║|]\s*$'
+            Assert-AgentPaneText -App $app -PaneSessionId $agent.PaneSessionId -Pattern $draftPattern -TimeoutSec 8
+            $focusedSession = Get-AgentPaneSession -App $app
+            $focusedSession.PaneSessionId | Should -Be $agent.PaneSessionId
+            $focusedSession.AcpSessionId | Should -Be $agent.AcpSessionId
+            Save-UiScreenshot -App $app -Path (Join-Path $script:evidenceDir 'agent-focus-direct-input.png') | Out-Null
+
+            Send-WtWindowKey -App $app -Vk 0xBE -Ctrl -Shift -RequireForeground | Out-Null
+            Wait-Until -TimeoutSec 8 -Because 'the focused-pane hotkey to stash chat' -Condition {
+                -not (Test-AgentPaneOpen -App $app)
+            } | Out-Null
+            Wait-Until -TimeoutSec 5 -Because 'stashing to return focus to the source shell' -Condition {
+                [Windows.Automation.Automation]::Compare(
+                    $shellFocus, [Windows.Automation.AutomationElement]::FocusedElement)
+            } | Out-Null
+
+            Send-WtWindowKey -App $app -Vk 0xBE -Ctrl -Shift -RequireForeground | Out-Null
+            Wait-Until -TimeoutSec 8 -Because 'the hidden-pane hotkey to restore chat' -Condition {
+                Test-AgentPaneOpen -App $app
+            } | Out-Null
+            Assert-AgentPaneText -App $app -PaneSessionId $agent.PaneSessionId -Pattern ([regex]::Escape($draft + 'X')) -TimeoutSec 8
+            Assert-AgentPaneText -App $app -PaneSessionId $agent.PaneSessionId -Pattern ([regex]::Escape("ACK_$turnMarker")) -TimeoutSec 8
+            $restored = Get-AgentPaneSession -App $app
+            $restored.PaneSessionId | Should -Be $agent.PaneSessionId
+            $restored.AcpSessionId | Should -Be $agent.AcpSessionId
+
+            Set-WtPaneFocus -App $app -SessionId $shell.session_id
+            Invoke-UiElement -App $app -Selector AgentToggleButton | Out-Null
+            Wait-Until -TimeoutSec 8 -Because 'the explicit button to retain hide behavior even from shell focus' -Condition {
+                -not (Test-AgentPaneOpen -App $app)
+            } | Out-Null
+            [pscustomobject]@{
+                WindowId = $app.WindowId
+                ShellSessionId = $shell.session_id
+                AgentPaneSessionId = $agent.PaneSessionId
+                AcpSessionId = $agent.AcpSessionId
+                DraftAfterPhysicalTyping = $draft + 'X'
+            } | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $script:evidenceDir 'agent-focus-input.json') -Encoding utf8
+        }
+        finally {
+            try {
+                if ($layout) { Restore-TestWindowKeyboardLayout -App $app -Context $layout }
+            }
+            finally {
+                if ($app) { Stop-Terminal -App $app }
             }
         }
     }

@@ -191,7 +191,8 @@ Net effect: UT shrinks the manual matrix to "did the wiring and UI connect", not
 - [ ] `C049` `[E2E]` **Button opens pane:** The AI assistant button opens the agent pane.
 - [ ] `C050` `[UT✓]` `[E2E]` **Hotkey opens pane:** `Ctrl+Shift+.` opens the agent pane. _(UT: `DefaultAgentKeybindings` binding; open behavior E2E.)_
 - [ ] `C051` `[E2E]` **Button hides pane:** The button hides/stashes the agent pane without killing the session.
-- [ ] `C052` `[E2E]` **Hotkey hides pane:** `Ctrl+Shift+.` hides/stashes the agent pane without killing the session.
+- [ ] `C052` `[E2E]` **Hotkey hides pane:** `Ctrl+Shift+.` hides/stashes the already-focused agent pane without killing the session.
+- [ ] `C429` `[new]` `[E2E]` **Agent pane hotkey focuses visible chat before hiding:** `Ctrl+Shift+.` focuses an open inactive chat pane and accepts direct typing without losing its draft, conversation or session; focused hide/restore and explicit button toggling remain intact. _(E2E: `Feature.AgentHotkeys`.)_
 - [ ] `C053` `[UT✓]` `[E2E]` **Focus hotkey works:** `Ctrl+Shift+I` focuses the agent pane when available. _(UT: `DefaultAgentKeybindings` binding; focus behavior E2E.)_
 - [ ] `C054` `[E2E]` **Different positions work:** Open/hide/focus works for bottom, right, left, and top pane positions.
 - [ ] `C252` `[new]` `[E2E]` **Agent pane move is isolated per tab and preserves input focus:** `/move` changes only the current tab's runtime pane position, leaves the global setting and sibling tabs unchanged, and returns keyboard focus to the moved agent input. _(#429; E2E: `Feature.AgentPaneMove`.)_
