@@ -9,6 +9,7 @@ BeforeAll {
             [string]$Tag,
             [switch]$GenerateReport,
             [switch]$ObstructReport,
+            [ValidateSet('summary.md', 'report.html')][string]$ObstructDiagnostic,
             [switch]$SeedReport,
             [switch]$SeedPriorArtifacts,
             [switch]$FailGenerator,
@@ -88,6 +89,13 @@ throw 'fixture verifier received configured isolated Dev family'
         if ($SeedPriorArtifacts) {
             '<test-run result="Passed" />' | Set-Content -LiteralPath (Join-Path $out 'results.xml')
         }
+        if ($ObstructDiagnostic) {
+            $obstruction = Join-Path $out $ObstructDiagnostic
+            if (Test-Path -LiteralPath $obstruction -PathType Leaf) {
+                Remove-Item -LiteralPath $obstruction -Force
+            }
+            New-Item -ItemType Directory -Path $obstruction | Out-Null
+        }
 
         $arguments = @('-NoProfile', '-File', $runner, '-Path', $testFile, '-OutDir', $out)
         if (-not $GenerateReport) { $arguments += '-SkipReleaseReport' }
@@ -103,7 +111,7 @@ throw 'fixture verifier received configured isolated Dev family'
         [pscustomobject]@{
             ExitCode = $exitCode
             Output = Get-Content -LiteralPath $log -Raw
-            Html = if (Test-Path -LiteralPath $html) { Get-Content -LiteralPath $html -Raw } else { '' }
+            Html = if (Test-Path -LiteralPath $html -PathType Leaf) { Get-Content -LiteralPath $html -Raw } else { '' }
             Summary = if (Test-Path -LiteralPath (Join-Path $out 'summary.md') -PathType Leaf) {
                 Get-Content -LiteralPath (Join-Path $out 'summary.md') -Raw
             } else { '' }
@@ -150,6 +158,47 @@ Describe 'ordinary suite' {
         $run.Output | Should -Not -Match 'release-report.md : SKIPPED'
         $run.Html | Should -BeNullOrEmpty
         $run.Summary | Should -BeNullOrEmpty
+    }
+
+    It 'invalidates checklist credit when <Diagnostic> cannot be written in <Mode> mode' -ForEach @(
+        @{ Mode = 'full'; Diagnostic = 'summary.md'; Generate = $true; UpdateReport = $false }
+        @{ Mode = 'full'; Diagnostic = 'report.html'; Generate = $true; UpdateReport = $false }
+        @{ Mode = 'incremental'; Diagnostic = 'summary.md'; Generate = $true; UpdateReport = $true }
+        @{ Mode = 'incremental'; Diagnostic = 'report.html'; Generate = $true; UpdateReport = $true }
+        @{ Mode = 'skip-checklist'; Diagnostic = 'summary.md'; Generate = $false; UpdateReport = $false }
+        @{ Mode = 'skip-checklist'; Diagnostic = 'report.html'; Generate = $false; UpdateReport = $false }
+    ) {
+        $run = Invoke-ReportFixture -GenerateReport:$Generate -UpdateReport:$UpdateReport `
+            -SeedPriorArtifacts -ObstructDiagnostic $Diagnostic -Body @"
+Describe 'Sidebar startup snapshots preserve the consolidated launch contract' {
+    It 'passes' { `$true | Should -BeTrue }
+}
+"@
+
+        $run.ExitCode | Should -Not -Be 0
+        $run.Output | Should -Match ([regex]::Escape($Diagnostic))
+        $run.ResultsXmlExists | Should -BeTrue
+        ($run.ReleaseReport -match '(?m)^- \[x\]') | Should -BeFalse
+        if ($Generate) { $run.ReleaseReport | Should -Match 'AUTOMATION FAILED.*Report generation failed' }
+        else { $run.ReleaseReport | Should -BeNullOrEmpty }
+        $run.Html | Should -BeNullOrEmpty
+        $run.Summary | Should -BeNullOrEmpty
+    }
+
+    It 'publishes checklist credit after both diagnostics succeed in <Mode> mode' -ForEach @(
+        @{ Mode = 'full'; UpdateReport = $false }
+        @{ Mode = 'incremental'; UpdateReport = $true }
+    ) {
+        $run = Invoke-ReportFixture -GenerateReport -UpdateReport:$UpdateReport -Body @"
+Describe 'Sidebar startup snapshots preserve the consolidated launch contract' {
+    It 'passes' { `$true | Should -BeTrue }
+}
+"@
+
+        $run.ExitCode | Should -Be 0
+        $run.Html | Should -Match 'ALL PASSED'
+        $run.Summary | Should -Match 'All tests passed'
+        ($run.ReleaseReport -match '(?m)^- \[x\] `C349`') | Should -BeTrue
     }
 
     It 'removes stale summaries even when a blocked release checklist cannot be written' {

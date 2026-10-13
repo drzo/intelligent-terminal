@@ -1042,9 +1042,12 @@ Outputs (all under `test/e2e/artifacts/`):
   `pwsh -File test/e2e/Update-ReleaseReport.ps1`.
   If Pester reports a structural setup/cleanup failure or no test passes, both full and incremental
   runner modes replace the release report with a blocked notice and **no checked
-  items**, rather than crediting test cases that passed before the failure. A
-  report-generator error clears earlier HTML and Markdown summaries before
-  attempting the blocked checklist; the runner exits nonzero.
+  items**, rather than crediting test cases that passed before the failure.
+  Diagnostics are written before publishing checklist credit. A failure writing
+  HTML, Markdown, or the checklist clears prior/current report artifacts and,
+  when requested, writes a blocked checklist; the runner exits nonzero while
+  retaining the current NUnit test result. If invalidation also fails, both
+  errors are surfaced. A blocked notice does not link to a removed HTML report.
 - Console echo of the same precise failures; exit code `1` on any failure (CI-friendly).
   Zero selected or passing cases and setup/report-generation errors are non-green,
   even with no failing test assertion. A mixture of passes and externally gated

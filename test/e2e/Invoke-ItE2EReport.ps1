@@ -126,38 +126,8 @@ function Write-BlockedReleaseReport([string]$Path, [string]$Reason) {
         '# Release Report'
         ''
         "> ⚠️ **AUTOMATION FAILED** — $Reason No checklist item is credited."
-        '> See the test output and report.html for diagnostics; rerun after fixing the failure.'
+        '> See the test output for diagnostics; rerun after fixing the failure.'
     ) | Set-Content -LiteralPath $Path -Encoding utf8
-}
-if (-not $SkipReleaseReport) {
-    $releaseReport = Join-Path $OutDir 'release-report.md'
-    $blockedReason = if ($setupFailures.Count) { 'Pester setup or cleanup failed.' }
-        elseif ($noTests) { 'No tests were selected.' }
-        elseif ($result.PassedCount -eq 0) { 'No tests passed.' }
-        elseif ($unexpectedSkips) { 'Strict run contained skipped tests.' }
-    if ($blockedReason) {
-        Remove-StaleItE2EArtifacts -Root $OutDir -Names @('report.html', 'summary.md')
-        Write-BlockedReleaseReport -Path $releaseReport -Reason $blockedReason
-        $releaseReportKind = 'blocked by incomplete test run'
-    }
-    else {
-        try {
-            if ($UpdateReport -and (Test-Path $releaseReport)) {
-                & (Join-Path $PSScriptRoot 'Update-ReleaseReport.ps1') -Report $releaseReport -ResultsXml $cfg.TestResult.OutputPath.Value
-                $releaseReportKind = 'incrementally updated'
-            }
-            else {
-                if ($UpdateReport) { Write-Host "  (-UpdateReport: no existing report at $releaseReport; generating fresh)" -ForegroundColor DarkGray }
-                & (Join-Path $PSScriptRoot 'New-ReleaseReport.ps1') -ResultsXml $cfg.TestResult.OutputPath.Value -OutFile $releaseReport
-                $releaseReportKind = 'clean release checklist'
-            }
-        }
-        catch {
-            Remove-StaleItE2EArtifacts -Root $OutDir -Names @('report.html', 'summary.md')
-            Write-BlockedReleaseReport -Path $releaseReport -Reason 'Release report generation failed.'
-            throw
-        }
-    }
 }
 
 $bannerText = if ($result.FailedCount -gt 0) {
@@ -231,6 +201,7 @@ function Format-Failure($t) {
     $sb.ToString()
 }
 
+try {
 $md = [System.Text.StringBuilder]::new()
 [void]$md.AppendLine("# ItE2E test report")
 [void]$md.AppendLine("")
@@ -341,6 +312,42 @@ foreach ($g in $groups) {
 $htmlPath = Join-Path $OutDir 'report.html'
 $h.ToString() | Set-Content -LiteralPath $htmlPath -Encoding utf8
 
+if (-not $SkipReleaseReport) {
+    $releaseReport = Join-Path $OutDir 'release-report.md'
+    $blockedReason = if ($setupFailures.Count) { 'Pester setup or cleanup failed.' }
+        elseif ($noTests) { 'No tests were selected.' }
+        elseif ($result.PassedCount -eq 0) { 'No tests passed.' }
+        elseif ($unexpectedSkips) { 'Strict run contained skipped tests.' }
+    if ($blockedReason) {
+        Write-BlockedReleaseReport -Path $releaseReport -Reason $blockedReason
+        $releaseReportKind = 'blocked by incomplete test run'
+    }
+    elseif ($UpdateReport -and (Test-Path $releaseReport)) {
+        & (Join-Path $PSScriptRoot 'Update-ReleaseReport.ps1') -Report $releaseReport -ResultsXml $cfg.TestResult.OutputPath.Value
+        $releaseReportKind = 'incrementally updated'
+    }
+    else {
+        if ($UpdateReport) { Write-Host "  (-UpdateReport: no existing report at $releaseReport; generating fresh)" -ForegroundColor DarkGray }
+        & (Join-Path $PSScriptRoot 'New-ReleaseReport.ps1') -ResultsXml $cfg.TestResult.OutputPath.Value -OutFile $releaseReport
+        $releaseReportKind = 'clean release checklist'
+    }
+}
+}
+catch {
+    $original = $_
+    try {
+        Remove-StaleItE2EArtifacts -Root $OutDir -Names @('report.html', 'summary.md', 'release-report.md')
+        if (-not $SkipReleaseReport) {
+            Write-BlockedReleaseReport -Path (Join-Path $OutDir 'release-report.md') -Reason 'Report generation failed.'
+        }
+    }
+    catch {
+        throw [AggregateException]::new('Report generation and artifact invalidation both failed.',
+            [Exception[]]@($original.Exception, $_.Exception))
+    }
+    throw $original
+}
+
 # ── Console echo of precise failures ────────────────────────────────────────
 Write-Host ""
 Write-Host ("=" * 70)
@@ -348,7 +355,9 @@ Write-Host "ItE2E REPORT  Passed=$($result.PassedCount) Failed=$($result.FailedC
 Write-Host "  report.html : $htmlPath"
 Write-Host "  results.xml : $($cfg.TestResult.OutputPath.Value)"
 Write-Host "  summary.md  : $summaryPath"
-if ($releaseReport) { Write-Host "  release-report.md : $releaseReport ($releaseReportKind)" -ForegroundColor Green }
+if ($releaseReport) {
+    Write-Host "  release-report.md : $releaseReport ($releaseReportKind)" -ForegroundColor $(if ($runFailed) { 'Red' } else { 'Green' })
+}
 if ($allFailures) {
     Write-Host ""
     Write-Host "PRECISE FAILURES:" -ForegroundColor Red
