@@ -287,8 +287,10 @@ Describe 'Feature: simplified agent Markdown' -Tag 'Feature', 'SimplifiedMarkdow
         Save-MarkdownEvidence completed-markdown
     }
 
-    It 'Interrupted agent replies format their received text (<Kind>)' -ForEach @(
-        @{ Kind = 'cancel' }, @{ Kind = 'error' }, @{ Kind = 'disconnect' }
+    It '<Title>' -ForEach @(
+        @{ Kind = 'cancel'; Title = 'Cancelled agent replies format their received text' }
+        @{ Kind = 'error'; Title = 'Failed agent replies format their received text' }
+        @{ Kind = 'disconnect'; Title = 'Disconnected agent replies format their received text' }
     ) {
         Start-MarkdownScenario
         $marker = 'QUEUE_HOLD_MD_' + $Kind.ToUpperInvariant() + '_' + $script:runId.Substring(0, 6).ToUpperInvariant()
