@@ -758,7 +758,7 @@ mod tests {
     fn agent_markdown_projection_matches_fresh_package_and_ratatui_output() {
         let sources = [
             "# Heading\r\n\r\n- [x] **Done**\r\n- [ ] pending\r\n",
-            "> quote with *emphasis*\n\n[link](https://example.invalid)\n\n`code`",
+            "> quote with *emphasis*\n\n[docs](https://example.invalid)\n\n`code`",
             "```rust\nlet value = 1;\n```\n\n```text\nunfinished",
             "| Name | Value |\n| :--- | ---: |\n| wide | **bold** |\n| short | 42 |",
             "Unicode: 中文 e\u{301} 👩‍💻 🌍\n\n**unfinished",

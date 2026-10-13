@@ -513,7 +513,7 @@ fn agent_markdown_mode_changes_preserve_selection_until_the_first_safe_frame() {
 }
 
 #[test]
-fn agent_markdown_does_not_render_offscreen_overscan_turns() {
+fn agent_markdown_does_not_render_turns_outside_the_viewport() {
     let _locale = crate::test_support::lock_locale();
     rust_i18n::set_locale("en-US");
     let mut app = super::tests::test_app();

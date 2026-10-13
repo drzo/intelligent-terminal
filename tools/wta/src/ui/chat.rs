@@ -2736,7 +2736,7 @@ mod tests {
                 Line::default(),
                 Line::from("alpha beta   gamma delta epsilon"),
                 Line::from("  leading and trailing spaces  "),
-                Line::from("one\ttwo\tthree"),
+                Line::from(concat!("one", "\t", "two", "\t", "three")),
                 Line::from("abcdefghijklmnopqrstuvwxyz"),
                 Line::default(),
                 Line::from("last"),
