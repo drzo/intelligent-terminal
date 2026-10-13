@@ -832,6 +832,10 @@ namespace Microsoft::Terminal::RichTab::Provider
                 {
                     const auto valueText = _ValueText(value->second);
                     _Append(result.text, valueText, L"\n");
+                    if (field.id == "agentStatus" && !valueText.empty())
+                    {
+                        result.agentStatusRanges.push_back({ result.text.size() - valueText.size(), valueText.size() });
+                    }
 
                     auto displayName = field.displayName;
                     if (const auto providerNames = fieldDisplayNames.find(provider.manifest.id);

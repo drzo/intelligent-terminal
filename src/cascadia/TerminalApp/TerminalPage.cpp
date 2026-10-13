@@ -5,6 +5,7 @@
 #include "pch.h"
 #include "TerminalPage.h"
 #include "TabStrip.h"
+#include "TabHeaderControl.h"
 
 #include <iomanip>
 #include <icu.h>
@@ -11612,7 +11613,8 @@ namespace winrt::TerminalApp::implementation
         if (const auto presentation = _richTabPresentations.find(sessionId);
             presentation != _richTabPresentations.end())
         {
-            tab.SetRichTabPresentation(presentation->second.presentation);
+            const auto agentInfo = _RichTabAgentInfoForControl(control);
+            tab.SetRichTabPresentation(presentation->second.presentation, agentInfo ? agentInfo->status : std::string_view{});
         }
         else
         {
@@ -11804,7 +11806,8 @@ namespace winrt::TerminalApp::implementation
                 if (const auto activePane = tab->GetActivePane();
                     activePane && activePane->GetSessionId() == target)
                 {
-                    tab->SetRichTabPresentation(update.presentation);
+                    const auto agentInfo = _RichTabAgentInfoForControl(activePane->GetTerminalControl());
+                    tab->SetRichTabPresentation(update.presentation, agentInfo ? agentInfo->status : std::string_view{});
                 }
                 _ApplyTabListProjection(*tab);
             }
@@ -13341,6 +13344,11 @@ namespace winrt::TerminalApp::implementation
                 {
                     const auto& value = *presentation->second.presentation;
                     itemImpl->MetadataText(winrt::hstring{ value.text });
+                    itemImpl->MetadataHighlightRanges(TabHeaderControl::BuildMetadataHighlightRanges(value));
+                    if (const auto agentInfo = _RichTabAgentInfoForControl(sourcePane ? sourcePane->GetTerminalControl() : nullptr))
+                    {
+                        itemImpl->MetadataHighlightColor(TabHeaderControl::AgentStatusHighlightColor(agentInfo->status));
+                    }
                     itemImpl->MetadataVisibility(value.text.empty() ? Visibility::Collapsed : Visibility::Visible);
                     if (!value.accessibilityText.empty())
                     {

@@ -15,6 +15,7 @@
 #include <thread>
 #include <unordered_map>
 #include <unordered_set>
+#include <vector>
 
 namespace TerminalAppUnitTests
 {
@@ -25,9 +26,18 @@ namespace Microsoft::Terminal::RichTab::Provider
 {
     struct Presentation
     {
+        struct TextRange
+        {
+            size_t start;
+            size_t length;
+
+            bool operator==(const TextRange&) const = default;
+        };
+
         std::wstring text;
         std::wstring tooltip;
         std::wstring accessibilityText;
+        std::vector<TextRange> agentStatusRanges;
 
         bool operator==(const Presentation&) const = default;
     };

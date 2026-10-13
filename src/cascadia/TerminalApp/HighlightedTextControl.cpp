@@ -27,11 +27,19 @@ namespace winrt::TerminalApp::implementation
     DependencyProperty HighlightedTextControl::_HighlightedRunsProperty{ nullptr };
     DependencyProperty HighlightedTextControl::_TextBlockStyleProperty{ nullptr };
     DependencyProperty HighlightedTextControl::_HighlightedRunStyleProperty{ nullptr };
+    DependencyProperty HighlightedTextControl::_ColorHighlightProperty{ nullptr };
+    DependencyProperty HighlightedTextControl::_ColorHighlightRangesProperty{ nullptr };
+    DependencyProperty HighlightedTextControl::_SuccessHighlightBrushProperty{ nullptr };
+    DependencyProperty HighlightedTextControl::_CautionHighlightBrushProperty{ nullptr };
+    DependencyProperty HighlightedTextControl::_CriticalHighlightBrushProperty{ nullptr };
 
-    HighlightedTextControl::HighlightedTextControl()
+    HighlightedTextControlPropertyRegistration::HighlightedTextControlPropertyRegistration()
     {
-        _InitializeProperties();
+        // ThemeResource expressions can be assigned during Control base construction.
+        HighlightedTextControl::_InitializeProperties();
     }
+
+    HighlightedTextControl::HighlightedTextControl() = default;
 
     void HighlightedTextControl::_InitializeProperties()
     {
@@ -63,6 +71,36 @@ namespace winrt::TerminalApp::implementation
             _HighlightedRunStyleProperty = DependencyProperty::Register(
                 L"HighlightedRunStyle",
                 xaml_typename<winrt::Windows::UI::Xaml::Style>(),
+                xaml_typename<winrt::TerminalApp::HighlightedTextControl>(),
+                PropertyMetadata(nullptr, HighlightedTextControl::_onPropertyChanged));
+
+            _ColorHighlightProperty = DependencyProperty::Register(
+                L"ColorHighlight",
+                xaml_typename<winrt::TerminalApp::TextHighlightColor>(),
+                xaml_typename<winrt::TerminalApp::HighlightedTextControl>(),
+                PropertyMetadata(box_value(winrt::TerminalApp::TextHighlightColor::None), HighlightedTextControl::_onPropertyChanged));
+
+            _ColorHighlightRangesProperty = DependencyProperty::Register(
+                L"ColorHighlightRanges",
+                xaml_typename<winrt::Windows::Foundation::Collections::IVector<winrt::TerminalApp::HighlightedRun>>(),
+                xaml_typename<winrt::TerminalApp::HighlightedTextControl>(),
+                PropertyMetadata(nullptr, HighlightedTextControl::_onPropertyChanged));
+
+            _SuccessHighlightBrushProperty = DependencyProperty::Register(
+                L"SuccessHighlightBrush",
+                xaml_typename<winrt::Windows::UI::Xaml::Media::Brush>(),
+                xaml_typename<winrt::TerminalApp::HighlightedTextControl>(),
+                PropertyMetadata(nullptr, HighlightedTextControl::_onPropertyChanged));
+
+            _CautionHighlightBrushProperty = DependencyProperty::Register(
+                L"CautionHighlightBrush",
+                xaml_typename<winrt::Windows::UI::Xaml::Media::Brush>(),
+                xaml_typename<winrt::TerminalApp::HighlightedTextControl>(),
+                PropertyMetadata(nullptr, HighlightedTextControl::_onPropertyChanged));
+
+            _CriticalHighlightBrushProperty = DependencyProperty::Register(
+                L"CriticalHighlightBrush",
+                xaml_typename<winrt::Windows::UI::Xaml::Media::Brush>(),
                 xaml_typename<winrt::TerminalApp::HighlightedTextControl>(),
                 PropertyMetadata(nullptr, HighlightedTextControl::_onPropertyChanged));
 
@@ -207,6 +245,53 @@ namespace winrt::TerminalApp::implementation
                 Documents::Run run;
                 run.Text(tail);
                 inlinesCollection.Append(run);
+            }
+        }
+
+        const auto highlighters = textBlock.TextHighlighters();
+        highlighters.Clear();
+        const auto color = ColorHighlight();
+        const auto colorRanges = ColorHighlightRanges();
+        if (color != TerminalApp::TextHighlightColor::None && colorRanges && !text.empty())
+        {
+            Media::Brush brush{ nullptr };
+            switch (color)
+            {
+            case TerminalApp::TextHighlightColor::Success:
+                brush = SuccessHighlightBrush();
+                break;
+            case TerminalApp::TextHighlightColor::Caution:
+                brush = CautionHighlightBrush();
+                break;
+            case TerminalApp::TextHighlightColor::Critical:
+                brush = CriticalHighlightBrush();
+                break;
+            default:
+                THROW_HR(E_INVALIDARG);
+            }
+            // Theme brushes can arrive separately; their changes rebuild the highlight.
+            if (!brush)
+            {
+                return;
+            }
+            Documents::TextHighlighter highlighter;
+            highlighter.Foreground(brush);
+            highlighter.Background(Media::SolidColorBrush{ Windows::UI::Colors::Transparent() });
+            const auto ranges = highlighter.Ranges();
+            for (const auto& range : colorRanges)
+            {
+                THROW_HR_IF(E_INVALIDARG, range.End < range.Start);
+                if (range.Start < text.size())
+                {
+                    const auto end = std::min<uint64_t>(range.End, text.size() - 1);
+                    ranges.Append(Documents::TextRange{
+                        gsl::narrow<int32_t>(range.Start),
+                        gsl::narrow<int32_t>(end - range.Start + 1) });
+                }
+            }
+            if (ranges.Size() != 0)
+            {
+                highlighters.Append(highlighter);
             }
         }
     }

@@ -376,8 +376,13 @@ zero, or invalid timestamps display Unknown, and future timestamps display just 
 Active uses a theme-aware green success accent, Waiting for input a yellow caution
 accent, and Error a red critical accent, matching the session management view.
 Only the status text is accented; the provider, distro name,
-age, and separators stay muted, and search matches remain highlighted. Host/WSL
-location remains searchable and available for routing; Host has no extra location
+age, and separators stay muted, and search matches remain highlighted.
+Live tab metadata and expanded split-pane metadata use the same status accents.
+Only the provider's `agentStatus` field is colored; working-directory and Git
+fields retain their existing appearance, including when they contain the same
+text as a status label. Idle and non-actionable states retain the normal metadata
+color. Status colors follow theme changes without removing search emphasis.
+Host/WSL location remains searchable and available for routing; Host has no extra location
 label. Status-only updates preserve the provider, distro name, and age from the
 latest snapshot.
 The live session bound to the current terminal pane has a selected background.
