@@ -790,6 +790,8 @@ Invoke-Pester test/e2e/selftests              # all self-tests
 The self-tests are the framework's own proof: every primitive is exercised against a
 running terminal (`selftests/ItE2E.Live.Tests.ps1`) and the core helpers are unit-tested
 in `selftests/ItE2E.Unit.Tests.ps1` (hermetic, no terminal needed).
+Ownership and pointer-safety regressions participate in the `Unit` tag, including
+both refusal before backup and backup retention after a later process arrival.
 The Live fixture pins completed onboarding and a default-profile horizontal tab.
 It can smoke-test a newly registered isolated Dev package after applying the
 temporary Dev identity substitutions in the
