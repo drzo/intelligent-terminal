@@ -73,6 +73,7 @@ Describe 'Feature: packaged OpenCode hook lifecycle' -Tag 'Feature', 'OpenCodeHo
             $start.Environment['WTCLI_PATH'] = $script:app.WtcliPath
             $start.Environment.Remove('OPENCODE_CLIENT') | Out-Null
             $process = [Diagnostics.Process]::Start($start)
+            $null = $process.Handle
             $script:drivers.Add($process)
             $process | Add-Member HookErrorTask $process.StandardError.ReadToEndAsync()
             $ready = $process.StandardOutput.ReadLineAsync()
@@ -116,7 +117,7 @@ Describe 'Feature: packaged OpenCode hook lifecycle' -Tag 'Feature', 'OpenCodeHo
                 if (-not $driver.HasExited) {
                     $driver.StandardInput.Close()
                     if (-not $driver.WaitForExit(5000)) {
-                        Stop-Process -Id $driver.Id -Force
+                        $driver.Kill()
                         throw "Owned OpenCode hook fixture did not exit: $($driver.Id)"
                     }
                 }
@@ -275,6 +276,7 @@ Describe 'Feature: packaged OpenCode hook lifecycle' -Tag 'Feature', 'OpenCodeHo
             $start.Environment.Remove($key) | Out-Null
         }
         $server = [Diagnostics.Process]::Start($start)
+        $null = $server.Handle
         $stdout = $server.StandardOutput.ReadToEndAsync()
         $stderr = $server.StandardError.ReadToEndAsync()
         $base = "http://127.0.0.1:$port"
@@ -300,7 +302,7 @@ Describe 'Feature: packaged OpenCode hook lifecycle' -Tag 'Feature', 'OpenCodeHo
             Assert-HookState $created.id 'Ended' 'agent.session.end' | Out-Null
         }
         finally {
-            if (-not $server.HasExited) { Stop-Process -Id $server.Id -Force }
+            if (-not $server.HasExited) { $server.Kill() }
             if (-not $server.WaitForExit(5000)) { throw 'Owned native OpenCode server did not exit' }
             Write-ItLog -Message "OpenCode server stdout: $($stdout.GetAwaiter().GetResult())"
             Write-ItLog -Message "OpenCode server stderr: $($stderr.GetAwaiter().GetResult())"

@@ -45,6 +45,8 @@ Hook versions are independent per provider. Bump only the manifest for the
 provider whose installed payload changes; for Claude and Copilot, also update
 that provider's marketplace plugin version. Keep the already-shipped versions
 of unchanged providers: do not roll them back to undo a coordinated release.
+Advance only that provider's shipped floor in the version-policy test when
+releasing its new version; unrelated providers keep their own floors.
 Reconciliation compares each provider's installed version against its own
 bundle version. A JavaScript-only OpenCode change still needs a version bump
 because its installed plugin is a copy, not a live link to the bundle.

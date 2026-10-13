@@ -2233,24 +2233,38 @@ fn copilot_uses_native_plugin_layout() {
 
 /// Providers upgrade independently. A marketplace must advertise the version
 /// of its own plugin, not the version of an unrelated provider's bundle.
+/// Each shipped floor moves with that provider alone and rejects rollbacks.
 #[test]
 fn native_hook_bundle_versions_match_their_marketplaces() {
     let manifests = [
-        CLAUDE_PLUGIN_JSON,
-        COPILOT_PLUGIN_JSON,
-        GEMINI_EXTENSION_JSON,
-        CODEX_PLUGIN_JSON,
-        OPENCODE_PLUGIN_JSON,
-        include_str!("../wt-agent-hooks/antigravity/intelligent-terminal.json"),
-        include_str!("../wt-agent-hooks/antigravity-wsl/intelligent-terminal.json"),
+        ("claude", CLAUDE_PLUGIN_JSON, "0.1.7"),
+        ("copilot", COPILOT_PLUGIN_JSON, "0.1.7"),
+        ("gemini", GEMINI_EXTENSION_JSON, "0.1.7"),
+        ("codex", CODEX_PLUGIN_JSON, "0.1.7"),
+        ("opencode", OPENCODE_PLUGIN_JSON, "0.1.7"),
+        (
+            "antigravity",
+            include_str!("../wt-agent-hooks/antigravity/intelligent-terminal.json"),
+            "0.1.2",
+        ),
+        (
+            "antigravity-wsl",
+            include_str!("../wt-agent-hooks/antigravity-wsl/intelligent-terminal.json"),
+            "0.1.2",
+        ),
     ];
-    for manifest in manifests {
+    for (provider, manifest, shipped_floor) in manifests {
         let value: Value = serde_json::from_str(manifest).unwrap();
-        value["version"]
+        let version = value["version"]
             .as_str()
             .unwrap()
             .parse::<Version>()
             .expect("each provider needs a valid upgrade version");
+        let floor = shipped_floor.parse::<Version>().unwrap();
+        assert!(
+            version >= floor,
+            "{provider} hook version {version} cannot fall below its shipped floor {floor}"
+        );
     }
 
     for (manifest, marketplace) in [
