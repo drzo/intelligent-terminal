@@ -11,11 +11,23 @@ BeforeAll {
     }, $true)) {
         $script:nativeCases[$command.CommandElements[1].Value] = $command.CommandElements[2].ScriptBlock.GetScriptBlock()
     }
+    $self = [Management.Automation.Language.Parser]::ParseFile(
+        (Join-Path $PSScriptRoot 'OpenCodeHooks.Unit.Tests.ps1'), [ref]$null, [ref]$null)
+    $componentCase = $self.Find({
+        param($node)
+        $node -is [Management.Automation.Language.CommandAst] -and $node.GetCommandName() -eq 'It' -and
+            $node.CommandElements[1].Value -eq 'executes both plugin entrypoints and lifecycle regressions'
+    }, $true)
+    $script:nativeCases['Node component wrapper'] = $componentCase.CommandElements[2].ScriptBlock.GetScriptBlock()
 }
 
 Describe 'Unit: OpenCode hook component behavior' -Tag 'Unit' {
     It 'executes both plugin entrypoints and lifecycle regressions' {
-        $node = Get-Command node -ErrorAction Stop
+        $node = Get-Command node -ErrorAction SilentlyContinue
+        if (-not $node) {
+            Set-ItResult -Skipped -Because 'Node.js is not installed for the JavaScript component regressions'
+            return
+        }
         $result = Invoke-Native -FilePath $node.Source -Arguments @(
             '--test', '--test-reporter=tap', (Join-Path $PSScriptRoot 'OpenCodeHooks.test.mjs')
         ) -TimeoutSec 30
@@ -23,6 +35,25 @@ Describe 'Unit: OpenCode hook component behavior' -Tag 'Unit' {
         $result.ExitCode | Should -Be 0 -Because "$($result.StdOut)`n$($result.StdErr)"
         $result.StdOut | Should -Match '# pass 8'
         $result.StdOut | Should -Match '# skipped 0'
+    }
+
+    It 'skips only the Node-dependent <Case> when Node.js is absent' -TestCases @(
+        @{ Case = 'Node component wrapper' },
+        @{ Case = 'OpenCode hook entrypoints deliver lifecycle to WTA' },
+        @{ Case = 'OpenCode hook suppression prevents ghost sessions' }
+    ) {
+        param($Case)
+        $previous = $script:node
+        try {
+            $script:node = $null
+            Mock Get-Command { $null } -ParameterFilter { $Name -eq 'node' }
+            Mock Set-ItResult {}
+            Mock Invoke-Native { throw 'Node-dependent execution must not start' }
+            & $script:nativeCases[$Case]
+            Should -Invoke Set-ItResult -Times 1 -Exactly -ParameterFilter { $Skipped -and $Because -match 'Node.js is not installed' }
+            Should -Invoke Invoke-Native -Times 0 -Exactly
+        }
+        finally { $script:node = $previous }
     }
 
     It 'skips the <Case> case when the optional native CLI is absent' -TestCases @(

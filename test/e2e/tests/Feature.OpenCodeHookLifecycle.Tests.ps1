@@ -7,7 +7,8 @@ Describe 'Feature: packaged OpenCode hook lifecycle' -Tag 'Feature', 'OpenCodeHo
         $script:app = $null
         $script:listener = $null
         $script:drivers = [Collections.Generic.List[Diagnostics.Process]]::new()
-        $script:node = (Get-Command node -ErrorAction Stop).Source
+        $nodeCommand = Get-Command node -ErrorAction SilentlyContinue
+        $script:node = if ($nodeCommand) { $nodeCommand.Source } else { $null }
         $script:driverPath = (Resolve-Path (Join-Path $PSScriptRoot '..\fixtures\OpenCodeHookDriver.mjs')).Path
         $script:fixtureDirectory = Join-Path $TestDrive 'opencode'
         New-Item -ItemType Directory -Path $script:fixtureDirectory | Out-Null
@@ -136,6 +137,10 @@ Describe 'Feature: packaged OpenCode hook lifecycle' -Tag 'Feature', 'OpenCodeHo
     }
 
     It 'OpenCode hook entrypoints deliver lifecycle to WTA' {
+        if (-not $script:node) {
+            Set-ItResult -Skipped -Because 'Node.js is not installed for controlled SDK inputs'
+            return
+        }
         foreach ($mode in @('v1', 'v2')) {
             $driver = Start-HookDriver $mode
             $id = "ite2e-opencode-$mode-$([guid]::NewGuid().ToString('N'))"
@@ -165,6 +170,10 @@ Describe 'Feature: packaged OpenCode hook lifecycle' -Tag 'Feature', 'OpenCodeHo
     }
 
     It 'OpenCode hook suppression prevents ghost sessions' {
+        if (-not $script:node) {
+            Set-ItResult -Skipped -Because 'Node.js is not installed for controlled SDK inputs'
+            return
+        }
         $driver = Start-HookDriver 'v2'
         $prefix = "ite2e-opencode-negative-$([guid]::NewGuid().ToString('N'))"
         $root = "$prefix-root"
