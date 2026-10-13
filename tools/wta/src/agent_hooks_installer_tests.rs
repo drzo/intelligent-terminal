@@ -2233,7 +2233,8 @@ fn copilot_uses_native_plugin_layout() {
 
 /// Providers upgrade independently. A marketplace must advertise the version
 /// of its own plugin, not the version of an unrelated provider's bundle.
-/// Each shipped floor moves with that provider alone and rejects rollbacks.
+/// Each expected release version moves with that provider alone; equality
+/// ensures a bump also advances its recorded rollback guard.
 #[test]
 fn native_hook_bundle_versions_match_their_marketplaces() {
     let manifests = [
@@ -2253,17 +2254,17 @@ fn native_hook_bundle_versions_match_their_marketplaces() {
             "0.1.2",
         ),
     ];
-    for (provider, manifest, shipped_floor) in manifests {
+    for (provider, manifest, expected_release) in manifests {
         let value: Value = serde_json::from_str(manifest).unwrap();
         let version = value["version"]
             .as_str()
             .unwrap()
             .parse::<Version>()
             .expect("each provider needs a valid upgrade version");
-        let floor = shipped_floor.parse::<Version>().unwrap();
-        assert!(
-            version >= floor,
-            "{provider} hook version {version} cannot fall below its shipped floor {floor}"
+        let expected = expected_release.parse::<Version>().unwrap();
+        assert_eq!(
+            version, expected,
+            "{provider} must update its own expected release version with its manifest"
         );
     }
 
