@@ -58,7 +58,9 @@ never a target, even if it belongs to Dev. An active non-Dev Intelligent Termina
 package remains protected, and ordinary Windows Terminal is not an ItE2E target.
 Unknown live process identities fail closed. Exited transient clients are not
 shutdown targets and cannot make the chat-ancestry check fail because their
-start time is no longer readable. Shared cleanup requires a one-second
+start time is no longer readable. Identity snapshot/revalidation failures are
+ignored only after that captured process is confirmed exited; failures for live
+processes are still surfaced. Shared cleanup requires a one-second
 quiet window, checking all package executables every 200 ms. Dev cleanup retries
 bounded late respawns; protected packages fail if any process appears. Suites
 that read or change configuration

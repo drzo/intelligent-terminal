@@ -244,8 +244,13 @@ function Assert-ItDevProcessesNotChat {
             }
             foreach ($process in $Processes) {
                 if ($process.HasExited) { continue }
-                if (-not $process.StartTime -or
-                    $process.StartTime.ToUniversalTime() -le $oldestObserved) {
+                try { $processStart = $process.StartTime }
+                catch {
+                    if ($process.HasExited) { continue }
+                    throw
+                }
+                if (-not $processStart -or
+                    $processStart.ToUniversalTime() -le $oldestObserved) {
                     if ($process.HasExited) { continue }
                     throw "Cannot establish current chat ancestry for pid=${id}: live Dev pid=$($process.Id) may predate an observed ancestor or have an unreadable start time."
                 }
@@ -303,22 +308,28 @@ function Stop-ItDevPackageProcesses {
         $targets = @(
             foreach ($process in $processes) {
                 if ($process.HasExited) { continue }
-                $null = $process.Handle
-                $path = if ($process.Path) { [string]$process.Path }
-                    else { Get-ItProcessImagePath -Id $process.Id }
-                if (-not $path) {
-                    throw "Dev process executable path unavailable (pid=$($process.Id))."
+                try {
+                    $null = $process.Handle
+                    $path = if ($process.Path) { [string]$process.Path }
+                        else { Get-ItProcessImagePath -Id $process.Id }
+                    if (-not $path) {
+                        throw "Dev process executable path unavailable (pid=$($process.Id))."
+                    }
+                    $path = [IO.Path]::GetFullPath($path)
+                    if (-not $path.StartsWith($root, [StringComparison]::OrdinalIgnoreCase) -or
+                        (Get-ItCreatedProcessPackage -Process $process) -cne $App.PackageFullName) {
+                        throw "Dev process package identity or path does not match the registered Dev package (pid=$($process.Id))."
+                    }
+                    [pscustomobject]@{
+                        Process = $process
+                        Id = [int]$process.Id
+                        Path = $path
+                        StartTime = $process.StartTime.ToUniversalTime()
+                    }
                 }
-                $path = [IO.Path]::GetFullPath($path)
-                if (-not $path.StartsWith($root, [StringComparison]::OrdinalIgnoreCase) -or
-                    (Get-ItCreatedProcessPackage -Process $process) -cne $App.PackageFullName) {
-                    throw "Dev process package identity or path does not match the registered Dev package (pid=$($process.Id))."
-                }
-                [pscustomobject]@{
-                    Process = $process
-                    Id = [int]$process.Id
-                    Path = $path
-                    StartTime = $process.StartTime.ToUniversalTime()
+                catch {
+                    if ($process.HasExited) { continue }
+                    throw
                 }
             }
         )
@@ -341,19 +352,25 @@ function Stop-ItDevPackageProcesses {
                         $target.Process.HasExited) { continue }
                     throw
                 }
-                $null = $live.Handle
-                # The retained handle prevents Windows from reusing this PID before shutdown.
-                $livePath = if ($live.Path) { [string]$live.Path }
-                    else { Get-ItProcessImagePath -Id $target.Id }
-                if (-not $livePath) {
-                    throw "Dev process executable path unavailable before shutdown (pid=$($target.Id))."
+                try {
+                    $null = $live.Handle
+                    # The retained handle prevents Windows from reusing this PID before shutdown.
+                    $livePath = if ($live.Path) { [string]$live.Path }
+                        else { Get-ItProcessImagePath -Id $target.Id }
+                    if (-not $livePath) {
+                        throw "Dev process executable path unavailable before shutdown (pid=$($target.Id))."
+                    }
+                    $livePath = [IO.Path]::GetFullPath($livePath)
+                    if ($live.HasExited -or
+                        $live.StartTime.ToUniversalTime() -ne $target.StartTime -or
+                        -not $livePath.Equals($target.Path, [StringComparison]::OrdinalIgnoreCase) -or
+                        (Get-ItCreatedProcessPackage -Process $live) -cne $App.PackageFullName) {
+                        throw "Dev process identity changed before shutdown (pid=$($target.Id))."
+                    }
                 }
-                $livePath = [IO.Path]::GetFullPath($livePath)
-                if ($live.HasExited -or
-                    $live.StartTime.ToUniversalTime() -ne $target.StartTime -or
-                    -not $livePath.Equals($target.Path, [StringComparison]::OrdinalIgnoreCase) -or
-                    (Get-ItCreatedProcessPackage -Process $live) -cne $App.PackageFullName) {
-                    throw "Dev process identity changed before shutdown (pid=$($target.Id))."
+                catch {
+                    if ($target.Process.HasExited) { continue }
+                    throw
                 }
                 try { Stop-Process -Id $target.Id -Force -ErrorAction Stop }
                 catch {

@@ -194,6 +194,46 @@ Describe 'Dev-only automatic cold start' -Tag 'Unit' {
             Should -Invoke Stop-Process -Times 1 -ParameterFilter { $Id -eq 51001 }
         }
 
+        It 'ignores a confirmed process exit during the initial identity snapshot' {
+            Mock Get-ItCreatedProcessPackage {
+                $script:process.HasExited = $true
+                throw 'snapshot identity unavailable'
+            }
+
+            { Stop-StaleItInstances -App $script:app } | Should -Not -Throw
+
+            $script:process.Closed | Should -BeFalse
+            Should -Invoke Stop-Process -Times 0
+        }
+
+        It 'retains identity failures for a process that is still alive' {
+            Mock Get-ItCreatedProcessPackage { throw 'snapshot identity unavailable' }
+
+            { Stop-StaleItInstances -App $script:app } | Should -Throw '*snapshot identity unavailable*'
+
+            $script:process.Closed | Should -BeFalse
+            Should -Invoke Stop-Process -Times 0
+        }
+
+        It 'ignores a confirmed exit during forced-stop identity revalidation' {
+            $script:process = New-FakeTerminalProcess -Name wta
+            $script:identityReads = 0
+            Mock Test-Until { $false }
+            Mock Get-Process { $script:process } -ParameterFilter { $Id -eq 51001 }
+            Mock Get-ItCreatedProcessPackage {
+                $script:identityReads++
+                if ($script:identityReads -gt 1) {
+                    $script:process.HasExited = $true
+                    throw 'snapshot identity unavailable'
+                }
+                $script:app.PackageFullName
+            }
+
+            { Stop-StaleItInstances -App $script:app -GraceSec 1 } | Should -Not -Throw
+
+            Should -Invoke Stop-Process -Times 0
+        }
+
         It 'force-stops a verified Dev helper when its managed Path is unavailable' {
             $script:process = New-FakeTerminalProcess -Name wta
             $script:process.Path = $null
