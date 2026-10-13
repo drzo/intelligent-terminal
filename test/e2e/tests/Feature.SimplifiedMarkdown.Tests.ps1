@@ -297,7 +297,7 @@ Describe 'Feature: simplified agent Markdown' -Tag 'Feature', 'SimplifiedMarkdow
         $null = Start-MarkdownReply -Marker $marker
         Wait-MarkdownText -Literal '**MD_BOLD**'
         if ($Kind -eq 'cancel') {
-            Send-AgentKey -App $script:app -PaneSessionId $script:agent.PaneSessionId -Key Escape | Out-Null
+            Send-AgentKey -App $script:app -PaneSessionId $script:agent.PaneSessionId -Key C-c | Out-Null
             $null = Wait-MarkdownRecord -Kind cancel -Marker $marker
             (Wait-MarkdownRecord -Kind completion -Marker $marker).reason | Should -Be 'cancelled'
         }
@@ -332,8 +332,6 @@ Describe 'Feature: simplified agent Markdown' -Tag 'Feature', 'SimplifiedMarkdow
     It 'Selected raw replies survive completion without blocking queued requests' {
         $clipboardCaptured = $false
         try {
-            $clipboard = Get-ClipboardSnapshot
-            $clipboardCaptured = $true
             Start-MarkdownScenario
             $selected = '**SELECTED_RAW**'
             $source = ("Earlier line`n" * 35) + "$selected`n" + ("tail`n" * 4)
@@ -356,6 +354,8 @@ Describe 'Feature: simplified agent Markdown' -Tag 'Feature', 'SimplifiedMarkdow
             $next.sequence | Should -BeGreaterThan $completed.sequence
             (Get-MarkdownPaneText).Contains($selected) | Should -BeTrue
             Save-MarkdownEvidence selected-raw-after-next-prompt
+            $clipboard = Get-ClipboardSnapshot
+            $clipboardCaptured = $true
             Invoke-WtCli -App $script:app -Arguments @('focus-pane', '-t', $script:agent.PaneSessionId) | Out-Null
             Send-WtWindowKey -App $script:app -Vk 0x43 -Ctrl -RequireForeground | Out-Null
             Wait-Until -TimeoutSec 5 -Because 'copy must return exactly the selected raw reply' -Condition {
@@ -383,11 +383,14 @@ Describe 'Feature: simplified agent Markdown' -Tag 'Feature', 'SimplifiedMarkdow
     It 'Saved agent replies use Markdown without changing raw history' {
         $historyHash = (Get-FileHash -LiteralPath $script:historyPath).Hash
         Start-MarkdownScenario
-        Send-WtEvent -App $script:app -EventType load_session -ParamsJson (@{
-            tab_id = $script:ownerTab
-            session_id = 'markdown-saved-session'
-            cwd = $script:evidenceDirectory
-        } | ConvertTo-Json -Compress)
+        Invoke-WtCli -App $script:app -Arguments @('publish', '--existing-only', (@{
+            method = 'load_session'
+            params = @{
+                tab_id = $script:ownerTab
+                session_id = 'markdown-saved-session'
+                cwd = $script:evidenceDirectory
+            }
+        } | ConvertTo-Json -Depth 5 -Compress)) | Out-Null
         (Wait-MarkdownRecord -Kind load).sessionId | Should -Be 'markdown-saved-session'
         Wait-MarkdownText -Literal SAVED_REPLY -Formatted
         (Get-MarkdownPaneText).Contains('**SAVED_USER**') | Should -BeTrue
@@ -419,7 +422,11 @@ Describe 'Feature: simplified agent Markdown' -Tag 'Feature', 'SimplifiedMarkdow
         $null = Wait-MarkdownRecord -Kind completion -Marker $marker
         Wait-MarkdownText -Literal MD_BOLD -Formatted
         $identity = Get-MarkdownIdentity
+        $shell = @(Get-WtPanes -App $script:app |
+            Where-Object { $_.session_id -ne $script:agent.PaneSessionId })
+        $shell | Should -HaveCount 1
         foreach ($enabled in @($false, $true)) {
+            Invoke-WtCli -App $script:app -Arguments @('focus-pane', '-t', $shell[0].session_id) | Out-Null
             Open-WtSettings -App $script:app | Out-Null
             Invoke-SettingsNav -App $script:app -NavItem AIAgentsNavItem | Out-Null
             $toggle = Get-UiElement -App $script:app -Selector RenderAgentMarkdownToggle
