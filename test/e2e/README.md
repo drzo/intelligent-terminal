@@ -1047,6 +1047,11 @@ Outputs (all under `test/e2e/artifacts/`):
   (runs the suite, then overlays only its items onto the existing report; falls back to a fresh
   generate if no report exists yet). Or standalone after a run wrote `results.xml`:
   `pwsh -File test/e2e/Update-ReleaseReport.ps1`.
+  The runner invalidates prior current-run HTML, summary, checklist and NUnit
+  artifacts before provenance checks or Pester start, so an interrupted process
+  cannot leave old success at those paths. Incremental mode retains its input as
+  `release-report.previous.md`; that snapshot is not current-run evidence.
+  A prior blocked notice without checklist rows falls back to fresh generation.
   If Pester reports a structural setup/cleanup failure or no test passes, both full and incremental
   runner modes replace the release report with a blocked notice and **no checked
   items**, rather than crediting test cases that passed before the failure.

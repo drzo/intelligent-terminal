@@ -54,6 +54,22 @@ function Remove-StaleItE2EArtifacts([string]$Root, [string[]]$Names) {
         }
     }
 }
+$previousReleaseReport = $null
+try {
+    $currentReport = Join-Path $OutDir 'release-report.md'
+    if ($UpdateReport -and -not $SkipReleaseReport -and (Test-Path -LiteralPath $currentReport -PathType Leaf)) {
+        $previousReleaseReport = Join-Path $OutDir 'release-report.previous.md'
+        if (Test-Path -LiteralPath $previousReleaseReport -PathType Container) {
+            throw "Previous checklist snapshot path is a directory: $previousReleaseReport"
+        }
+        Move-Item -LiteralPath $currentReport -Destination $previousReleaseReport -Force -ErrorAction Stop
+    }
+    Remove-StaleItE2EArtifacts -Root $OutDir -Names @('report.html', 'summary.md', 'release-report.md', 'results.xml')
+}
+catch {
+    Remove-StaleItE2EArtifacts -Root $OutDir -Names @('report.html', 'summary.md', 'release-report.md', 'results.xml')
+    throw
+}
 $proofRequested = $PSBoundParameters.ContainsKey('SourceRoot') -or
     $PSBoundParameters.ContainsKey('ExpectedHead') -or
     $PSBoundParameters.ContainsKey('RecipePath') -or
@@ -322,12 +338,14 @@ if (-not $SkipReleaseReport) {
         Write-BlockedReleaseReport -Path $releaseReport -Reason $blockedReason
         $releaseReportKind = 'blocked by incomplete test run'
     }
-    elseif ($UpdateReport -and (Test-Path $releaseReport)) {
-        & (Join-Path $PSScriptRoot 'Update-ReleaseReport.ps1') -Report $releaseReport -ResultsXml $cfg.TestResult.OutputPath.Value
+    elseif ($previousReleaseReport -and
+        (Get-Content -LiteralPath $previousReleaseReport -Raw) -match '(?m)^\s*-\s*\[[ xX]\]\s') {
+        & (Join-Path $PSScriptRoot 'Update-ReleaseReport.ps1') -Report $previousReleaseReport `
+            -OutFile $releaseReport -ResultsXml $cfg.TestResult.OutputPath.Value
         $releaseReportKind = 'incrementally updated'
     }
     else {
-        if ($UpdateReport) { Write-Host "  (-UpdateReport: no existing report at $releaseReport; generating fresh)" -ForegroundColor DarkGray }
+        if ($UpdateReport) { Write-Host "  (-UpdateReport: no reusable prior checklist; generating fresh)" -ForegroundColor DarkGray }
         & (Join-Path $PSScriptRoot 'New-ReleaseReport.ps1') -ResultsXml $cfg.TestResult.OutputPath.Value -OutFile $releaseReport
         $releaseReportKind = 'clean release checklist'
     }

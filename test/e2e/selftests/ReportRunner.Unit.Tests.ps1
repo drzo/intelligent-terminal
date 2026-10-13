@@ -11,6 +11,7 @@ BeforeAll {
             [switch]$ObstructReport,
             [ValidateSet('summary.md', 'report.html')][string]$ObstructDiagnostic,
             [switch]$SeedReport,
+            [switch]$SeedBlockedReport,
             [switch]$SeedPriorArtifacts,
             [switch]$FailGenerator,
             [switch]$FailPester,
@@ -35,6 +36,10 @@ BeforeAll {
                 '> **Automated: 1 passed, 0 failed. Manual: 0 item(s) left for you.** (total 1)'
                 '- [x] `C349` **Sidebar startup snapshots preserve the consolidated launch contract:** prior result'
             ) | Set-Content -LiteralPath (Join-Path $out 'release-report.md')
+        }
+        if ($SeedBlockedReport) {
+            @('# Release Report', '> AUTOMATION FAILED: prior incomplete run') |
+                Set-Content -LiteralPath (Join-Path $out 'release-report.md')
         }
 
         $runner = $script:runner
@@ -118,12 +123,61 @@ throw 'fixture verifier received configured isolated Dev family'
             ReleaseReport = if (Test-Path -LiteralPath (Join-Path $out 'release-report.md') -PathType Leaf) {
                 Get-Content -LiteralPath (Join-Path $out 'release-report.md') -Raw
             } else { '' }
+            PreviousReleaseReport = if (Test-Path -LiteralPath (Join-Path $out 'release-report.previous.md') -PathType Leaf) {
+                Get-Content -LiteralPath (Join-Path $out 'release-report.previous.md') -Raw
+            } else { '' }
             ResultsXmlExists = Test-Path -LiteralPath (Join-Path $out 'results.xml') -PathType Leaf
         }
     }
 }
 
 Describe 'Report runner acceptance' -Tag 'Unit' {
+    It 'quarantines old success before an interrupted <Mode> run starts' -ForEach @(
+        @{ Mode = 'full'; UpdateReport = $false }
+        @{ Mode = 'incremental'; UpdateReport = $true }
+    ) {
+        $run = Invoke-ReportFixture -GenerateReport -SeedPriorArtifacts -UpdateReport:$UpdateReport -Body @"
+Describe 'owned runner interruption' {
+    It 'terminates only this child runner' {
+        [Console]::WriteLine('OWNED_RUNNER_REACHED_TEST')
+        [Environment]::Exit(23)
+    }
+}
+"@
+
+        $run.ExitCode | Should -Be 23
+        $run.Output | Should -Match 'OWNED_RUNNER_REACHED_TEST'
+        $run.Html | Should -BeNullOrEmpty
+        $run.Summary | Should -BeNullOrEmpty
+        $run.ReleaseReport | Should -BeNullOrEmpty
+        $run.ResultsXmlExists | Should -BeFalse
+        if ($UpdateReport) { $run.PreviousReleaseReport | Should -Match '\[x\].*C349' }
+    }
+
+    It 'preserves unrelated prior credit after a successful incremental run' {
+        $run = Invoke-ReportFixture -GenerateReport -UpdateReport -Body @"
+Describe 'an independent framework check' {
+    It 'passes' { `$true | Should -BeTrue }
+}
+"@
+
+        $run.ExitCode | Should -Be 0
+        $run.Html | Should -Match 'ALL PASSED'
+        $run.ReleaseReport | Should -Match '\[x\].*C349'
+    }
+
+    It 'regenerates a checklist when the previous run left only a blocked notice' {
+        $run = Invoke-ReportFixture -GenerateReport -UpdateReport -SeedBlockedReport -Body @"
+Describe 'Sidebar startup snapshots preserve the consolidated launch contract' {
+    It 'passes' { `$true | Should -BeTrue }
+}
+"@
+
+        $run.ExitCode | Should -Be 0
+        ($run.ReleaseReport -match '(?m)^- \[x\] `C349`') | Should -BeTrue
+        $run.ReleaseReport | Should -Not -Match 'prior incomplete run'
+    }
+
     It 'does not claim success when every selected test skips' {
         $run = Invoke-ReportFixture -Body @"
 Describe 'external prerequisite' {
