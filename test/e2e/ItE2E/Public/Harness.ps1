@@ -510,7 +510,10 @@ function Start-Terminal {
         foreach ($key in $State.Keys) {
             Set-WtState -App $app -Key $key -Value $State[$key] | Out-Null
             $actual = Get-WtStateObject -App $app
-            if ($actual.PSObject.Properties.Name -notcontains $key -or $actual.$key -cne $State[$key]) {
+            $expectedJson = ConvertTo-Json -InputObject $State[$key] -Depth 64 -Compress
+            $actualJson = ConvertTo-Json -InputObject $actual.$key -Depth 64 -Compress
+            if ($actual.PSObject.Properties.Name -notcontains $key -or
+                -not [string]::Equals($actualJson, $expectedJson, [StringComparison]::Ordinal)) {
                 throw "Startup state did not persist: $key"
             }
         }

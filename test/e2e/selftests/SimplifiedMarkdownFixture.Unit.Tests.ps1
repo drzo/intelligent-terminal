@@ -122,6 +122,18 @@ Describe 'Simplified Markdown release-report mapping' -Tag 'Unit' {
         New-Item -ItemType Directory -Path $script:reportRoot -ErrorAction Stop | Out-Null
     }
 
+    It 'maps exactly the literal live scenario titles used by focused filters' {
+        $ast = [Management.Automation.Language.Parser]::ParseFile(
+            (Join-Path $PSScriptRoot '..\tests\Feature.SimplifiedMarkdown.Tests.ps1'), [ref]$null, [ref]$null)
+        $cases = @($ast.FindAll({
+            param($node)
+            $node -is [Management.Automation.Language.CommandAst] -and $node.GetCommandName() -eq 'It'
+        }, $true))
+        $names = @($cases | ForEach-Object { $_.CommandElements[1].Value } | Sort-Object)
+        $names | Should -HaveCount $script:markdownCases.Count
+        @(Compare-Object @($script:markdownCases.Values | Sort-Object) $names) | Should -HaveCount 0
+    }
+
     It 'credits all eight distinct cases in full and incremental reports' {
         $xml = Join-Path $script:reportRoot 'synthetic.xml'
         Write-MarkdownReportFixture -Path $xml -Passed @($script:markdownCases.Values)

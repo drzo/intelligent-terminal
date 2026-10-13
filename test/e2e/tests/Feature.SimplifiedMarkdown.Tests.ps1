@@ -6,6 +6,7 @@
 Describe 'Feature: simplified agent Markdown' -Tag 'Feature', 'SimplifiedMarkdown' {
     BeforeAll {
         Import-Module (Join-Path $PSScriptRoot '..\ItE2E\ItE2E.psd1') -Force
+        Add-Type -AssemblyName UIAutomationClient, UIAutomationTypes
         if ((Get-ItTestPackage) -ne 'Dev') { throw 'Select the intended Dev package explicitly.' }
         $script:target = Resolve-ItApp -Package Dev
         foreach ($pair in @(@('WtaPath', 'ITE2E_EXPECTED_WTA_SHA256'), @('App', 'ITE2E_EXPECTED_APP_SHA256'))) {
@@ -90,7 +91,7 @@ Describe 'Feature: simplified agent Markdown' -Tag 'Feature', 'SimplifiedMarkdow
         }
 
         function Start-MarkdownScenario {
-            param([bool]$Enabled = $true, [switch]$Fre)
+            param([bool]$Enabled = $true, [switch]$Fre, [switch]$SavedHistory)
             $invocation = "& '{0}' -ControlDirectory '{1}' -RecordDirectory '{2}'" -f
                 $script:fixture.Replace("'", "''"),
                 $script:controlDirectory.Replace("'", "''"),
@@ -99,8 +100,9 @@ Describe 'Feature: simplified agent Markdown' -Tag 'Feature', 'SimplifiedMarkdow
                 [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($invocation))
             $profileId = '{' + [guid]::NewGuid().ToString() + '}'
             $settings = @{
-                acpAgent = 'custom:markdown-fixture'
+                acpAgent = 'custom:pwsh'
                 acpCustomCommand = $command
+                acpCustomCommands = @($command)
                 acpModel = ''
                 renderAgentMarkdown = $Enabled
                 language = 'en-US'
@@ -137,12 +139,50 @@ Describe 'Feature: simplified agent Markdown' -Tag 'Feature', 'SimplifiedMarkdow
                     )
                 }
             }
-            $script:app = Start-Terminal -Package Dev -Settings $settings -ShowFre:$Fre -State @{
+            $state = @{
                 sidebarLayoutMigrationCompleted = $true
                 sidebarIntroductionShown = $true
             }
+            if ($SavedHistory) {
+                $settings.firstWindowPreference = 'persistedLayoutAndContent'
+                $restoreCommand = '"wta.exe" --initial-load-session-id "markdown-saved-session" --initial-view chat --agent-backend host:custom:pwsh --agent-custom-command "{0}"' -f $command
+                $state.persistedWindowLayouts = @(
+                    @{
+                        tabLayout = @(
+                            @{ action = 'newTab'; profile = $profileId }
+                            @{
+                                action = 'splitPane'
+                                split = 'right'
+                                size = 0.5
+                                type = 'agent'
+                                commandline = $restoreCommand
+                                startingDirectory = $script:evidenceDirectory
+                            }
+                        )
+                    }
+                )
+            }
+            $script:app = Start-Terminal -Package Dev -Settings $settings -ShowFre:$Fre -State $state
             $script:app | Add-Member -NotePropertyName RequireOwnedForeground -NotePropertyValue $true -Force
             if (-not $Fre) { Bind-MarkdownPane }
+        }
+
+        function Open-MarkdownSettings {
+            if (Test-UiElementExists -App $script:app -Selector SettingsNav -TimeoutSec 1) { return }
+            $script:app.OwnedProcess.HasExited | Should -BeFalse
+            $root = [Windows.Automation.AutomationElement]::FromHandle([IntPtr]$script:app.Hwnd)
+            $root.Current.ProcessId | Should -Be $script:app.Pid
+            $button = $root.FindFirst(
+                [Windows.Automation.TreeScope]::Descendants,
+                [Windows.Automation.PropertyCondition]::new(
+                    [Windows.Automation.AutomationElement]::AutomationIdProperty, 'NewTabButton'))
+            $button | Should -Not -BeNullOrEmpty
+            $button.Current.ProcessId | Should -Be $script:app.Pid
+            $button.Current.IsOffscreen | Should -BeFalse
+            $pattern = $button.GetCurrentPattern([Windows.Automation.ExpandCollapsePattern]::Pattern)
+            $pattern.Expand()
+            Invoke-UiElement -App $script:app -Selector Settings | Out-Null
+            Wait-UiElement -App $script:app -Selector SettingsNav | Should -Not -BeNullOrEmpty
         }
 
         function Start-MarkdownReply {
@@ -157,6 +197,30 @@ Describe 'Feature: simplified agent Markdown' -Tag 'Feature', 'SimplifiedMarkdow
         function Open-MarkdownGate {
             param([Parameter(Mandatory)][string]$Name)
             [IO.File]::WriteAllText((Join-Path $script:controlDirectory $Name), '')
+        }
+
+        function Assert-MarkdownInterruptedReply {
+            param([ValidateSet('cancel', 'error', 'disconnect')][string]$Kind)
+            Start-MarkdownScenario
+            $marker = 'QUEUE_HOLD_MD_' + $Kind.ToUpperInvariant() + '_' + $script:runId.Substring(0, 6).ToUpperInvariant()
+            $null = Start-MarkdownReply -Marker $marker
+            Wait-MarkdownText -Literal '**MD_BOLD**'
+            if ($Kind -eq 'cancel') {
+                Send-AgentKey -App $script:app -PaneSessionId $script:agent.PaneSessionId -Key C-c | Out-Null
+                $null = Wait-MarkdownRecord -Kind cancel -Marker $marker
+                (Wait-MarkdownRecord -Kind completion -Marker $marker).reason | Should -Be 'cancelled'
+            }
+            elseif ($Kind -eq 'error') {
+                Open-MarkdownGate "$marker.fail"
+                (Wait-MarkdownRecord -Kind completion -Marker $marker).reason | Should -Be 'error'
+            }
+            else {
+                Open-MarkdownGate "$marker.disconnect"
+                $null = Wait-MarkdownRecord -Kind disconnect -Marker $marker
+            }
+            Wait-MarkdownText -Literal MD_BOLD -Formatted
+            (Get-MarkdownPaneText).Contains('**USER_LITERAL**') | Should -BeTrue
+            Save-MarkdownEvidence "partial-$Kind"
         }
 
         function Get-MarkdownTextPosition {
@@ -287,31 +351,16 @@ Describe 'Feature: simplified agent Markdown' -Tag 'Feature', 'SimplifiedMarkdow
         Save-MarkdownEvidence completed-markdown
     }
 
-    It '<Title>' -ForEach @(
-        @{ Kind = 'cancel'; Title = 'Cancelled agent replies format their received text' }
-        @{ Kind = 'error'; Title = 'Failed agent replies format their received text' }
-        @{ Kind = 'disconnect'; Title = 'Disconnected agent replies format their received text' }
-    ) {
-        Start-MarkdownScenario
-        $marker = 'QUEUE_HOLD_MD_' + $Kind.ToUpperInvariant() + '_' + $script:runId.Substring(0, 6).ToUpperInvariant()
-        $null = Start-MarkdownReply -Marker $marker
-        Wait-MarkdownText -Literal '**MD_BOLD**'
-        if ($Kind -eq 'cancel') {
-            Send-AgentKey -App $script:app -PaneSessionId $script:agent.PaneSessionId -Key C-c | Out-Null
-            $null = Wait-MarkdownRecord -Kind cancel -Marker $marker
-            (Wait-MarkdownRecord -Kind completion -Marker $marker).reason | Should -Be 'cancelled'
-        }
-        elseif ($Kind -eq 'error') {
-            Open-MarkdownGate "$marker.fail"
-            (Wait-MarkdownRecord -Kind completion -Marker $marker).reason | Should -Be 'error'
-        }
-        else {
-            Open-MarkdownGate "$marker.disconnect"
-            $null = Wait-MarkdownRecord -Kind disconnect -Marker $marker
-        }
-        Wait-MarkdownText -Literal MD_BOLD -Formatted
-        (Get-MarkdownPaneText).Contains('**USER_LITERAL**') | Should -BeTrue
-        Save-MarkdownEvidence "partial-$Kind"
+    It 'Cancelled agent replies format their received text' {
+        Assert-MarkdownInterruptedReply -Kind cancel
+    }
+
+    It 'Failed agent replies format their received text' {
+        Assert-MarkdownInterruptedReply -Kind error
+    }
+
+    It 'Disconnected agent replies format their received text' {
+        Assert-MarkdownInterruptedReply -Kind disconnect
     }
 
     It 'Raw Markdown preference bypasses formatting from helper startup' {
@@ -382,16 +431,9 @@ Describe 'Feature: simplified agent Markdown' -Tag 'Feature', 'SimplifiedMarkdow
 
     It 'Saved agent replies use Markdown without changing raw history' {
         $historyHash = (Get-FileHash -LiteralPath $script:historyPath).Hash
-        Start-MarkdownScenario
-        Invoke-WtCli -App $script:app -Arguments @('publish', '--existing-only', (@{
-            method = 'load_session'
-            params = @{
-                tab_id = $script:ownerTab
-                session_id = 'markdown-saved-session'
-                cwd = $script:evidenceDirectory
-            }
-        } | ConvertTo-Json -Depth 5 -Compress)) | Out-Null
+        Start-MarkdownScenario -SavedHistory
         (Wait-MarkdownRecord -Kind load).sessionId | Should -Be 'markdown-saved-session'
+        $script:agent.AcpSessionId | Should -Be 'markdown-saved-session'
         Wait-MarkdownText -Literal SAVED_REPLY -Formatted
         (Get-MarkdownPaneText).Contains('**SAVED_USER**') | Should -BeTrue
         Save-MarkdownEvidence loaded-history
@@ -422,12 +464,8 @@ Describe 'Feature: simplified agent Markdown' -Tag 'Feature', 'SimplifiedMarkdow
         $null = Wait-MarkdownRecord -Kind completion -Marker $marker
         Wait-MarkdownText -Literal MD_BOLD -Formatted
         $identity = Get-MarkdownIdentity
-        $shell = @(Get-WtPanes -App $script:app |
-            Where-Object { $_.session_id -ne $script:agent.PaneSessionId })
-        $shell | Should -HaveCount 1
         foreach ($enabled in @($false, $true)) {
-            Invoke-WtCli -App $script:app -Arguments @('focus-pane', '-t', $shell[0].session_id) | Out-Null
-            Open-WtSettings -App $script:app | Out-Null
+            Open-MarkdownSettings
             Invoke-SettingsNav -App $script:app -NavItem AIAgentsNavItem | Out-Null
             $toggle = Get-UiElement -App $script:app -Selector RenderAgentMarkdownToggle
             $toggle.name | Should -Be 'Markdown formatting'
