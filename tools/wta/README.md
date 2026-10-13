@@ -334,10 +334,15 @@ Short aliases are supported: `lsw`, `lst`, `lsp`, `neww`, `splitw`, `capturep`,
 `killp`, `setenv`, and `mon`.
 
 `list-tabs` and `list-panes` can use `-w <window-id>` to select a window explicitly.
-Without it, discovery accepts both native numeric window IDs and string IDs from
-the protocol, while retaining the first-listed-window selection.
+Without `-t`, `list-panes` lists only the first tab in the selected window.
+When window discovery is needed, both commands accept native numeric window IDs
+and string IDs from the protocol and select the first-listed window, not the
+focused window. An explicit `list-panes -t <tab-id>` without `-w` retains the
+cross-window query; tab IDs are window-local, so use both flags to select one
+window's tab.
 
-When `-t` (target pane) is omitted, the active pane is used automatically.
+For pane-targeting commands such as `capture-pane` and `kill-pane`, omitting `-t`
+uses the active pane automatically.
 
 ### Protocol Discovery & Environment Setup
 

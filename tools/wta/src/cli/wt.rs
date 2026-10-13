@@ -27,19 +27,7 @@ pub(crate) async fn run(command: Command, json_mode: bool) -> Result<()> {
         }
         Command::ListPanes { tab_id, window_id } => {
             let channel = connect_channel().await?;
-            let tid = match tab_id {
-                Some(id) => id,
-                None => {
-                    let wid = match window_id {
-                        Some(id) => id,
-                        None => get_first_window_id(&channel).await?,
-                    };
-                    get_first_tab_id(&channel, &wid).await?
-                }
-            };
-            let result = channel
-                .request("list_panes", json!({ "tab_id": tid }))
-                .await?;
+            let result = list_panes(&channel, tab_id, window_id).await?;
             print_output(&result, json_mode, format_panes_human);
             Ok(())
         }
@@ -305,7 +293,31 @@ async fn resolve_pane_id(channel: &CliChannel, target: &Option<String>) -> Resul
     }
 }
 
-async fn get_first_window_id(channel: &CliChannel) -> Result<String> {
+async fn list_panes(
+    channel: &dyn WtChannel,
+    tab_id: Option<String>,
+    window_id: Option<String>,
+) -> Result<serde_json::Value> {
+    let (tid, wid) = match tab_id {
+        Some(id) => (id, window_id),
+        None => {
+            let wid = match window_id {
+                Some(id) => id,
+                None => get_first_window_id(channel).await?,
+            };
+            let tid = get_first_tab_id(channel, &wid).await?;
+            (tid, Some(wid))
+        }
+    };
+    let mut params = json!({ "tab_id": tid });
+    // An explicit tab without a window retains the protocol's cross-window query.
+    if let Some(wid) = wid {
+        params["window_id"] = json!(wid);
+    }
+    channel.request("list_panes", params).await
+}
+
+async fn get_first_window_id(channel: &dyn WtChannel) -> Result<String> {
     let result = channel.request("list_windows", json!({})).await?;
     first_window_id(&result).ok_or_else(|| anyhow::anyhow!("{}", t!("output.no_windows_in_list")))
 }
@@ -363,7 +375,7 @@ mod window_id_tests {
     }
 }
 
-async fn get_first_tab_id(channel: &CliChannel, window_id: &str) -> Result<String> {
+async fn get_first_tab_id(channel: &dyn WtChannel, window_id: &str) -> Result<String> {
     let result = channel
         .request("list_tabs", json!({ "window_id": window_id }))
         .await?;
@@ -377,6 +389,193 @@ async fn get_first_tab_id(channel: &CliChannel, window_id: &str) -> Result<Strin
             _ => None,
         })
         .ok_or_else(|| anyhow::anyhow!("{}", t!("output.no_tabs_in_window", window_id = window_id)))
+}
+
+#[cfg(test)]
+mod list_panes_tests {
+    use super::*;
+    use std::sync::Mutex;
+
+    struct MultiWindowChannel {
+        requests: Mutex<Vec<(String, serde_json::Value)>>,
+        windows: serde_json::Value,
+        tabs: serde_json::Value,
+        fail_method: Option<&'static str>,
+    }
+
+    impl MultiWindowChannel {
+        fn new() -> Self {
+            Self {
+                requests: Mutex::new(Vec::new()),
+                windows: json!({"windows": [
+                    {"window_id": 2, "is_focused": false},
+                    {"window_id": 1, "is_focused": true}
+                ]}),
+                tabs: json!({"tabs": [
+                    {"tab_id": 0, "is_active": false},
+                    {"tab_id": 1, "is_active": true}
+                ]}),
+                fail_method: None,
+            }
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl WtChannel for MultiWindowChannel {
+        async fn request(
+            &self,
+            method: &str,
+            params: serde_json::Value,
+        ) -> Result<serde_json::Value> {
+            self.requests
+                .lock()
+                .unwrap()
+                .push((method.to_owned(), params.clone()));
+            if self.fail_method == Some(method) {
+                bail!("failed {method}");
+            }
+            match method {
+                "list_windows" => Ok(self.windows.clone()),
+                "list_tabs" => Ok(self.tabs.clone()),
+                "list_panes" => {
+                    let panes = [
+                        json!({"window_id": 2, "tab_id": 0, "session_id": "second-first"}),
+                        json!({"window_id": 1, "tab_id": 0, "session_id": "first-first"}),
+                        json!({"window_id": 2, "tab_id": 1, "session_id": "second-active"}),
+                        json!({"window_id": 1, "tab_id": 1, "session_id": "first-active"}),
+                    ];
+                    let panes: Vec<_> = panes
+                        .into_iter()
+                        .filter(|pane| {
+                            params.get("window_id").is_none_or(|window_id| {
+                                window_id.as_str() == Some(pane["window_id"].to_string().as_str())
+                            }) && params["tab_id"].as_str()
+                                == Some(pane["tab_id"].to_string().as_str())
+                        })
+                        .collect();
+                    Ok(json!({"panes": panes}))
+                }
+                _ => bail!("unexpected method {method}"),
+            }
+        }
+
+        fn is_available(&self) -> bool {
+            true
+        }
+    }
+
+    #[tokio::test]
+    async fn default_window_keeps_first_listed_window_and_tab_scope() {
+        let channel = MultiWindowChannel::new();
+        let result = list_panes(&channel, None, None).await.unwrap();
+        assert_eq!(
+            result["panes"],
+            json!([
+                {"window_id": 2, "tab_id": 0, "session_id": "second-first"}
+            ])
+        );
+        assert_eq!(
+            *channel.requests.lock().unwrap(),
+            vec![
+                ("list_windows".into(), json!({})),
+                ("list_tabs".into(), json!({"window_id": "2"})),
+                (
+                    "list_panes".into(),
+                    json!({"window_id": "2", "tab_id": "0"})
+                ),
+            ]
+        );
+    }
+
+    #[tokio::test]
+    async fn explicit_window_scopes_first_tab_without_window_discovery() {
+        let channel = MultiWindowChannel::new();
+        let result = list_panes(&channel, None, Some("1".into())).await.unwrap();
+        assert_eq!(
+            result["panes"],
+            json!([
+                {"window_id": 1, "tab_id": 0, "session_id": "first-first"}
+            ])
+        );
+        assert_eq!(
+            *channel.requests.lock().unwrap(),
+            vec![
+                ("list_tabs".into(), json!({"window_id": "1"})),
+                (
+                    "list_panes".into(),
+                    json!({"window_id": "1", "tab_id": "0"})
+                ),
+            ]
+        );
+    }
+
+    #[tokio::test]
+    async fn explicit_window_and_tab_bypass_discovery() {
+        let channel = MultiWindowChannel::new();
+        let result = list_panes(&channel, Some("1".into()), Some("1".into()))
+            .await
+            .unwrap();
+        assert_eq!(
+            result["panes"],
+            json!([
+                {"window_id": 1, "tab_id": 1, "session_id": "first-active"}
+            ])
+        );
+        assert_eq!(
+            *channel.requests.lock().unwrap(),
+            vec![(
+                "list_panes".into(),
+                json!({"window_id": "1", "tab_id": "1"})
+            )]
+        );
+    }
+
+    #[tokio::test]
+    async fn explicit_tab_without_window_preserves_cross_window_query() {
+        let channel = MultiWindowChannel::new();
+        let result = list_panes(&channel, Some("0".into()), None).await.unwrap();
+        assert_eq!(
+            result["panes"],
+            json!([
+                {"window_id": 2, "tab_id": 0, "session_id": "second-first"},
+                {"window_id": 1, "tab_id": 0, "session_id": "first-first"}
+            ])
+        );
+        assert_eq!(
+            *channel.requests.lock().unwrap(),
+            vec![("list_panes".into(), json!({"tab_id": "0"}))]
+        );
+    }
+
+    #[tokio::test]
+    async fn empty_discovery_stops_before_listing_panes() {
+        for no_windows in [true, false] {
+            let mut channel = MultiWindowChannel::new();
+            if no_windows {
+                channel.windows = json!({"windows": []});
+            } else {
+                channel.tabs = json!({"tabs": []});
+            }
+            assert!(list_panes(&channel, None, None).await.is_err());
+            let requests = channel.requests.lock().unwrap();
+            assert_eq!(requests.len(), if no_windows { 1 } else { 2 });
+            assert!(requests.iter().all(|(method, _)| method != "list_panes"));
+        }
+    }
+
+    #[tokio::test]
+    async fn request_errors_propagate_without_fallback() {
+        for (index, method) in ["list_windows", "list_tabs", "list_panes"]
+            .iter()
+            .enumerate()
+        {
+            let mut channel = MultiWindowChannel::new();
+            channel.fail_method = Some(method);
+            let error = list_panes(&channel, None, None).await.unwrap_err();
+            assert_eq!(error.to_string(), format!("failed {method}"));
+            assert_eq!(channel.requests.lock().unwrap().len(), index + 1);
+        }
+    }
 }
 
 fn print_output(val: &serde_json::Value, json_mode: bool, formatter: fn(&serde_json::Value)) {
