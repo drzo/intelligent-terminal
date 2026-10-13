@@ -190,7 +190,10 @@ Describe 'Feature: packaged OpenCode hook lifecycle' -Tag 'Feature', 'OpenCodeHo
     }
 
     It 'OpenCode copied hooks upgrade without force' {
-        $null = Get-Command opencode -ErrorAction Stop
+        if (-not (Get-Command opencode -ErrorAction SilentlyContinue)) {
+            Set-ItResult -Skipped -Because 'opencode CLI is not installed or discoverable for reconciliation'
+            return
+        }
         $config = Join-Path $TestDrive 'upgrade-config'
         $plugins = Join-Path $config 'opencode\plugins'
         $support = Join-Path $plugins 'wt-agent-hooks'
@@ -222,10 +225,16 @@ Describe 'Feature: packaged OpenCode hook lifecycle' -Tag 'Feature', 'OpenCodeHo
     }
 
     It 'OpenCode CLI loads copied hooks' {
-        $command = Get-Command opencode -ErrorAction Stop
-        $executable = if ($env:ITE2E_OPENCODE_EXE) { $env:ITE2E_OPENCODE_EXE }
-        elseif ($command.Source.EndsWith('.exe')) { $command.Source }
-        else { Join-Path (Split-Path $command.Source) 'node_modules\opencode-ai\bin\opencode.exe' }
+        $executable = $env:ITE2E_OPENCODE_EXE
+        if (-not $executable) {
+            $command = Get-Command opencode -ErrorAction SilentlyContinue
+            if (-not $command) {
+                Set-ItResult -Skipped -Because 'opencode CLI is not installed and no native executable override was supplied'
+                return
+            }
+            $executable = if ($command.Source.EndsWith('.exe')) { $command.Source }
+            else { Join-Path (Split-Path $command.Source) 'node_modules\opencode-ai\bin\opencode.exe' }
+        }
         Test-Path -LiteralPath $executable -PathType Leaf | Should -BeTrue `
             -Because 'set ITE2E_OPENCODE_EXE for a native CLI installed outside the Windows npm layout'
         $version = Invoke-Native -FilePath $executable -Arguments @('--version') -TimeoutSec 15
