@@ -18,11 +18,22 @@ param(
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
 
+function Assert-PackageInputPath([string]$Path, [string]$Root) {
+    for ($current = $Path; $current; $current = [IO.Path]::GetDirectoryName($current)) {
+        if ([IO.File]::GetAttributes($current) -band [IO.FileAttributes]::ReparsePoint) {
+            throw "Package inputs must not traverse reparse points: $current"
+        }
+        if ($current.Equals($Root, [StringComparison]::OrdinalIgnoreCase)) { return }
+    }
+    throw "Package input is outside its expected root: $Path"
+}
+
 $root = [IO.Path]::GetFullPath($SourceRoot).TrimEnd('\')
 $sourcePrefix = $root + '\'
 if (-not (Test-Path -LiteralPath $root -PathType Container)) {
     throw "Source root does not exist: $root"
 }
+Assert-PackageInputPath -Path $root -Root $root
 $head = (& git -C $root rev-parse HEAD).Trim()
 if ($LASTEXITCODE -ne 0 -or $head -ne $ExpectedHead) {
     throw "The source HEAD is not the expected revision: expected=$ExpectedHead actual=$head"
@@ -39,6 +50,7 @@ foreach ($path in @($recipe, $msix)) {
         -not (Test-Path -LiteralPath $path -PathType Leaf)) {
         throw "Package input is missing or outside the source worktree: $path"
     }
+    Assert-PackageInputPath -Path $path -Root $root
 }
 
 $packages = @(
@@ -89,6 +101,7 @@ if (-not $sourceManifest.StartsWith($sourcePrefix, [StringComparison]::OrdinalIg
     -not (Test-Path -LiteralPath $sourceManifest -PathType Leaf)) {
     throw "Recipe manifest source is missing or outside the source worktree: $sourceManifest"
 }
+Assert-PackageInputPath -Path $sourceManifest -Root $root
 $sourceIdentity = Get-ManifestIdentity ([xml](Get-Content -LiteralPath $sourceManifest -Raw))
 $sourceManifestHash = (Get-FileHash -LiteralPath $sourceManifest -Algorithm SHA256).Hash
 $installedIdentity = Get-ManifestIdentity ([xml](Get-Content -LiteralPath $registeredManifest -Raw))
@@ -173,6 +186,8 @@ try {
             if (-not $inSource -and -not $sdkUcrt) {
                 throw "Recipe source is outside the selected source worktree: $relative"
             }
+            $inputRoot = if ($inSource) { $root } else { $sdkUcrtRoot.TrimEnd('\') }
+            Assert-PackageInputPath -Path $source -Root $inputRoot
 
             $sourceHash = (Get-FileHash -LiteralPath $source -Algorithm SHA256).Hash
             if ($sdkUcrt) {

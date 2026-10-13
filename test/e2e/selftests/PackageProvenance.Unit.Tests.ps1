@@ -18,7 +18,9 @@ BeforeAll {
             [switch]$ExternalSdkUcrt,
             [switch]$DuplicateMixedSeparator,
             [switch]$TraversalPath,
-            [switch]$WrongFamily
+            [switch]$WrongFamily,
+            [ValidateSet('Payload', 'Manifest', 'Recipe', 'Msix')][string]$JunctionInput,
+            [switch]$InternalJunction
         )
 
         $root = Join-Path $TestDrive ([guid]::NewGuid().ToString('N'))
@@ -125,6 +127,35 @@ BeforeAll {
                 $file = Join-Path $installed $path
                 New-Item -ItemType Directory -Path (Split-Path $file -Parent) -Force | Out-Null
                 'metadata' | Set-Content -LiteralPath $file -NoNewline
+            }
+        }
+
+        if ($JunctionInput) {
+            $targetRoot = if ($InternalJunction) { $sourceRoot } else { $root }
+            $targetDirectory = Join-Path $targetRoot 'junction-target'
+            $alias = Join-Path $sourceRoot 'linked-input'
+            New-Item -ItemType Directory -Path $targetDirectory | Out-Null
+            New-Item -ItemType Junction -Path $alias -Target $targetDirectory -ErrorAction Stop | Out-Null
+            'linked-input/' | Set-Content -LiteralPath (Join-Path $sourceRoot '.gitignore')
+            $original = switch ($JunctionInput) {
+                'Payload' { $sourceDll }
+                'Manifest' { $sourceManifest }
+                'Recipe' { $recipe }
+                'Msix' { $msix }
+            }
+            Copy-Item -LiteralPath $original -Destination $targetDirectory
+            $linked = Join-Path $alias ([IO.Path]::GetFileName($original))
+            if ($JunctionInput -eq 'Recipe') { $recipe = $linked }
+            elseif ($JunctionInput -eq 'Msix') { $msix = $linked }
+            else {
+                [xml]$recipeXml = Get-Content -LiteralPath $recipe -Raw
+                $node = if ($JunctionInput -eq 'Manifest') {
+                    $recipeXml.SelectSingleNode('//AppXManifest')
+                } else {
+                    $recipeXml.SelectSingleNode('//AppxPackagedFile[PackagePath="TerminalApp.dll"]')
+                }
+                $node.SetAttribute('Include', $linked)
+                $recipeXml.Save($recipe)
             }
         }
 
@@ -248,6 +279,43 @@ Describe 'Offline package provenance' -Tag 'Unit' {
         { & $script:verifier -SourceRoot $f.SourceRoot -ExpectedHead $f.Head `
                 -RecipePath $f.Recipe -MsixPath $f.Msix -InstalledPackage $f.Package } |
             Should -Throw '*Recipe source is outside the selected source worktree: fixture-data.txt*'
+    }
+
+    It 'rejects <Kind> behind an ignored junction outside the source worktree' -ForEach @(
+        @{ Kind = 'Payload' }, @{ Kind = 'Manifest' }, @{ Kind = 'Recipe' }, @{ Kind = 'Msix' }
+    ) {
+        $f = New-ProvenanceFixture -JunctionInput $Kind
+        { & $script:verifier -SourceRoot $f.SourceRoot -ExpectedHead $f.Head `
+                -RecipePath $f.Recipe -MsixPath $f.Msix -InstalledPackage $f.Package } |
+            Should -Throw '*reparse*'
+    }
+
+    It 'rejects in-worktree junction aliases rather than issuing ambiguous source proof' {
+        $f = New-ProvenanceFixture -JunctionInput Payload -InternalJunction
+        { & $script:verifier -SourceRoot $f.SourceRoot -ExpectedHead $f.Head `
+                -RecipePath $f.Recipe -MsixPath $f.Msix -InstalledPackage $f.Package } |
+            Should -Throw '*reparse*'
+    }
+
+    It 'does not let the SDK UCRT exception follow an external junction' {
+        $previous = [Environment]::GetEnvironmentVariable('ProgramFiles(x86)', 'Process')
+        [Environment]::SetEnvironmentVariable('ProgramFiles(x86)', (Join-Path $TestDrive 'junction-sdk'), 'Process')
+        try {
+            $f = New-ProvenanceFixture -ExternalSdkUcrt
+            [xml]$recipe = Get-Content -LiteralPath $f.Recipe -Raw
+            $source = $recipe.SelectSingleNode('//AppxPackagedFile[PackagePath="ucrtbased.dll"]').Include
+            $directory = Split-Path $source -Parent
+            $outside = Join-Path $TestDrive 'relocated-ucrt'
+            Move-Item -LiteralPath $directory -Destination $outside -ErrorAction Stop
+            New-Item -ItemType Junction -Path $directory -Target $outside -ErrorAction Stop | Out-Null
+
+            { & $script:verifier -SourceRoot $f.SourceRoot -ExpectedHead $f.Head `
+                    -RecipePath $f.Recipe -MsixPath $f.Msix -InstalledPackage $f.Package } |
+                Should -Throw '*reparse*'
+        }
+        finally {
+            [Environment]::SetEnvironmentVariable('ProgramFiles(x86)', $previous, 'Process')
+        }
     }
 
     It 'records the Windows SDK debug UCRT as the sole allowed external recipe input' {

@@ -762,6 +762,10 @@ the Windows SDK debug `ucrtbased.dll`, which is reported with its source path an
 hash under `ExternalInputs`. Keep build-time source/command evidence
 separately: matching hashes do not themselves prove which source the compiler
 used. These options are not required for an explicitly requested Store baseline.
+Input paths and their components through the selected worktree root must be
+free of reparse points, including junctions or symbolic links that target another
+in-tree path. The SDK UCRT exception applies the same check through its SDK root;
+an ignored build-directory link cannot certify an external payload as local.
 
 A suite that asserts on diagnostics only present in a particular build should pin
 its `-Package` and **`-Skip`** itself when that package isn't installed (see
