@@ -458,7 +458,7 @@ permission_ui: current permission snapshot={"session_id":"old-session","tool_cal
 }
 
 Describe 'Agent settings cleanup' -Tag 'Unit' {
-    It 'removes showTokenUsageAndCost while preserving profiles' {
+    It 'removes agent display preferences while preserving profiles and other keys' {
         $settingsPath = Join-Path $TestDrive 'settings.json'
         @{
             defaultProfile = '{6239a42c-1111-49a3-80bd-e8fdd045185c}'
@@ -468,6 +468,8 @@ Describe 'Agent settings cleanup' -Tag 'Unit' {
             })
             acpAgent = 'copilot'
             showTokenUsageAndCost = $true
+            renderAgentMarkdown = $false
+            renderAgentMarkdownOther = 'keep'
         } | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $settingsPath -Encoding utf8
         $app = [pscustomobject]@{ SettingsPath = $settingsPath }
 
@@ -475,6 +477,8 @@ Describe 'Agent settings cleanup' -Tag 'Unit' {
 
         $settings = Get-WtSettingsObject -App $app
         $settings.PSObject.Properties.Name | Should -Not -Contain 'showTokenUsageAndCost'
+        $settings.PSObject.Properties.Name | Should -Not -Contain 'renderAgentMarkdown'
+        $settings.renderAgentMarkdownOther | Should -Be 'keep'
         $settings.PSObject.Properties.Name | Should -Not -Contain 'acpAgent'
         $settings.profiles[0].name | Should -Be 'p0'
     }
