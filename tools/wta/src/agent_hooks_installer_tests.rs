@@ -154,7 +154,14 @@ fn restage_bundle_dir_replaces_stale_contents() {
 }
 
 fn write_opencode_test_bundle(root: &Path, js: &str) {
-    fs::write(root.join(OPENCODE_PLUGIN_JS), js).unwrap();
+    fs::create_dir_all(root.join("v1")).unwrap();
+    fs::create_dir_all(root.join("shared")).unwrap();
+    fs::write(root.join("v1").join(OPENCODE_PLUGIN_JS), js).unwrap();
+    fs::write(
+        root.join("shared").join("bridge.js"),
+        OPENCODE_BRIDGE_JS_CONTENT,
+    )
+    .unwrap();
     fs::write(
         root.join(OPENCODE_MANIFEST),
         r#"{"name":"wt-agent-hooks","version":"0.1.3","managed_by":"Intelligent Terminal: wt-agent-hooks"}"#,
@@ -897,7 +904,8 @@ fn copy_opencode_bundle_preserves_non_managed_support_directory() {
 fn copy_opencode_bundle_rolls_back_partial_first_install() {
     let source = unique_dir("opencode-partial-source");
     let home = unique_dir("opencode-partial-home");
-    fs::write(source.join(OPENCODE_PLUGIN_JS), OPENCODE_PLUGIN_JS_CONTENT).unwrap();
+    write_opencode_test_bundle(&source, OPENCODE_PLUGIN_JS_CONTENT);
+    fs::remove_file(source.join(OPENCODE_MANIFEST)).unwrap();
 
     assert!(copy_opencode_bundle(&source, &home).is_err());
     assert!(!opencode_support_dir(&home).exists());
@@ -1199,7 +1207,9 @@ const COPILOT_MARKETPLACE_JSON: &str =
     include_str!("../wt-agent-hooks/copilot/.github/plugin/marketplace.json");
 
 const OPENCODE_PLUGIN_JS_CONTENT: &str =
-    include_str!("../wt-agent-hooks/opencode/wt-agent-hooks.js");
+    include_str!("../wt-agent-hooks/opencode/v1/wt-agent-hooks.js");
+const OPENCODE_BRIDGE_JS_CONTENT: &str =
+    include_str!("../wt-agent-hooks/opencode/shared/bridge.js");
 const OPENCODE_PLUGIN_JSON: &str = include_str!("../wt-agent-hooks/opencode/plugin.json");
 
 /// Every manifest-driven CLI invokes the native wtcli bridge directly; no
@@ -2223,7 +2233,7 @@ fn copilot_uses_native_plugin_layout() {
 /// here even when only one bundle's content changed.
 #[test]
 fn native_hook_bundle_versions_stay_in_sync() {
-    const BUNDLE_VERSION: &str = "0.1.7";
+    const BUNDLE_VERSION: &str = "0.1.8";
     let manifests = [
         CLAUDE_PLUGIN_JSON,
         COPILOT_PLUGIN_JSON,
@@ -2256,20 +2266,20 @@ fn native_hook_bundle_versions_stay_in_sync() {
 #[test]
 fn opencode_plugin_has_runtime_guards_and_source_tag() {
     assert!(OPENCODE_PLUGIN_JS_CONTENT.contains(OPENCODE_MANAGED_MARKER));
-    assert!(OPENCODE_PLUGIN_JS_CONTENT.contains("process.env.WT_COM_CLSID"));
-    assert!(OPENCODE_PLUGIN_JS_CONTENT.contains("process.env.WT_SESSION"));
-    assert!(OPENCODE_PLUGIN_JS_CONTENT.contains("process.env.OPENCODE_CLIENT"));
-    assert!(OPENCODE_PLUGIN_JS_CONTENT.contains("\"acp\""));
-    assert!(OPENCODE_PLUGIN_JS_CONTENT.contains("\"wtcli.exe\""));
-    assert!(OPENCODE_PLUGIN_JS_CONTENT.contains("\"agent-hook\""));
-    assert!(!OPENCODE_PLUGIN_JS_CONTENT.contains("powershell"));
-    assert!(OPENCODE_PLUGIN_JS_CONTENT.contains("new TextEncoder().encode"));
-    assert!(OPENCODE_PLUGIN_JS_CONTENT.contains("\"opencode\""));
+    assert!(OPENCODE_BRIDGE_JS_CONTENT.contains("process.env.WT_COM_CLSID"));
+    assert!(OPENCODE_BRIDGE_JS_CONTENT.contains("process.env.WT_SESSION"));
+    assert!(OPENCODE_BRIDGE_JS_CONTENT.contains("process.env.OPENCODE_CLIENT"));
+    assert!(OPENCODE_BRIDGE_JS_CONTENT.contains("\"acp\""));
+    assert!(OPENCODE_BRIDGE_JS_CONTENT.contains("\"wtcli.exe\""));
+    assert!(OPENCODE_BRIDGE_JS_CONTENT.contains("\"agent-hook\""));
+    assert!(!OPENCODE_BRIDGE_JS_CONTENT.contains("powershell"));
+    assert!(OPENCODE_BRIDGE_JS_CONTENT.contains("new TextEncoder().encode"));
+    assert!(OPENCODE_BRIDGE_JS_CONTENT.contains("\"opencode\""));
     assert!(OPENCODE_PLUGIN_JS_CONTENT.contains("agent.session.start"));
-    assert!(OPENCODE_PLUGIN_JS_CONTENT.contains("value.data?.message"));
-    assert!(OPENCODE_PLUGIN_JS_CONTENT.contains("if (!sessionID) return"));
+    assert!(OPENCODE_BRIDGE_JS_CONTENT.contains("value.data?.message"));
+    assert!(OPENCODE_PLUGIN_JS_CONTENT.contains("!sessionID"));
     assert!(OPENCODE_PLUGIN_JS_CONTENT.contains("info.title !== previous.title"));
-    assert!(OPENCODE_PLUGIN_JS_CONTENT.contains("rootSessions.get(sessionID).cwd"));
+    assert!(OPENCODE_PLUGIN_JS_CONTENT.contains("roots.get(id)?.cwd"));
 }
 
 #[test]
@@ -2954,7 +2964,7 @@ fn bundle_resolve_source_returns_none_when_nothing_resolves() {
 /// as a test failure.
 #[test]
 fn schema_versions_are_pinned() {
-    assert_eq!(STATUS_SCHEMA_VERSION, 5);
+    assert_eq!(STATUS_SCHEMA_VERSION, 6);
     assert_eq!(UNINSTALL_SCHEMA_VERSION, 2);
 }
 
@@ -3055,6 +3065,7 @@ fn installed_status(name: &'static str) -> CliStatus {
         installed_version: Some("0.1.6".into()),
         bundle_version: Some("0.1.6".into()),
         detection_fallback: None,
+        opencode: None,
     }
 }
 
@@ -3752,6 +3763,7 @@ fn populate_marketplace_path_noop_without_home() {
         installed_version: None,
         bundle_version: None,
         detection_fallback: None,
+        opencode: None,
     };
     populate_marketplace_path(&mut s, CliKind::Copilot, None);
     assert!(s.marketplace_path.is_none());
@@ -3774,6 +3786,7 @@ fn cli_status_serializes_new_fields() {
         installed_version: None,
         bundle_version: None,
         detection_fallback: None,
+        opencode: None,
     };
     let v = serde_json::to_value(&s).unwrap();
     assert_eq!(
@@ -3962,6 +3975,7 @@ fn codex_fs_fallback_detects_install_dirs() {
         installed_version: None,
         bundle_version: None,
         detection_fallback: None,
+        opencode: None,
     };
     codex_fs_fallback(&mut s, Some(&tmp_root));
     assert!(s.marketplace_registered);

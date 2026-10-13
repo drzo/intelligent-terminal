@@ -109,6 +109,7 @@ use serde::Serialize;
 use serde_json::Value;
 
 mod antigravity;
+mod opencode;
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -147,6 +148,8 @@ const OPENCODE_MANIFEST_MANAGED_BY: &str = "Intelligent Terminal: wt-agent-hooks
 /// Schema version of the JSON returned by [`status`]. Bumped when the shape
 /// or the set of possible string-enum values changes.
 ///
+/// v6: OpenCode CLI version and installed/required plugin API variants.
+///
 /// v5: added Antigravity's native CLI plugin integration.
 ///
 /// v4: added the per-CLI `installed_version` and
@@ -163,7 +166,7 @@ const OPENCODE_MANIFEST_MANAGED_BY: &str = "Intelligent Terminal: wt-agent-hooks
 /// v2: `bundle_source.kind` no longer includes `"embedded"` (the embedded
 /// `include_str!` fallback was removed in #20). Possible kinds are
 /// `env` / `exe-sibling` / `dev-tree` / `none`.
-const STATUS_SCHEMA_VERSION: u32 = 5;
+const STATUS_SCHEMA_VERSION: u32 = 6;
 
 /// Schema version of the JSON returned by [`uninstall`].
 ///
@@ -213,6 +216,7 @@ fn opencode_status(on_path: bool, bin_path: Option<String>, home: Option<&Path>)
         installed_version: None,
         bundle_version: None,
         detection_fallback: None,
+        opencode: None,
     };
     let Some(home) = home else { return out };
     let dir = opencode_plugins_dir(home);
@@ -220,10 +224,11 @@ fn opencode_status(on_path: bool, bin_path: Option<String>, home: Option<&Path>)
     let js = dir.join(OPENCODE_PLUGIN_JS);
     let managed_js = fs::read_to_string(&js)
         .map(|text| text.contains(OPENCODE_MANAGED_MARKER))
-        .unwrap_or(false);
+        .unwrap_or(false)
+        || opencode::managed_entry(home);
     let managed_support = opencode_manifest_is_managed(&support_dir.join(OPENCODE_MANIFEST));
     let managed = managed_js || managed_support;
-    let complete = managed_js && managed_support;
+    let complete = opencode::complete(home);
     out.marketplace_registered = managed;
     out.marketplace_path = managed.then(|| dir.to_string_lossy().into_owned());
     out.marketplace_path_valid = complete;
@@ -369,6 +374,8 @@ pub struct CliStatus {
     pub bundle_version: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub detection_fallback: Option<&'static str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub opencode: Option<opencode::Compatibility>,
 }
 
 impl CliStatus {
@@ -390,6 +397,7 @@ impl CliStatus {
             installed_version: None,
             bundle_version: None,
             detection_fallback: None,
+            opencode: None,
         }
     }
 
@@ -1544,111 +1552,13 @@ fn opencode_support_dir(home: &Path) -> PathBuf {
     opencode_plugins_dir(home).join(OPENCODE_SUPPORT_DIR)
 }
 
+#[cfg(test)]
 fn copy_opencode_bundle(source: &Path, home: &Path) -> std::io::Result<()> {
-    let destination = opencode_plugins_dir(home);
-    let support_dir = opencode_support_dir(home);
-    let installed_js = destination.join(OPENCODE_PLUGIN_JS);
-    let installed_js_metadata = match fs::symlink_metadata(&installed_js) {
-        Ok(metadata) => Some(metadata),
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
-        Err(error) => return Err(error),
-    };
-    let installed_js_existed = installed_js_metadata.is_some();
-    let support_dir_existed = support_dir.exists();
-    let installed_js_managed = if let Some(metadata) = installed_js_metadata {
-        if !metadata.file_type().is_file() {
-            return Err(std::io::Error::new(
-                std::io::ErrorKind::AlreadyExists,
-                format!(
-                    "{} exists but is not a regular managed file",
-                    installed_js.display()
-                ),
-            ));
-        }
-        let text = fs::read_to_string(&installed_js)?;
-        if !text.contains(OPENCODE_MANAGED_MARKER) {
-            return Err(std::io::Error::new(
-                std::io::ErrorKind::AlreadyExists,
-                format!(
-                    "{} exists but is not managed by Intelligent Terminal",
-                    installed_js.display()
-                ),
-            ));
-        }
-        true
-    } else {
-        false
-    };
-    if support_dir.exists() {
-        let managed_support = opencode_manifest_is_managed(&support_dir.join(OPENCODE_MANIFEST))
-            || installed_js_managed;
-        if !managed_support {
-            return Err(std::io::Error::new(
-                std::io::ErrorKind::AlreadyExists,
-                format!(
-                    "{} exists but is not managed by Intelligent Terminal",
-                    support_dir.display()
-                ),
-            ));
-        }
-    }
-
-    let copy_result = (|| {
-        fs::create_dir_all(&destination)?;
-        fs::create_dir_all(&support_dir)?;
-        fs::copy(source.join(OPENCODE_PLUGIN_JS), &installed_js)?;
-        let legacy_bridge = support_dir.join(OPENCODE_LEGACY_BRIDGE_PS1);
-        if legacy_bridge.exists() {
-            fs::remove_file(legacy_bridge)?;
-        }
-        // Commit the new version last. If the runtime file fails to copy,
-        // the old manifest keeps the upgrade eligible for retry.
-        fs::copy(
-            source.join(OPENCODE_MANIFEST),
-            support_dir.join(OPENCODE_MANIFEST),
-        )?;
-        Ok(())
-    })();
-
-    if copy_result.is_err() {
-        if !installed_js_existed {
-            let _ = fs::remove_file(&installed_js);
-        }
-        if !support_dir_existed {
-            let _ = fs::remove_file(support_dir.join(OPENCODE_MANIFEST));
-            let _ = fs::remove_dir(&support_dir);
-        }
-    }
-    copy_result
+    opencode::copy_bundle(source, home, opencode::ApiVariant::V1)
 }
 
 fn install_for_opencode(home: &Path) -> InstallOutcome {
-    if !cli_binary_on_path(CliKind::OpenCode) {
-        tracing::debug!(
-            target: "agent_hooks",
-            "opencode not on PATH; skipping hook install (CLI not installed)",
-        );
-        return InstallOutcome::Skipped;
-    }
-    let Some(bundle_dir) = bundle::resolve_cli_dir(CliKind::OpenCode) else {
-        tracing::warn!(
-            target: "agent_hooks",
-            "no wt-agent-hooks/opencode bundle found; skipping OpenCode plugin install",
-        );
-        return InstallOutcome::Skipped;
-    };
-    match copy_opencode_bundle(&bundle_dir, home) {
-        Ok(()) => InstallOutcome::Installed,
-        Err(e) => {
-            tracing::warn!(
-                target: "agent_hooks",
-                err = %e,
-                source = %bundle_dir.display(),
-                "OpenCode plugin install failed",
-            );
-            InstallOutcome::Failed(format!("OpenCode plugin file copy failed: {e}"))
-        }
-    }
+    opencode::install(home)
 }
 
 // ---------------------------------------------------------------------------
@@ -1703,6 +1613,9 @@ fn status_for(cli: CliKind, home: Option<&Path>) -> CliStatus {
         CliKind::OpenCode => opencode_status(on_path, bin_path, home),
         CliKind::Antigravity => antigravity::status(on_path, bin_path, home),
     };
+    if cli == CliKind::OpenCode {
+        opencode::apply_compatibility(&mut out, home);
+    }
     // Read unconditionally: the bundle version is the only half of the
     // comparison that still means something when nothing is installed
     // ("`hooks install` would give you 0.1.5").
@@ -1833,6 +1746,10 @@ fn codex_plugin_cache_dir(home: &Path) -> PathBuf {
 }
 
 fn locate_binary(cli: CliKind) -> (bool, Option<String>) {
+    if cli == CliKind::OpenCode {
+        let path = crate::agent_check::find_exe("opencode");
+        return (path.is_some(), path);
+    }
     match which::which(cli.executable()) {
         Ok(p) => (true, Some(p.display().to_string())),
         Err(_) => (false, None),
@@ -1852,6 +1769,7 @@ fn copilot_status(on_path: bool, bin_path: Option<String>, home: Option<&Path>) 
         installed_version: None,
         bundle_version: None,
         detection_fallback: None,
+        opencode: None,
     };
     if !on_path {
         // CLI not present — fall back to fs check so we still report
@@ -2050,6 +1968,7 @@ fn claude_status(on_path: bool, bin_path: Option<String>, home: Option<&Path>) -
         installed_version: None,
         bundle_version: None,
         detection_fallback: None,
+        opencode: None,
     };
     if !on_path {
         claude_fs_fallback(&mut out, home);
@@ -2133,6 +2052,7 @@ fn gemini_status(on_path: bool, bin_path: Option<String>, home: Option<&Path>) -
         installed_version: None,
         bundle_version: None,
         detection_fallback: None,
+        opencode: None,
     };
     if !on_path {
         gemini_fs_fallback(&mut out, home);
@@ -2970,7 +2890,8 @@ fn opencode_uninstall(home: Option<&Path>) -> CliUninstallResult {
     }
     let managed_js = fs::read_to_string(&js)
         .map(|text| text.contains(OPENCODE_MANAGED_MARKER))
-        .unwrap_or(false);
+        .unwrap_or(false)
+        || opencode::managed_entry(home);
     let managed_support = opencode_manifest_is_managed(&support_dir.join(OPENCODE_MANIFEST));
     if (js.exists() && !managed_js) || (support_dir.exists() && !managed_support && !managed_js) {
         out.messages.push(format!(
@@ -2983,6 +2904,11 @@ fn opencode_uninstall(home: Option<&Path>) -> CliUninstallResult {
 
     out.attempted = true;
     let mut removed = true;
+    if let Err(error) = opencode::remove_support_files(home) {
+        out.messages.push(error.to_string());
+        out.plugin_uninstalled = Some(false);
+        return out;
+    }
     let bridge = support_dir.join(OPENCODE_LEGACY_BRIDGE_PS1);
     if bridge.exists() {
         if let Err(e) = fs::remove_file(&bridge) {
@@ -3001,6 +2927,16 @@ fn opencode_uninstall(home: Option<&Path>) -> CliUninstallResult {
                 removed = false;
                 out.messages
                     .push(format!("failed to remove {}: {}", manifest.display(), e));
+            }
+        }
+    }
+    if removed {
+        let entry = support_dir.join(OPENCODE_PLUGIN_JS);
+        if entry.exists() {
+            if let Err(error) = fs::remove_file(&entry) {
+                removed = false;
+                out.messages
+                    .push(format!("failed to remove {}: {error}", entry.display()));
             }
         }
     }
@@ -3855,6 +3791,7 @@ fn codex_status(on_path: bool, bin_path: Option<String>, home: Option<&Path>) ->
         installed_version: None,
         bundle_version: None,
         detection_fallback: None,
+        opencode: None,
     };
     if !on_path {
         codex_fs_fallback(&mut out, home);
@@ -4447,14 +4384,14 @@ fn read_installed_opencode(home: &Path) -> InstalledProbe {
         Ok(text) => text.contains(OPENCODE_MANAGED_MARKER),
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => false,
         Err(error) => return Err(format!("failed to read {}: {}", js.display(), error)),
-    };
+    } || opencode::managed_entry(home);
     let support_dir = opencode_support_dir(home);
     let manifest = support_dir.join(OPENCODE_MANIFEST);
     let managed_support = opencode_manifest_is_managed(&manifest);
     if !managed_js && !managed_support {
         return Ok(None);
     }
-    let complete = managed_js && managed_support;
+    let complete = opencode::complete(home);
     Ok(Some(InstalledInfo {
         // A partial managed install must go through OpenCodeCopy even when its
         // surviving manifest already has the current bundle version.

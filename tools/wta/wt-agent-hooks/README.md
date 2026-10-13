@@ -30,9 +30,16 @@ wt-agent-hooks/
 │   └── hooks/hooks.json                    # 7 native hook commands
 ├── codex/                                  # passed to `codex plugin marketplace add`
 │   └── wt-agent-hooks/hooks/hooks.json     # native hook commands
-├── opencode/                                # copied to OpenCode's global plugins dir
+├── opencode/                                # selected by the installed CLI version
 │   ├── plugin.json                          # managed bundle version
-│   └── wt-agent-hooks.js                    # OpenCode V1/V2 plugin
+│   ├── shared/bridge.js                     # common native wtcli transport
+│   ├── v1/wt-agent-hooks.js                  # V1 function entrypoint
+│   └── v2/                                  # V2 local package with server + client
+│       ├── package.json                     # exports "." and "./tui"
+│       ├── wt-agent-hooks.js                # server hooks, explicit pane bindings
+│       ├── server.js                        # local-directory discovery entrypoint
+│       ├── tui.js                           # client sends pane/session identity
+│       └── rpc.js                           # versioned client/server contract
 └── hook-debug/                             # dev utility, not part of the install bundle
     └── state-logger.ps1
 ```
@@ -70,12 +77,26 @@ second `install` is a no-op once the plugin is registered.
 flow as a manual recovery path when status cannot observe the real problem.
 
 OpenCode has no separate hook marketplace. `wta hooks install --cli opencode`
-copies `wt-agent-hooks.js` into `%XDG_CONFIG_HOME%\opencode\plugins\` when
-`XDG_CONFIG_HOME` is set, or `%USERPROFILE%\.config\opencode\plugins\`
-otherwise. It keeps its ownership/version manifest in a dedicated
-`wt-agent-hooks\` support subdirectory and refuses to overwrite a same-name
-JavaScript plugin that does not contain Intelligent Terminal's managed-file
-marker.
+resolves the actual host executable and probes `--version` with a five-second
+timeout, including cleanup of that probe's npm-shim descendants. Only major
+versions 1 and 2 are accepted; unknown versions fail explicitly without changing
+the installed plugin. Detection does not use ACP's protocol version.
+
+The global plugin directory is `%XDG_CONFIG_HOME%\opencode\plugins\` when
+`XDG_CONFIG_HOME` is set, or `%USERPROFILE%\.config\opencode\plugins\` otherwise.
+V1 installs a function-exporting `wt-agent-hooks.js` there, including support for
+V1 releases older than 1.18.29, with its bridge in `wt-agent-hooks\bridge.js`.
+V2 installs one local package in `wt-agent-hooks\`, whose `package.json` exports
+both server and TUI entrypoints. Switching versions removes the other
+auto-discovered entrypoint, rather than loading two plugins.
+
+The support directory's `plugin.json` records ownership, bundle version, and
+`api_variant: "v1" | "v2"`. Reconciliation checks the required variant even when
+the bundle version is unchanged, so CLI upgrades and downgrades trigger repair.
+The JSON status's optional `opencode` object distinguishes `cli_version`,
+`api_variant`, and `installed_api_variant`. Unknown or mismatched variants are
+never reported enabled. Foreign files are preserved; the completion manifest
+is committed last, and partial managed installations remain repairable.
 
 Bundle resolution chain (first hit wins, see
 `agent_hooks_installer::bundle::candidate_roots`):
@@ -205,11 +226,49 @@ hook, so the CLI blocks on it. Turn-level Working is unaffected because
 `UserPromptSubmit` already maps to `ToolStarting`; what is given up is the
 tool's name in the session row, not its status.
 
-OpenCode uses a plugin definition with a V1 `server()` entrypoint and a V2
-`setup()` entrypoint rather than a hook manifest. Both forward prompt, tool,
-session lifecycle, and permission/question events to the same WTA topics.
-Child sessions with `parentID` are ignored so OpenCode's internal subagents
-do not create extra rows.
+OpenCode has separate V1 and V2 adapters rather than a hook manifest. V1 returns
+its callbacks from a named function export. V2 registers hooks and consumes
+`event.data` through `setup(ctx)`. Both use the canonical `opencode` source and
+the same WTA topics; root-session filtering excludes internal child sessions.
+
+### OpenCode V2 client/server ownership
+
+The V2 server is shared by local CLI clients. Its startup environment cannot
+identify the pane that submitted a later prompt; matching a directory cannot
+distinguish two panes in the same project either.
+
+The bundled TUI entrypoint therefore explicitly calls the server plugin's
+`wt-agent-hooks.pane.sync` RPC with the client ID, pane `WT_SESSION`, COM CLSID,
+actual `WTCLI_PATH`, log directory, and the root sessions open in that client.
+Requests are scoped to each session's location. Server callbacks emit only for
+these bindings, passing that client's environment to `wtcli`. There is no
+fallback to the shared server's `WT_SESSION`. Another client's unexpired
+binding cannot be stolen by a heartbeat.
+
+The client refreshes its bindings every ten seconds and releases them on
+cleanup. A missing client's lease expires after 45 seconds and suppresses further
+forwarding; it does not falsely declare that the CLI exited. Actual pane lifecycle
+retains responsibility for exit detection. Explicit unbinding ends only that
+client's tracked rows; it does not cancel execution. Server plugin reload or
+shutdown does not pretend that every connected CLI exited. RPC requests have a
+five-second deadline. Neither RPC nor bridge failure interrupts normal chat or
+ACP history discovery. A bounded cache replays already-observed activity when
+the first prompt precedes client binding or a client reconnects.
+
+The sidecar is invisible and uses OpenCode's automatic `./tui` loading; no
+`cli.json` or user configuration is rewritten. It covers the full interactive
+TUI. Non-TUI clients, including `opencode run` and `mini`, must explicitly call
+the same RPC to participate; this package does not inject an identity into
+those upstream commands or infer one from cwd. They can still execute and
+appear in ACP history without live hook status. Host installation does not
+claim to configure WSL plugin stores.
+
+Adapter component checks (no model calls or Terminal configuration edits):
+
+```powershell
+node --experimental-vm-modules --test tools\wta\tests\opencode-hooks.test.mjs
+cargo test --target x86_64-pc-windows-msvc --manifest-path tools\wta\Cargo.toml opencode
+```
 
 OpenCode's `question` tool is recognized as a user-input tool by both the native
 hook bridge and WTA. Its `agent.tool.starting` event and the `agent.notification`
@@ -221,6 +280,8 @@ References:
 - Claude: <https://docs.claude.com/en/docs/claude-code/hooks>
 - Gemini: <https://github.com/google-gemini/gemini-cli/blob/main/docs/hooks/reference.md>
 - OpenCode: <https://opencode.ai/docs/plugins/>
+- OpenCode V2 migration: <https://opencode.ai/v2/docs/build/plugins/migrate-v1/>
+- OpenCode V2 plugin RPC: <https://opencode.ai/v2/docs/build/plugins/rpc/>
 
 ## Hook bridge
 
@@ -458,10 +519,10 @@ Gemini has no marketplace concept and reads the extension folder directly.
   without `WT_SESSION`, including WTA's shared ACP processes. Agent-pane
   sessions are already tracked through ACP; only interactive CLI sessions in
   regular terminal panes produce hook-backed rows.
-- **OpenCode ACP sessions are intentionally ignored by the plugin.** The
-  plugin requires both `WT_COM_CLSID` and `WT_SESSION`; the shared ACP process
-  used by the agent pane is already tracked through ACP and must not create a
-  duplicate hook-backed row.
+- **OpenCode ACP sessions are intentionally ignored by both adapters.**
+  `OPENCODE_CLIENT=acp` suppresses their shell-session hooks. V1 additionally
+  requires local Terminal context; V2 requires an explicit client pane binding.
+  Agent-pane sessions remain tracked by ACP, never by the shell hook bridge.
 - **MSIX install paths include the package version.** They change on every
   upgrade, which is why `agent_hooks_installer` re-runs marketplace
   registration on every wta startup and strips stale entries before
