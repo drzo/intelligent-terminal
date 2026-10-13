@@ -634,8 +634,12 @@ registry lookup, resume routing, tab creation, binding, focus, and the return to
 the UI. `elapsed_ms` is cumulative within each operation; native `stage_ms`
 measures the interval since the preceding stage.
 
-Native `protocol_tab_create` records split UI dispatcher wait, pane creation,
-tab insertion, synchronous layout, and selection. `agent_pane_create` further
+Buffered native `protocol_tab_create` summaries split UI dispatcher wait, pane
+creation, tab insertion, synchronous layout, selection, and tab lookup. Each
+summary retains `trace_id`, resulting pane identity, `completed`, and
+`last_stage`, including early returns and exceptions. Checkpoints do no
+formatting or file I/O; the summary is emitted once after the UI-critical work.
+`agent_pane_create` further
 splits native agent pane creation into settings, elevation, connection, control,
 and pane-content construction. Buffered `startup_timing` summaries in the same
 native log split `terminal_initialize` into core/rendering initialization,
@@ -651,8 +655,11 @@ These diagnostics apply to terminal startup generally, including prewarmed
 helpers, so use the pane identity rather than proximity alone. Match the resulting `pane_id`
 and `client_pid` with the master's `pane_created` record and the provider's own
 startup log. `wtcli_timing` records separately measure spawning and waiting for
-`new-tab` and `focus-pane` bridge processes. An unfinished `*_begin` stage
-identifies an in-flight operation. These timing records do not include prompts,
+`new-tab` and `focus-pane` bridge processes, with or without the `--json` prefix.
+In a buffered summary, `completed=false` and `last_stage` identify the point
+where creation stopped; an unfinished `*_begin` stage in unbuffered records
+identifies an in-flight operation. Buffered checkpoints are not visible while
+an operation is still running. These timing records do not include prompts,
 command lines, working directories, or credentials.
 
 ## Project Structure

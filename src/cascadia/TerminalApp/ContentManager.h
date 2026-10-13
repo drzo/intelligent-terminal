@@ -74,6 +74,7 @@ namespace winrt::TerminalApp::implementation
             winrt::hstring universe;
             bool identityQualified{};
             bool interactiveResume{};
+            bool resumeCommandlineTrusted{};
             winrt::hstring eventJson;
             std::vector<winrt::hstring> supersededSessionIds;
 
@@ -98,7 +99,10 @@ namespace winrt::TerminalApp::implementation
 
         void Detach(const Microsoft::Terminal::Control::TermControl& control);
 
+        // The projected entry point is out-of-band protocol ingress. VT output
+        // must use the implementation overload with command trust disabled.
         void OnPaneAgentSessionChanged(const winrt::hstring& eventJson);
+        void OnPaneAgentSessionChanged(const winrt::hstring& eventJson, bool trustResumeCommandline);
         winrt::hstring AgentSessionEvent(uint64_t contentId);
         void UpdateKeepRunningTab(const winrt::TerminalApp::Tab& tab);
         bool IsPaneKeepRunning(const winrt::guid& paneId) const;

@@ -163,6 +163,23 @@ the hook-free resume binding, so `handle_session_hook` records them in
 treated as hook-owned and its row would sit at `Idle` forever even as the watcher
 saw activity.
 
+**Terminal restore metadata.** In-band VT agent events may identify a session,
+but cannot supply an executable `resume_commandline`: the page removes that
+field before applying or forwarding the event. ContentManager also records
+command provenance from the ingress API, not from JSON. Only explicit
+out-of-band protocol ingress and application-owned bindings may retain raw
+resume wrappers (including WSL distro, cwd and session-universe selection).
+Other bindings are rebuilt with the validated native/WSL resume builder;
+failed validation leaves the original shell command unchanged. A late identity
+binding does not reset a failed connection. Pending restore replay is reconciled
+against authoritative pane identity both after manager updates and at replay,
+so independent page/manager dispatch order cannot revive an ended or replaced
+session. Retaining an existing command during identity binding retains its
+existing provenance; an empty command argument does not promote trust.
+Canonical pending restores also match qualified host/WSL source, distro and
+the default (empty) universe, preventing same-ID/provider replacements in a
+different execution scope from replaying the old birth.
+
 **Native History resume metadata.** Explicit Sidebar activation keeps the
 selected qualified session identity and binds the pane returned by tab
 creation. Historical/Ended becomes Idle; newer live activity is retained.

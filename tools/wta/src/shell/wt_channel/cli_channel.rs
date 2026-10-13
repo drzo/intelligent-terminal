@@ -121,6 +121,13 @@ where
     Ok((retained, truncated))
 }
 
+fn timing_command(args: &[String]) -> Option<&str> {
+    let command_index = usize::from(args.first().is_some_and(|arg| arg == "--json"));
+    args.get(command_index)
+        .map(String::as_str)
+        .filter(|command| matches!(*command, "new-tab" | "focus-pane"))
+}
+
 async fn run_wtcli_one_shot(
     path: &str,
     args: &[String],
@@ -129,9 +136,7 @@ async fn run_wtcli_one_shot(
     timeout: Duration,
 ) -> Result<std::process::Output, WtcliOneShotError> {
     let started = std::time::Instant::now();
-    let timing_command = args
-        .get(1)
-        .filter(|command| matches!(command.as_str(), "new-tab" | "focus-pane"));
+    let timing_command = timing_command(args);
     if let Some(command) = timing_command {
         tracing::info!(target: "wtcli_timing", command, stage = "spawn_begin", "WT mutation timing");
     }
@@ -1266,6 +1271,37 @@ impl WtChannel for CliChannel {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn mutation_timing_command_handles_optional_json_prefix() {
+        let cases: &[(&[&str], Option<&str>)] = &[
+            (&["new-tab"], Some("new-tab")),
+            (&["new-tab", "--background"], Some("new-tab")),
+            (&["--json", "new-tab"], Some("new-tab")),
+            (&["--json", "new-tab", "--background"], Some("new-tab")),
+            (&["focus-pane"], Some("focus-pane")),
+            (&["focus-pane", "-t", "pane-id"], Some("focus-pane")),
+            (&["--json", "focus-pane"], Some("focus-pane")),
+            (
+                &["--json", "focus-pane", "-t", "pane-id"],
+                Some("focus-pane"),
+            ),
+            (&[], None),
+            (&[""], None),
+            (&["--json"], None),
+            (&["--json", ""], None),
+            (&["list-panes"], None),
+            (&["--json", "list-panes"], None),
+            (&["send-keys", "new-tab"], None),
+            (&["capture-pane", "focus-pane"], None),
+            (&["--json", "send-keys", "focus-pane"], None),
+            (&["--existing-only", "new-tab"], None),
+        ];
+        for (args, expected) in cases {
+            let args: Vec<String> = args.iter().map(|arg| (*arg).to_string()).collect();
+            assert_eq!(timing_command(&args), *expected, "args: {args:?}");
+        }
+    }
 
     #[test]
     fn passive_transport_listener_uses_existing_only() {

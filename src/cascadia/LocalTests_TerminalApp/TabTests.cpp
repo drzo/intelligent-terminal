@@ -540,6 +540,11 @@ namespace TerminalAppLocalTests
         TEST_METHOD(AgentsViewEnrichesNativePanesBeforeHooks);
         TEST_METHOD(AgentsViewRejectsAmbiguousPaneIdentity);
         TEST_METHOD(AgentsViewWslResumeBindsQualifiedIdentityImmediately);
+        TEST_METHOD(PaneResumeRejectsTerminalCommandline);
+        TEST_METHOD(PaneLateBindingPreservesFailure);
+        TEST_METHOD(PaneRestorePageBeforeManagerReconciles);
+        TEST_METHOD(PaneBindingPreservesInheritedCommandProvenance);
+        TEST_METHOD(PaneRestoreQualifiedIdentityReplacementDoesNotReplay);
         TEST_METHOD(KeepRunningAcceptsPlainTerminalTabs);
         TEST_METHOD(KeepRunningSnapshotCountsAttachedTerminalTabs);
         TEST_METHOD(PinnedTabMenuReordersWithoutStealingSelection);
@@ -3678,6 +3683,224 @@ namespace TerminalAppLocalTests
             VERIFY_ARE_EQUAL(command, args.Commandline());
             _endPaneSession(page->_manager, id);
             VERIFY_ARE_EQUAL(2u, page->_tabStrip.HistoryItems().Size());
+        });
+    }
+
+    void TabTests::PaneResumeRejectsTerminalCommandline()
+    {
+        const auto page = _commonSetup(nullptr, nullptr, std::nullopt, true);
+        TestOnUIThread([&]() {
+            const auto id = page->_GetFocusedTabImpl()->GetActivePane()->GetSessionId();
+            const auto manager = winrt::get_self<winrt::TerminalApp::implementation::ContentManager>(page->_manager);
+            for (const auto wsl : { false, true })
+            {
+                Json::Value event;
+                auto& params = event["params"];
+                params["event"] = "agent.session.start";
+                params["pane_id"] = _formatPaneId(id);
+                params["agent"] = "copilot";
+                params["agent_session_id"] = wsl ? "wsl-session" : "native-session";
+                params["agent_source"] = wsl ? "wsl" : "host";
+                params["agent_backend"] = wsl ? "wsl:Ubuntu:copilot" : "host:copilot";
+                params["cwd"] = wsl ? "/home/u/project with spaces" : "";
+                params["resume_commandline"] = "cmd.exe /c echo injected";
+                params["trusted"] = true;
+                manager->OnPaneAgentSessionChanged(
+                    winrt::to_hstring(Json::writeString(Json::StreamWriterBuilder{}, event)), false);
+                NewTerminalArgs args;
+                args.SessionId(id);
+                args.Commandline(L"original-shell");
+                std::vector<ActionAndArgs> actions{ { ShortcutAction::NewTab, NewTabArgs{ args } } };
+                page->_StampAgentResumeCommandlines(actions);
+                const auto expected = ::Microsoft::Terminal::AgentPaneRestore::BuildResumeCommandline(
+                    wsl ? L"wsl:Ubuntu:copilot" : L"host:copilot",
+                    wsl ? L"wsl-session" : L"native-session",
+                    wsl ? L"/home/u/project with spaces" : L"");
+                VERIFY_ARE_EQUAL(winrt::hstring{ expected }, args.Commandline());
+                VERIFY_IS_FALSE(_paneMetadata(page->_manager, id)->resumeCommandlineTrusted);
+                VERIFY_IS_TRUE(winrt::to_string(_paneMetadata(page->_manager, id)->eventJson).find("echo injected") == std::string::npos);
+                params["agent_session_id"] = "unsafe&session";
+                manager->OnPaneAgentSessionChanged(
+                    winrt::to_hstring(Json::writeString(Json::StreamWriterBuilder{}, event)), false);
+                args.Commandline(L"original-shell");
+                page->_StampAgentResumeCommandlines(actions);
+                VERIFY_ARE_EQUAL(winrt::hstring{ L"original-shell" }, args.Commandline());
+                if (wsl)
+                {
+                    const winrt::hstring universeCommand{
+                        L"wsl.exe -d Ubuntu --cd \"/home/u/project with spaces\" --exec bash -lc \"export COPILOT_HOME='/home/u/selected-universe'; exec copilot --resume wsl-session\"" };
+                    params["agent_session_id"] = "wsl-session";
+                    params["session_universe"] = "/home/u/selected-universe";
+                    params["resume_commandline"] = winrt::to_string(universeCommand);
+                    page->_manager.OnPaneAgentSessionChanged(
+                        winrt::to_hstring(Json::writeString(Json::StreamWriterBuilder{}, event)));
+                    page->_StampAgentResumeCommandlines(actions);
+                    VERIFY_ARE_EQUAL(universeCommand, args.Commandline());
+                    VERIFY_IS_TRUE(_paneMetadata(page->_manager, id)->resumeCommandlineTrusted);
+                    VERIFY_ARE_EQUAL(winrt::hstring{ L"/home/u/selected-universe" }, _paneMetadata(page->_manager, id)->universe);
+                }
+            }
+        });
+    }
+
+    void TabTests::PaneLateBindingPreservesFailure()
+    {
+        using Manager = winrt::TerminalApp::implementation::ContentManager;
+        const auto page = _commonSetup(nullptr, nullptr, std::nullopt, true);
+        TestOnUIThread([&]() {
+            const auto id = page->_GetFocusedTabImpl()->GetActivePane()->GetSessionId();
+            const auto manager = winrt::get_self<Manager>(page->_manager);
+            _bindPaneSession(page->_manager, id, { {}, L"copilot", {} });
+            manager->SetPaneConnectionState(id, true);
+            _bindPaneSession(page->_manager, id, { {}, L"copilot", {} });
+            VERIFY_ARE_EQUAL(Manager::PaneAgentState::Failed, _paneMetadata(page->_manager, id)->state);
+            _bindPaneSession(page->_manager, id, { L"late-session", L"copilot", {} });
+            VERIFY_ARE_EQUAL(Manager::PaneAgentState::Failed, _paneMetadata(page->_manager, id)->state);
+            for (const auto name : { "agent.session.start", "agent.prompt.submit" })
+            {
+                page->_manager.OnPaneAgentSessionChanged(_keepRunningHook(id, name, "late-session"));
+                VERIFY_ARE_EQUAL(Manager::PaneAgentState::Failed, _paneMetadata(page->_manager, id)->state);
+                VERIFY_ARE_EQUAL(winrt::hstring{ L"Error" }, _paneMetadata(page->_manager, id)->activity);
+                VERIFY_IS_TRUE(_paneHasSession(page->_manager, id));
+            }
+        });
+    }
+
+    void TabTests::PaneBindingPreservesInheritedCommandProvenance()
+    {
+        using Manager = winrt::TerminalApp::implementation::ContentManager;
+        const auto page = _commonSetup(nullptr, nullptr, std::nullopt, true);
+        TestOnUIThread([&]() {
+            const auto id = page->_GetFocusedTabImpl()->GetActivePane()->GetSessionId();
+            const auto manager = winrt::get_self<Manager>(page->_manager);
+            Json::Value event;
+            event["params"]["event"] = "agent.session.start";
+            event["params"]["pane_id"] = _formatPaneId(id);
+            event["params"]["agent_session_id"] = "inherited-session";
+            event["params"]["agent"] = "copilot";
+            event["params"]["agent_backend"] = "host:copilot";
+            event["params"]["resume_commandline"] = "cmd.exe /c echo injected";
+            manager->OnPaneAgentSessionChanged(winrt::to_hstring(Json::writeString(Json::StreamWriterBuilder{}, event)), false);
+            const auto command = _paneMetadata(page->_manager, id)->session.resumeCommandline;
+            VERIFY_IS_FALSE(command.empty());
+            _bindPaneSession(page->_manager, id, { L"inherited-session", L"copilot", {} });
+            VERIFY_IS_FALSE(_paneMetadata(page->_manager, id)->resumeCommandlineTrusted);
+            VERIFY_ARE_EQUAL(command, _paneMetadata(page->_manager, id)->session.resumeCommandline);
+            manager->UpdatePaneSessionIdentity(id, { L"inherited-session", L"copilot", {} }, L"host", {}, {});
+            VERIFY_IS_FALSE(_paneMetadata(page->_manager, id)->resumeCommandlineTrusted);
+            VERIFY_ARE_EQUAL(command, _paneMetadata(page->_manager, id)->session.resumeCommandline);
+            _bindPaneSession(page->_manager, id, { L"inherited-session", L"copilot", L"copilot --resume inherited-session" });
+            _bindPaneSession(page->_manager, id, { L"inherited-session", L"copilot", {} });
+            VERIFY_IS_TRUE(_paneMetadata(page->_manager, id)->resumeCommandlineTrusted);
+            VERIFY_ARE_EQUAL(winrt::hstring{ L"copilot --resume inherited-session" }, _paneMetadata(page->_manager, id)->session.resumeCommandline);
+            _bindPaneSession(page->_manager, id, { L"new-session", L"copilot", {} });
+            VERIFY_IS_FALSE(_paneMetadata(page->_manager, id)->resumeCommandlineTrusted);
+            VERIFY_IS_TRUE(_paneMetadata(page->_manager, id)->session.resumeCommandline.empty());
+        });
+    }
+
+    void TabTests::PaneRestoreQualifiedIdentityReplacementDoesNotReplay()
+    {
+        using Page = winrt::TerminalApp::implementation::TerminalPage;
+        using Manager = winrt::TerminalApp::implementation::ContentManager;
+        const auto page = _commonSetup(nullptr, nullptr, std::nullopt, true);
+        TestOnUIThread([&]() {
+            const auto tab = page->_GetFocusedTabImpl();
+            const auto id = tab->GetActivePane()->GetSessionId();
+            const auto manager = winrt::get_self<Manager>(page->_manager);
+            size_t replayCount{};
+            const auto token = page->ProtocolVtSequenceReceived([&](auto&&, const winrt::hstring& event) {
+                if (winrt::to_string(event).find("session_born_bound") != std::string::npos)
+                {
+                    ++replayCount;
+                }
+            });
+            const auto revoke = wil::scope_exit([&]() noexcept { page->ProtocolVtSequenceReceived(token); });
+            const Page::_PendingRestoredSessionBinding pending{ L"same-session", L"copilot", L"/home/u", L"wsl:Ubuntu:copilot" };
+            for (const auto replacement : { 0, 1, 2 })
+            {
+                manager->BindPaneSession(id, { L"same-session", L"copilot", {}, L"wsl:Ubuntu:copilot", L"/home/u" }, L"wsl", L"Ubuntu");
+                page->_pendingRestoredSessionBindings.insert_or_assign(id, pending);
+                Json::Value event;
+                auto& params = event["params"];
+                params["event"] = "agent.session.start";
+                params["pane_id"] = _formatPaneId(id);
+                params["agent_session_id"] = "same-session";
+                params["agent"] = "copilot";
+                params["agent_source"] = replacement == 0 ? "host" : "wsl";
+                params["wsl_distro"] = replacement == 0 ? "" : replacement == 1 ? "Debian" : "Ubuntu";
+                params["agent_backend"] = replacement == 0 ? "host:copilot" : replacement == 1 ? "wsl:Debian:copilot" : "wsl:Ubuntu:copilot";
+                params["session_universe"] = replacement == 2 ? "other-universe" : "";
+                const auto json = winrt::to_hstring(Json::writeString(Json::StreamWriterBuilder{}, event));
+                page->OnPaneAgentSessionChanged(json);
+                VERIFY_IS_TRUE(page->_pendingRestoredSessionBindings.contains(id));
+                page->_manager.OnPaneAgentSessionChanged(json);
+                page->_OnPaneMetadataChanged(id);
+                VERIFY_IS_FALSE(page->_pendingRestoredSessionBindings.contains(id));
+                // Independently exercise replay while its callback is deferred.
+                page->_pendingRestoredSessionBindings.insert_or_assign(id, pending);
+                page->_ReplayRestoredSessionBindings(tab);
+                VERIFY_IS_FALSE(page->_pendingRestoredSessionBindings.contains(id));
+                VERIFY_ARE_EQUAL(size_t{ 0 }, replayCount);
+            }
+            for (const auto wsl : { false, true })
+            {
+                manager->BindPaneSession(id,
+                                        { L"same-session", L"copilot", {}, wsl ? L"wsl:Ubuntu:copilot" : L"", {} },
+                                        wsl ? L"wsl" : L"host", wsl ? L"Ubuntu" : L"");
+                page->_pendingRestoredSessionBindings.insert_or_assign(
+                    id, Page::_PendingRestoredSessionBinding{ L"same-session", L"copilot", {}, wsl ? L"wsl:Ubuntu:copilot" : L"" });
+                page->_OnPaneMetadataChanged(id);
+                VERIFY_IS_TRUE(page->_pendingRestoredSessionBindings.contains(id));
+                page->_ReplayRestoredSessionBindings(tab);
+            }
+            VERIFY_ARE_EQUAL(size_t{ 2 }, replayCount);
+        });
+    }
+
+    void TabTests::PaneRestorePageBeforeManagerReconciles()
+    {
+        using Page = winrt::TerminalApp::implementation::TerminalPage;
+        const auto page = _commonSetup(nullptr, nullptr, std::nullopt, true);
+        TestOnUIThread([&]() {
+            const auto tab = page->_GetFocusedTabImpl();
+            const auto id = tab->GetActivePane()->GetSessionId();
+            size_t replayCount{};
+            const auto token = page->ProtocolVtSequenceReceived([&](auto&&, const winrt::hstring& event) {
+                if (winrt::to_string(event).find("session_born_bound") != std::string::npos)
+                {
+                    ++replayCount;
+                }
+            });
+            const auto revoke = wil::scope_exit([&]() noexcept { page->ProtocolVtSequenceReceived(token); });
+            for (const auto ended : { false, true })
+            {
+                _bindPaneSession(page->_manager, id, { L"restore-session", L"copilot", {} });
+                page->_pendingRestoredSessionBindings.insert_or_assign(
+                    id, Page::_PendingRestoredSessionBinding{ L"restore-session", L"copilot", {} });
+                const auto event = _keepRunningHook(id, ended ? "agent.session.end" : "agent.session.start",
+                                                   ended ? "restore-session" : "replacement-session");
+                page->OnPaneAgentSessionChanged(event);
+                VERIFY_IS_TRUE(page->_pendingRestoredSessionBindings.contains(id));
+                page->_manager.OnPaneAgentSessionChanged(event);
+                page->_OnPaneMetadataChanged(id);
+                VERIFY_IS_FALSE(page->_pendingRestoredSessionBindings.contains(id));
+                // Model replay overtaking a queued metadata callback.
+                page->_pendingRestoredSessionBindings.insert_or_assign(
+                    id, Page::_PendingRestoredSessionBinding{ L"restore-session", L"copilot", {} });
+                const auto snapshot = page->_manager.AgentSessionEvent(tab->GetActiveTerminalControl().ContentId());
+                page->_ReplayRestoredSessionBindings(tab);
+                VERIFY_IS_FALSE(page->_pendingRestoredSessionBindings.contains(id));
+                VERIFY_ARE_EQUAL(size_t{ 0 }, replayCount);
+                VERIFY_ARE_EQUAL(snapshot, page->_manager.AgentSessionEvent(tab->GetActiveTerminalControl().ContentId()));
+            }
+            _bindPaneSession(page->_manager, id, { L"valid-session", L"copilot", {} });
+            page->_pendingRestoredSessionBindings.insert_or_assign(
+                id, Page::_PendingRestoredSessionBinding{ L"valid-session", L"copilot", {} });
+            page->_OnPaneMetadataChanged(id);
+            VERIFY_IS_TRUE(page->_pendingRestoredSessionBindings.contains(id));
+            page->_ReplayRestoredSessionBindings(tab);
+            VERIFY_ARE_EQUAL(size_t{ 1 }, replayCount);
         });
     }
 

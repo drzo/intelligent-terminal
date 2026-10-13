@@ -10779,6 +10779,41 @@ namespace winrt::TerminalApp::implementation
         }
     }
 
+    static bool _IsStaleRestoredSessionBinding(const ContentManager::PaneMetadata& metadata,
+                                              const winrt::hstring& sessionId,
+                                              const winrt::hstring& agent,
+                                              const winrt::hstring& backend)
+    {
+        if (metadata.state == ContentManager::PaneAgentState::Ended)
+        {
+            return std::ranges::find(metadata.supersededSessionIds, sessionId) != metadata.supersededSessionIds.end();
+        }
+        if (!metadata.HasSession())
+        {
+            return false;
+        }
+        if (metadata.session.sessionId != sessionId || metadata.session.agent != agent)
+        {
+            return true;
+        }
+        if (!metadata.identityQualified)
+        {
+            return false;
+        }
+        namespace Model = ::Microsoft::Terminal::Settings::Model;
+        const auto restoredBackend = Model::AgentPaneBackend::Parse(std::wstring_view{ backend });
+        if (!backend.empty() && !restoredBackend)
+        {
+            return false;
+        }
+        const auto wsl = restoredBackend && restoredBackend->source == Model::AgentPaneBackendSource::Wsl;
+        const winrt::hstring distro = wsl ? winrt::hstring{ restoredBackend->wslDistro } : winrt::hstring{};
+        // Canonical layout resume commands have the default session universe.
+        // Native commands have an empty backend; WSL commands encode the distro.
+        return metadata.source != (wsl ? L"wsl" : L"host") ||
+               metadata.wslDistro != distro || !metadata.universe.empty();
+    }
+
     void TerminalPage::_ReplayRestoredSessionBindings(const winrt::com_ptr<Tab>& tab)
     {
         // Startup yields between panes. A restored helper can subscribe before
@@ -10795,6 +10830,12 @@ namespace winrt::TerminalApp::implementation
         }
         for (auto it = _pendingRestoredSessionBindings.begin(); it != _pendingRestoredSessionBindings.end();)
         {
+            const auto metadata = _MetadataForPane(it->first);
+            if (metadata && _IsStaleRestoredSessionBinding(*metadata, it->second.sessionId, it->second.agent, it->second.backend))
+            {
+                it = _pendingRestoredSessionBindings.erase(it);
+                continue;
+            }
             if (!root->FindPaneBySessionId(it->first))
             {
                 ++it;
@@ -10960,6 +11001,8 @@ namespace winrt::TerminalApp::implementation
                         if (const auto pending = _pendingRestoredSessionBindings.find(*paneSessionId);
                             pending != _pendingRestoredSessionBindings.end() &&
                             metadata && metadata->state == ContentManager::PaneAgentState::Ended &&
+                            (params.get("agent", "").asString().empty() ||
+                             pending->second.agent == winrt::to_hstring(params["agent"].asString())) &&
                             (agentSessionId.empty() || pending->second.sessionId == winrt::to_hstring(agentSessionId)))
                         {
                             _pendingRestoredSessionBindings.erase(pending);
@@ -10967,6 +11010,11 @@ namespace winrt::TerminalApp::implementation
                     }
                     else if (sessionStarted && !agentSessionId.starts_with("sidekick-") &&
                              metadata && metadata->HasAgent() &&
+                             metadata->session.agent == winrt::to_hstring(params.get("agent", params.get("cli_source", "")).asString()) &&
+                             (!metadata->identityQualified || params.get("agent_source", "").asString().empty() ||
+                              (metadata->source == winrt::to_hstring(params["agent_source"].asString()) &&
+                               metadata->wslDistro == winrt::to_hstring(params.get("wsl_distro", "").asString()) &&
+                               metadata->universe == winrt::to_hstring(params.get("session_universe", "").asString()))) &&
                              metadata->session.sessionId == winrt::to_hstring(agentSessionId))
                     {
                         _pendingRestoredSessionBindings.erase(*paneSessionId);
@@ -10986,6 +11034,17 @@ namespace winrt::TerminalApp::implementation
 
     void TerminalPage::_OnPaneMetadataChanged(const winrt::guid& paneId)
     {
+        // Manager application and page fan-out use independent dispatchers.
+        // Reconcile again after application, including when the page ran first.
+        if (const auto metadata = _MetadataForPane(paneId))
+        {
+            if (const auto pending = _pendingRestoredSessionBindings.find(paneId);
+                pending != _pendingRestoredSessionBindings.end() &&
+                _IsStaleRestoredSessionBinding(*metadata, pending->second.sessionId, pending->second.agent, pending->second.backend))
+            {
+                _pendingRestoredSessionBindings.erase(pending);
+            }
+        }
         for (const auto& tab : _RuntimeTabs())
         {
             if (const auto impl = _GetTabImpl(tab); impl && impl->GetRootPane() &&
@@ -12017,10 +12076,15 @@ namespace winrt::TerminalApp::implementation
                                     agentParams.isMember("event") &&
                                     agentParams["event"].isString())
                                 {
+                                    // Terminal output is not an executable-command
+                                    // authority. Only out-of-band resume selection
+                                    // may supply a wrapper (including WSL universe).
+                                    agentParams.removeMember("resume_commandline");
                                     agentParams["pane_id"] = paneIdStr;
                                     Json::Value bindingEvent;
                                     bindingEvent["params"] = agentParams;
-                                    page->_manager.OnPaneAgentSessionChanged(winrt::to_hstring(Json::writeString(Json::StreamWriterBuilder{}, bindingEvent)));
+                                    winrt::get_self<ContentManager>(page->_manager)->OnPaneAgentSessionChanged(
+                                        winrt::to_hstring(Json::writeString(Json::StreamWriterBuilder{}, bindingEvent)), false);
                                     if (!tabIdStr.empty())
                                     {
                                         agentParams["tab_id"] = tabIdStr;

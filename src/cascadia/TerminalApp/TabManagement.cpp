@@ -782,18 +782,18 @@ namespace winrt::TerminalApp::implementation
             }
 
             // Prefer rebuilding from the agent id: it is validated, while a
-            // command line handed to us by a hook is not. Fall back to the
-            // recorded one when we cannot spell the resume ourselves — an
-            // agent absent from `ResumeInvocations`, or a session id that
-            // fails validation — rather than dropping the binding entirely.
+            // command line handed to us by terminal output is not. Raw
+            // wrappers are retained only from out-of-band protocol ingress or
+            // an application-owned binding, never from in-band VT events.
             namespace Restore = ::Microsoft::Terminal::AgentPaneRestore;
-            auto resume = metadata->session.agent.empty() || metadata->source == L"wsl" ?
+            auto resume = metadata->session.agent.empty() ||
+                                  (metadata->source == L"wsl" && metadata->resumeCommandlineTrusted && !metadata->session.resumeCommandline.empty()) ?
                               winrt::hstring{} :
                               winrt::hstring{ Restore::BuildResumeCommandline(
                                   metadata->session.backend.empty() ? metadata->session.agent : metadata->session.backend,
                                   metadata->session.sessionId,
                                   metadata->session.cwd) };
-            if (resume.empty())
+            if (resume.empty() && metadata->resumeCommandlineTrusted)
             {
                 resume = metadata->session.resumeCommandline;
             }

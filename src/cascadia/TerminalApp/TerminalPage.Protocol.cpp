@@ -21,6 +21,7 @@
 #include "../inc/AgentSourceUtils.h"
 
 #include <wil/resource.h>
+#include <array>
 #include <atomic>
 #include <chrono>
 #include <json/json.h>
@@ -755,34 +756,58 @@ namespace winrt::TerminalApp::implementation
         static std::atomic<uint64_t> traceSerial{ 0 };
         const auto traceId = traceSerial.fetch_add(1, std::memory_order_relaxed) + 1;
         const auto started = std::chrono::steady_clock::now();
-        auto previousStage = started;
-        const char* lastStage = "foreground_queue";
-        const auto trace = [&](const char* stage) {
-            lastStage = stage;
-            const auto now = std::chrono::steady_clock::now();
-            _agentPaneLog(fmt::format("protocol_tab_create trace_id={} stage={} elapsed_ms={} stage_ms={} pid={} tid={} background={}",
-                                      traceId,
-                                      stage,
-                                      std::chrono::duration_cast<std::chrono::milliseconds>(now - started).count(),
-                                      std::chrono::duration_cast<std::chrono::milliseconds>(now - previousStage).count(),
-                                      GetCurrentProcessId(),
-                                      GetCurrentThreadId(),
-                                      background));
-            previousStage = std::chrono::steady_clock::now();
+        struct Checkpoint
+        {
+            const char* stage;
+            std::chrono::steady_clock::time_point at;
+            DWORD threadId;
         };
+        std::array<Checkpoint, 24> checkpoints{};
+        size_t checkpointCount = 0;
+        const char* lastStage = "foreground_queue";
+        const auto trace = [&](const char* stage) noexcept {
+            lastStage = stage;
+            if (checkpointCount < checkpoints.size())
+            {
+                checkpoints[checkpointCount++] = { stage, std::chrono::steady_clock::now(), GetCurrentThreadId() };
+            }
+        };
+        Protocol::TabCreationResult result{};
         bool completed = false;
-        const auto logCompletion = wil::scope_exit([&]() {
-            _agentPaneLog(fmt::format("protocol_tab_create trace_id={} stage=end completed={} last_stage={} elapsed_ms={}",
-                                      traceId,
-                                      completed,
-                                      lastStage,
-                                      std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - started).count()));
+        // Emit once after the UI-critical work, including early returns and
+        // exception unwinding. No checkpoint performs formatting or file I/O.
+        const auto logCompletion = wil::scope_exit([&]() noexcept {
+            try
+            {
+                const auto ended = std::chrono::steady_clock::now();
+                auto message = fmt::format("protocol_tab_create trace_id={} pane_id={} client_pid={} tab_index={} pid={} background={} stage=end completed={} last_stage={} elapsed_ms={}",
+                                           traceId,
+                                           winrt::to_string(winrt::to_hstring(result.SessionId)),
+                                           result.Pid,
+                                           result.TabId,
+                                           GetCurrentProcessId(),
+                                           background,
+                                           completed,
+                                           lastStage,
+                                           std::chrono::duration_cast<std::chrono::milliseconds>(ended - started).count());
+                auto previousStage = started;
+                for (size_t i = 0; i < checkpointCount; ++i)
+                {
+                    const auto& checkpoint = checkpoints[i];
+                    message += fmt::format(" [stage={} elapsed_ms={} stage_ms={} tid={}]",
+                                           checkpoint.stage,
+                                           std::chrono::duration_cast<std::chrono::milliseconds>(checkpoint.at - started).count(),
+                                           std::chrono::duration_cast<std::chrono::milliseconds>(checkpoint.at - previousStage).count(),
+                                           checkpoint.threadId);
+                    previousStage = checkpoint.at;
+                }
+                _agentPaneLog(message);
+            }
+            CATCH_LOG();
         });
         trace("foreground_queue");
         co_await wil::resume_foreground(Dispatcher());
         trace("foreground_ready");
-
-        Protocol::TabCreationResult result{};
 
         // A protocol create_tab that carries a commandline but no profile would
         // otherwise resolve (via CascadiaSettings::GetProfileForArgs) to the
@@ -843,9 +868,11 @@ namespace winrt::TerminalApp::implementation
         }
         trace("selection_settled");
 
+        trace("tab_lookup_begin");
         uint32_t newTabIdx{};
         if (!_tabs.IndexOf(newTab, newTabIdx))
             co_return result;
+        trace("tab_lookup_end");
 
         const auto tabImpl = _GetTabImpl(newTab);
 
@@ -861,11 +888,6 @@ namespace winrt::TerminalApp::implementation
             }
         }
 
-        _agentPaneLog(fmt::format("protocol_tab_create trace_id={} pane_id={} client_pid={} tab_index={}",
-                                  traceId,
-                                  winrt::to_string(winrt::to_hstring(result.SessionId)),
-                                  result.Pid,
-                                  result.TabId));
         completed = true;
         co_return result;
     }

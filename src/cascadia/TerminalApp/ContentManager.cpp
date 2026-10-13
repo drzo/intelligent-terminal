@@ -246,9 +246,14 @@ namespace winrt::TerminalApp::implementation
                     resolved.cwd = metadata.session.cwd;
                 }
             }
+            metadata.resumeCommandlineTrusted = !session.resumeCommandline.empty() ||
+                                                (metadata.session.sessionId == session.sessionId && metadata.resumeCommandlineTrusted);
             metadata.session = std::move(resolved);
             std::erase(metadata.supersededSessionIds, session.sessionId);
-            metadata.state = session.sessionId.empty() ? PaneAgentState::Starting : PaneAgentState::Running;
+            if (metadata.state != PaneAgentState::Failed)
+            {
+                metadata.state = session.sessionId.empty() ? PaneAgentState::Starting : PaneAgentState::Running;
+            }
             metadata.source = source;
             metadata.wslDistro = distro;
             metadata.universe = universe;
@@ -300,6 +305,7 @@ namespace winrt::TerminalApp::implementation
             metadata.universe.clear();
             metadata.identityQualified = false;
             metadata.interactiveResume = false;
+            metadata.resumeCommandlineTrusted = false;
             metadata.eventJson.clear();
         }
         PaneMetadataChanged.raise(*this, paneId);
@@ -356,6 +362,10 @@ namespace winrt::TerminalApp::implementation
             {
                 resolved.cwd = metadata.session.cwd;
             }
+            if (!session.resumeCommandline.empty())
+            {
+                metadata.resumeCommandlineTrusted = true;
+            }
             if (metadata.identityQualified && metadata.session.sessionId == resolved.sessionId &&
                 metadata.session.agent == resolved.agent && metadata.session.resumeCommandline == resolved.resumeCommandline &&
                 metadata.session.backend == resolved.backend && metadata.session.cwd == resolved.cwd)
@@ -377,6 +387,11 @@ namespace winrt::TerminalApp::implementation
 
     void ContentManager::OnPaneAgentSessionChanged(const winrt::hstring& eventJson)
     {
+        OnPaneAgentSessionChanged(eventJson, true);
+    }
+
+    void ContentManager::OnPaneAgentSessionChanged(const winrt::hstring& eventJson, const bool trustResumeCommandline)
+    {
         _CheckThread();
         Json::Value event;
         Json::CharReaderBuilder reader;
@@ -386,6 +401,12 @@ namespace winrt::TerminalApp::implementation
         {
             THROW_HR(E_INVALIDARG);
         }
+        if (!trustResumeCommandline)
+        {
+            event["params"].removeMember("resume_commandline");
+        }
+        const auto bindingEventJson = trustResumeCommandline ? eventJson :
+                                          winrt::to_hstring(Json::writeString(Json::StreamWriterBuilder{}, event));
         const auto& params = event["params"];
         const auto name = params.get("event", "").asString();
         const auto ended = name == "agent.session.end" || name == "agent.session.stopped";
@@ -488,18 +509,20 @@ namespace winrt::TerminalApp::implementation
                     metadata.universe.clear();
                     metadata.identityQualified = false;
                     metadata.interactiveResume = false;
+                    metadata.resumeCommandlineTrusted = false;
                 }
                 if (!agentSessionId.empty() &&
                     std::ranges::find(metadata.supersededSessionIds, agentSessionId) == metadata.supersededSessionIds.end())
                 {
                     metadata.session.sessionId = agentSessionId;
-                    if (const auto resume = winrt::to_hstring(params.get("resume_commandline", "").asString()); !resume.empty())
+                    if (const auto resume = winrt::to_hstring(params.get("resume_commandline", "").asString()); trustResumeCommandline && !resume.empty())
                     {
                         metadata.session.resumeCommandline = resume;
+                        metadata.resumeCommandlineTrusted = true;
                     }
                     if (!(prompt && agent == L"copilot" && hadSession))
                     {
-                        metadata.eventJson = eventJson;
+                        metadata.eventJson = bindingEventJson;
                     }
                 }
                 metadata.session.agent = agent;
@@ -545,8 +568,11 @@ namespace winrt::TerminalApp::implementation
                         metadata.identityQualified = true;
                     }
                 }
-                metadata.state = metadata.session.sessionId.empty() ? PaneAgentState::Starting : PaneAgentState::Running;
-                metadata.activity = prompt ? L"Working" : L"Idle";
+                if (metadata.state != PaneAgentState::Failed)
+                {
+                    metadata.state = metadata.session.sessionId.empty() ? PaneAgentState::Starting : PaneAgentState::Running;
+                    metadata.activity = prompt ? L"Working" : L"Idle";
+                }
                 if (!metadata.launchProvider.empty() && !std::wstring_view{ metadata.launchProvider }.starts_with(L"custom:"))
                 {
                     metadata.launchProvider = agent;
