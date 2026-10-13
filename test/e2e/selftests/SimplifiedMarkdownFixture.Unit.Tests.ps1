@@ -92,6 +92,69 @@ Describe 'Simplified Markdown fixture isolation' -Tag 'Unit' {
     }
 }
 
+Describe 'Simplified Markdown restored-pane binding' -Tag 'Unit' {
+    BeforeAll {
+        Import-Module (Join-Path $PSScriptRoot '..\ItE2E\ItE2E.psd1') -Force
+        $ast = [Management.Automation.Language.Parser]::ParseFile(
+            (Join-Path $PSScriptRoot '..\tests\Feature.SimplifiedMarkdown.Tests.ps1'), [ref]$null, [ref]$null)
+        foreach ($name in @('Get-MarkdownPaneText', 'Bind-MarkdownPane')) {
+            $definition = $ast.Find({
+                param($node)
+                $node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq $name
+            }, $true)
+            . ([scriptblock]::Create($definition.Extent.Text))
+        }
+    }
+
+    BeforeEach {
+        $script:app = [pscustomobject]@{
+            Pid = 12345
+            OwnedProcess = [pscustomobject]@{ StartTime = [datetime]'2026-01-01' }
+        }
+        $script:target = [pscustomobject]@{ WtaPath = 'C:\fixture\wta.exe' }
+        $script:sessions = @([pscustomobject]@{
+            session_id = 'markdown-saved-session'
+            pane_session_id = 'restored-pane'
+        })
+        Mock Open-AgentPane {}
+        Mock Get-WtSessions { $script:sessions }
+        Mock Get-WtPaneStatus { [pscustomobject]@{ state = 'running'; pid = 12346 } }
+        Mock Get-DescendantWtaIds { [pscustomobject]@{ Id = 12346; Path = $script:target.WtaPath } }
+        Mock Get-AgentPaneSession { throw 'Saved-history binding must not depend on the legacy session file.' }
+        Mock Get-WtCapture { 'Ask anything, / for commands' }
+        Mock Get-CimInstance { [pscustomobject]@{ CommandLine = 'wta.exe --owner-tab-id restored-tab' } }
+        Mock Wait-Until {
+            param($Condition)
+            $result = & $Condition
+            if (-not $result) { throw 'Expected condition not satisfied.' }
+            $result
+        }
+    }
+
+    It 'observes readiness through the public module API and the verified live pane' {
+        Bind-MarkdownPane -SavedHistory
+
+        $script:agent.PaneSessionId | Should -Be 'restored-pane'
+        $script:agent.AcpSessionId | Should -Be 'markdown-saved-session'
+        $script:agent.HelperProcessId | Should -Be 12346
+        $script:ownerTab | Should -Be 'restored-tab'
+        Should -Invoke Get-WtCapture -Times 1 -Exactly -ParameterFilter { $SessionId -eq 'restored-pane' }
+        Should -Invoke Get-AgentPaneSession -Times 0 -Exactly
+    }
+
+    It 'rejects ambiguous restored conversation ownership' {
+        $script:sessions += $script:sessions[0]
+        { Bind-MarkdownPane -SavedHistory } | Should -Throw '*ambiguous pane ownership*'
+        Should -Invoke Get-WtCapture -Times 0 -Exactly
+    }
+
+    It 'does not bind an unrelated conversation' {
+        $script:sessions[0].session_id = 'another-session'
+        { Bind-MarkdownPane -SavedHistory } | Should -Throw '*Expected condition not satisfied*'
+        Should -Invoke Get-WtCapture -Times 0 -Exactly
+    }
+}
+
 Describe 'Simplified Markdown release-report mapping' -Tag 'Unit' {
     BeforeAll {
         $script:markdownCases = [ordered]@{

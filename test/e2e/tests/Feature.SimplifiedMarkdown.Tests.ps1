@@ -91,7 +91,8 @@ Describe 'Feature: simplified agent Markdown' -Tag 'Feature', 'SimplifiedMarkdow
                 Where-Object Id -eq $script:agent.HelperProcessId)
             $helpers | Should -HaveCount 1
             $helpers[0].Path | Should -Be $script:target.WtaPath
-            $ready = Get-AgentConnectedPlaceholderRegex
+            $ready = Get-WtaLocalizedTextRegex -Key 'input.placeholder.connected'
+            $ready | Should -Not -BeNullOrEmpty
             Wait-Until -TimeoutSec 45 -Because 'the owning pane to show its connected input' -Condition {
                 (Get-MarkdownPaneText) -match $ready
             } | Out-Null
