@@ -176,9 +176,24 @@ against authoritative pane identity both after manager updates and at replay,
 so independent page/manager dispatch order cannot revive an ended or replaced
 session. Retaining an existing command during identity binding retains its
 existing provenance; an empty command argument does not promote trust.
-Canonical pending restores also match qualified host/WSL source, distro and
-the default (empty) universe, preventing same-ID/provider replacements in a
-different execution scope from replaying the old birth.
+Trusted commands persist in an `intellterm-resume-v1` layout envelope containing
+the exact command, provider, SID, host/WSL backend (including distro), cwd, and
+session universe. Restoration validates and unwraps it before creating settings
+or launching a connection; malformed envelopes fail rather than execute literally.
+StartingDirectory remains a normal layout field, and restored agent conversations
+skip saved shell-buffer replay. Pending births bind and replay the same qualified
+identity, including the expected universe; a replacement in any scope cannot
+replay the old birth. The helper-to-master birth request retains that universe;
+explicit-store births bind the qualified row without first mutating a raw-SID
+collision in another store. VT command strings never enter this envelope.
+
+CLI resume rejects unsupported alternate universes before creating a pane or
+marking/binding a session, both in Sidebar History and the helper picker. An empty
+universe denotes the source's current store. Explicit universes are rejected:
+new panes inherit Terminal's environment, not master's `COPILOT_HOME`, and a WSL
+login shell may also select another store. Even matching master's home cannot
+prove the new CLI's store. The helper also rejects ambiguous same-SID snapshot rows
+from different universes.
 
 **Native History resume metadata.** Explicit Sidebar activation keeps the
 selected qualified session identity and binds the pane returned by tab

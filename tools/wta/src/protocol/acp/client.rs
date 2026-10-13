@@ -364,6 +364,7 @@ pub enum MasterExtRequest {
     SessionBornBound {
         event: crate::agent_sessions::SessionEvent,
         wsl_distro: Option<String>,
+        session_universe: Option<String>,
     },
     SessionResumeDispatched {
         request_id: u64,
@@ -4244,14 +4245,17 @@ fn dispatch_master_ext_request_with_yolo_timeout(
                     }
                 }
             }
-            MasterExtRequest::SessionBornBound { event, wsl_distro } => {
+            MasterExtRequest::SessionBornBound {
+                event,
+                wsl_distro,
+                session_universe,
+            } => {
                 const BORN_BOUND_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(8);
-                let wire = match wsl_distro.as_deref() {
-                    Some(distro) => {
-                        crate::session_registry::build_born_bound_request_wsl(&event, distro)
-                    }
-                    None => crate::session_registry::build_born_bound_request(&event),
-                };
+                let wire = crate::session_registry::build_born_bound_request_scoped(
+                    &event,
+                    wsl_distro.as_deref(),
+                    session_universe.as_deref(),
+                );
                 match tokio::time::timeout(BORN_BOUND_TIMEOUT, conn.ext_method(wire)).await {
                     Ok(Ok(response)) => tracing::debug!(
                         target: "session_hook",

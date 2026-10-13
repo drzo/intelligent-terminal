@@ -1156,6 +1156,7 @@ namespace winrt::TerminalApp::implementation
             winrt::hstring agent;
             winrt::hstring cwd;
             winrt::hstring backend;
+            winrt::hstring universe;
         };
         // Layout replay precedes WTA startup. Keep births until the owning
         // helper acknowledges its COM subscription, not merely ACP readiness.

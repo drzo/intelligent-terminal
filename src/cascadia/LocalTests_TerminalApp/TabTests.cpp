@@ -557,6 +557,7 @@ namespace TerminalAppLocalTests
         TEST_METHOD(AgentsViewRejectsAmbiguousPaneIdentity);
         TEST_METHOD(AgentsViewWslResumeBindsQualifiedIdentityImmediately);
         TEST_METHOD(PaneResumeRejectsTerminalCommandline);
+        TEST_METHOD(TrustedResumeEnvelopeRoundTripsQualifiedIdentity);
         TEST_METHOD(PaneLateBindingPreservesFailure);
         TEST_METHOD(PaneRestorePageBeforeManagerReconciles);
         TEST_METHOD(PaneBindingPreservesInheritedCommandProvenance);
@@ -3754,7 +3755,10 @@ namespace TerminalAppLocalTests
             args.Commandline(L"copilot");
             std::vector<ActionAndArgs> actions{ { ShortcutAction::NewTab, NewTabArgs{ args } } };
             page->_StampAgentResumeCommandlines(actions);
-            VERIFY_ARE_EQUAL(command, args.Commandline());
+            const auto persisted = ::Microsoft::Terminal::AgentPaneRestore::ParseResumeCommandline(args.Commandline());
+            VERIFY_ARE_EQUAL(std::wstring{ command }, persisted.commandline);
+            VERIFY_ARE_EQUAL(std::wstring{ L"selected-universe" }, persisted.universe);
+            VERIFY_ARE_EQUAL(std::wstring{ L"wsl:Ubuntu:copilot" }, persisted.backend);
             _endPaneSession(page->_manager, id);
             VERIFY_ARE_EQUAL(2u, page->_tabStrip.HistoryItems().Size());
         });
@@ -3793,6 +3797,12 @@ namespace TerminalAppLocalTests
                 VERIFY_ARE_EQUAL(winrt::hstring{ expected }, args.Commandline());
                 VERIFY_IS_FALSE(_paneMetadata(page->_manager, id)->resumeCommandlineTrusted);
                 VERIFY_IS_TRUE(winrt::to_string(_paneMetadata(page->_manager, id)->eventJson).find("echo injected") == std::string::npos);
+                VERIFY_ARE_EQUAL(winrt::hstring{ wsl ? L"Ubuntu" : L"" }, _paneMetadata(page->_manager, id)->wslDistro);
+                params["event"] = "agent.prompt.submit";
+                manager->OnPaneAgentSessionChanged(
+                    winrt::to_hstring(Json::writeString(Json::StreamWriterBuilder{}, event)), false);
+                VERIFY_ARE_EQUAL(winrt::hstring{ L"Working" }, _paneMetadata(page->_manager, id)->activity);
+                params["event"] = "agent.session.start";
                 params["agent_session_id"] = "unsafe&session";
                 manager->OnPaneAgentSessionChanged(
                     winrt::to_hstring(Json::writeString(Json::StreamWriterBuilder{}, event)), false);
@@ -3809,11 +3819,110 @@ namespace TerminalAppLocalTests
                     page->_manager.OnPaneAgentSessionChanged(
                         winrt::to_hstring(Json::writeString(Json::StreamWriterBuilder{}, event)));
                     page->_StampAgentResumeCommandlines(actions);
-                    VERIFY_ARE_EQUAL(universeCommand, args.Commandline());
+                    const auto persisted = ::Microsoft::Terminal::AgentPaneRestore::ParseResumeCommandline(args.Commandline());
+                    VERIFY_ARE_EQUAL(std::wstring{ universeCommand }, persisted.commandline);
+                    VERIFY_ARE_EQUAL(std::wstring{ L"/home/u/selected-universe" }, persisted.universe);
                     VERIFY_IS_TRUE(_paneMetadata(page->_manager, id)->resumeCommandlineTrusted);
                     VERIFY_ARE_EQUAL(winrt::hstring{ L"/home/u/selected-universe" }, _paneMetadata(page->_manager, id)->universe);
                 }
             }
+        });
+    }
+
+    void TabTests::TrustedResumeEnvelopeRoundTripsQualifiedIdentity()
+    {
+        namespace Restore = ::Microsoft::Terminal::AgentPaneRestore;
+        using Manager = winrt::TerminalApp::implementation::ContentManager;
+        const auto page = _commonSetup(nullptr, nullptr, std::nullopt, true);
+        TestOnUIThread([&]() {
+            const auto id = page->_GetFocusedTabImpl()->GetActivePane()->GetSessionId();
+            const auto manager = winrt::get_self<Manager>(page->_manager);
+            for (const auto wsl : { false, true })
+            {
+                const std::wstring command = wsl ?
+                    L"wsl.exe -d Ubuntu --cd \"/home/u/project with spaces\" -- bash -lc \"exec 'copilot' '--resume' 'roundtrip-session'\"" :
+                    L"\"C:\\resolved tools\\copilot.exe\" --resume roundtrip-session";
+                const std::wstring backend = wsl ? L"wsl:Ubuntu:copilot" : L"host:copilot";
+                const std::wstring cwd = wsl ? L"/home/u/project with spaces" : L"C:\\project with spaces";
+                manager->BindPaneSession(id, { L"roundtrip-session", L"copilot", winrt::hstring{ command }, winrt::hstring{ backend }, winrt::hstring{ cwd } },
+                                         wsl ? L"wsl" : L"host", wsl ? L"Ubuntu" : L"", L"selected-home");
+                NewTerminalArgs args;
+                args.SessionId(id);
+                args.StartingDirectory(winrt::hstring{ cwd });
+                std::vector<ActionAndArgs> actions{ { ShortcutAction::NewTab, NewTabArgs{ args } } };
+                page->_StampAgentResumeCommandlines(actions);
+                WindowLayout layout;
+                layout.TabLayout(winrt::single_threaded_vector<ActionAndArgs>(std::move(actions)));
+                const auto saved = _getTerminalArgs(WindowLayout::FromJson(WindowLayout::ToJson(layout)).TabLayout().GetAt(0));
+                const auto target = Restore::ParseResumeCommandline(saved.Commandline());
+                VERIFY_ARE_EQUAL(command, target.commandline);
+                VERIFY_ARE_EQUAL(backend, target.backend);
+                VERIFY_ARE_EQUAL(cwd, target.cwd);
+                VERIFY_ARE_EQUAL(std::wstring{ L"selected-home" }, target.universe);
+                VERIFY_ARE_EQUAL(args.StartingDirectory(), saved.StartingDirectory());
+                VERIFY_IS_TRUE(Restore::IsResumeCommandline(saved.Commandline()));
+                const auto restoredId = ::Microsoft::Console::Utils::CreateGuid();
+                saved.SessionId(restoredId);
+                const auto connection = winrt::make_self<TestConnection>(
+                    restoredId, winrt::Microsoft::Terminal::TerminalConnection::ConnectionState::Connected);
+                const auto restoredPane = page->_MakeTerminalPane(saved, nullptr, *connection);
+                VERIFY_IS_NOT_NULL(restoredPane);
+                VERIFY_ARE_EQUAL(winrt::hstring{ command }, saved.Commandline());
+                const auto restoredMetadata = _paneMetadata(page->_manager, restoredId);
+                VERIFY_ARE_EQUAL(winrt::hstring{ L"selected-home" }, restoredMetadata->universe);
+                VERIFY_ARE_EQUAL(winrt::hstring{ backend }, restoredMetadata->session.backend);
+                VERIFY_ARE_EQUAL(winrt::hstring{ command }, restoredMetadata->session.resumeCommandline);
+                VERIFY_ARE_EQUAL(winrt::hstring{ cwd }, restoredMetadata->session.cwd);
+                VERIFY_ARE_EQUAL(winrt::hstring{ L"selected-home" }, page->_pendingRestoredSessionBindings.at(restoredId).universe);
+                page->_OnPaneMetadataChanged(restoredId);
+                VERIFY_IS_TRUE(page->_pendingRestoredSessionBindings.contains(restoredId));
+                std::vector<Json::Value> births;
+                const auto token = page->ProtocolVtSequenceReceived([&](auto&&, const winrt::hstring& payload) {
+                    Json::Value event;
+                    Json::CharReaderBuilder reader;
+                    std::string errors;
+                    std::istringstream stream{ winrt::to_string(payload) };
+                    VERIFY_IS_TRUE(Json::parseFromStream(reader, stream, &event, &errors));
+                    if (event["method"] == "session_born_bound")
+                    {
+                        births.push_back(event["params"]);
+                    }
+                });
+                const auto revoke = wil::scope_exit([&]() { page->ProtocolVtSequenceReceived(token); });
+                VERIFY_IS_NOT_NULL(page->_CreateNewTabFromPane(restoredPane));
+                page->_ReplayRestoredSessionBindings(page->_GetFocusedTabImpl());
+                VERIFY_ARE_EQUAL(size_t{ 1 }, births.size());
+                VERIFY_ARE_EQUAL(std::string{ "copilot" }, births[0]["agent"].asString());
+                VERIFY_ARE_EQUAL(std::string{ "roundtrip-session" }, births[0]["agent_session_id"].asString());
+                VERIFY_ARE_EQUAL(std::string{ wsl ? "wsl" : "host" }, births[0]["agent_source"].asString());
+                VERIFY_ARE_EQUAL(std::string{ wsl ? "Ubuntu" : "" }, births[0].get("wsl_distro", "").asString());
+                VERIFY_ARE_EQUAL(std::string{ "selected-home" }, births[0]["session_universe"].asString());
+                VERIFY_ARE_EQUAL(winrt::to_string(winrt::hstring{ cwd }), births[0]["cwd"].asString());
+                VERIFY_IS_FALSE(page->_pendingRestoredSessionBindings.contains(restoredId));
+                if (wsl)
+                {
+                    const auto producer = Restore::ParseResumeCommandline(command);
+                    VERIFY_ARE_EQUAL(std::wstring{ L"roundtrip-session" }, producer.sessionId);
+                    VERIFY_ARE_EQUAL(backend, producer.backend);
+                }
+            }
+            for (const auto malformed : { L"intellterm-resume-v1", L"intellterm-resume-v1 \"host:copilot\" \"unsafe&sid\" \"\" \"\" \"calc.exe\"" })
+            {
+                VERIFY_IS_TRUE(Restore::ParseResumeCommandline(malformed).agent.empty());
+                NewTerminalArgs invalid;
+                invalid.Commandline(malformed);
+                VERIFY_THROWS(page->_MakeTerminalPane(invalid), wil::ResultException);
+            }
+            for (const auto inner : { L"exec 'copilot' '--resume' 'safe-session'; echo injected",
+                                      L"exec 'copilot' '--resume' 'safe-session'extra",
+                                      L"exec 'copilot' '--resume' 'safe-session",
+                                      L"exec copilot --resume safe-session && echo injected" })
+            {
+                std::wstring command{ L"wsl.exe -d Ubuntu --cd /home/u -- bash -lc " };
+                Restore::AppendQuoted(command, inner);
+                VERIFY_IS_TRUE(Restore::ParseResumeCommandline(command).agent.empty());
+            }
+            VERIFY_IS_TRUE(Restore::ParseResumeCommandline(L"wsl.exe -d Ubuntu -- bash -lc \"exec copilot --resume safe-session\" extra").agent.empty());
         });
     }
 

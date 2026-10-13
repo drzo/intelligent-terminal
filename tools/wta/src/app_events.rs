@@ -469,6 +469,7 @@ impl App {
         &mut self,
         event: crate::agent_sessions::SessionEvent,
         wsl_distro: Option<String>,
+        session_universe: Option<String>,
     ) {
         self.agent_sessions.apply(event.clone());
         if self
@@ -477,6 +478,7 @@ impl App {
                 crate::protocol::acp::client::MasterExtRequest::SessionBornBound {
                     event,
                     wsl_distro,
+                    session_universe,
                 },
             )
             .is_err()
@@ -2856,7 +2858,7 @@ impl App {
                 self.handle_agents_snapshot_failed(request_id);
             }
             AppEvent::RegisterBornBoundSession { event } => {
-                self.register_born_bound_session(event, None);
+                self.register_born_bound_session(event, None, None);
             }
             AppEvent::MasterMutationCompleted { request_id } => {
                 tracing::debug!(target: "agents_view", request_id, "master mutation completed; refetching open views");
@@ -3014,6 +3016,11 @@ impl App {
                             .get("wsl_distro")
                             .and_then(serde_json::Value::as_str)
                             .filter(|distro| !distro.is_empty())
+                            .map(str::to_string),
+                        params
+                            .get("session_universe")
+                            .and_then(serde_json::Value::as_str)
+                            .filter(|universe| !universe.trim().is_empty())
                             .map(str::to_string),
                     );
                     return;

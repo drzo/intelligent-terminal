@@ -660,8 +660,9 @@ to `info`). The F12 debug panel in the TUI shows protocol traffic live without
 tailing log files.
 
 Sidebar session activation emits `session_activation` timing records at `info`
-in the CLI and master logs. Match `activation_id` to the `sidebar_activation`
-records in `terminal-agent-pane.log` to follow pipe discovery, initialization,
+in the CLI and master logs. Match `activation_id` to the buffered
+`startup_timing operation=sidebar_activation` summaries in
+`terminal-agent-pane.log` to follow pipe discovery, initialization,
 registry lookup, resume routing, tab creation, binding, focus, and the return to
 the UI. `elapsed_ms` is cumulative within each operation; native `stage_ms`
 measures the interval since the preceding stage.
@@ -671,7 +672,7 @@ creation, tab insertion, synchronous layout, selection, and tab lookup. Each
 summary retains `trace_id`, resulting pane identity, `completed`, and
 `last_stage`, including early returns and exceptions. Checkpoints do no
 formatting or file I/O; the summary is emitted once after the UI-critical work.
-`agent_pane_create` further
+`startup_timing operation=agent_pane_create` further
 splits native agent pane creation into settings, elevation, connection, control,
 and pane-content construction. Buffered `startup_timing` summaries in the same
 native log split `terminal_initialize` into core/rendering initialization,
@@ -679,8 +680,10 @@ interactivity, connection startup, painting, appearance, and initialized-event
 handlers. `conpty_start` splits pseudoconsole creation, client launch, and release;
 `conpty_client_launch` splits process attributes, environment preparation,
 `CreateProcess`, and client-name resolution. Checkpoints are measured in memory
-and emitted together when each operation exits (including exception unwinding),
-so the line's UTC timestamp is its emission time, not its start time.
+and emitted together on a background thread when each operation exits (including
+exception unwinding), so formatting and file I/O do not run on the UI dispatcher.
+The line's UTC timestamp is its emission time, not its start time; background
+emission can reorder summaries, so correlate their identities rather than line order.
 `startup_first_output` records the first decoded nonempty output and
 `since_release_ms` measures from pseudoconsole release, not the sidebar click.
 These diagnostics apply to terminal startup generally, including prewarmed

@@ -45,6 +45,7 @@
 #include "DebugTapConnection.h"
 #include "FreOverlay.h"
 #include "../inc/AgentPaneRestore.h"
+#include "../inc/StartupTiming.h"
 #include "../inc/WindowPersistence.h"
 #include "MarkdownPaneContent.h"
 #include "Remoting.h"
@@ -7395,22 +7396,14 @@ namespace winrt::TerminalApp::implementation
 
         const auto weakThis = get_weak();
         const auto dispatcher = Dispatcher();
-        const auto started = std::chrono::steady_clock::now();
         const auto request = _PrepareSidebarHistoryActivation(item);
         const auto activationId = winrt::to_string(request.id);
         const auto sessionId = winrt::to_string(item.SessionId());
-        auto previousStage = started;
+        ::IntelligentTerminal::StartupTiming timing{
+            "sidebar_activation",
+            fmt::format("activation_id={} session_id={}", activationId, sessionId) };
         const auto trace = [&](const char* stage) {
-            const auto now = std::chrono::steady_clock::now();
-            _agentPaneLog(fmt::format("sidebar_activation activation_id={} session_id={} stage={} elapsed_ms={} stage_ms={} pid={} tid={}",
-                                      activationId,
-                                      sessionId,
-                                      stage,
-                                      std::chrono::duration_cast<std::chrono::milliseconds>(now - started).count(),
-                                      std::chrono::duration_cast<std::chrono::milliseconds>(now - previousStage).count(),
-                                      GetCurrentProcessId(),
-                                      GetCurrentThreadId()));
-            previousStage = std::chrono::steady_clock::now();
+            timing.Mark(stage);
         };
         trace(request.statusOnly ? "status_retry" : "clicked");
         auto args = request.arguments;
@@ -7434,11 +7427,10 @@ namespace winrt::TerminalApp::implementation
             trace("wta_capture_begin");
             const auto result = Wta::RunWtaCapture(wtaPath, args, timeout, nullptr, false);
             trace("wta_capture_end");
-            _agentPaneLog(fmt::format("sidebar_activation activation_id={} completed={} exit_code={} timeout_ms={}",
-                                      activationId,
-                                      result.completed,
-                                      result.exitCode,
-                                      timeout));
+            timing.AppendContext(fmt::format("[capture completed={} exit_code={} timeout_ms={}]",
+                                             result.completed,
+                                             result.exitCode,
+                                             timeout));
             if (result.completed && result.exitCode == 0)
             {
                 return _ParseSidebarHistoryActivation(result.output, request.id);
@@ -7469,10 +7461,7 @@ namespace winrt::TerminalApp::implementation
                 page->_RequestSidebarHistoryRefresh(false);
             }
         }
-        _agentPaneLog(fmt::format("sidebar_activation activation_id={} state={} accepted={}",
-                                  activationId,
-                                  static_cast<int>(result.state),
-                                  result.accepted));
+        timing.AppendContext(fmt::format("state={} accepted={}", static_cast<int>(result.state), result.accepted));
         trace("complete");
     }
 
@@ -10799,7 +10788,8 @@ namespace winrt::TerminalApp::implementation
     static bool _IsStaleRestoredSessionBinding(const ContentManager::PaneMetadata& metadata,
                                               const winrt::hstring& sessionId,
                                               const winrt::hstring& agent,
-                                              const winrt::hstring& backend)
+                                              const winrt::hstring& backend,
+                                              const winrt::hstring& universe)
     {
         if (metadata.state == ContentManager::PaneAgentState::Ended)
         {
@@ -10825,10 +10815,8 @@ namespace winrt::TerminalApp::implementation
         }
         const auto wsl = restoredBackend && restoredBackend->source == Model::AgentPaneBackendSource::Wsl;
         const winrt::hstring distro = wsl ? winrt::hstring{ restoredBackend->wslDistro } : winrt::hstring{};
-        // Canonical layout resume commands have the default session universe.
-        // Native commands have an empty backend; WSL commands encode the distro.
         return metadata.source != (wsl ? L"wsl" : L"host") ||
-               metadata.wslDistro != distro || !metadata.universe.empty();
+               metadata.wslDistro != distro || metadata.universe != universe;
     }
 
     void TerminalPage::_ReplayRestoredSessionBindings(const winrt::com_ptr<Tab>& tab)
@@ -10848,7 +10836,7 @@ namespace winrt::TerminalApp::implementation
         for (auto it = _pendingRestoredSessionBindings.begin(); it != _pendingRestoredSessionBindings.end();)
         {
             const auto metadata = _MetadataForPane(it->first);
-            if (metadata && _IsStaleRestoredSessionBinding(*metadata, it->second.sessionId, it->second.agent, it->second.backend))
+            if (metadata && _IsStaleRestoredSessionBinding(*metadata, it->second.sessionId, it->second.agent, it->second.backend, it->second.universe))
             {
                 it = _pendingRestoredSessionBindings.erase(it);
                 continue;
@@ -10863,11 +10851,14 @@ namespace winrt::TerminalApp::implementation
             params["agent_session_id"] = winrt::to_string(it->second.sessionId);
             params["agent"] = winrt::to_string(it->second.agent);
             params["cwd"] = winrt::to_string(it->second.cwd);
+            params["agent_source"] = "host";
+            params["session_universe"] = winrt::to_string(it->second.universe);
             if (const auto backend = ::Microsoft::Terminal::Settings::Model::AgentPaneBackend::Parse(
                     std::wstring_view{ it->second.backend });
                 backend && backend->source == ::Microsoft::Terminal::Settings::Model::AgentPaneBackendSource::Wsl)
             {
                 params["wsl_distro"] = winrt::to_string(winrt::hstring{ backend->wslDistro });
+                params["agent_source"] = "wsl";
             }
             params["tab_id"] = winrt::to_string(tab->StableId());
             params["window_id"] = std::to_string(_WindowProperties.WindowId());
@@ -11057,7 +11048,7 @@ namespace winrt::TerminalApp::implementation
         {
             if (const auto pending = _pendingRestoredSessionBindings.find(paneId);
                 pending != _pendingRestoredSessionBindings.end() &&
-                _IsStaleRestoredSessionBinding(*metadata, pending->second.sessionId, pending->second.agent, pending->second.backend))
+                _IsStaleRestoredSessionBinding(*metadata, pending->second.sessionId, pending->second.agent, pending->second.backend, pending->second.universe))
             {
                 _pendingRestoredSessionBindings.erase(pending);
             }
@@ -15140,22 +15131,23 @@ namespace winrt::TerminalApp::implementation
             return resultPane;
         }
 
-        const auto started = std::chrono::steady_clock::now();
-        auto previousStage = started;
+        const auto timingEnabled = newTerminalArgs && !newTerminalArgs.NativeAgentProviderId().empty();
+        ::IntelligentTerminal::StartupTiming timing{
+            "agent_pane_create",
+            timingEnabled ? fmt::format("provider={}", winrt::to_string(newTerminalArgs.NativeAgentProviderId())) : std::string{},
+            timingEnabled };
         const auto trace = [&](const char* stage) {
-            if (newTerminalArgs && !newTerminalArgs.NativeAgentProviderId().empty())
-            {
-                const auto now = std::chrono::steady_clock::now();
-                _agentPaneLog(fmt::format("agent_pane_create provider={} stage={} elapsed_ms={} stage_ms={} tid={}",
-                                          winrt::to_string(newTerminalArgs.NativeAgentProviderId()),
-                                          stage,
-                                          std::chrono::duration_cast<std::chrono::milliseconds>(now - started).count(),
-                                          std::chrono::duration_cast<std::chrono::milliseconds>(now - previousStage).count(),
-                                          GetCurrentThreadId()));
-                previousStage = std::chrono::steady_clock::now();
-            }
+            timing.Mark(stage);
         };
         trace("settings_begin");
+        const auto restoredAgent = newTerminalArgs ?
+                                       ::Microsoft::Terminal::AgentPaneRestore::ParseResumeCommandline(newTerminalArgs.Commandline()) :
+                                       ::Microsoft::Terminal::AgentPaneRestore::ResumeTarget{};
+        if (newTerminalArgs && ::Microsoft::Terminal::AgentPaneRestore::IsPersistedResumeCommandline(newTerminalArgs.Commandline()))
+        {
+            THROW_HR_IF(E_INVALIDARG, restoredAgent.commandline.empty());
+            newTerminalArgs.Commandline(winrt::hstring{ restoredAgent.commandline });
+        }
         Settings::TerminalSettingsCreateResult controlSettings{ nullptr };
         Profile profile{ nullptr };
 
@@ -15180,12 +15172,10 @@ namespace winrt::TerminalApp::implementation
             controlSettings = Settings::TerminalSettings::CreateWithNewTerminalArgs(_settings, newTerminalArgs);
         }
 
-        const auto restoredAgent = newTerminalArgs ?
-                                       ::Microsoft::Terminal::AgentPaneRestore::ParseResumeCommandline(newTerminalArgs.Commandline()) :
-                                       ::Microsoft::Terminal::AgentPaneRestore::ResumeTarget{};
         if (newTerminalArgs && newTerminalArgs.NativeAgentProviderId().empty() && !restoredAgent.agent.empty())
         {
             newTerminalArgs.NativeAgentProviderId(winrt::hstring{ restoredAgent.agent });
+            timing.Enable(fmt::format("provider={}", winrt::to_string(newTerminalArgs.NativeAgentProviderId())));
         }
         trace("settings_end");
 
@@ -15244,7 +15234,7 @@ namespace winrt::TerminalApp::implementation
         const auto replaysItsOwnHistory =
             newTerminalArgs &&
             (::Microsoft::Terminal::AgentPaneRestore::IsPaneType(newTerminalArgs.Type()) ||
-             ::Microsoft::Terminal::AgentPaneRestore::IsResumeCommandline(newTerminalArgs.Commandline()));
+             !restoredAgent.agent.empty());
 
         if (hasSessionId && !replaysItsOwnHistory)
         {
@@ -15296,20 +15286,26 @@ namespace winrt::TerminalApp::implementation
                         winrt::hstring{ target.agent },
                         newTerminalArgs.Commandline(),
                         winrt::hstring{ target.backend },
-                        winrt::hstring{ target.cwd } });
+                        winrt::hstring{ target.cwd } },
+                    target.backend.starts_with(L"wsl:") ? L"wsl" : L"host",
+                    target.backend.starts_with(L"wsl:") ?
+                        winrt::hstring{ ::Microsoft::Terminal::Settings::Model::AgentPaneBackend::Parse(target.backend)->wslDistro } :
+                        winrt::hstring{},
+                    winrt::hstring{ target.universe });
                 _pendingRestoredSessionBindings.insert_or_assign(
                     sessionId,
                     _PendingRestoredSessionBinding{
                         winrt::hstring{ target.sessionId },
                         winrt::hstring{ target.agent },
                         target.cwd.empty() ? newTerminalArgs.StartingDirectory() : winrt::hstring{ target.cwd },
-                        winrt::hstring{ target.backend } });
+                        winrt::hstring{ target.backend },
+                        winrt::hstring{ target.universe } });
             }
         }
 
         if (connection && newTerminalArgs && !newTerminalArgs.NativeAgentProviderId().empty())
         {
-            _agentPaneLog(fmt::format("agent_pane_create pane_id={}", winrt::to_string(winrt::to_hstring(connection.SessionId()))));
+            timing.AppendContext(fmt::format("pane_id={}", winrt::to_string(winrt::to_hstring(connection.SessionId()))));
         }
         trace("complete");
         return resultPane;

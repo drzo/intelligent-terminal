@@ -10905,6 +10905,53 @@ async fn sidebar_activation_explicit_live_unknown_origin_resumes_current_window_
 }
 
 #[tokio::test(flavor = "current_thread")]
+async fn sidebar_activation_rejects_alternate_universe_before_creating_or_binding() {
+    use crate::agent_sessions::{AgentStatus, CliSource, SessionLocation, SessionOrigin};
+    use crate::session_registry::{SessionActivateParams, SessionIdentity, SessionInfo};
+    for location in [
+        SessionLocation::Host,
+        SessionLocation::Wsl {
+            distro: "Ubuntu".into(),
+        },
+    ] {
+        let mock = Arc::new(MockWtChannel::responding(
+            serde_json::json!({"session_id": "wrong-store-pane"}),
+        ));
+        let state = make_state_with_wt(mock.clone());
+        let mut row = SessionInfo::new(
+            SessionId::new("alternate-store-session"),
+            std::path::PathBuf::from("/home/u/project"),
+        );
+        row.provider_id = Some("copilot".into());
+        row.cli_source = Some(CliSource::Copilot);
+        row.location = location;
+        row.origin = Some(SessionOrigin::Unknown);
+        row.status = Some(AgentStatus::Historical);
+        row.session_universe = Some("unavailable-alternate-store".into());
+        let identity = SessionIdentity::from_info(&row);
+        state.registry.upsert(row.clone()).await;
+        let params = SessionActivateParams {
+            identity: identity.clone(),
+            window_id: 42,
+            activation_id: "alternate-store".into(),
+        };
+        let response = tokio::task::LocalSet::new()
+            .run_until(handle_session_activate(&state, &params))
+            .await
+            .unwrap();
+        let response =
+            crate::session_registry::parse_session_activate_response(&response.0).unwrap();
+        assert!(!response.accepted);
+        assert!(mock.calls().is_empty());
+        let unchanged = state.registry.lookup_identity(&identity).await.unwrap();
+        assert_eq!(unchanged.status, row.status);
+        assert_eq!(unchanged.session_universe, row.session_universe);
+        assert!(unchanged.pane_session_id.is_none());
+        assert!(!unchanged.born_bound_pane);
+    }
+}
+
+#[tokio::test(flavor = "current_thread")]
 async fn sidebar_activation_resume_quotes_session_and_wsl_distro_through_registered_builders() {
     use crate::agent_sessions::{AgentStatus, CliSource, SessionLocation, SessionOrigin};
     use crate::session_registry::{SessionActivateParams, SessionIdentity, SessionInfo};
@@ -16108,6 +16155,105 @@ async fn session_born_bound_marks_born_bound_not_hook_owned() {
         !state.hook_owned.lock().await.contains(&sid),
         "born-bound is binding-only — must NOT be hook-owned"
     );
+}
+
+#[tokio::test]
+async fn restored_birth_preserves_universe_without_mutating_colliding_row() {
+    use crate::agent_sessions::{AgentStatus, CliSource, SessionEvent, SessionLocation};
+    use crate::session_registry::{SessionIdentity, SessionInfo};
+    for distro in [None, Some("Ubuntu")] {
+        let state = make_state();
+        let sid = acp::schema::v1::SessionId::new("same-restored-session");
+        let mut foreign = SessionInfo::new(sid.clone(), std::path::PathBuf::from("C:\\foreign"));
+        foreign.provider_id = Some("copilot".into());
+        foreign.cli_source = Some(CliSource::Copilot);
+        foreign.status = Some(AgentStatus::Working);
+        foreign.pane_session_id = Some("foreign-pane".into());
+        foreign.title = Some("Foreign conversation".into());
+        let foreign_identity = SessionIdentity::from_info(&foreign);
+        state.registry.upsert(foreign.clone()).await;
+        state.hook_owned.lock().await.insert(sid.clone());
+        let event = SessionEvent::SessionStarted {
+            key: sid.to_string(),
+            cli_source: CliSource::Copilot,
+            pane_session_id: "restored-pane".into(),
+            cwd: std::path::PathBuf::from("/selected"),
+            title: "Selected conversation".into(),
+        };
+        handle_scoped_session_born_bound(
+            &state,
+            event.clone(),
+            distro.map(str::to_string),
+            Some("selected-home".into()),
+        )
+        .await
+        .unwrap();
+        let location = distro.map_or(SessionLocation::Host, |distro| SessionLocation::Wsl {
+            distro: distro.into(),
+        });
+        let mut selected = SessionInfo::new(sid.clone(), std::path::PathBuf::from("/selected"));
+        selected.provider_id = Some("copilot".into());
+        selected.cli_source = Some(CliSource::Copilot);
+        selected.location = location;
+        selected.session_universe = Some("selected-home".into());
+        let identity = SessionIdentity::from_info(&selected);
+        let restored = state.registry.lookup_identity(&identity).await.unwrap();
+        assert_eq!(restored.pane_session_id.as_deref(), Some("restored-pane"));
+        assert_eq!(restored.status, Some(AgentStatus::Idle));
+        assert!(restored.born_bound_pane);
+        let unchanged = state
+            .registry
+            .lookup_identity(&foreign_identity)
+            .await
+            .unwrap();
+        assert_eq!(unchanged.pane_session_id, foreign.pane_session_id);
+        assert_eq!(unchanged.status, foreign.status);
+        assert_eq!(unchanged.title, foreign.title);
+        assert!(state.hook_owned.lock().await.contains(&sid));
+        handle_scoped_session_born_bound(
+            &state,
+            event.clone(),
+            distro.map(str::to_string),
+            Some("selected-home".into()),
+        )
+        .await
+        .unwrap();
+        assert_eq!(state.registry.snapshot().await.len(), 2);
+        let mut historical = restored;
+        historical.status = Some(AgentStatus::Historical);
+        historical.born_bound_pane = false;
+        state.registry.upsert(historical).await;
+        handle_scoped_session_born_bound(
+            &state,
+            event,
+            distro.map(str::to_string),
+            Some("selected-home".into()),
+        )
+        .await
+        .unwrap();
+        let resumed = state.registry.lookup_identity(&identity).await.unwrap();
+        assert_eq!(resumed.status, Some(AgentStatus::Idle));
+        assert!(resumed.born_bound_pane);
+        assert_eq!(
+            SessionIdentity::from_info(
+                &state
+                    .registry
+                    .lookup_active_by_pane("restored-pane")
+                    .await
+                    .unwrap(),
+            ),
+            identity,
+        );
+        assert_eq!(
+            state
+                .registry
+                .lookup_identity(&foreign_identity)
+                .await
+                .unwrap()
+                .status,
+            foreign.status,
+        );
+    }
 }
 
 #[tokio::test]

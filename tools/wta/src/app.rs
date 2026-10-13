@@ -3271,6 +3271,33 @@ impl App {
             }
         };
         let profile = crate::agent_registry::lookup_profile_by_id(cli_id);
+        // AgentSession is a display projection without universe identity. Consult
+        // the full snapshot before dispatch; ambiguous same-SID rows fail closed.
+        let matching_rows: Vec<_> = self
+            .tab_sessions
+            .values()
+            .filter_map(|tab| tab.agents_view.snapshot.as_ref())
+            .flat_map(|snapshot| snapshot.iter())
+            .filter(|row| {
+                row.session_id.0.as_ref() == s.key
+                    && row.location == s.location
+                    && row.cli_source.as_ref() == Some(&s.cli_source)
+            })
+            .collect();
+        let resume_universe = matching_rows
+            .first()
+            .and_then(|row| row.session_universe.clone());
+        if matching_rows
+            .iter()
+            .any(|row| row.session_universe != resume_universe)
+        {
+            tracing::warn!(target: "agents_view", "refusing ambiguous CLI resume across session universes");
+            return;
+        }
+        if let Err(error) = crate::coordinator::ensure_resume_universe(resume_universe.as_deref()) {
+            tracing::warn!(target: "agents_view", %error, "refusing CLI resume in an unsupported session universe");
+            return;
+        }
         if profile.resume_flag.is_empty() {
             tracing::debug!(
                 target: "agents_view",
@@ -3481,6 +3508,7 @@ impl App {
         // so the existing helper handles both.
         let cb_key = key.clone();
         let cb_location = s.location.clone();
+        let cb_universe = resume_universe;
         let cb_commandline = commandline.clone();
         let cb_cwd = s.cwd.to_string_lossy().into_owned();
         let event_tx = self.agent_event_tx.clone();
@@ -3491,7 +3519,7 @@ impl App {
                     &cb_key,
                     &pane_session_id,
                     &cb_location,
-                    None,
+                    cb_universe.as_deref(),
                     &cb_commandline,
                     Some(&cb_cwd),
                 ) {

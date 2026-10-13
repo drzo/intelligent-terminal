@@ -484,7 +484,15 @@ namespace winrt::TerminalApp::implementation
             }
             const auto hadSession = !metadata.session.sessionId.empty();
             const auto source = winrt::to_hstring(params.get("agent_source", "").asString());
-            const auto distro = winrt::to_hstring(params.get("wsl_distro", "").asString());
+            auto distro = winrt::to_hstring(params.get("wsl_distro", "").asString());
+            if (source == L"wsl" && distro.empty() && !bindingBackend.empty())
+            {
+                if (const auto backend = AgentPaneBackend::Parse(std::wstring_view{ bindingBackend });
+                    backend && backend->source == AgentPaneBackendSource::Wsl)
+                {
+                    distro = winrt::hstring{ backend->wslDistro };
+                }
+            }
             const auto universe = winrt::to_hstring(params.get("session_universe", "").asString());
             if (!started && !source.empty() && metadata.identityQualified &&
                 (metadata.source != source || metadata.wslDistro != distro || metadata.universe != universe))
@@ -559,13 +567,18 @@ namespace winrt::TerminalApp::implementation
                     metadata.universe = universe;
                     metadata.identityQualified = true;
                 }
-                else if (!metadata.session.backend.empty() && !metadata.identityQualified)
+                if (!metadata.session.backend.empty() &&
+                    (!metadata.identityQualified || (metadata.source == L"wsl" && metadata.wslDistro.empty())))
                 {
                     if (const auto backend = AgentPaneBackend::Parse(std::wstring_view{ metadata.session.backend }))
                     {
-                        metadata.source = backend->source == AgentPaneBackendSource::Wsl ? L"wsl" : L"host";
-                        metadata.wslDistro = winrt::hstring{ backend->wslDistro };
-                        metadata.identityQualified = true;
+                        if (!metadata.identityQualified ||
+                            (metadata.source == L"wsl" && metadata.wslDistro.empty() && backend->source == AgentPaneBackendSource::Wsl))
+                        {
+                            metadata.source = backend->source == AgentPaneBackendSource::Wsl ? L"wsl" : L"host";
+                            metadata.wslDistro = winrt::hstring{ backend->wslDistro };
+                            metadata.identityQualified = true;
+                        }
                     }
                 }
                 if (metadata.state != PaneAgentState::Failed)

@@ -747,7 +747,11 @@ pub enum WtaExtRequest {
     /// semantics). The second field is the WSL distro when the born-bound
     /// session runs inside a distro (delegate `?<prompt>` from a WSL pane), so
     /// the master can stamp the row `Wsl { distro }` for the distro suffix.
-    SessionBornBound(crate::agent_sessions::SessionEvent, Option<String>),
+    SessionBornBound(
+        crate::agent_sessions::SessionEvent,
+        Option<String>,
+        Option<String>,
+    ),
     /// `_intellterm.wta/session_resume_dispatched` — optimistic resume flip.
     SessionResumeDispatched(SessionResumeDispatchedParams),
     /// `_intellterm.wta/session_focus` — focus + typed focus result.
@@ -801,7 +805,9 @@ pub fn parse_ext_request(req: acp::schema::v1::ExtRequest) -> WtaExtRequest {
         decode!(SessionHook, parse_session_hook_params)
     } else if ext_method_matches(&req.method, INTELLTERM_METHOD_SESSION_BORN_BOUND) {
         match parse_born_bound_params(&req.params) {
-            Ok((ev, wsl_distro)) => WtaExtRequest::SessionBornBound(ev, wsl_distro),
+            Ok((ev, wsl_distro, universe)) => {
+                WtaExtRequest::SessionBornBound(ev, wsl_distro, universe)
+            }
             Err(err) => WtaExtRequest::Malformed {
                 method: req.method.to_string(),
                 error: err.to_string(),
@@ -1182,7 +1188,7 @@ pub fn build_session_hook_request(
 pub fn build_born_bound_request(
     event: &crate::agent_sessions::SessionEvent,
 ) -> acp::schema::v1::ExtRequest {
-    build_born_bound_request_inner(event, None)
+    build_born_bound_request_scoped(event, None, None)
 }
 
 /// Like [`build_born_bound_request`] but tags the session as running inside a
@@ -1194,7 +1200,7 @@ pub fn build_born_bound_request_wsl(
     event: &crate::agent_sessions::SessionEvent,
     distro: &str,
 ) -> acp::schema::v1::ExtRequest {
-    build_born_bound_request_inner(event, Some(distro.to_string()))
+    build_born_bound_request_scoped(event, Some(distro), None)
 }
 
 /// Serialize the born-bound body: the shared `SessionHookParams` object with an
@@ -1203,15 +1209,27 @@ pub fn build_born_bound_request_wsl(
 /// `SessionHookParams` serialization, so the host body is not byte-identical to
 /// a `session_hook` body — but it is structurally the same object, which is all
 /// `parse_session_hook_params` (field-based, order-independent) relies on.
-fn build_born_bound_request_inner(
+pub fn build_born_bound_request_scoped(
     event: &crate::agent_sessions::SessionEvent,
-    wsl_distro: Option<String>,
+    wsl_distro: Option<&str>,
+    session_universe: Option<&str>,
 ) -> acp::schema::v1::ExtRequest {
     let params = SessionHookParams::from(event);
     let mut value =
         serde_json::to_value(&params).expect("SessionHookParams serialization is infallible");
-    if let (Some(obj), Some(distro)) = (value.as_object_mut(), wsl_distro) {
-        obj.insert("wsl_distro".to_string(), serde_json::Value::String(distro));
+    if let Some(obj) = value.as_object_mut() {
+        if let Some(distro) = wsl_distro {
+            obj.insert(
+                "wsl_distro".to_string(),
+                serde_json::Value::String(distro.into()),
+            );
+        }
+        if let Some(universe) = session_universe.filter(|value| !value.trim().is_empty()) {
+            obj.insert(
+                "session_universe".to_string(),
+                serde_json::Value::String(universe.into()),
+            );
+        }
     }
     let json =
         serde_json::to_string(&value).expect("serde_json::Value serialization is infallible");
@@ -1226,16 +1244,25 @@ pub fn parse_session_hook_params(
 ) -> Result<crate::agent_sessions::SessionEvent, serde_json::Error> {
     serde_json::from_str::<SessionHookParams>(raw.get()).map(Into::into)
 }
-/// Parse a born-bound body into `(event, wsl_distro)`. Reuses
+/// Parse a born-bound body into `(event, wsl_distro, session_universe)`. Reuses
 /// [`parse_session_hook_params`] for the event (it ignores the extra
 /// `wsl_distro` key) and separately extracts the optional distro.
 pub fn parse_born_bound_params(
     raw: &serde_json::value::RawValue,
-) -> Result<(crate::agent_sessions::SessionEvent, Option<String>), serde_json::Error> {
+) -> Result<
+    (
+        crate::agent_sessions::SessionEvent,
+        Option<String>,
+        Option<String>,
+    ),
+    serde_json::Error,
+> {
     #[derive(serde::Deserialize)]
     struct WslDistroField {
         #[serde(default)]
         wsl_distro: Option<String>,
+        #[serde(default)]
+        session_universe: Option<String>,
     }
     let event = parse_session_hook_params(raw)?;
 
@@ -1244,8 +1271,14 @@ pub fn parse_born_bound_params(
     // dropping the distro and mislabelling the row as a host session. A missing
     // field deserializes to `None` via `#[serde(default)]`, so the plain host
     // body (no `wsl_distro`) still parses cleanly.
-    let distro = serde_json::from_str::<WslDistroField>(raw.get())?.wsl_distro;
-    Ok((event, distro))
+    let scope = serde_json::from_str::<WslDistroField>(raw.get())?;
+    Ok((
+        event,
+        scope.wsl_distro,
+        scope
+            .session_universe
+            .filter(|value| !value.trim().is_empty()),
+    ))
 }
 
 /// Build a master response for `session_hook`.
@@ -5206,10 +5239,11 @@ mod tests {
         // Host (no distro): parses back to the event with no distro, and the
         // event still round-trips through the plain hook parser.
         let host = build_born_bound_request(&event);
-        let (ev_host, distro_host) =
+        let (ev_host, distro_host, universe_host) =
             parse_born_bound_params(&host.params).expect("host born-bound parses");
         assert_eq!(ev_host, event);
         assert_eq!(distro_host, None);
+        assert_eq!(universe_host, None);
         assert_eq!(
             parse_session_hook_params(&host.params).expect("host body is hook-shaped"),
             event,
@@ -5218,16 +5252,41 @@ mod tests {
 
         // WSL: the distro rides alongside, and the event still parses cleanly.
         let wsl = build_born_bound_request_wsl(&event, "Ubuntu");
-        let (ev_wsl, distro_wsl) =
+        let (ev_wsl, distro_wsl, universe_wsl) =
             parse_born_bound_params(&wsl.params).expect("wsl born-bound parses");
         assert_eq!(ev_wsl, event);
         assert_eq!(distro_wsl.as_deref(), Some("Ubuntu"));
+        assert_eq!(universe_wsl, None);
         assert_eq!(
             parse_session_hook_params(&wsl.params)
                 .expect("wsl body ignores the extra wsl_distro key"),
             event,
             "the extra wsl_distro key must not break the plain hook parser",
         );
+    }
+
+    #[test]
+    fn born_bound_universe_round_trips_and_rejects_invalid_type() {
+        use crate::agent_sessions::{CliSource, SessionEvent};
+        let event = SessionEvent::SessionStarted {
+            key: "qualified-session".into(),
+            cli_source: CliSource::Copilot,
+            pane_session_id: "qualified-pane".into(),
+            cwd: PathBuf::from("/project"),
+            title: String::new(),
+        };
+        for distro in [None, Some("Ubuntu")] {
+            let request = build_born_bound_request_scoped(&event, distro, Some("selected-home"));
+            let (actual, actual_distro, universe) =
+                parse_born_bound_params(&request.params).unwrap();
+            assert_eq!(actual, event);
+            assert_eq!(actual_distro.as_deref(), distro);
+            assert_eq!(universe.as_deref(), Some("selected-home"));
+            let mut value: serde_json::Value = serde_json::from_str(request.params.get()).unwrap();
+            value["session_universe"] = serde_json::json!(123);
+            let raw = serde_json::value::RawValue::from_string(value.to_string()).unwrap();
+            assert!(parse_born_bound_params(&raw).is_err());
+        }
     }
 
     #[test]

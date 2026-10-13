@@ -4648,8 +4648,8 @@ impl HelperHandler {
                 handle_session_activation_status(&self.state, &p).await
             }
             Req::SessionHook(ev) => handle_session_hook(&self.state, ev, false).await,
-            Req::SessionBornBound(ev, wsl_distro) => {
-                handle_session_born_bound(&self.state, ev, wsl_distro).await
+            Req::SessionBornBound(ev, wsl_distro, universe) => {
+                handle_scoped_session_born_bound(&self.state, ev, wsl_distro, universe).await
             }
             Req::SessionResumeDispatched(p) => {
                 handle_session_resume_dispatched(&self.state, &p).await
@@ -8293,6 +8293,11 @@ where
             let runtimes =
                 crate::coordinator::default_delegate_agent_runtimes(Some(&provider_id), None, None);
             let runtime = &runtimes[0];
+            if let Err(error) =
+                crate::coordinator::ensure_resume_universe(row.session_universe.as_deref())
+            {
+                return failed("resume_cli", error);
+            }
             let commandline = match &row.location {
                 crate::agent_sessions::SessionLocation::Host => {
                     crate::coordinator::build_delegate_resume_commandline(
@@ -8699,6 +8704,114 @@ async fn session_event_status_key(
             })
         })
         .map(|row| row.session_id.0.to_string())
+}
+
+async fn handle_scoped_session_born_bound(
+    state: &MasterStateInner,
+    event: crate::agent_sessions::SessionEvent,
+    wsl_distro: Option<String>,
+    universe: Option<String>,
+) -> acp::Result<acp::schema::v1::ExtResponse> {
+    let Some(universe) = universe.filter(|value| !value.trim().is_empty()) else {
+        return handle_session_born_bound(state, event, wsl_distro).await;
+    };
+    let crate::agent_sessions::SessionEvent::SessionStarted {
+        key,
+        cli_source,
+        pane_session_id,
+        cwd,
+        title,
+    } = event
+    else {
+        return Err(acp::Error::invalid_params().data("qualified birth requires a session start"));
+    };
+    let provider_id = cli_source.canonical_provider_id().ok_or_else(|| {
+        acp::Error::invalid_params().data("qualified birth requires a known provider")
+    })?;
+    if key.is_empty() || pane_session_id.is_empty() {
+        return Err(
+            acp::Error::invalid_params().data("qualified birth requires session and pane IDs")
+        );
+    }
+    let location = match wsl_distro {
+        Some(distro) if !distro.trim().is_empty() => {
+            crate::agent_sessions::SessionLocation::Wsl { distro }
+        }
+        Some(_) => {
+            return Err(acp::Error::invalid_params().data("qualified birth has an empty distro"))
+        }
+        None => crate::agent_sessions::SessionLocation::Host,
+    };
+    let sid = acp::schema::v1::SessionId::new(key);
+    let gate = session_lifecycle_gate(state, &sid).await;
+    let _gate_guard = gate.lock().await;
+    let mut row = crate::session_registry::SessionInfo::new(sid.clone(), cwd);
+    row.provider_id = Some(provider_id);
+    row.cli_source = Some(cli_source);
+    row.location = location;
+    row.session_universe = Some(universe);
+    row.status = Some(crate::agent_sessions::AgentStatus::Idle);
+    row.title = (!title.is_empty()).then_some(title);
+    let identity = crate::session_registry::SessionIdentity::from_info(&row);
+    if let Some(existing) = state.registry.lookup_identity(&identity).await {
+        let same_pane = existing.pane_session_id.as_deref().is_some_and(|pane| {
+            crate::agent_sessions::pane_key(pane)
+                == crate::agent_sessions::pane_key(&pane_session_id)
+        });
+        if (same_pane
+            && matches!(
+                existing.status,
+                Some(
+                    crate::agent_sessions::AgentStatus::Idle
+                        | crate::agent_sessions::AgentStatus::Working
+                        | crate::agent_sessions::AgentStatus::Attention
+                        | crate::agent_sessions::AgentStatus::Error
+                )
+            ))
+            || (existing.origin == Some(crate::agent_sessions::SessionOrigin::AgentPane)
+                && existing.pane_session_id.is_some())
+        {
+            return Ok(crate::session_registry::build_session_hook_response(false));
+        }
+        if same_pane {
+            // Layout restore can reuse a historical pane GUID. Release its
+            // stale binding so assignment rebuilds the active index/protection.
+            let mut historical = existing;
+            historical.pane_session_id = None;
+            historical.born_bound_pane = false;
+            if historical.status.is_none() {
+                historical.status = Some(crate::agent_sessions::AgentStatus::Idle);
+            }
+            state.registry.upsert(historical).await;
+        }
+    }
+    // Never run a raw-SID reducer and then stamp its scope: that can mutate a
+    // different provider/store before the qualified identity is established.
+    state.registry.upsert_if_absent(row).await;
+    let status_changed = state
+        .registry
+        .mark_resume_dispatched_identity(&identity)
+        .await
+        .is_some_and(|(changed, _)| changed);
+    let bound = state
+        .registry
+        .assign_resume_pane_identity(&identity, pane_session_id)
+        .await;
+    if state
+        .registry
+        .lookup(&sid)
+        .await
+        .is_some_and(|row| crate::session_registry::SessionIdentity::from_info(&row) == identity)
+    {
+        state.hook_owned.lock().await.remove(&sid);
+        state.born_bound.lock().await.insert(sid);
+    }
+    if bound || status_changed {
+        broadcast_session_status_change(state, None).await;
+    }
+    Ok(crate::session_registry::build_session_hook_response(
+        bound || status_changed,
+    ))
 }
 
 /// Handle a #266 *born-bound* registration (delegate `?<prompt>` / resume).

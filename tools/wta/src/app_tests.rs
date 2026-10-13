@@ -3809,6 +3809,35 @@ fn restored_shell_agent_session_registers_as_born_bound() {
 }
 
 #[test]
+fn restored_birth_forwards_qualified_session_universe() {
+    for distro in [None, Some("Ubuntu")] {
+        let (mut app, mut master_rx) = test_app_with_master_rx();
+        app.handle_event(AppEvent::WtEvent {
+            method: "session_born_bound".into(),
+            pane_id: "restored-pane".into(),
+            tab_id: None,
+            params: json!({
+                "agent_session_id": "same-session",
+                "agent": "copilot",
+                "cwd": "/project",
+                "wsl_distro": distro,
+                "session_universe": "selected-home",
+            }),
+        });
+        let crate::protocol::acp::client::MasterExtRequest::SessionBornBound {
+            wsl_distro,
+            session_universe,
+            ..
+        } = master_rx.try_recv().expect("restored birth forwarded")
+        else {
+            panic!("expected a born-bound registration");
+        };
+        assert_eq!(wsl_distro.as_deref(), distro);
+        assert_eq!(session_universe.as_deref(), Some("selected-home"));
+    }
+}
+
+#[test]
 fn sessions_changed_with_open_agents_view_schedules_refetch() {
     let (mut app, mut master_rx) = test_app_with_master_rx();
     app.current_tab_mut().current_view = View::Agents;
@@ -25751,6 +25780,45 @@ fn known_cli_id_returns_none_for_unknown_variant() {
         known_cli_id(&CliSource::Unknown("anything".to_string())),
         None
     );
+}
+
+#[test]
+fn helper_cli_resume_rejects_alternate_universe_before_dispatch() {
+    use crate::agent_sessions::{AgentStatus, CliSource, SessionLocation, SessionOrigin};
+    use crate::session_registry::SessionInfo;
+    for location in [
+        SessionLocation::Host,
+        SessionLocation::Wsl {
+            distro: "Ubuntu".into(),
+        },
+    ] {
+        let mut info = SessionInfo::new(
+            agent_client_protocol::schema::v1::SessionId::new("alternate-home"),
+            std::path::PathBuf::from("/home/u"),
+        );
+        info.cli_source = Some(CliSource::Copilot);
+        info.provider_id = Some("copilot".into());
+        info.location = location;
+        info.origin = Some(SessionOrigin::Unknown);
+        info.status = Some(AgentStatus::Historical);
+        info.session_universe = Some("unavailable-alternate-store".into());
+        let row = session_info_to_agent_session(&info);
+        let mut app = test_app();
+        app.window_id = Some("41".into());
+        app.tab_mut(DEFAULT_TAB_ID).agents_view.snapshot = Some(vec![info]);
+        app.agent_sessions.merge_historical(vec![row.clone()]);
+        app.dispatch_resume(&row);
+        assert!(app.last_dispatched_command_for_test().is_none());
+        assert_eq!(
+            app.agent_sessions
+                .iter_sorted()
+                .into_iter()
+                .find(|session| session.key == row.key)
+                .unwrap()
+                .status,
+            AgentStatus::Historical
+        );
+    }
 }
 
 #[test]

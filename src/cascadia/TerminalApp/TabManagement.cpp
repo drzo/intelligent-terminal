@@ -785,21 +785,27 @@ namespace winrt::TerminalApp::implementation
                 continue;
             }
 
-            // Prefer rebuilding from the agent id: it is validated, while a
-            // command line handed to us by terminal output is not. Raw
-            // wrappers are retained only from out-of-band protocol ingress or
-            // an application-owned binding, never from in-band VT events.
+            // Preserve wrappers only from code-owned trusted ingress. VT
+            // command strings never enter the persisted executable envelope.
             namespace Restore = ::Microsoft::Terminal::AgentPaneRestore;
-            auto resume = metadata->session.agent.empty() ||
-                                  (metadata->source == L"wsl" && metadata->resumeCommandlineTrusted && !metadata->session.resumeCommandline.empty()) ?
-                              winrt::hstring{} :
-                              winrt::hstring{ Restore::BuildResumeCommandline(
-                                  metadata->session.backend.empty() ? metadata->session.agent : metadata->session.backend,
-                                  metadata->session.sessionId,
-                                  metadata->session.cwd) };
-            if (resume.empty() && metadata->resumeCommandlineTrusted)
+            winrt::hstring resume;
+            if (metadata->resumeCommandlineTrusted && !metadata->session.resumeCommandline.empty())
             {
-                resume = metadata->session.resumeCommandline;
+                namespace Model = ::Microsoft::Terminal::Settings::Model;
+                const auto backend = metadata->source == L"wsl" ?
+                                         Model::AgentPaneBackend::Wsl(metadata->wslDistro, metadata->session.agent) :
+                                         Model::AgentPaneBackend::Host(metadata->session.agent);
+                resume = winrt::hstring{ Restore::BuildPersistedResumeCommandline(
+                    { std::wstring{ metadata->session.agent }, std::wstring{ metadata->session.sessionId },
+                      backend, std::wstring{ metadata->session.cwd }, std::wstring{ metadata->universe },
+                      std::wstring{ metadata->session.resumeCommandline } }) };
+            }
+            else if (metadata->universe.empty())
+            {
+                resume = winrt::hstring{ Restore::BuildResumeCommandline(
+                    metadata->session.backend.empty() ? metadata->session.agent : metadata->session.backend,
+                    metadata->session.sessionId,
+                    metadata->session.cwd) };
             }
             if (!resume.empty())
             {
