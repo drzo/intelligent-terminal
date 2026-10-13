@@ -12,6 +12,7 @@ setup.subtitle.authentication_required: "Váš agent \"%{agent}\" vyžaduje ově
 setup.auth.sign_in: "Postupujte podle níže uvedených kroků a přihlaste se."  # Shared guidance for device login and initial protocol SignIn; follows the auth intro.
 setup.auth.external_sign_in: "Přihlaste se přes agenta a pak vyberte \"Přihlásil/a jsem se\" níže."  # External-agent sign-in, then the setup.option.retry_auth confirmation; follows the auth intro.
 setup.auth.select_method: "Vyberte způsob přihlášení a pokračujte zde."  # Shown only inside the actual sign-in method picker; follows the auth intro.
+setup.auth.switch_agent: "Chcete-li přepnout agenta, přejděte do Inteligentní Terminál Settings > Agent."  # Shared auth guidance; "Agent" names the selector on the Settings "Agents" page, not the navigation label. {Locked="Settings","Agent"}
 setup.subtitle.connection_failed: "Nepodařilo se spustit agenta %{agent}."
 
 # {Locked=qps-ploc,qps-ploca,qps-plocm}

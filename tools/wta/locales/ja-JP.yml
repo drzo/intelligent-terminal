@@ -11,6 +11,7 @@ setup.subtitle.authentication_required: "エージェント \"%{agent}\" には�
 setup.auth.sign_in: "以下の手順に従ってサインインしてください。"  # Shared guidance for device login and initial protocol SignIn; follows the auth intro.
 setup.auth.external_sign_in: "エージェントからサインインし、下の \"サインイン済み\" を選択してください。"  # External-agent sign-in, then the setup.option.retry_auth confirmation; follows the auth intro.
 setup.auth.select_method: "ここで続行するには、サインイン方法を選択してください。"  # Shown only inside the actual sign-in method picker; follows the auth intro.
+setup.auth.switch_agent: "エージェントを切り替えるにはインテリジェント ターミナル Settings > Agent に移動してください。"  # Shared auth guidance; "Agent" names the selector on the Settings "Agents" page, not the navigation label. {Locked="Settings","Agent"}
 setup.subtitle.connection_failed: "%{agent} を起動できませんでした。"
 
 setup.option.install: "%{agent} をインストール"

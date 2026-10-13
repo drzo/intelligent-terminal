@@ -12,6 +12,7 @@ setup.subtitle.authentication_required: "Agentingiz \"%{agent}\" autentifikatsiy
 setup.auth.sign_in: "Tizimga kirish uchun quyidagi qadamlarni bajaring."  # Shared guidance for device login and initial protocol SignIn; follows the auth intro.
 setup.auth.external_sign_in: "Iltimos, agent orqali tizimga kiring, keyin pastda \"Men tizimga kirdim\" ni tanlang."  # External-agent sign-in, then the setup.option.retry_auth confirmation; follows the auth intro.
 setup.auth.select_method: "Bu yerda davom etish uchun kirish usulini tanlang."  # Shown only inside the actual sign-in method picker; follows the auth intro.
+setup.auth.switch_agent: "Agentni almashtirish uchun Aqlli terminal Settings > Agent boʻlimiga oʻting."  # Shared auth guidance; "Agent" names the selector on the Settings "Agents" page, not the navigation label. {Locked="Settings","Agent"}
 setup.subtitle.connection_failed: "%{agent} ishga tushirilmadi."
 
 # {Locked=qps-ploc,qps-ploca,qps-plocm}

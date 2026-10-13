@@ -12,6 +12,7 @@ setup.subtitle.authentication_required: "Tác nhân AI \"%{agent}\" của bạn 
 setup.auth.sign_in: "Thực hiện theo các bước bên dưới để đăng nhập."  # Shared guidance for device login and initial protocol SignIn; follows the auth intro.
 setup.auth.external_sign_in: "Vui lòng đăng nhập qua tác nhân AI, sau đó chọn \"Tôi đã đăng nhập\" bên dưới."  # External-agent sign-in, then the setup.option.retry_auth confirmation; follows the auth intro.
 setup.auth.select_method: "Chọn phương thức đăng nhập để tiếp tục tại đây."  # Shown only inside the actual sign-in method picker; follows the auth intro.
+setup.auth.switch_agent: "Để chuyển tác nhân AI, hãy đi tới Đầu cuối thông minh Settings > Agent."  # Shared auth guidance; "Agent" names the selector on the Settings "Agents" page, not the navigation label. {Locked="Settings","Agent"}
 setup.subtitle.connection_failed: "Chúng tôi không thể khởi động %{agent}."
 
 # {Locked=qps-ploc,qps-ploca,qps-plocm}

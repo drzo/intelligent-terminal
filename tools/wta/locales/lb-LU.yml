@@ -12,6 +12,7 @@ setup.subtitle.authentication_required: "Ären Agent \"%{agent}\" brauch eng Aut
 setup.auth.sign_in: "Follegt de Schrëtt hei drënner fir Iech unzemellen."  # Shared guidance for device login and initial protocol SignIn; follows the auth intro.
 setup.auth.external_sign_in: "Mellt Iech iwwer den Agent un a wielt dann \"Ech hu mech ugemellt\" hei ënnendrënner."  # External-agent sign-in, then the setup.option.retry_auth confirmation; follows the auth intro.
 setup.auth.select_method: "Wielt eng Umeldemethod fir hei weiderzefueren."  # Shown only inside the actual sign-in method picker; follows the auth intro.
+setup.auth.switch_agent: "Fir den Agent ze wiesselen, gitt op Intelligenten Terminal Settings > Agent."  # Shared auth guidance; "Agent" names the selector on the Settings "Agents" page, not the navigation label. {Locked="Settings","Agent"}
 setup.subtitle.connection_failed: "%{agent} konnt net gestart ginn."
 
 # {Locked=qps-ploc,qps-ploca,qps-plocm}, {Locked="Settings"}

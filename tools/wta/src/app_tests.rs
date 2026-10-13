@@ -13167,12 +13167,13 @@ fn authentication_setup_subtitle_matches_selected_actions() {
         assert_eq!(
             setup.subtitle,
             format!(
-                "{} {}",
+                "{} {} {}",
                 t!(
                     "setup.subtitle.authentication_required",
                     agent = crate::agent_registry::lookup_profile_by_id(agent_id).display_name
                 ),
                 t!("setup.auth.external_sign_in"),
+                "To switch agents, go to Intelligent Terminal Settings > Agent.",
             ),
             "{agent_id} must describe external sign-in when only external retry is offered"
         );
@@ -13220,12 +13221,13 @@ fn authentication_setup_shares_sign_in_content_for_device_and_protocol_flows() {
             assert_eq!(
                 setup.subtitle,
                 format!(
-                    "{} {}",
+                    "{} {} {}",
                     t!(
                         "setup.subtitle.authentication_required",
                         agent = crate::agent_registry::lookup_profile_by_id(agent_id).display_name
                     ),
                     t!("setup.auth.sign_in"),
+                    "To switch agents, go to Intelligent Terminal Settings > Agent.",
                 )
             );
             assert_eq!(app.current_agent_source, source);
@@ -13258,11 +13260,14 @@ fn authentication_setup_requires_usable_methods_before_offering_protocol_sign_in
             ));
             assert_eq!(
                 subtitle,
-                t!(
-                    "setup.subtitle.authentication_required",
-                    agent = crate::agent_registry::lookup_profile_by_id(agent_id).display_name
-                )
-                .into_owned(),
+                format!(
+                    "{} {}",
+                    t!(
+                        "setup.subtitle.authentication_required",
+                        agent = crate::agent_registry::lookup_profile_by_id(agent_id).display_name
+                    ),
+                    "To switch agents, go to Intelligent Terminal Settings > Agent.",
+                ),
                 "no instructions for an unavailable authentication action"
             );
         }
@@ -13465,12 +13470,13 @@ fn protocol_auth_onboarding_selects_advertised_method_and_cancels_without_quitti
     assert_eq!(
         app.setup.as_ref().unwrap().subtitle,
         format!(
-            "{} {}",
+            "{} {} {}",
             t!(
                 "setup.subtitle.authentication_required",
                 agent = "Google Antigravity"
             ),
             t!("setup.auth.select_method"),
+            "To switch agents, go to Intelligent Terminal Settings > Agent.",
         )
     );
 }
@@ -13494,7 +13500,10 @@ fn authentication_setup_connection_failure_only_offers_supported_recovery() {
             "a non-auth connection failure must retain RetryConnection for {agent_id}"
         );
         if protocol_sign_in {
-            assert!(setup.subtitle.ends_with(t!("setup.auth.sign_in").as_ref()));
+            assert!(setup.subtitle.contains(t!("setup.auth.sign_in").as_ref()));
+            assert!(setup
+                .subtitle
+                .ends_with("To switch agents, go to Intelligent Terminal Settings > Agent."));
             assert!(setup.subtitle.starts_with(
                 t!(
                     "setup.subtitle.connection_failed",
@@ -13595,15 +13604,18 @@ fn authentication_setup_picker_keeps_only_usable_methods_and_shared_guidance() {
     assert_eq!(
         setup.subtitle,
         format!(
-            "{} {}",
+            "{} {} {}",
             t!("setup.subtitle.authentication_required", agent = "Agent"),
             t!("setup.auth.select_method"),
+            "To switch agents, go to Intelligent Terminal Settings > Agent.",
         )
     );
     let text = render_to_text(&mut app, 140, 20);
     assert!(text.contains("Valid method"));
     assert!(!text.contains("Invalid method"));
     assert!(!text.contains(t!("setup.auth.sign_in").as_ref()));
+    let wrapped_text = text.split_whitespace().collect::<Vec<_>>().join(" ");
+    assert!(wrapped_text.contains("To switch agents, go to Intelligent Terminal Settings > Agent."));
 }
 
 #[test]

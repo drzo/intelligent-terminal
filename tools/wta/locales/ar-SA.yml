@@ -12,6 +12,7 @@ setup.subtitle.authentication_required: "يتطلب عامل الذكاء الا
 setup.auth.sign_in: "اتبع الخطوات أدناه لتسجيل الدخول."  # Shared guidance for device login and initial protocol SignIn; follows the auth intro.
 setup.auth.external_sign_in: "يُرجى تسجيل الدخول عبر عامل الذكاء الاصطناعي، ثم حدد \"لقد سجّلت الدخول\" أدناه."  # External-agent sign-in, then the setup.option.retry_auth confirmation; follows the auth intro.
 setup.auth.select_method: "حدد طريقة لتسجيل الدخول للمتابعة هنا."  # Shown only inside the actual sign-in method picker; follows the auth intro.
+setup.auth.switch_agent: "لتبديل عوامل الذكاء الاصطناعي، انتقل إلى الوحدة الطرفية الذكية Settings > Agent."  # Shared auth guidance; "Agent" names the selector on the Settings "Agents" page, not the navigation label. {Locked="Settings","Agent"}
 setup.subtitle.connection_failed: "تعذر بدء تشغيل %{agent}."
 
 # {Locked=qps-ploc,qps-ploca,qps-plocm}

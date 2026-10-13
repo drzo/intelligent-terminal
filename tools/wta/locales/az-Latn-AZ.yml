@@ -12,6 +12,7 @@ setup.subtitle.authentication_required: "Agentiniz \"%{agent}\" kimlik doğrulam
 setup.auth.sign_in: "Daxil olmaq üçün aşağıdakı addımları izləyin."  # Shared guidance for device login and initial protocol SignIn; follows the auth intro.
 setup.auth.external_sign_in: "Lütfən agent vasitəsilə daxil olun, sonra aşağıda \"Daxil oldum\" seçin."  # External-agent sign-in, then the setup.option.retry_auth confirmation; follows the auth intro.
 setup.auth.select_method: "Burada davam etmək üçün giriş üsulu seçin."  # Shown only inside the actual sign-in method picker; follows the auth intro.
+setup.auth.switch_agent: "Agenti dəyişmək üçün Ağıllı Terminal Settings > Agent-ə keçin."  # Shared auth guidance; "Agent" names the selector on the Settings "Agents" page, not the navigation label. {Locked="Settings","Agent"}
 setup.subtitle.connection_failed: "%{agent} başladıla bilmədi."
 
 # {Locked=qps-ploc,qps-ploca,qps-plocm}

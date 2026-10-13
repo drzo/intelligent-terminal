@@ -12,6 +12,7 @@ setup.subtitle.authentication_required: "Agenttisi \"%{agent}\" vaatii todennuks
 setup.auth.sign_in: "Kirjaudu sisään seuraamalla alla olevia ohjeita."  # Shared guidance for device login and initial protocol SignIn; follows the auth intro.
 setup.auth.external_sign_in: "Kirjaudu sisään agentin kautta ja valitse sitten alta \"Olen kirjautunut sisään\"."  # External-agent sign-in, then the setup.option.retry_auth confirmation; follows the auth intro.
 setup.auth.select_method: "Valitse kirjautumistapa jatkaaksesi tässä."  # Shown only inside the actual sign-in method picker; follows the auth intro.
+setup.auth.switch_agent: "Vaihtaaksesi agenttia siirry kohtaan Älykäs Pääte Settings > Agent."  # Shared auth guidance; "Agent" names the selector on the Settings "Agents" page, not the navigation label. {Locked="Settings","Agent"}
 setup.subtitle.connection_failed: "Agenttia \"%{agent}\" ei voitu käynnistää."
 
 # {Locked=qps-ploc,qps-ploca,qps-plocm}

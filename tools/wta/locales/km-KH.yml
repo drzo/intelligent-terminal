@@ -14,6 +14,7 @@ setup.subtitle.authentication_required: "ភ្នាក់ងារ AI រប�
 setup.auth.sign_in: "សូមធ្វើតាមជំហានខាងក្រោមដើម្បីចូល។"  # Shared guidance for device login and initial protocol SignIn; follows the auth intro.
 setup.auth.external_sign_in: "សូមចូលតាមរយៈ ភ្នាក់ងារ AI រួចជ្រើសរើស \"ខ្ញុំបានចូលហើយ\" ខាងក្រោម។"  # External-agent sign-in, then the setup.option.retry_auth confirmation; follows the auth intro.
 setup.auth.select_method: "សូមជ្រើសរើសវិធីចូល ដើម្បីបន្តនៅទីនេះ។"  # Shown only inside the actual sign-in method picker; follows the auth intro.
+setup.auth.switch_agent: "ដើម្បីប្តូរ AI អេជេន្ត់ សូមទៅ ស្ថានីយឆ្លាតវៃ Settings > Agent។"  # Shared auth guidance; "Agent" names the selector on the Settings "Agents" page, not the navigation label. {Locked="Settings","Agent"}
 setup.subtitle.connection_failed: "យើងមិនអាចចាប់ផ្តើម %{agent} បានទេ។"
 
 # {Locked=qps-ploc,qps-ploca,qps-plocm}

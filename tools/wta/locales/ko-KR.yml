@@ -11,6 +11,7 @@ setup.subtitle.authentication_required: "에이전트 \"%{agent}\"에 인증이 
 setup.auth.sign_in: "아래 단계에 따라 로그인하세요."  # Shared guidance for device login and initial protocol SignIn; follows the auth intro.
 setup.auth.external_sign_in: "에이전트를 통해 로그인한 후 아래에서 \"로그인 완료\"를 선택하세요."  # External-agent sign-in, then the setup.option.retry_auth confirmation; follows the auth intro.
 setup.auth.select_method: "여기에서 계속하려면 로그인 방법을 선택하세요."  # Shown only inside the actual sign-in method picker; follows the auth intro.
+setup.auth.switch_agent: "에이전트를 전환하려면 지능형 터미널 Settings > Agent로 이동하세요."  # Shared auth guidance; "Agent" names the selector on the Settings "Agents" page, not the navigation label. {Locked="Settings","Agent"}
 setup.subtitle.connection_failed: "%{agent} 시작에 실패했습니다."
 
 setup.option.install: "%{agent} 설치"

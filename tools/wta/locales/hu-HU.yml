@@ -12,6 +12,7 @@ setup.subtitle.authentication_required: "A(z) \"%{agent}\" ügynök hitelesíté
 setup.auth.sign_in: "Kövesse az alábbi lépéseket a bejelentkezéshez."  # Shared guidance for device login and initial protocol SignIn; follows the auth intro.
 setup.auth.external_sign_in: "Jelentkezzen be az ügynökön keresztül, majd válassza a \"Bejelentkeztem\" lehetőséget alul."  # External-agent sign-in, then the setup.option.retry_auth confirmation; follows the auth intro.
 setup.auth.select_method: "Válasszon bejelentkezési módot az itteni folytatáshoz."  # Shown only inside the actual sign-in method picker; follows the auth intro.
+setup.auth.switch_agent: "Az ügynök váltásához lépjen az Intelligens Terminál Settings > Agent oldalra."  # Shared auth guidance; "Agent" names the selector on the Settings "Agents" page, not the navigation label. {Locked="Settings","Agent"}
 setup.subtitle.connection_failed: "A(z) %{agent} nem indult el."
 
 # {Locked=qps-ploc,qps-ploca,qps-plocm}

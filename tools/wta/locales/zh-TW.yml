@@ -11,6 +11,7 @@ setup.subtitle.authentication_required: "您的智能體 \"%{agent}\" 需要驗�
 setup.auth.sign_in: "請依照下列步驟登入。"  # Shared guidance for device login and initial protocol SignIn; follows the auth intro.
 setup.auth.external_sign_in: "請透過智能體登入，然後選擇下方的 \"我已登入\"。"  # External-agent sign-in, then the setup.option.retry_auth confirmation; follows the auth intro.
 setup.auth.select_method: "請選擇登入方式以在此處繼續。"  # Shown only inside the actual sign-in method picker; follows the auth intro.
+setup.auth.switch_agent: "若要切換智能體，請前往智慧終端機 Settings > Agent。"  # Shared auth guidance; "Agent" names the selector on the Settings "Agents" page, not the navigation label. {Locked="Settings","Agent"}
 setup.subtitle.connection_failed: "無法啟動 %{agent}。"
 
 setup.option.install: "安裝 %{agent}"

@@ -12,6 +12,7 @@ setup.subtitle.authentication_required: "Ang agent mong \"%{agent}\" ay nanganga
 setup.auth.sign_in: "Sundin ang mga hakbang sa ibaba para mag-sign in."  # Shared guidance for device login and initial protocol SignIn; follows the auth intro.
 setup.auth.external_sign_in: "Mangyaring mag-sign in sa pamamagitan ng agent, pagkatapos ay piliin ang \"Naka-sign in na ako\" sa ibaba."  # External-agent sign-in, then the setup.option.retry_auth confirmation; follows the auth intro.
 setup.auth.select_method: "Pumili ng paraan ng pag-sign in para magpatuloy dito."  # Shown only inside the actual sign-in method picker; follows the auth intro.
+setup.auth.switch_agent: "Para magpalit ng agent, pumunta sa Matalinong Terminal Settings > Agent."  # Shared auth guidance; "Agent" names the selector on the Settings "Agents" page, not the navigation label. {Locked="Settings","Agent"}
 setup.subtitle.connection_failed: "Hindi namin masimulan ang %{agent}."
 
 # {Locked=qps-ploc,qps-ploca,qps-plocm}

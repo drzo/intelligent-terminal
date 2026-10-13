@@ -12,6 +12,7 @@ setup.subtitle.authentication_required: "Me whakamotuhēhē tō agent \"%{agent}
 setup.auth.sign_in: "Whāia ngā hipanga i raro nei ki te takiuru."  # Shared guidance for device login and initial protocol SignIn; follows the auth intro.
 setup.auth.external_sign_in: "Takiuru mā te agent, kātahi ka kōwhiria \"Kua takiuru au\" i raro."  # External-agent sign-in, then the setup.option.retry_auth confirmation; follows the auth intro.
 setup.auth.select_method: "Kōwhiria he tikanga takiuru hei haere tonu i konei."  # Shown only inside the actual sign-in method picker; follows the auth intro.
+setup.auth.switch_agent: "Ki te huri agent, haere ki Iho Atamai Settings > Agent."  # Shared auth guidance; "Agent" names the selector on the Settings "Agents" page, not the navigation label. {Locked="Settings","Agent"}
 setup.subtitle.connection_failed: "Kāore i taea te tīmata i a %{agent}."
 
 # {Locked=qps-ploc,qps-ploca,qps-plocm}

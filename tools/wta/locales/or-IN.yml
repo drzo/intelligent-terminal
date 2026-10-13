@@ -12,6 +12,7 @@ setup.subtitle.authentication_required: "ଆପଣଙ୍କ ଏଜେଣ୍ଟ \
 setup.auth.sign_in: "ସାଇନ୍ ଇନ୍ କରିବା ପାଇଁ ନିମ୍ନ ପଦକ୍ଷେପଗୁଡ଼ିକ ଅନୁସରଣ କରନ୍ତୁ।"  # Shared guidance for device login and initial protocol SignIn; follows the auth intro.
 setup.auth.external_sign_in: "ଦୟାକରି ଏଜେଣ୍ଟ ମାଧ୍ୟମରେ ସାଇନ୍ ଇନ୍ କରନ୍ତୁ, ତାପରେ ତଳେ \"ମୁଁ ସାଇନ୍ ଇନ୍ କରିଛି\" ବାଛନ୍ତୁ।"  # External-agent sign-in, then the setup.option.retry_auth confirmation; follows the auth intro.
 setup.auth.select_method: "ଏଠାରେ ଜାରି ରଖିବାକୁ ସାଇନ୍ ଇନ୍ ପଦ୍ଧତି ବାଛନ୍ତୁ।"  # Shown only inside the actual sign-in method picker; follows the auth intro.
+setup.auth.switch_agent: "ଏଜେଣ୍ଟ ବଦଳାଇବା ପାଇଁ ଇଣ୍ଟେଲିଜେଣ୍ଟ ଟର୍ମିନାଲ Settings > Agent କୁ ଯାଆନ୍ତୁ।"  # Shared auth guidance; "Agent" names the selector on the Settings "Agents" page, not the navigation label. {Locked="Settings","Agent"}
 setup.subtitle.connection_failed: "ଆମେ %{agent} ଆରମ୍ଭ କରିପାରିଲୁ ନାହିଁ।"
 
 # {Locked=qps-ploc,qps-ploca,qps-plocm}

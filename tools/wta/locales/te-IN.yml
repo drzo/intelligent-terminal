@@ -12,6 +12,7 @@ setup.subtitle.authentication_required: "మీ ఏజెంట్ \"%{agent}\" 
 setup.auth.sign_in: "సైన్ ఇన్ చేయడానికి దిగువ దశలను అనుసరించండి."  # Shared guidance for device login and initial protocol SignIn; follows the auth intro.
 setup.auth.external_sign_in: "దయచేసి ఏజెంట్ ద్వారా సైన్ ఇన్ చేసి, క్రింద \"నేను సైన్ ఇన్ చేసాను\" ఎంచుకోండి."  # External-agent sign-in, then the setup.option.retry_auth confirmation; follows the auth intro.
 setup.auth.select_method: "ఇక్కడ కొనసాగించడానికి సైన్ ఇన్ పద్ధతిని ఎంచుకోండి."  # Shown only inside the actual sign-in method picker; follows the auth intro.
+setup.auth.switch_agent: "ఏజెంట్‌ను మార్చడానికి ఇంటెలిజెంట్ టెర్మినల్ Settings > Agent కు వెళ్ళండి."  # Shared auth guidance; "Agent" names the selector on the Settings "Agents" page, not the navigation label. {Locked="Settings","Agent"}
 setup.subtitle.connection_failed: "మేము %{agent}ను ప్రారంభించలేకపోయాము."
 
 # {Locked=qps-ploc,qps-ploca,qps-plocm}

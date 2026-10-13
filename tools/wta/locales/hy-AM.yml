@@ -17,6 +17,7 @@ setup.subtitle.authentication_required: "Ձեր \"%{agent}\" գործակալը 
 setup.auth.sign_in: "Մուտք գործելու համար հետևեք ստորև նշված քայլերին։"  # Shared guidance for device login and initial protocol SignIn; follows the auth intro.
 setup.auth.external_sign_in: "Մուտք գործեք գործակալի միջոցով, ապա ընտրեք ստորև \"Մուտք եմ գործել\"։"  # External-agent sign-in, then the setup.option.retry_auth confirmation; follows the auth intro.
 setup.auth.select_method: "Այստեղ շարունակելու համար ընտրեք մուտք գործելու եղանակ։"  # Shown only inside the actual sign-in method picker; follows the auth intro.
+setup.auth.switch_agent: "Ագենտը փոխելու համար անցեք Խելացի տերմինալ Settings > Agent։"  # Shared auth guidance; "Agent" names the selector on the Settings "Agents" page, not the navigation label. {Locked="Settings","Agent"}
 setup.subtitle.connection_failed: "Չհաջողվեց գործարկել %{agent}-ը։"
 
 setup.option.install: "Տեղադրել %{agent}"

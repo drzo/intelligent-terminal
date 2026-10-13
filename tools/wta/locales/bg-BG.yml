@@ -12,6 +12,7 @@ setup.subtitle.authentication_required: "Вашият агент \"%{agent}\" и
 setup.auth.sign_in: "Следвайте стъпките по-долу, за да влезете."  # Shared guidance for device login and initial protocol SignIn; follows the auth intro.
 setup.auth.external_sign_in: "Влезте чрез агента и изберете \"Влязох\" по-долу."  # External-agent sign-in, then the setup.option.retry_auth confirmation; follows the auth intro.
 setup.auth.select_method: "Изберете метод за влизане, за да продължите тук."  # Shown only inside the actual sign-in method picker; follows the auth intro.
+setup.auth.switch_agent: "За да смените агента, отидете в Интелигентен Терминал Settings > Agent."  # Shared auth guidance; "Agent" names the selector on the Settings "Agents" page, not the navigation label. {Locked="Settings","Agent"}
 setup.subtitle.connection_failed: "Не успяхме да стартираме %{agent}."
 
 # {Locked=qps-ploc,qps-ploca,qps-plocm}

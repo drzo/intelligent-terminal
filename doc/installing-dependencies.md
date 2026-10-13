@@ -353,6 +353,8 @@ after opening the advertised method picker. Agents that require external CLI
 sign-in instead offer **I've signed in — try connecting again**, even if their
 ACP server advertises methods. If no usable in-pane method is available, retry
 the connection or select another agent; Terminal does not invent a login method.
+All authentication setup paths retain the shared reminder to switch agents in
+**Intelligent Terminal Settings > Agent**.
 
 The WSL runtime must be visible in the selected distro's default user's login
 environment. Files installed for another user can exist while discovery cannot

@@ -13,6 +13,7 @@ setup.subtitle.authentication_required: "[Ÿöûŕ åğéñţ \"%{agent}\" ŕéq
 setup.auth.sign_in: "[Ƒöĺĺöŵ ţĥé śţéṗś ƀéĺöŵ ţö śïğñ ïñ.!!!! !!!!]"  # Shared guidance for device login and initial protocol SignIn; follows the auth intro.
 setup.auth.external_sign_in: "[Ṗĺéåśé śïğñ ïñ ṽïå ţĥé åğéñţ, ţĥéñ śéĺéçţ \"Ï'ṽé śïğñéð ïñ\" ɓéĺöŵ.!!!! !!!! !!!!]"  # External-agent sign-in, then the setup.option.retry_auth confirmation; follows the auth intro.
 setup.auth.select_method: "[Ŝéĺéçţ å śïğñ-ïñ ḿéţĥöď ţö çöñţïñûé ĥéŕé.!!!! !!!!]"  # Shown only inside the actual sign-in method picker; follows the auth intro.
+setup.auth.switch_agent: "[Ţö śŵïţçĥ åğéñţś, ğö ţö Intelligent Terminal Settings > Agent.!!!! !!!!]"  # Shared auth guidance; "Agent" names the selector on the Settings "Agents" page, not the navigation label. {Locked="Settings","Agent"}
 setup.subtitle.connection_failed: "[Ŵé çöûĺďñ'ţ śţåŕţ %{agent}.!!!!]"
 
 # {Locked="Intelligent Terminal"}, {Locked="Settings"}

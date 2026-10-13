@@ -12,6 +12,7 @@ setup.subtitle.authentication_required: "Jūsų agentas \"%{agent}\" reikalauja 
 setup.auth.sign_in: "Norėdami prisijungti, atlikite toliau nurodytus veiksmus."  # Shared guidance for device login and initial protocol SignIn; follows the auth intro.
 setup.auth.external_sign_in: "Prisijunkite per agentą, tada pasirinkite \"Prisijungiau\" žemiau."  # External-agent sign-in, then the setup.option.retry_auth confirmation; follows the auth intro.
 setup.auth.select_method: "Pasirinkite prisijungimo būdą, kad tęstumėte čia."  # Shown only inside the actual sign-in method picker; follows the auth intro.
+setup.auth.switch_agent: "Norėdami pakeisti agentą, eikite į Išmanusis Terminalas Settings > Agent."  # Shared auth guidance; "Agent" names the selector on the Settings "Agents" page, not the navigation label. {Locked="Settings","Agent"}
 setup.subtitle.connection_failed: "Nepavyko paleisti %{agent}."
 
 # {Locked=qps-ploc,qps-ploca,qps-plocm}

@@ -12,6 +12,7 @@ setup.subtitle.authentication_required: "Agenten din \"%{agent}\" krever autenti
 setup.auth.sign_in: "Følg trinnene nedenfor for å logge inn."  # Shared guidance for device login and initial protocol SignIn; follows the auth intro.
 setup.auth.external_sign_in: "Logg inn via agenten, og velg deretter \"Jeg har logget inn\" nedenfor."  # External-agent sign-in, then the setup.option.retry_auth confirmation; follows the auth intro.
 setup.auth.select_method: "Velg en påloggingsmetode for å fortsette her."  # Shown only inside the actual sign-in method picker; follows the auth intro.
+setup.auth.switch_agent: "For å bytte agent, gå til Intelligent Terminal Settings > Agent."  # Shared auth guidance; "Agent" names the selector on the Settings "Agents" page, not the navigation label. {Locked="Settings","Agent"}
 setup.subtitle.connection_failed: "Vi kunne ikke starte %{agent}."
 
 # {Locked="Intelligent Terminal"}

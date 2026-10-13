@@ -12,6 +12,7 @@ setup.subtitle.authentication_required: "Su agente \"%{agent}\" requiere autenti
 setup.auth.sign_in: "Siga los pasos a continuación para iniciar sesión."  # Shared guidance for device login and initial protocol SignIn; follows the auth intro.
 setup.auth.external_sign_in: "Inicie sesión a través del agente y, a continuación, seleccione \"Ya inicié sesión\" abajo."  # External-agent sign-in, then the setup.option.retry_auth confirmation; follows the auth intro.
 setup.auth.select_method: "Seleccione un método de inicio de sesión para continuar aquí."  # Shown only inside the actual sign-in method picker; follows the auth intro.
+setup.auth.switch_agent: "Para cambiar de agente, vaya a Terminal Inteligente Settings > Agent."  # Shared auth guidance; "Agent" names the selector on the Settings "Agents" page, not the navigation label. {Locked="Settings","Agent"}
 setup.subtitle.connection_failed: "No se pudo iniciar %{agent}."
 
 # {Locked=qps-ploc,qps-ploca,qps-plocm}

@@ -12,6 +12,7 @@ setup.subtitle.authentication_required: "[!!_Ｙｏｕｒ ａｇｅｎｔ \"%{ag
 setup.auth.sign_in: "[!!_Ｆｏｌｌｏｗ ｔｈｅ ｓｔｅｐｓ ｂｅｌｏｗ ｔｏ ｓｉｇｎ ｉｎ._!!]"  # Shared guidance for device login and initial protocol SignIn; follows the auth intro.
 setup.auth.external_sign_in: "[!!_Ｐｌｅａｓｅ ｓｉｇｎ ｉｎ ｖｉａ ｔｈｅ ａｇｅｎｔ, ｔｈｅｎ ｓｅｌｅｃｔ \"Ｉ'ｖｅ ｓｉｇｎｅｄ ｉｎ\" ｂｅｌｏｗ._!!]"  # External-agent sign-in, then the setup.option.retry_auth confirmation; follows the auth intro.
 setup.auth.select_method: "[!!_Ｓｅｌｅｃｔ ａ ｓｉｇｎ-ｉｎ ｍｅｔｈｏｄ ｔｏ ｃｏｎｔｉｎｕｅ ｈｅｒｅ._!!]"  # Shown only inside the actual sign-in method picker; follows the auth intro.
+setup.auth.switch_agent: "[!!_Ｔｏ ｓｗｉｔｃｈ ａｇｅｎｔｓ, ｇｏ ｔｏ Intelligent Terminal Settings > Agent._!!]"  # Shared auth guidance; "Agent" names the selector on the Settings "Agents" page, not the navigation label. {Locked="Settings","Agent"}
 setup.subtitle.connection_failed: "[!!_We couldn't start %{agent}._!!]"
 
 # {Locked="Intelligent Terminal"}, {Locked="Settings"}

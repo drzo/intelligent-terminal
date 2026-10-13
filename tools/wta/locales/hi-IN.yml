@@ -12,6 +12,7 @@ setup.subtitle.authentication_required: "आपके एजेंट \"%{agent}
 setup.auth.sign_in: "साइन इन करने के लिए नीचे दिए गए चरणों का पालन करें।"  # Shared guidance for device login and initial protocol SignIn; follows the auth intro.
 setup.auth.external_sign_in: "कृपया एजेंट से साइन इन करें, फिर नीचे \"मैंने साइन इन कर लिया है\" चुनें।"  # External-agent sign-in, then the setup.option.retry_auth confirmation; follows the auth intro.
 setup.auth.select_method: "यहाँ आगे बढ़ने के लिए साइन इन करने का तरीका चुनें।"  # Shown only inside the actual sign-in method picker; follows the auth intro.
+setup.auth.switch_agent: "एजेंट बदलने के लिए इंटेलिजेंट टर्मिनल Settings > Agent पर जाएँ।"  # Shared auth guidance; "Agent" names the selector on the Settings "Agents" page, not the navigation label. {Locked="Settings","Agent"}
 setup.subtitle.connection_failed: "हम %{agent} को शुरू नहीं कर सके।"
 
 # {Locked=qps-ploc,qps-ploca,qps-plocm}

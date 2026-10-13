@@ -12,6 +12,7 @@ setup.subtitle.authentication_required: "Uw agent \"%{agent}\" vereist verificat
 setup.auth.sign_in: "Volg de onderstaande stappen om u aan te melden."  # Shared guidance for device login and initial protocol SignIn; follows the auth intro.
 setup.auth.external_sign_in: "Meld u aan via de agent en selecteer hieronder \"Ik heb me aangemeld\"."  # External-agent sign-in, then the setup.option.retry_auth confirmation; follows the auth intro.
 setup.auth.select_method: "Selecteer een aanmeldmethode om hier verder te gaan."  # Shown only inside the actual sign-in method picker; follows the auth intro.
+setup.auth.switch_agent: "Om van agent te wisselen, ga naar Intelligente Terminal Settings > Agent."  # Shared auth guidance; "Agent" names the selector on the Settings "Agents" page, not the navigation label. {Locked="Settings","Agent"}
 setup.subtitle.connection_failed: "We konden %{agent} niet starten."
 
 # {Locked=qps-ploc,qps-ploca,qps-plocm}

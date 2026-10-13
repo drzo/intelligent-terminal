@@ -4379,7 +4379,11 @@ impl App {
             },
             title: reason.title(),
             subtitle: if can_sign_in {
-                format!("{subtitle} {}", t!("setup.auth.sign_in"))
+                format!(
+                    "{subtitle} {} {}",
+                    t!("setup.auth.sign_in"),
+                    t!("setup.auth.switch_agent")
+                )
             } else {
                 subtitle
             },
@@ -4426,6 +4430,7 @@ impl App {
             Some(instructions) => format!("{introduction} {instructions}"),
             None => introduction,
         };
+        let subtitle = format!("{subtitle} {}", t!("setup.auth.switch_agent"));
         (vec![option, SetupOption::ChooseAgentSource], subtitle)
     }
 
@@ -4606,12 +4611,13 @@ impl App {
             setup.phase = SetupPhase::Ready;
             setup.title = t!("setup.title.sign_in").into_owned();
             setup.subtitle = format!(
-                "{} {}",
+                "{} {} {}",
                 t!(
                     "setup.subtitle.authentication_required",
                     agent = profile.display_name
                 ),
                 t!("setup.auth.select_method"),
+                t!("setup.auth.switch_agent"),
             );
         }
     }

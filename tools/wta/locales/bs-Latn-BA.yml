@@ -12,6 +12,7 @@ setup.subtitle.authentication_required: "Vaš agent \"%{agent}\" zahtijeva auten
 setup.auth.sign_in: "Slijedite korake ispod da biste se prijavili."  # Shared guidance for device login and initial protocol SignIn; follows the auth intro.
 setup.auth.external_sign_in: "Prijavite se preko agenta, pa odaberite \"Prijavio/la sam se\" ispod."  # External-agent sign-in, then the setup.option.retry_auth confirmation; follows the auth intro.
 setup.auth.select_method: "Odaberite način prijave da nastavite ovdje."  # Shown only inside the actual sign-in method picker; follows the auth intro.
+setup.auth.switch_agent: "Za promjenu agenta idite u Inteligentni Terminal Settings > Agent."  # Shared auth guidance; "Agent" names the selector on the Settings "Agents" page, not the navigation label. {Locked="Settings","Agent"}
 setup.subtitle.connection_failed: "Nismo mogli pokrenuti %{agent}."
 
 # {Locked=qps-ploc,qps-ploca,qps-plocm}
