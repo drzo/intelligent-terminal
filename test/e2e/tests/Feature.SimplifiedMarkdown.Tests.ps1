@@ -41,7 +41,7 @@ Describe 'Feature: simplified agent Markdown' -Tag 'Feature', 'SimplifiedMarkdow
         }
 
         function Get-MarkdownPaneText {
-            Get-AgentPaneText -App $script:app -PaneSessionId $script:agent.PaneSessionId -MaxLines 120
+            Get-WtCapture -App $script:app -SessionId $script:agent.PaneSessionId -MaxLines 120
         }
 
         function Wait-MarkdownText {
@@ -63,11 +63,38 @@ Describe 'Feature: simplified agent Markdown' -Tag 'Feature', 'SimplifiedMarkdow
         }
 
         function Bind-MarkdownPane {
+            param([switch]$SavedHistory)
             Open-AgentPane -App $script:app | Out-Null
-            Wait-AgentReady -App $script:app -TimeoutSec 45 |
-                Should -BeTrue -Because 'the synthetic ACP agent must connect'
-            $script:agent = Get-AgentPaneSession -App $script:app
+            if ($SavedHistory) {
+                $session = Wait-Until -TimeoutSec 45 -Because 'the restored conversation to bind to its live pane' -Condition {
+                    $matches = @(Get-WtSessions -App $script:app -Origin agent-pane |
+                        Where-Object { $_.session_id -ceq 'markdown-saved-session' -and $_.pane_session_id })
+                    if ($matches.Count -eq 1) { $matches[0] }
+                    elseif ($matches.Count -gt 1) { throw 'The restored conversation has ambiguous pane ownership.' }
+                }
+                $status = Get-WtPaneStatus -App $script:app -SessionId $session.pane_session_id
+                $status.state | Should -Match 'run'
+                $script:agent = [pscustomobject]@{
+                    PaneSessionId = $session.pane_session_id
+                    AcpSessionId = $session.session_id
+                    HelperProcessId = $status.pid
+                }
+            }
+            else {
+                Wait-AgentReady -App $script:app -TimeoutSec 45 |
+                    Should -BeTrue -Because 'the synthetic ACP agent must connect'
+                $script:agent = Get-AgentPaneSession -App $script:app
+            }
             $script:agent | Should -Not -BeNullOrEmpty
+            $helpers = @(Get-DescendantWtaIds -RootPid $script:app.Pid -AsProcess `
+                -RootProcess $script:app.OwnedProcess -RootStartTime $script:app.OwnedProcess.StartTime |
+                Where-Object Id -eq $script:agent.HelperProcessId)
+            $helpers | Should -HaveCount 1
+            $helpers[0].Path | Should -Be $script:target.WtaPath
+            $ready = Get-AgentConnectedPlaceholderRegex
+            Wait-Until -TimeoutSec 45 -Because 'the owning pane to show its connected input' -Condition {
+                (Get-MarkdownPaneText) -match $ready
+            } | Out-Null
             $process = Get-CimInstance Win32_Process -Filter "ProcessId=$($script:agent.HelperProcessId)"
             $owner = [regex]::Match($process.CommandLine, '(?:^|\s)--owner-tab-id\s+(?:"([^"]+)"|(\S+))')
             $owner.Success | Should -BeTrue -Because 'the helper must have an explicit owning tab'
@@ -164,7 +191,7 @@ Describe 'Feature: simplified agent Markdown' -Tag 'Feature', 'SimplifiedMarkdow
             }
             $script:app = Start-Terminal -Package Dev -Settings $settings -ShowFre:$Fre -State $state
             $script:app | Add-Member -NotePropertyName RequireOwnedForeground -NotePropertyValue $true -Force
-            if (-not $Fre) { Bind-MarkdownPane }
+            if (-not $Fre) { Bind-MarkdownPane -SavedHistory:$SavedHistory }
         }
 
         function Open-MarkdownSettings {
