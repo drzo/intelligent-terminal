@@ -293,7 +293,7 @@ Describe 'Feature: telemetry funnels' -Tag 'Feature', 'Telemetry' -Skip:($env:IT
         }
         $created[0].Fields.PrimaryProvider | Should -Be 'custom'
         $created[0].Fields.SidebarRolloutId | Should -Be 'sidebar-upgrade-v1'
-        $created[0].Fields.SidebarRolloutAssignment | Should -BeIn @('Sidebar', 'Horizontal')
+        $created[0].Fields.SidebarRolloutAssignment | Should -Be 'Horizontal'
         $created[0].Types.PartA_PrivTags | Should -Match 'UInt64$'
         @($script:records | Where-Object Name -in @('AgentProviderConfigured', 'CustomAgentConfigured', 'SidebarStateOnLaunch')) | Should -HaveCount 0
     }
@@ -315,7 +315,11 @@ Describe 'Feature: telemetry funnels' -Tag 'Feature', 'Telemetry' -Skip:($env:IT
             Should -BeLessThan ([DateTimeOffset]$script:phases['second-window'].Data.ActivationUtc).UtcDateTime
         @($script:records | Where-Object { $_.ProcessId -eq $script:primaryAppPid -and $_.Name -eq 'AppCreated' }) |
             Should -HaveCount 2 -Because 'initial and secondary windows each emit once; activation and settings reload do not'
-        @($created[0].Fields.Keys | Where-Object { $_ -ne 'PartA_PrivTags' }) | Should -HaveCount 13
+        @($created[0].Fields.Keys | Where-Object { $_ -ne 'PartA_PrivTags' }) | Should -HaveCount 15
+        $created[0].Types.SidebarRolloutId | Should -Match 'UnicodeString$'
+        $created[0].Types.SidebarRolloutAssignment | Should -Match 'UnicodeString$'
+        $created[0].Fields.SidebarRolloutId | Should -Be 'sidebar-upgrade-v1'
+        $created[0].Fields.SidebarRolloutAssignment | Should -Be 'Horizontal'
     }
 
     It 'Connected helpers receive current native Autofix configuration' -ForEach @(
@@ -550,7 +554,11 @@ Describe 'Feature: telemetry funnels' -Tag 'Feature', 'Telemetry' -Skip:($env:IT
         @($script:records | Where-Object { $_.ProcessId -eq $script:startupCases.noAgent -and $_.Name -eq 'AgentSessionStarted' }) |
             Should -HaveCount 0
         foreach ($snapshot in @($inventory, $none)) {
-            @($snapshot.Fields.Keys | Where-Object { $_ -ne 'PartA_PrivTags' }) | Should -HaveCount 13
+            @($snapshot.Fields.Keys | Where-Object { $_ -ne 'PartA_PrivTags' }) | Should -HaveCount 15
+            $snapshot.Types.SidebarRolloutId | Should -Match 'UnicodeString$'
+            $snapshot.Types.SidebarRolloutAssignment | Should -Match 'UnicodeString$'
+            $snapshot.Fields.SidebarRolloutId | Should -Be 'sidebar-upgrade-v1'
+            $snapshot.Fields.SidebarRolloutAssignment | Should -Be 'Horizontal'
             $snapshot.Fields.AllowedAgentsPolicy | Should -Be 'not_configured'
             $snapshot.Fields.AllowCustomAgentsPolicy | Should -Be 'not_configured'
             $snapshot.Fields.DefaultsFallback | Should -BeIn @('false', '0')
