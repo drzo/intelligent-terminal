@@ -13,7 +13,7 @@ const sameLocation = (left, right) =>
 export default {
   id: "wt-agent-hooks",
   async setup(ctx) {
-    if (process.platform !== "win32" || process.env.OPENCODE_CLIENT === "acp") return
+    if (process.platform !== "win32") return
 
     const owners = new Map()
     const lookups = new Map()

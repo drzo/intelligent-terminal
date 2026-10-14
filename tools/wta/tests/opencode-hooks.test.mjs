@@ -181,11 +181,24 @@ test("V2 uses explicit pane bindings, never shared server environment or cwd att
   assert.equal(fixture.calls.length, beforeDispose, "server unload is not a CLI exit")
 })
 
-test("V2 ACP never registers shell-session hooks", async () => {
+test("V2 ACP-started server registers RPC but forwards only explicitly bound interactive sessions", async () => {
   const fixture = await load("v2/wt-agent-hooks.js", { OPENCODE_CLIENT: "acp" })
-  const result = await fixture.plugin.default.setup({})
-  assert.equal(result, undefined)
+  const server = serverContext({ a: { id: "a", location } })
+  const dispose = await fixture.plugin.default.setup(server.ctx)
+  await server.hooks.prompt({ sessionID: "a" })
+  await server.event("session.status", { sessionID: "a", status: { type: "busy" } })
   assert.equal(fixture.calls.length, 0)
+  await server.sync(binding(paneA, ["a"]))
+  assert.equal(fixture.calls.at(-1).topic, "agent.prompt.submit")
+  assert.ok(fixture.calls.every((call) => call.env.WT_SESSION === paneA))
+  await dispose()
+
+  const acp = await load("v2/tui.js", { OPENCODE_CLIENT: "acp", WT_SESSION: paneA, WT_COM_CLSID: clsid })
+  const result = acp.plugin.default.setup({})
+  assert.equal(result, undefined, "ACP TUI must not access RPC or register UI hooks")
+  assert.equal(acp.timers.size, 0)
+  assert.equal(acp.effects.length, 0)
+  assert.equal(acp.calls.length, 0)
 })
 
 test("V2 missing heartbeats suppress forwarding without inventing a CLI exit", async () => {

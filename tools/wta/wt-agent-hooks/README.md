@@ -537,8 +537,9 @@ Gemini has no marketplace concept and reads the extension folder directly.
   sessions are already tracked through ACP; only interactive CLI sessions in
   regular terminal panes produce hook-backed rows.
 - **OpenCode ACP sessions are intentionally ignored by both adapters.**
-  `OPENCODE_CLIENT=acp` suppresses their shell-session hooks. V1 additionally
-  requires local Terminal context; V2 requires an explicit client pane binding.
+  `OPENCODE_CLIENT=acp` suppresses V1 hooks and the V2 TUI sidecar. The V2 server
+  registers its binding RPC regardless of its startup environment and forwards
+  only explicitly bound client sessions. V1 additionally requires local Terminal context.
   Agent-pane sessions remain tracked by ACP, never by the shell hook bridge.
 - **MSIX install paths include the package version.** They change on every
   upgrade, which is why `agent_hooks_installer` re-runs marketplace

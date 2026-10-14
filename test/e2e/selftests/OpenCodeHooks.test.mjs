@@ -12,6 +12,7 @@ const bundlePath = process.env.ITE2E_OPENCODE_BUNDLE ??
   fileURLToPath(new URL("../../../tools/wta/wt-agent-hooks/opencode/", import.meta.url))
 const v1 = await loadPlugin(join(bundlePath, "v1", "wt-agent-hooks.js"))
 const v2 = await loadPlugin(join(bundlePath, "v2", "wt-agent-hooks.js"))
+const tui = await loadPlugin(join(bundlePath, "v2", "tui.js"))
 const environmentKeys = ["WT_COM_CLSID", "WT_SESSION", "WTCLI_PATH", "OPENCODE_CLIENT", "WTA_HOOK_LOG_DIR"]
 let originalEnvironment
 let originalBun
@@ -195,7 +196,7 @@ describe("OpenCode bundled hook behavior", { skip: process.platform !== "win32" 
     } finally { await dispose() }
   })
 
-  it("ACP mode suppresses registration and missing client identity suppresses binding and V1 emission", async () => {
+  it("ACP clients remain unbound while the shared server registers, and missing identity suppresses binding and V1 emission", async () => {
     for (const suppressed of ["acp", "WT_SESSION", "WT_COM_CLSID"]) {
       const previous = { ...process.env }
       if (suppressed === "acp") process.env.OPENCODE_CLIENT = "acp"
@@ -203,8 +204,18 @@ describe("OpenCode bundled hook behavior", { skip: process.platform !== "win32" 
       const sdk = createContext()
       const dispose = await v2.setup(sdk.context)
       if (suppressed === "acp") {
-        assert.equal(dispose, undefined)
-        assert.equal(sdk.registered, 0)
+        assert.equal(typeof dispose, "function")
+        assert.equal(sdk.registered, 2, "an ACP-started server may later serve an interactive client")
+        assert.equal((await sdk.bind([])).bound, 0, "pane binding RPC remains registered on the shared server")
+        assert.equal(tui.setup({
+          client: { rpc: () => { throw new Error("ACP clients must not bind a pane") } },
+        }), undefined)
+        await sdk.prompt("suppressed")
+        await sdk.tool("suppressed", "bash", {})
+        await sdk.event("session.status", { sessionID: "suppressed", status: { type: "busy" } })
+        assert.equal(calls.length, 0, "server ACP environment does not create implicit ownership")
+        await dispose()
+        assert.equal(sdk.aborted, true)
       } else {
         assert.equal(sdk.registered, 2, "V2 may load without the background server owning a pane")
         await assert.rejects(sdk.bind(["suppressed"]), /Invalid Intelligent Terminal pane context/)

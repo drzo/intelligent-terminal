@@ -6,17 +6,21 @@ import { spawn } from "node:child_process"
 import { dirname, resolve } from "node:path"
 import vm from "node:vm"
 import * as fs from "node:fs"
+import * as crypto from "node:crypto"
 
 export async function loadPlugin(path) {
   const context = vm.createContext({
-    process, TextEncoder, AbortController, console, setInterval, clearInterval,
+    process, TextEncoder, AbortController, AbortSignal, console, setInterval, clearInterval,
     get Bun() { return globalThis.Bun },
   })
   const modules = new Map()
   async function load(name) {
     if (modules.has(name)) return modules.get(name)
-    if (name === "node:fs" || name === "@opencode/plugin/rpc") {
-      const exports = name === "node:fs" ? fs : { Rpc: { define: (definition) => definition } }
+    if (["node:fs", "node:crypto", "solid-js", "@opencode/plugin/rpc"].includes(name)) {
+      const exports = name === "node:fs" ? fs
+        : name === "node:crypto" ? crypto
+          : name === "solid-js" ? { createEffect: (effect) => effect() }
+            : { Rpc: { define: (definition) => definition } }
       const module = new vm.SyntheticModule(Object.keys(exports), function () {
         for (const [key, value] of Object.entries(exports)) this.setExport(key, value)
       }, { context, identifier: name })
