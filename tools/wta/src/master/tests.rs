@@ -1639,10 +1639,218 @@ fn make_state() -> Arc<MasterStateInner> {
     make_state_with_retirement_pending_timeout(SESSION_CLOSE_TIMEOUT)
 }
 
+#[test]
+fn native_receiver_generation_requires_positive_decimal_u64() {
+    assert_eq!(
+        parse_native_observation_receiver_generation("42").unwrap(),
+        42
+    );
+    for invalid in ["", "0", "-1", "+1", " 1", "1 ", "18446744073709551616"] {
+        assert!(parse_native_observation_receiver_generation(invalid).is_err());
+    }
+}
+
+#[tokio::test]
+async fn native_receiver_unmanaged_master_preserves_legacy_admission() {
+    let _capture = crate::wt_protocol_events::capture_test_published_events();
+    let state = make_state();
+    assert!(native_observation_matches_receiver(&state, None));
+    assert!(native_observation_matches_receiver(&state, Some(99)));
+    handle_master_wt_event(
+        &state,
+        serde_json::json!({
+            "method":"native_agent_observation", "params":{
+                "pane_id":"00112233-4455-6677-8899-aabbccddeeff", "provider_id":"copilot",
+                "window_id":0, "tab_id":"tab", "mode_epoch":1,
+                "kind":"reset", "tracking_enabled":false
+            }
+        }),
+    )
+    .await;
+    assert_eq!(state.registry.native_pane_observations().await.len(), 1);
+    assert!(state.registry.snapshot().await.is_empty());
+}
+
+#[tokio::test]
+async fn native_receiver_ready_generation_fences_all_observations() {
+    let _capture = crate::wt_protocol_events::capture_test_published_events();
+    let mut state = make_state();
+    Arc::get_mut(&mut state)
+        .unwrap()
+        .native_observation_receiver_generation = Some(7);
+    let mut params = serde_json::json!({
+        "pane_id":"00112233-4455-6677-8899-aabbccddeeff", "provider_id":"copilot",
+        "window_id":0, "tab_id":"tab", "mode_epoch":1,
+        "kind":"reset", "tracking_enabled":false, "receiver_generation":7
+    });
+    handle_master_wt_event(
+        &state,
+        serde_json::json!({"method":"native_agent_observation","params":params.clone()}),
+    )
+    .await;
+    assert!(state.registry.native_pane_observations().await.is_empty());
+    assert!(!state
+        .native_observation_listener_ready
+        .load(std::sync::atomic::Ordering::Acquire));
+    handle_master_wt_event(
+        &state,
+        serde_json::json!({"method":"wt_listener_ready","params":{}}),
+    )
+    .await;
+    assert!(state
+        .native_observation_listener_ready
+        .load(std::sync::atomic::Ordering::Acquire));
+    assert!(crate::wt_protocol_events::take_test_published_events()
+        .iter()
+        .any(|event| event.contains("session_registry_changed")));
+    for generation in [
+        serde_json::Value::Null,
+        serde_json::json!(6),
+        serde_json::json!(8),
+    ] {
+        params["receiver_generation"] = generation;
+        handle_master_wt_event(
+            &state,
+            serde_json::json!({"method":"native_agent_observation","params":params.clone()}),
+        )
+        .await;
+        assert!(state.registry.native_pane_observations().await.is_empty());
+    }
+    params["receiver_generation"] = serde_json::json!(7);
+    handle_master_wt_event(
+        &state,
+        serde_json::json!({"method":"native_agent_observation","params":params.clone()}),
+    )
+    .await;
+    for kind in ["progress", "bell", "removed", "reset"] {
+        params["kind"] = serde_json::json!(kind);
+        params["progress_state"] = serde_json::json!(1);
+        params["receiver_generation"] = serde_json::json!(6);
+        handle_master_wt_event(
+            &state,
+            serde_json::json!({"method":"native_agent_observation","params":params.clone()}),
+        )
+        .await;
+        assert_eq!(
+            state.registry.native_pane_observations().await[0].status,
+            crate::agent_sessions::AgentStatus::Idle
+        );
+    }
+    params["kind"] = serde_json::json!("bell");
+    params["receiver_generation"] = serde_json::json!(7);
+    handle_master_wt_event(
+        &state,
+        serde_json::json!({"method":"native_agent_observation","params":params}),
+    )
+    .await;
+    assert_eq!(
+        state.registry.native_pane_observations().await[0].status,
+        crate::agent_sessions::AgentStatus::Attention
+    );
+    assert!(state.registry.snapshot().await.is_empty());
+}
+
+#[tokio::test]
+async fn native_receiver_ordered_birth_reset_preserves_late_rpc_activity() {
+    use crate::agent_sessions::{AgentStatus, CliSource, SessionEvent};
+    let _capture = crate::wt_protocol_events::capture_test_published_events();
+    let mut state = make_state();
+    Arc::get_mut(&mut state)
+        .unwrap()
+        .native_observation_receiver_generation = Some(7);
+    let birth = serde_json::json!({
+        "pane_id":"00112233-4455-6677-8899-aabbccddeeff", "agent_session_id":"restored-real",
+        "agent":"copilot", "cwd":"C:\\repo", "tab_id":"tab", "window_id":0,
+        "receiver_generation":7
+    });
+    handle_master_wt_event(
+        &state,
+        serde_json::json!({"method":"session_born_bound","params":birth.clone()}),
+    )
+    .await;
+    assert!(state.registry.snapshot().await.is_empty());
+    handle_master_wt_event(
+        &state,
+        serde_json::json!({"method":"wt_listener_ready","params":{}}),
+    )
+    .await;
+    let mut stale = birth.clone();
+    stale["receiver_generation"] = serde_json::json!(6);
+    handle_master_wt_event(
+        &state,
+        serde_json::json!({"method":"session_born_bound","params":stale}),
+    )
+    .await;
+    assert!(state.registry.snapshot().await.is_empty());
+    handle_master_wt_event(
+        &state,
+        serde_json::json!({"method":"session_born_bound","params":birth.clone()}),
+    )
+    .await;
+    let mut observation = serde_json::json!({
+        "pane_id":"00112233-4455-6677-8899-aabbccddeeff", "provider_id":"copilot",
+        "agent_session_id":"restored-real", "location":"Host", "window_id":0,
+        "tab_id":"tab", "mode_epoch":1, "kind":"reset","tracking_enabled":false,
+        "receiver_generation":7
+    });
+    handle_master_wt_event(
+        &state,
+        serde_json::json!({"method":"native_agent_observation","params":observation.clone()}),
+    )
+    .await;
+    observation["kind"] = serde_json::json!("progress");
+    observation["progress_state"] = serde_json::json!(1);
+    handle_master_wt_event(
+        &state,
+        serde_json::json!({"method":"native_agent_observation","params":observation}),
+    )
+    .await;
+    let sid = acp::schema::v1::SessionId::new("restored-real");
+    assert_eq!(
+        state.registry.lookup(&sid).await.unwrap().status,
+        Some(AgentStatus::Working)
+    );
+    handle_session_born_bound(
+        &state,
+        SessionEvent::SessionStarted {
+            key: "restored-real".into(),
+            cli_source: CliSource::Copilot,
+            pane_session_id: "00112233-4455-6677-8899-aabbccddeeff".into(),
+            cwd: "C:\\old".into(),
+            title: "old".into(),
+        },
+        None,
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        state.registry.lookup(&sid).await.unwrap().status,
+        Some(AgentStatus::Working)
+    );
+    state
+        .registry
+        .apply_event(SessionEvent::Notification {
+            key: "restored-real".into(),
+            message: "ask_user".into(),
+        })
+        .await;
+    handle_master_wt_event(
+        &state,
+        serde_json::json!({"method":"session_born_bound","params":birth}),
+    )
+    .await;
+    let row = state.registry.lookup(&sid).await.unwrap();
+    assert_eq!(row.status, Some(AgentStatus::Attention));
+    assert_eq!(row.attention_reason.as_deref(), Some("ask_user"));
+    assert_eq!(state.registry.snapshot().await.len(), 1);
+}
+
 fn make_state_with_retirement_pending_timeout(
     retirement_pending_timeout: std::time::Duration,
 ) -> Arc<MasterStateInner> {
     Arc::new(MasterStateInner {
+        native_observation_receiver_generation: None,
+        native_observation_listener_ready: std::sync::atomic::AtomicBool::new(false),
         session_lifecycle_gates: Mutex::new(SessionLifecycleGateTable::default()),
         session_to_helper: Mutex::new(LiveRouteTable::default()),
         session_mcp_endpoints: session_mcp::Endpoints::new("http://127.0.0.1:1/mcp".to_string()),
@@ -12534,6 +12742,8 @@ impl crate::shell::wt_channel::WtChannel for MockWtChannel {
 
 fn make_state_with_wt(wt: Arc<dyn crate::shell::wt_channel::WtChannel>) -> Arc<MasterStateInner> {
     Arc::new(MasterStateInner {
+        native_observation_receiver_generation: None,
+        native_observation_listener_ready: std::sync::atomic::AtomicBool::new(false),
         session_lifecycle_gates: Mutex::new(SessionLifecycleGateTable::default()),
         session_to_helper: Mutex::new(LiveRouteTable::default()),
         session_mcp_endpoints: session_mcp::Endpoints::new("http://127.0.0.1:1/mcp".to_string()),
@@ -15831,6 +16041,220 @@ fn codex_emitted(key: &str) -> crate::session_watcher::Emitted {
             key: key.to_string(),
             tool_name: String::new(),
         },
+    }
+}
+
+#[tokio::test]
+async fn native_off_watcher_admits_exact_copilot_input_activity() {
+    use crate::agent_sessions::{AgentStatus, CliSource, SessionLocation};
+    let state = make_state();
+    let _capture = crate::wt_protocol_events::capture_test_published_events();
+    let sid = acp::schema::v1::SessionId::new("native-watcher");
+    let mut row = crate::session_registry::SessionInfo::new(sid.clone(), "C:\\repo".into());
+    row.provider_id = Some("copilot".into());
+    row.location = SessionLocation::Host;
+    row.status = Some(AgentStatus::Historical);
+    state.registry.upsert(row).await;
+    handle_master_wt_event(
+        &state,
+        serde_json::json!({
+            "method":"native_agent_observation", "params":{
+                "pane_id":"00112233-4455-6677-8899-aabbccddeeff", "provider_id":"copilot",
+                "agent_session_id":"native-watcher", "location":"Host",
+                "window_id":0, "tab_id":"native-tab", "mode_epoch":1,
+                "kind":"reset", "tracking_enabled":false
+            }
+        }),
+    )
+    .await;
+    assert!(state.born_bound.lock().await.is_empty());
+    let events = crate::session_watcher::classify_copilot::classify(
+        &serde_json::json!({"type":"tool.execution_start","data":{"toolName":"ask_user"}}),
+        &"native-watcher".into(),
+    );
+    for event in events {
+        apply_watcher_event(
+            &state,
+            crate::session_watcher::Emitted {
+                cli: CliSource::Copilot,
+                key: "native-watcher".into(),
+                event,
+            },
+        )
+        .await;
+    }
+    let row = state.registry.lookup(&sid).await.unwrap();
+    assert_eq!(row.status, Some(AgentStatus::Attention));
+    assert_eq!(row.attention_reason.as_deref(), Some("ask_user"));
+    assert_eq!(
+        state.registry.native_pane_observations().await[0].status,
+        AgentStatus::Attention
+    );
+    let identity = crate::session_registry::SessionIdentity::from_info(&row);
+    state.hook_owned.lock().await.insert(sid.clone());
+    let mut collision = row.clone();
+    collision.provider_id = Some("claude".into());
+    collision.pane_session_id = None;
+    collision.born_bound_pane = false;
+    collision.status = Some(AgentStatus::Historical);
+    let collision_identity = crate::session_registry::SessionIdentity::from_info(&collision);
+    state.registry.upsert(collision.clone()).await;
+    apply_watcher_event(&state, codex_emitted("native-watcher")).await;
+    assert_eq!(
+        state
+            .registry
+            .lookup_identity(&identity)
+            .await
+            .unwrap()
+            .status,
+        Some(AgentStatus::Attention)
+    );
+    apply_watcher_event(
+        &state,
+        crate::session_watcher::Emitted {
+            cli: CliSource::Copilot,
+            key: "native-watcher".into(),
+            event: crate::agent_sessions::SessionEvent::ToolCompleted {
+                key: "native-watcher".into(),
+            },
+        },
+    )
+    .await;
+    assert_eq!(
+        state
+            .registry
+            .lookup_identity(&identity)
+            .await
+            .unwrap()
+            .status,
+        Some(AgentStatus::Idle)
+    );
+    assert_eq!(
+        state.registry.lookup_identity(&collision_identity).await,
+        Some(collision)
+    );
+    handle_master_wt_event(
+        &state,
+        serde_json::json!({
+            "method":"native_agent_observation", "params":{
+                "pane_id":"00112233-4455-6677-8899-aabbccddeeff", "provider_id":"copilot",
+                "agent_session_id":"native-watcher", "location":"Host",
+                "window_id":0, "tab_id":"native-tab", "mode_epoch":2,
+                "kind":"reset", "tracking_enabled":true
+            }
+        }),
+    )
+    .await;
+    apply_watcher_event(
+        &state,
+        crate::session_watcher::Emitted {
+            cli: CliSource::Copilot,
+            key: "native-watcher".into(),
+            event: crate::agent_sessions::SessionEvent::Notification {
+                key: "native-watcher".into(),
+                message: "stale".into(),
+            },
+        },
+    )
+    .await;
+    assert_eq!(
+        state
+            .registry
+            .lookup_identity(&identity)
+            .await
+            .unwrap()
+            .status,
+        Some(AgentStatus::Idle)
+    );
+}
+
+#[tokio::test]
+async fn native_off_watcher_rejects_unknown_backend_and_removed_bindings() {
+    use crate::agent_sessions::{AgentStatus, CliSource, SessionEvent, SessionLocation};
+    for location in [
+        SessionLocation::Host,
+        SessionLocation::Wsl {
+            distro: "Ubuntu".into(),
+        },
+    ] {
+        let state = make_state();
+        let _capture = crate::wt_protocol_events::capture_test_published_events();
+        let sid = acp::schema::v1::SessionId::new("native-source");
+        let mut row = crate::session_registry::SessionInfo::new(sid.clone(), "C:\\repo".into());
+        row.provider_id = Some("copilot".into());
+        row.location = location.clone();
+        row.status = Some(AgentStatus::Historical);
+        let identity = crate::session_registry::SessionIdentity::from_info(&row);
+        state.registry.upsert(row).await;
+        let mut params = serde_json::json!({
+            "pane_id":"00112233-4455-6677-8899-aabbccddeeff", "provider_id":"copilot",
+            "agent_session_id":"missing", "location":location,
+            "window_id":0, "tab_id":"native-tab", "mode_epoch":1,
+            "kind":"reset", "tracking_enabled":false
+        });
+        handle_master_wt_event(
+            &state,
+            serde_json::json!({"method":"native_agent_observation","params":params.clone()}),
+        )
+        .await;
+        let emitted = crate::session_watcher::Emitted {
+            cli: CliSource::Copilot,
+            key: "native-source".into(),
+            event: SessionEvent::Notification {
+                key: "native-source".into(),
+                message: "ask_user".into(),
+            },
+        };
+        apply_watcher_event(&state, emitted.clone()).await;
+        assert_eq!(
+            state
+                .registry
+                .lookup_identity(&identity)
+                .await
+                .unwrap()
+                .status,
+            Some(AgentStatus::Historical)
+        );
+        params["agent_session_id"] = serde_json::json!("native-source");
+        params["mode_epoch"] = serde_json::json!(2);
+        handle_master_wt_event(
+            &state,
+            serde_json::json!({"method":"native_agent_observation","params":params.clone()}),
+        )
+        .await;
+        apply_watcher_event(&state, emitted.clone()).await;
+        let expected = if location == SessionLocation::Host {
+            AgentStatus::Attention
+        } else {
+            AgentStatus::Idle
+        };
+        assert_eq!(
+            state
+                .registry
+                .lookup_identity(&identity)
+                .await
+                .unwrap()
+                .status,
+            Some(expected)
+        );
+        params["kind"] = serde_json::json!("removed");
+        handle_master_wt_event(
+            &state,
+            serde_json::json!({"method":"native_agent_observation","params":params}),
+        )
+        .await;
+        apply_watcher_event(&state, emitted).await;
+        assert_eq!(
+            state
+                .registry
+                .lookup_identity(&identity)
+                .await
+                .unwrap()
+                .status,
+            Some(AgentStatus::Ended)
+        );
+        assert!(state.registry.native_pane_observations().await.is_empty());
+        assert_eq!(state.registry.snapshot().await.len(), 1);
     }
 }
 
