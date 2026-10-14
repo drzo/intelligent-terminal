@@ -43,6 +43,10 @@ D2D
 -capproval_policy=never\b
 --nocapture\b
 
+# Bash shell integration callback names and native Readline option
+\b__it_shellinteg_[a-z_]+\b
+--noediting\b
+
 # Windows ICU relative-time APIs and constants
 \b(?:URelativeDateTime(?:Formatter|Unit)|UCalendar(?:DateFields)?|UDate)\b
 \b(?:ureldatefmt_(?:open|close|formatNumeric)|ucal_(?:open|close|setMillis|getFieldDifference)|uloc_forLanguageTag|u_errorName)\b

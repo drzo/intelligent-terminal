@@ -241,6 +241,14 @@ evaluates input: substitutions, expansions, escaped words, redirects, pipelines,
 background jobs, and compound commands are deliberately ignored. Windows
 interop `.exe`/`.cmd`/`.bat` launchers in WSL are not treated as Linux agents.
 
+To avoid mistaking an option's value for a resume flag, Bash treats other
+options without `=` as potentially value-taking. A following option-like word
+is ambiguous and suppresses binding, including quoted or partially quoted
+words. Use self-contained `--option=value` forms to remove that ambiguity;
+`--model gpt-5 --resume=<id>` remains supported. This intentionally excludes
+adjacent standalone switches before a resume flag instead of maintaining a
+provider-specific option catalog. The v5 script upgrades existing v4 blocks.
+
 Without bash-preexec, a DEBUG callback inspects a new, complete history entry,
 once per prompt. Commands excluded by `HISTCONTROL`/`HISTIGNORE`, disabled
 history, and multiline entries are not guessed from `BASH_COMMAND`, which

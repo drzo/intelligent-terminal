@@ -722,13 +722,32 @@ $cases = @(
     @{ Line = 'copilot --resume=resume-test'; Agent = 'copilot' }
     @{ Line = 'copilot --resume "resume-test" --model gpt-5'; Agent = 'copilot' }
     @{ Line = "copilot --model gpt-5 --resume='resume-test'"; Agent = 'copilot' }
-    @{ Line = 'claude --resume resume-test --system-prompt "--resume=other"'; Agent = 'claude' }
+    @{ Line = 'claude --resume resume-test --system-prompt="--resume=other"'; Agent = 'claude' }
+    @{ Line = 'claude --resume resume-test --system-prompt "--resume=other"'; Agent = '' }
     @{ Line = 'gemini --resume=resume-test'; Agent = 'gemini' }
     @{ Line = 'codex resume "resume-test" --yolo'; Agent = 'codex' }
     @{ Line = 'opencode --session=resume-test'; Agent = 'opencode' }
     @{ Line = 'agy --conversation resume-test'; Agent = 'antigravity' }
     @{ Line = 'copilot "--resume=resume-test"'; Agent = '' }
     @{ Line = 'copilot --prompt "--resume=resume-test"'; Agent = '' }
+    @{ Line = 'copilot --prompt --resume=resume-test'; Agent = '' }
+    @{ Line = 'copilot --prompt --resume resume-test'; Agent = '' }
+    @{ Line = 'copilot "--prompt" --resume=resume-test'; Agent = '' }
+    @{ Line = 'copilot --"prompt" --resume="resume-test"'; Agent = '' }
+    @{ Line = 'copilot --prompt --"resume"="resume-test"'; Agent = '' }
+    @{ Line = 'copilot --unknown-option --resume=resume-test'; Agent = '' }
+    @{ Line = 'copilot -i --resume=resume-test'; Agent = '' }
+    @{ Line = 'copilot --prompt "--resume=other" --resume=resume-test'; Agent = '' }
+    @{ Line = 'copilot --prompt= --resume=resume-test'; Agent = 'copilot' }
+    @{ Line = 'copilot "--prompt=--resume=other" --resume=resume-test'; Agent = 'copilot' }
+    @{ Line = 'copilot --prompt="--resume=other" --resume="resume-test"'; Agent = 'copilot' }
+    @{ Line = 'copilot "--model" "gpt-5" --resume=resume-test'; Agent = 'copilot' }
+    @{ Line = 'copilot --unknown-option literal --resume=resume-test'; Agent = 'copilot' }
+    @{ Line = 'copilot --unknown-option=literal --resume=resume-test'; Agent = 'copilot' }
+    @{ Line = 'claude --system-prompt --resume=resume-test'; Agent = '' }
+    @{ Line = 'gemini --prompt --resume=resume-test'; Agent = '' }
+    @{ Line = 'opencode --prompt --session=resume-test'; Agent = '' }
+    @{ Line = 'agy --prompt --conversation=resume-test'; Agent = '' }
     @{ Line = 'copilot --resume resume-test --resume=other'; Agent = '' }
     @{ Line = 'copilot --resume "$session"'; Agent = '' }
     @{ Line = 'copilot --resume "$(printf resume-test)"'; Agent = '' }
@@ -746,8 +765,8 @@ $cases = @(
 )
 foreach ($mode in @('host', 'wsl', 'outside', 'trap', 'no-history')) {
     $modeCases = if ($mode -eq 'host') { $cases }
-                 elseif ($mode -eq 'wsl') { @($cases[0], $cases[2], $cases[5], $cases[13], $cases[14]) }
-                 else { @($cases[0], $cases[13]) }
+                 elseif ($mode -eq 'wsl') { $cases }
+                 else { @($cases[0], ($cases | Where-Object Line -eq 'copilot --resume resume-test | cat')) }
     $inputLines = [System.Collections.Generic.List[string]]::new()
     $inputLines.Add("HISTFILE=/dev/null; HISTCONTROL=; HISTIGNORE=; session=resume-test; PS1='TEST> '; PROMPT_COMMAND='PS1=`"TEST> `"'")
     $inputLines.Add("copilot() { printf 'CLI_START\n'; }; claude() { copilot; }; gemini() { copilot; }; codex() { copilot; }; opencode() { copilot; }; agy() { copilot; }")

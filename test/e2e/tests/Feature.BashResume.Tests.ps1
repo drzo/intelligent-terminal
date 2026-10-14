@@ -4,8 +4,8 @@
 
 BeforeDiscovery {
     $script:GitBash = 'C:\Program Files\Git\bin\bash.exe'
-    $script:Ready = (Test-Path -LiteralPath $script:GitBash) -and
-        [bool](Get-AppxPackage | Where-Object Name -like '*IntelligentTerminal*') -and
+    $script:GitBashReady = Test-Path -LiteralPath $script:GitBash
+    $script:Ready = [bool](Get-AppxPackage | Where-Object Name -like '*IntelligentTerminal*') -and
         [bool](Get-Command winapp -ErrorAction SilentlyContinue)
 }
 
@@ -190,7 +190,7 @@ namespace ItE2E {
         }
     }
 
-    It 'Git Bash resumes persist before the first conversation' {
+    It 'Git Bash resumes persist before the first conversation' -Skip:(-not $script:GitBashReady) {
         Test-BashResumePersistence ''
     }
 

@@ -39,7 +39,8 @@ namespace Microsoft::Terminal::ShellIntegration::Bash
     // version bump rewrites existing v2 profile blocks; WSL inherits this
     // version via WslBashFlavor.
     // v4: bind literal foreground resume commands before the CLI starts.
-    inline constexpr int kVersion = 4;
+    // v5: reject ambiguous option values before binding a resume command.
+    inline constexpr int kVersion = 5;
 
     inline std::wstring ScriptFileName()
     {
@@ -204,17 +205,25 @@ __it_shellinteg_resume() {
     esac
     if [ "$__agent" != codex ]; then
         for ((__i=1; __i<__n; __i++)); do
-            [ "${__literals[__i]}" = 1 ] || continue
             __word="${__words[__i]}"
             [ "$__word" != -- ] || break
             case "$__word" in
                 "$__flag")
+                    [ "${__literals[__i]}" = 1 ] || return 0
                     [ "$__seen" = 0 ] && [ "$((__i+1))" -lt "$__n" ] || return 0
                     __i=$((__i+1))
                     __session="${__words[__i]}" __seen=1 ;;
                 "$__flag="*)
+                    [ "${__literals[__i]}" = 1 ] || return 0
                     [ "$__seen" = 0 ] || return 0
                     __session="${__word#*=}" __seen=1 ;;
+                -*=*) ;;
+                -*)
+                    # Without a provider option catalog, a separate option-like
+                    # value is ambiguous, even when either word was quoted.
+                    [ "$((__i+1))" -lt "$__n" ] || break
+                    __i=$((__i+1))
+                    case "${__words[__i]}" in -*) return 0 ;; esac ;;
             esac
         done
     fi
