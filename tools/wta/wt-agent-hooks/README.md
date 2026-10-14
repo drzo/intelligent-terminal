@@ -46,7 +46,17 @@ wt-agent-hooks/
 
 Every integration dispatches through the native `wtcli agent-hook` command,
 invoked directly from `hooks.json` with no script or batch launcher in between.
-Claude and Copilot share the same plugin manifest and event schema.
+Claude and Copilot share the same non-version plugin metadata and event schema.
+
+Hook versions are independent per provider. Bump only the manifest for the
+provider whose installed payload changes; for Claude and Copilot, also update
+that provider's marketplace plugin version. Keep the already-shipped versions
+of unchanged providers: do not roll them back to undo a coordinated release.
+Update only that provider's exact expected release version in the version-policy
+test with its manifest; unrelated providers keep their own expected versions.
+Reconciliation compares each provider's installed version against its own
+bundle version. A JavaScript-only OpenCode change still needs a version bump
+because its installed plugin is a copy, not a live link to the bundle.
 
 ## How install works
 
@@ -230,6 +240,9 @@ OpenCode has separate V1 and V2 adapters rather than a hook manifest. V1 returns
 its callbacks from a named function export. V2 registers hooks and consumes
 `event.data` through `setup(ctx)`. Both use the canonical `opencode` source and
 the same WTA topics; root-session filtering excludes internal child sessions.
+OpenCode's explicit session titles reach both the helper and master registry;
+rename events replace the previous title, while prompts without a title retain
+it. Other providers keep their existing title/history behavior.
 
 ### OpenCode V2 client/server ownership
 
@@ -241,8 +254,8 @@ The bundled TUI entrypoint therefore explicitly calls the server plugin's
 `wt-agent-hooks.pane.sync` RPC with the client ID, pane `WT_SESSION`, COM CLSID,
 actual `WTCLI_PATH`, log directory, and the root sessions open in that client.
 Requests are scoped to each session's location. Server callbacks emit only for
-these bindings, passing that client's environment to `wtcli`. There is no
-fallback to the shared server's `WT_SESSION`. Another client's unexpired
+these bindings, passing that client's environment to `wtcli`. The shared
+server's `WT_SESSION` is never used. Another client's unexpired
 binding cannot be stolen by a heartbeat.
 
 The client refreshes its bindings every ten seconds and releases them on
@@ -267,8 +280,12 @@ Adapter component checks (no model calls or Terminal configuration edits):
 
 ```powershell
 node --experimental-vm-modules --test tools\wta\tests\opencode-hooks.test.mjs
+node --experimental-vm-modules --test test\e2e\selftests\OpenCodeHooks.test.mjs
 cargo test --target x86_64-pc-windows-msvc --manifest-path tools\wta\Cargo.toml opencode
 ```
+These execute both versioned entrypoints with controlled SDK inputs and capture bridge
+requests. The packaged delivery tests are documented in `test\e2e\README.md`;
+controlled SDK inputs do not substitute for validation of a real V2 loader.
 
 OpenCode's `question` tool is recognized as a user-input tool by both the native
 hook bridge and WTA. Its `agent.tool.starting` event and the `agent.notification`
