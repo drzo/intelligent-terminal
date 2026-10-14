@@ -44,15 +44,19 @@ namespace winrt::TerminalApp::implementation
 
     HighlightedTextControl::~HighlightedTextControl()
     {
-        if (_textBlock)
+        try
         {
-            _textBlock.UnregisterPropertyChangedCallback(Controls::TextBlock::ForegroundProperty(), _foregroundToken);
+            if (_textBlock)
+            {
+                _textBlock.UnregisterPropertyChangedCallback(Controls::TextBlock::ForegroundProperty(), _foregroundToken);
+            }
+            if (_foreground)
+            {
+                _foreground.UnregisterPropertyChangedCallback(Media::SolidColorBrush::ColorProperty(), _colorToken);
+                _foreground.UnregisterPropertyChangedCallback(Media::Brush::OpacityProperty(), _opacityToken);
+            }
         }
-        if (_foreground)
-        {
-            _foreground.UnregisterPropertyChangedCallback(Media::SolidColorBrush::ColorProperty(), _colorToken);
-            _foreground.UnregisterPropertyChangedCallback(Media::Brush::OpacityProperty(), _opacityToken);
-        }
+        CATCH_LOG();
     }
 
     void HighlightedTextControl::_observeForeground()

@@ -16913,6 +16913,7 @@ namespace TerminalAppLocalTests
             VERIFY_ARE_EQUAL(
                 winrt::to_string(winrt::TerminalApp::implementation::TerminalPage::_SidebarHistoryStatusText("Working")),
                 fields.at("agentStatus"));
+            VERIFY_ARE_EQUAL(currentPaneInfo->status, fields.at("agentStatusId"));
             VERIFY_IS_FALSE(fields.at("branchLabel").empty());
             VERIFY_IS_FALSE(fields.at("changesLabel").empty());
             VERIFY_ARE_EQUAL(
