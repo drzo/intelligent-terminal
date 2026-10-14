@@ -47,23 +47,26 @@ instead of letting unordered snapshot rows repeatedly change the icon.
 
 ## One-time Sidebar upgrade and introduction
 
-- The `sidebar-upgrade-v1` experiment assigns approximately 80% of installation
+- The `sidebar-upgrade-v1` rollout assigns approximately 80% of installation
   identities to Sidebar and 20% to Horizontal. On the first eligible load,
   apply that assignment once to new and upgraded installations, including
   those that already completed the older all-Sidebar migration.
-- Persist a random `experimentInstallationId` GUID in shared `state.json`.
-  Use stable experiment-scoped bucketing, not per-launch randomness or a
+- Persist a random `rolloutInstallationId` GUID in shared `state.json`.
+  Use stable rollout-scoped bucketing, not per-launch randomness or a
   hardware identifier. Share identity across windows and elevation levels
   using the existing sidebar-state file lock. Clearing state resets identity.
 - Persist a hidden migration-completed state separately from the hidden
   introduction-shown state. Neither appears as an editable Settings UI option.
   Migration completion is recorded only after its required layout change has
   succeeded through the existing settings persistence path.
-- Record `sidebarExperimentVersion` and `sidebarExperimentAssignment` on
+- Record `sidebarRolloutVersion` and `sidebarRolloutAssignment` on
   completion independently of the legacy `sidebarLayoutMigrationCompleted`
-  flag. Report `SidebarExperimentId` and `SidebarExperimentAssignment` in
+  flag. Report `SidebarRolloutId` and `SidebarRolloutAssignment` in
   `AppCreated`; the fixed assignment is separate from current `SidebarEnabled`.
   Do not emit the installation GUID.
+- Preserve the pre-rename Dev build's identity and completion when converting
+  its hidden experiment-named state keys to rollout-named keys; renaming must
+  not reassign the installation or override a later user layout choice.
 - Later choosing horizontal tabs must not reset either state. Restarting,
   reloading settings, opening another window, or another ordinary upgrade must
   not force Sidebar again or repeat an already-shown introduction.

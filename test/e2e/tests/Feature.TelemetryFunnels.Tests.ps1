@@ -55,8 +55,8 @@ Describe 'Feature: telemetry funnels' -Tag 'Feature', 'Telemetry' -Skip:($env:IT
                 Set-TelemetryPolicy -Transaction $script:policyTransaction -Name $name -Value $null
             }
             $script:app = Start-Terminal -Package Dev -PassFre $true -State @{
-                experimentInstallationId = '{00000000-0000-0000-0000-000000000002}'
-                sidebarExperimentVersion = 1; sidebarExperimentAssignment = 'Horizontal'
+                rolloutInstallationId = '{00000000-0000-0000-0000-000000000002}'
+                sidebarRolloutVersion = 1; sidebarRolloutAssignment = 'Horizontal'
                 sidebarLayoutMigrationCompleted = $true
             } -Settings @{
                 acpAgent = 'custom:telemetry-fixture'; acpCustomCommand = $command; acpModel = ''
@@ -283,8 +283,8 @@ Describe 'Feature: telemetry funnels' -Tag 'Feature', 'Telemetry' -Skip:($env:IT
             AllowedAgentsPolicy = 'AnsiString'
             AllowCustomAgentsPolicy = 'AnsiString'
             SidebarEnabled = 'Boolean'
-            SidebarExperimentId = 'UnicodeString'
-            SidebarExperimentAssignment = 'UnicodeString'
+            SidebarRolloutId = 'UnicodeString'
+            SidebarRolloutAssignment = 'UnicodeString'
             DefaultsFallback = 'Boolean'
         }
         @($created[0].Fields.Keys | Where-Object { $_ -ne 'PartA_PrivTags' } | Sort-Object) | Should -Be ($expected.Keys | Sort-Object)
@@ -292,8 +292,8 @@ Describe 'Feature: telemetry funnels' -Tag 'Feature', 'Telemetry' -Skip:($env:IT
             $created[0].Types[$field] | Should -Match ($expected[$field] + '$')
         }
         $created[0].Fields.PrimaryProvider | Should -Be 'custom'
-        $created[0].Fields.SidebarExperimentId | Should -Be 'sidebar-upgrade-v1'
-        $created[0].Fields.SidebarExperimentAssignment | Should -BeIn @('Sidebar', 'Horizontal')
+        $created[0].Fields.SidebarRolloutId | Should -Be 'sidebar-upgrade-v1'
+        $created[0].Fields.SidebarRolloutAssignment | Should -BeIn @('Sidebar', 'Horizontal')
         $created[0].Types.PartA_PrivTags | Should -Match 'UInt64$'
         @($script:records | Where-Object Name -in @('AgentProviderConfigured', 'CustomAgentConfigured', 'SidebarStateOnLaunch')) | Should -HaveCount 0
     }

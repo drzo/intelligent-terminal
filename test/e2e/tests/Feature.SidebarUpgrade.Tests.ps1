@@ -35,9 +35,9 @@ Describe 'Feature: Sidebar upgrade' -Tag @('Feature', 'SidebarUpgrade') {
             Clear-WtConfig -App $script:target
             Invoke-FrePass -App $script:target | Out-Null
             Set-WtState -App $script:target -Key sidebarLayoutMigrationCompleted -Value $Migration | Out-Null
-            Set-WtState -App $script:target -Key experimentInstallationId -Value '{00000000-0000-0000-0000-000000000001}' | Out-Null
-            Set-WtState -App $script:target -Key sidebarExperimentVersion -Value $(if ($Migration) { 1 } else { 0 }) | Out-Null
-            Set-WtState -App $script:target -Key sidebarExperimentAssignment -Value $(if ($Migration) { 'Sidebar' } else { '' }) | Out-Null
+            Set-WtState -App $script:target -Key rolloutInstallationId -Value '{00000000-0000-0000-0000-000000000001}' | Out-Null
+            Set-WtState -App $script:target -Key sidebarRolloutVersion -Value $(if ($Migration) { 1 } else { 0 }) | Out-Null
+            Set-WtState -App $script:target -Key sidebarRolloutAssignment -Value $(if ($Migration) { 'Sidebar' } else { '' }) | Out-Null
             Set-WtState -App $script:target -Key sidebarIntroductionShown -Value $Shown | Out-Null
             Set-WtSettings -App $script:target -Settings @{
                 language = 'en-US'; tabLayout = $Layout; startupActions = ''
@@ -120,9 +120,9 @@ Describe 'Feature: Sidebar upgrade' -Tag @('Feature', 'SidebarUpgrade') {
         Clear-WtConfig -App $script:target
         Invoke-FrePass -App $script:target | Out-Null
         Set-WtState -App $script:target -Key sidebarLayoutMigrationCompleted -Value $false | Out-Null
-        Set-WtState -App $script:target -Key experimentInstallationId -Value '{00000000-0000-0000-0000-000000000001}' | Out-Null
-        Set-WtState -App $script:target -Key sidebarExperimentVersion -Value 0 | Out-Null
-        Set-WtState -App $script:target -Key sidebarExperimentAssignment -Value '' | Out-Null
+        Set-WtState -App $script:target -Key rolloutInstallationId -Value '{00000000-0000-0000-0000-000000000001}' | Out-Null
+        Set-WtState -App $script:target -Key sidebarRolloutVersion -Value 0 | Out-Null
+        Set-WtState -App $script:target -Key sidebarRolloutAssignment -Value '' | Out-Null
         Set-WtState -App $script:target -Key sidebarIntroductionShown -Value $true | Out-Null
         Set-WtSettings -App $script:target -Settings @{
             language = 'en-US'; tabLayout = 'horizontal'; startupActions = ''
@@ -200,10 +200,10 @@ Describe 'Feature: Sidebar upgrade' -Tag @('Feature', 'SidebarUpgrade') {
         $settings | ConvertTo-Json -Depth 64 | Set-Content -LiteralPath $script:target.SettingsPath
         $state = Get-WtStateObject -App $script:target
         if (-not $state) { $state = [pscustomobject]@{} }
-        foreach ($key in @('sidebarLayoutMigrationCompleted', 'sidebarIntroductionShown', 'agentFreCompleted', 'sidebarExperimentVersion', 'sidebarExperimentAssignment')) {
+        foreach ($key in @('sidebarLayoutMigrationCompleted', 'sidebarIntroductionShown', 'agentFreCompleted', 'sidebarRolloutVersion', 'sidebarRolloutAssignment')) {
             $state.PSObject.Properties.Remove($key)
         }
-        $state | Add-Member experimentInstallationId '{00000000-0000-0000-0000-000000000001}' -Force
+        $state | Add-Member rolloutInstallationId '{00000000-0000-0000-0000-000000000001}' -Force
         $state | ConvertTo-Json -Depth 64 | Set-Content -LiteralPath $script:target.StatePath
         $script:app = Start-Terminal -Package Dev -Backup $false -CleanSettings $false -PassFre $false -ShowFre
         Test-FreShowing -App $script:app | Should -BeTrue

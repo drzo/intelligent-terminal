@@ -1672,18 +1672,18 @@ bool CascadiaSettings::WriteSettingsToDisk()
 
 bool CascadiaSettings::MigrateSidebarLayout(ApplicationState& state, const std::function<bool()>& save)
 {
-    if (!state.PrepareSidebarExperiment())
+    if (!state.PrepareSidebarRollout())
     {
         WarnSidebarPersistenceFailure();
         return false;
     }
-    if (state.SidebarExperimentVersion() == ApplicationState::CurrentSidebarExperimentVersion)
+    if (state.SidebarRolloutVersion() == ApplicationState::CurrentSidebarRolloutVersion)
     {
         return true;
     }
     const auto hadLayout = _globals->HasTabLayout();
     const auto previous = _globals->TabLayout();
-    const auto assignedLayout = state.SidebarExperimentLayout();
+    const auto assignedLayout = state.SidebarRolloutLayout();
     _globals->TabLayout(assignedLayout);
     bool saved = false;
     try

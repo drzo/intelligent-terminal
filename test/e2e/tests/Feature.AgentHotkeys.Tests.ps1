@@ -19,7 +19,7 @@ Describe 'Feature §2/§5 agent hotkeys + delegation palette (window-level accel
     BeforeAll {
         Import-Module (Join-Path $PSScriptRoot '..\ItE2E\ItE2E.psd1') -Force
         $script:app = Start-Terminal -Package (Get-ItTestPackage) -PassFre $true -State @{
-            experimentInstallationId = '{00000000-0000-0000-0000-000000000001}'; sidebarExperimentVersion = 1; sidebarExperimentAssignment = 'Sidebar'; sidebarLayoutMigrationCompleted = $true; sidebarIntroductionShown = $true
+            rolloutInstallationId = '{00000000-0000-0000-0000-000000000001}'; sidebarRolloutVersion = 1; sidebarRolloutAssignment = 'Sidebar'; sidebarLayoutMigrationCompleted = $true; sidebarIntroductionShown = $true
         } -Settings @{ acpAgent = 'copilot'; delegateAgent = 'copilot' }
         # VK codes: Ctrl+Shift+. = 0xBE (OEM_PERIOD); Alt+Shift+B = 0x42; Alt+Shift+/ = 0xBF (OEM_2).
         $script:TogglePaneHotkey = { Send-WtWindowKey -App $script:app -Vk 0xBE -Ctrl -Shift | Out-Null }
@@ -208,7 +208,7 @@ Describe 'Feature: layout-aware agent history and sidebar hotkeys' -Tag @('Featu
                 throw 'Refusing to replace an existing selected-package window for layout hotkey tests.'
             }
             Start-Terminal -Package (Get-ItTestPackage) -PassFre $true -State @{
-                experimentInstallationId = '{00000000-0000-0000-0000-000000000001}'; sidebarExperimentVersion = 1; sidebarExperimentAssignment = 'Sidebar'; sidebarLayoutMigrationCompleted = $true; sidebarIntroductionShown = $true
+                rolloutInstallationId = '{00000000-0000-0000-0000-000000000001}'; sidebarRolloutVersion = 1; sidebarRolloutAssignment = 'Sidebar'; sidebarLayoutMigrationCompleted = $true; sidebarIntroductionShown = $true
             } -Settings @{
                 language = 'en-US'
                 tabLayout = $Layout

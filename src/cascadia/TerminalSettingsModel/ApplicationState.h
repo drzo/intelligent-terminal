@@ -50,9 +50,9 @@ namespace winrt::Microsoft::Terminal::Settings::Model::implementation
     X(FileSource::Shared, bool, AgentWelcomeShown, "agentWelcomeShown", false)                                                                                            \
     X(FileSource::Shared, bool, SidebarLayoutMigrationCompleted, "sidebarLayoutMigrationCompleted", false)                                                                \
     X(FileSource::Shared, bool, SidebarIntroductionShown, "sidebarIntroductionShown", false)                                                                              \
-    X(FileSource::Shared, winrt::guid, ExperimentInstallationId, "experimentInstallationId")                                                                              \
-    X(FileSource::Shared, uint32_t, SidebarExperimentVersion, "sidebarExperimentVersion", 0)                                                                              \
-    X(FileSource::Shared, winrt::hstring, SidebarExperimentAssignment, "sidebarExperimentAssignment")
+    X(FileSource::Shared, winrt::guid, RolloutInstallationId, "rolloutInstallationId")                                                                                    \
+    X(FileSource::Shared, uint32_t, SidebarRolloutVersion, "sidebarRolloutVersion", 0)                                                                                    \
+    X(FileSource::Shared, winrt::hstring, SidebarRolloutAssignment, "sidebarRolloutAssignment")
 
     struct WindowLayout : WindowLayoutT<WindowLayout>
     {
@@ -99,14 +99,14 @@ namespace winrt::Microsoft::Terminal::Settings::Model::implementation
         // Hold this lock across reading settings, migration, and recording completion.
         wil::unique_handle LockSidebarState(bool wait = true) const;
         void RefreshSidebarState() const;
-        bool PrepareSidebarExperiment() noexcept;
+        bool PrepareSidebarRollout() noexcept;
         bool CompleteSidebarLayoutMigration() noexcept;
-        static uint32_t SidebarExperimentBucket(const winrt::guid& installationId) noexcept;
-        Model::TabLayout SidebarExperimentLayout() const noexcept;
-        winrt::hstring SidebarExperimentId() const;
+        static uint32_t SidebarRolloutBucket(const winrt::guid& installationId) noexcept;
+        Model::TabLayout SidebarRolloutLayout() const noexcept;
+        winrt::hstring SidebarRolloutId() const;
 
-        static constexpr uint32_t CurrentSidebarExperimentVersion = 1;
-        static constexpr std::string_view CurrentSidebarExperimentId{ "sidebar-upgrade-v1" };
+        static constexpr uint32_t CurrentSidebarRolloutVersion = 1;
+        static constexpr std::string_view CurrentSidebarRolloutId{ "sidebar-upgrade-v1" };
 
         // State getters/setters
 #define MTSM_APPLICATION_STATE_GEN(source, type, name, key, ...) \

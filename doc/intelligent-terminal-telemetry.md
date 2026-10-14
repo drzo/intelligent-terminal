@@ -491,8 +491,8 @@ the same process and windows that never connect an agent session.
 | `AllowedAgentsPolicy` | String | `not_configured`, `empty`, or `allowlist`; never the allowlist entries |
 | `AllowCustomAgentsPolicy` | String | `not_configured`, `allowed`, or `blocked` |
 | `SidebarEnabled` | Bool | Whether the configured tab layout is vertical |
-| `SidebarExperimentId` | WideString | `sidebar-upgrade-v1` after successful experiment migration; empty if not enrolled |
-| `SidebarExperimentAssignment` | WideString | Fixed initial assignment: `Sidebar`, `Horizontal`, or `NotEnrolled` if migration has not completed |
+| `SidebarRolloutId` | WideString | `sidebar-upgrade-v1` after successful rollout migration; empty if not enrolled |
+| `SidebarRolloutAssignment` | WideString | Fixed initial assignment: `Sidebar`, `Horizontal`, or `NotEnrolled` if migration has not completed |
 | `DefaultsFallback` | Bool | Whether the currently accepted settings came from initial load-failure fallback |
 
 Both roles and shared policy/sidebar state belong to this single record;
@@ -501,7 +501,7 @@ windows reflect the then-current settings, not a frozen process-start
 snapshot. Settings reload and agent session creation/load do not emit
 `AppCreated`.
 
-The sidebar upgrade experiment assigns approximately 80% of installation
+The sidebar upgrade rollout assigns approximately 80% of installation
 identities to Sidebar and 20% to Horizontal, including users who already
 completed the older all-Sidebar migration. A random GUID is persisted locally
 in shared application state; FNV-1a over `sidebar-upgrade-v1` followed by the
@@ -510,10 +510,12 @@ GUID's canonical 16 bytes selects one of 10,000 buckets (0-7,999 Sidebar,
 The GUID is not included in telemetry. Its scope is the current settings/state
 directory, shared across elevation levels, not the entire physical device.
 Deleting state starts a new identity and assignment.
+Pre-rename Dev state keys are read as aliases and converted to rollout keys
+on the next state write, preserving identity, assignment, and migration completion.
 
 The assigned layout is applied once, only recording completion after both
 settings and state are saved. Subsequent user layout changes are preserved.
-`SidebarExperimentAssignment` stays fixed while `SidebarEnabled` reports the
+`SidebarRolloutAssignment` stays fixed while `SidebarEnabled` reports the
 current layout. Analyze groups using backend device metadata and a documented
 snapshot-selection rule; event counts across windows are not assignment shares.
 

@@ -44,11 +44,12 @@ namespace SettingsModelUnitTests
         TEST_METHOD(SidebarMigrationRollbackFailureWarnsAndKeepsLastSavedLayout);
         TEST_METHOD(SidebarIntroductionCloseRetriesPendingDurability);
         TEST_METHOD(SidebarIntroductionFlushCompletesPendingDurability);
-        TEST_METHOD(SidebarExperimentBucketsAreStableAndEightyTwenty);
-        TEST_METHOD(SidebarExperimentAssignmentPersistsAcrossInstances);
-        TEST_METHOD(SidebarExperimentMigratesBothGroupsAfterLegacyMigration);
-        TEST_METHOD(SidebarExperimentFailedSaveKeepsIdentity);
-        TEST_METHOD(SidebarExperimentIdentityFailureDoesNotChangeLayout);
+        TEST_METHOD(SidebarRolloutBucketsAreStableAndEightyTwenty);
+        TEST_METHOD(SidebarRolloutAssignmentPersistsAcrossInstances);
+        TEST_METHOD(SidebarRolloutMigratesBothGroupsAfterLegacyMigration);
+        TEST_METHOD(SidebarRolloutFailedSaveKeepsIdentity);
+        TEST_METHOD(SidebarRolloutIdentityFailureDoesNotChangeLayout);
+        TEST_METHOD(SidebarRolloutRenamePreservesExistingAssignment);
 
     private:
         static std::filesystem::path _tempRoot()
@@ -102,8 +103,8 @@ namespace SettingsModelUnitTests
         static winrt::com_ptr<implementation::ApplicationState> _sidebarState(const std::filesystem::path& root, bool sidebar = true)
         {
             til::io::write_utf8_string_to_file_atomic(root / L"state.json",
-                                                      sidebar ? R"({"experimentInstallationId":"{00000000-0000-0000-0000-000000000001}"})" :
-                                                                R"({"experimentInstallationId":"{00000000-0000-0000-0000-000000000002}"})");
+                                                      sidebar ? R"({"rolloutInstallationId":"{00000000-0000-0000-0000-000000000001}"})" :
+                                                                R"({"rolloutInstallationId":"{00000000-0000-0000-0000-000000000002}"})");
             return winrt::make_self<implementation::ApplicationState>(root);
         }
 
@@ -498,14 +499,14 @@ namespace SettingsModelUnitTests
         first->EndSidebarIntroduction(claim, false);
     }
 
-    void ApplicationStateTests::SidebarExperimentBucketsAreStableAndEightyTwenty()
+    void ApplicationStateTests::SidebarRolloutBucketsAreStableAndEightyTwenty()
     {
         using State = implementation::ApplicationState;
         const auto root = _sidebarRoot();
         const auto cleanup = wil::scope_exit([&]() { std::filesystem::remove_all(root); });
         auto state = winrt::make_self<State>(root);
-        VERIFY_ARE_EQUAL(uint32_t{ 1495 }, State::SidebarExperimentBucket(winrt::guid{ L"{00000000-0000-0000-0000-000000000001}" }));
-        VERIFY_ARE_EQUAL(uint32_t{ 9114 }, State::SidebarExperimentBucket(winrt::guid{ L"{00000000-0000-0000-0000-000000000002}" }));
+        VERIFY_ARE_EQUAL(uint32_t{ 1495 }, State::SidebarRolloutBucket(winrt::guid{ L"{00000000-0000-0000-0000-000000000001}" }));
+        VERIFY_ARE_EQUAL(uint32_t{ 9114 }, State::SidebarRolloutBucket(winrt::guid{ L"{00000000-0000-0000-0000-000000000002}" }));
         uint32_t sidebar = 0;
         uint32_t horizontal = 0;
         bool validBuckets = true;
@@ -515,14 +516,14 @@ namespace SettingsModelUnitTests
         {
             winrt::guid id{};
             id.Data1 = i;
-            const auto bucket = State::SidebarExperimentBucket(id);
+            const auto bucket = State::SidebarRolloutBucket(id);
             validBuckets &= bucket < 10000;
             saw7999 |= bucket == 7999;
             saw8000 |= bucket == 8000;
             if (bucket == 7999 || bucket == 8000)
             {
-                state->ExperimentInstallationId(id);
-                VERIFY_ARE_EQUAL(bucket == 7999 ? TabLayout::Vertical : TabLayout::Horizontal, state->SidebarExperimentLayout());
+                state->RolloutInstallationId(id);
+                VERIFY_ARE_EQUAL(bucket == 7999 ? TabLayout::Vertical : TabLayout::Horizontal, state->SidebarRolloutLayout());
             }
             bucket < 8000 ? ++sidebar : ++horizontal;
         }
@@ -532,7 +533,7 @@ namespace SettingsModelUnitTests
         VERIFY_ARE_EQUAL(uint32_t{ 100000 }, sidebar + horizontal);
     }
 
-    void ApplicationStateTests::SidebarExperimentAssignmentPersistsAcrossInstances()
+    void ApplicationStateTests::SidebarRolloutAssignmentPersistsAcrossInstances()
     {
         const auto root = _sidebarRoot();
         const auto cleanup = wil::scope_exit([&]() { std::filesystem::remove_all(root); });
@@ -542,35 +543,35 @@ namespace SettingsModelUnitTests
         TabLayout layout;
         {
             const auto lock = first->LockSidebarState();
-            VERIFY_IS_TRUE(first->PrepareSidebarExperiment());
-            id = first->ExperimentInstallationId();
-            layout = first->SidebarExperimentLayout();
+            VERIFY_IS_TRUE(first->PrepareSidebarRollout());
+            id = first->RolloutInstallationId();
+            layout = first->SidebarRolloutLayout();
             VERIFY_IS_TRUE(id != winrt::guid{});
             VERIFY_IS_TRUE(first->CompleteSidebarLayoutMigration());
         }
         stale->AgentWelcomeShown(true);
         stale->Flush();
         auto restarted = winrt::make_self<implementation::ApplicationState>(root);
-        VERIFY_ARE_EQUAL(id, restarted->ExperimentInstallationId());
-        VERIFY_ARE_EQUAL(layout, restarted->SidebarExperimentLayout());
-        VERIFY_ARE_EQUAL(winrt::hstring{ L"sidebar-upgrade-v1" }, restarted->SidebarExperimentId());
-        VERIFY_ARE_EQUAL(first->SidebarExperimentAssignment(), restarted->SidebarExperimentAssignment());
+        VERIFY_ARE_EQUAL(id, restarted->RolloutInstallationId());
+        VERIFY_ARE_EQUAL(layout, restarted->SidebarRolloutLayout());
+        VERIFY_ARE_EQUAL(winrt::hstring{ L"sidebar-upgrade-v1" }, restarted->SidebarRolloutId());
+        VERIFY_ARE_EQUAL(first->SidebarRolloutAssignment(), restarted->SidebarRolloutAssignment());
         const auto shared = restarted->ToJson(implementation::FileSource::Shared);
         const auto local = restarted->ToJson(implementation::FileSource::Local);
-        VERIFY_IS_TRUE(shared.isMember("experimentInstallationId"));
-        VERIFY_IS_TRUE(shared.isMember("sidebarExperimentVersion"));
-        VERIFY_IS_TRUE(shared.isMember("sidebarExperimentAssignment"));
-        VERIFY_IS_FALSE(local.isMember("experimentInstallationId"));
-        VERIFY_IS_FALSE(local.isMember("sidebarExperimentVersion"));
-        VERIFY_IS_FALSE(local.isMember("sidebarExperimentAssignment"));
+        VERIFY_IS_TRUE(shared.isMember("rolloutInstallationId"));
+        VERIFY_IS_TRUE(shared.isMember("sidebarRolloutVersion"));
+        VERIFY_IS_TRUE(shared.isMember("sidebarRolloutAssignment"));
+        VERIFY_IS_FALSE(local.isMember("rolloutInstallationId"));
+        VERIFY_IS_FALSE(local.isMember("sidebarRolloutVersion"));
+        VERIFY_IS_FALSE(local.isMember("sidebarRolloutAssignment"));
         const auto lock = stale->LockSidebarState();
         stale->RefreshSidebarState();
-        VERIFY_IS_TRUE(stale->PrepareSidebarExperiment());
-        VERIFY_ARE_EQUAL(id, stale->ExperimentInstallationId());
-        VERIFY_ARE_EQUAL(first->SidebarExperimentAssignment(), stale->SidebarExperimentAssignment());
+        VERIFY_IS_TRUE(stale->PrepareSidebarRollout());
+        VERIFY_ARE_EQUAL(id, stale->RolloutInstallationId());
+        VERIFY_ARE_EQUAL(first->SidebarRolloutAssignment(), stale->SidebarRolloutAssignment());
     }
 
-    void ApplicationStateTests::SidebarExperimentMigratesBothGroupsAfterLegacyMigration()
+    void ApplicationStateTests::SidebarRolloutMigratesBothGroupsAfterLegacyMigration()
     {
         for (const auto sidebar : { false, true })
         {
@@ -588,8 +589,8 @@ namespace SettingsModelUnitTests
             VERIFY_IS_TRUE(settings->MigrateSidebarLayout(*state, [&]() { ++saves; return true; }));
             VERIFY_ARE_EQUAL(1, saves);
             VERIFY_ARE_EQUAL(assigned, settings->GlobalSettings().TabLayout());
-            VERIFY_ARE_EQUAL(winrt::hstring{ sidebar ? L"Sidebar" : L"Horizontal" }, state->SidebarExperimentAssignment());
-            VERIFY_ARE_EQUAL(uint32_t{ 1 }, state->SidebarExperimentVersion());
+            VERIFY_ARE_EQUAL(winrt::hstring{ sidebar ? L"Sidebar" : L"Horizontal" }, state->SidebarRolloutAssignment());
+            VERIFY_ARE_EQUAL(uint32_t{ 1 }, state->SidebarRolloutVersion());
             lock.reset();
             auto restarted = winrt::make_self<implementation::ApplicationState>(root);
             auto changed = _sidebarSettings(sidebar ? "horizontal" : "vertical");
@@ -597,11 +598,11 @@ namespace SettingsModelUnitTests
             VERIFY_IS_TRUE(changed->MigrateSidebarLayout(*restarted, [&]() { ++saves; return true; }));
             VERIFY_ARE_EQUAL(1, saves);
             VERIFY_ARE_EQUAL(sidebar ? TabLayout::Horizontal : TabLayout::Vertical, changed->GlobalSettings().TabLayout());
-            VERIFY_ARE_EQUAL(state->SidebarExperimentAssignment(), restarted->SidebarExperimentAssignment());
+            VERIFY_ARE_EQUAL(state->SidebarRolloutAssignment(), restarted->SidebarRolloutAssignment());
         }
     }
 
-    void ApplicationStateTests::SidebarExperimentFailedSaveKeepsIdentity()
+    void ApplicationStateTests::SidebarRolloutFailedSaveKeepsIdentity()
     {
         const auto root = _sidebarRoot();
         const auto cleanup = wil::scope_exit([&]() { std::filesystem::remove_all(root); });
@@ -609,23 +610,23 @@ namespace SettingsModelUnitTests
         auto settings = _sidebarSettings("horizontal");
         auto lock = state->LockSidebarState();
         VERIFY_IS_FALSE(settings->MigrateSidebarLayout(*state, []() { return false; }));
-        const auto id = state->ExperimentInstallationId();
+        const auto id = state->RolloutInstallationId();
         VERIFY_IS_TRUE(id != winrt::guid{});
-        VERIFY_ARE_EQUAL(uint32_t{ 0 }, state->SidebarExperimentVersion());
-        VERIFY_IS_TRUE(state->SidebarExperimentId().empty());
+        VERIFY_ARE_EQUAL(uint32_t{ 0 }, state->SidebarRolloutVersion());
+        VERIFY_IS_TRUE(state->SidebarRolloutId().empty());
         VERIFY_IS_TRUE(_hasSaveWarning(*settings));
         VERIFY_ARE_EQUAL(TabLayout::Horizontal, settings->GlobalSettings().TabLayout());
         lock.reset();
         auto restarted = winrt::make_self<implementation::ApplicationState>(root);
-        VERIFY_ARE_EQUAL(id, restarted->ExperimentInstallationId());
+        VERIFY_ARE_EQUAL(id, restarted->RolloutInstallationId());
         lock = restarted->LockSidebarState();
         VERIFY_IS_TRUE(settings->MigrateSidebarLayout(*restarted, []() { return true; }));
-        VERIFY_ARE_EQUAL(id, restarted->ExperimentInstallationId());
-        VERIFY_ARE_EQUAL(restarted->SidebarExperimentLayout(), settings->GlobalSettings().TabLayout());
-        VERIFY_ARE_EQUAL(uint32_t{ 1 }, restarted->SidebarExperimentVersion());
+        VERIFY_ARE_EQUAL(id, restarted->RolloutInstallationId());
+        VERIFY_ARE_EQUAL(restarted->SidebarRolloutLayout(), settings->GlobalSettings().TabLayout());
+        VERIFY_ARE_EQUAL(uint32_t{ 1 }, restarted->SidebarRolloutVersion());
     }
 
-    void ApplicationStateTests::SidebarExperimentIdentityFailureDoesNotChangeLayout()
+    void ApplicationStateTests::SidebarRolloutIdentityFailureDoesNotChangeLayout()
     {
         const auto root = _sidebarRoot();
         const auto cleanup = wil::scope_exit([&]() { std::filesystem::remove_all(root); });
@@ -638,12 +639,65 @@ namespace SettingsModelUnitTests
         VERIFY_ARE_EQUAL(0, saves);
         VERIFY_IS_TRUE(_hasSaveWarning(*settings));
         VERIFY_ARE_EQUAL(TabLayout::Horizontal, settings->GlobalSettings().TabLayout());
-        VERIFY_ARE_EQUAL(winrt::guid{}, state->ExperimentInstallationId());
-        VERIFY_ARE_EQUAL(uint32_t{ 0 }, state->SidebarExperimentVersion());
+        VERIFY_ARE_EQUAL(winrt::guid{}, state->RolloutInstallationId());
+        VERIFY_ARE_EQUAL(uint32_t{ 0 }, state->SidebarRolloutVersion());
         std::filesystem::remove(root / L"state.json");
         VERIFY_IS_TRUE(settings->MigrateSidebarLayout(*state, [&]() { ++saves; return true; }));
         VERIFY_ARE_EQUAL(1, saves);
-        VERIFY_IS_TRUE(state->ExperimentInstallationId() != winrt::guid{});
-        VERIFY_ARE_EQUAL(uint32_t{ 1 }, state->SidebarExperimentVersion());
+        VERIFY_IS_TRUE(state->RolloutInstallationId() != winrt::guid{});
+        VERIFY_ARE_EQUAL(uint32_t{ 1 }, state->SidebarRolloutVersion());
+    }
+
+    void ApplicationStateTests::SidebarRolloutRenamePreservesExistingAssignment()
+    {
+        const auto root = _sidebarRoot();
+        const auto cleanup = wil::scope_exit([&]() { std::filesystem::remove_all(root); });
+        til::io::write_utf8_string_to_file_atomic(root / L"state.json",
+                                                  R"({"experimentInstallationId":"{00000000-0000-0000-0000-000000000001}","sidebarExperimentVersion":1,"sidebarExperimentAssignment":"Sidebar","sidebarLayoutMigrationCompleted":true})");
+        auto state = winrt::make_self<implementation::ApplicationState>(root);
+        auto stale = winrt::make_self<implementation::ApplicationState>(root);
+        const auto id = winrt::guid{ L"{00000000-0000-0000-0000-000000000001}" };
+        VERIFY_ARE_EQUAL(id, state->RolloutInstallationId());
+        auto settings = _sidebarSettings("horizontal");
+        {
+            const auto lock = state->LockSidebarState();
+            state->RefreshSidebarState();
+            auto saves = 0;
+            VERIFY_IS_TRUE(settings->MigrateSidebarLayout(*state, [&]() { ++saves; return true; }));
+            VERIFY_ARE_EQUAL(0, saves);
+            VERIFY_ARE_EQUAL(TabLayout::Horizontal, settings->GlobalSettings().TabLayout());
+            VERIFY_ARE_EQUAL(winrt::hstring{ L"Sidebar" }, state->SidebarRolloutAssignment());
+        }
+        state->AgentWelcomeShown(true);
+        state->Flush();
+        stale->AgentFreCompleted(true);
+        stale->Flush();
+        const auto json = _readFixture(root / L"state.json");
+        VERIFY_ARE_EQUAL(std::string{ "{00000000-0000-0000-0000-000000000001}" }, json["rolloutInstallationId"].asString());
+        VERIFY_ARE_EQUAL(uint32_t{ 1 }, json["sidebarRolloutVersion"].asUInt());
+        VERIFY_ARE_EQUAL(std::string{ "Sidebar" }, json["sidebarRolloutAssignment"].asString());
+        VERIFY_IS_FALSE(json.isMember("experimentInstallationId"));
+        VERIFY_IS_FALSE(json.isMember("sidebarExperimentVersion"));
+        VERIFY_IS_FALSE(json.isMember("sidebarExperimentAssignment"));
+        auto restarted = winrt::make_self<implementation::ApplicationState>(root);
+        VERIFY_ARE_EQUAL(id, restarted->RolloutInstallationId());
+        VERIFY_ARE_EQUAL(winrt::hstring{ L"Sidebar" }, restarted->SidebarRolloutAssignment());
+        auto mixed = json;
+        mixed["experimentInstallationId"] = "{00000000-0000-0000-0000-000000000002}";
+        mixed["sidebarExperimentVersion"] = 0;
+        mixed["sidebarExperimentAssignment"] = "Horizontal";
+        til::io::write_utf8_string_to_file_atomic(root / L"state.json", Json::writeString(Json::StreamWriterBuilder{}, mixed));
+        auto canonical = winrt::make_self<implementation::ApplicationState>(root);
+        {
+            const auto lock = canonical->LockSidebarState();
+            canonical->RefreshSidebarState();
+            VERIFY_IS_TRUE(canonical->PrepareSidebarRollout());
+            VERIFY_ARE_EQUAL(id, canonical->RolloutInstallationId());
+            VERIFY_ARE_EQUAL(uint32_t{ 1 }, canonical->SidebarRolloutVersion());
+            VERIFY_ARE_EQUAL(winrt::hstring{ L"Sidebar" }, canonical->SidebarRolloutAssignment());
+        }
+        canonical->AgentWelcomeShown(true);
+        canonical->Flush();
+        VERIFY_IS_FALSE(_readFixture(root / L"state.json").isMember("experimentInstallationId"));
     }
 }

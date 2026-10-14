@@ -107,7 +107,7 @@ Describe 'Feature: Agents mode actions' -Tag @('Feature', 'AgentsModeActions') {
             [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($otherBootstrap))
         $script:ownsConfig = $true
         $script:app = Start-Terminal -Package Dev -PassFre $true -State @{
-            experimentInstallationId = '{00000000-0000-0000-0000-000000000001}'; sidebarExperimentVersion = 1; sidebarExperimentAssignment = 'Sidebar'; sidebarLayoutMigrationCompleted = $true; sidebarIntroductionShown = $true
+            rolloutInstallationId = '{00000000-0000-0000-0000-000000000001}'; sidebarRolloutVersion = 1; sidebarRolloutAssignment = 'Sidebar'; sidebarLayoutMigrationCompleted = $true; sidebarIntroductionShown = $true
         } -Settings @{
             language = 'en-US'; tabLayout = 'vertical'; startupActions = ''
             firstWindowPreference = 'defaultProfile'; windowingBehavior = 'useNew'

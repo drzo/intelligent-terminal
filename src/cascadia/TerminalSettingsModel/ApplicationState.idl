@@ -56,7 +56,7 @@ namespace Microsoft.Terminal.Settings.Model
         UInt64 TryBeginSidebarIntroduction();
         void EndSidebarIntroduction(UInt64 claim, Boolean shown);
 
-        String SidebarExperimentId { get; };
-        String SidebarExperimentAssignment { get; };
+        String SidebarRolloutId { get; };
+        String SidebarRolloutAssignment { get; };
     }
 }

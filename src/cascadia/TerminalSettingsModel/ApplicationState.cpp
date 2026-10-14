@@ -21,6 +21,24 @@ static constexpr std::string_view InitialPositionKey{ "initialPosition" };
 static constexpr std::string_view InitialSizeKey{ "initialSize" };
 static constexpr std::string_view LaunchModeKey{ "launchMode" };
 
+static constexpr std::array<std::pair<const char*, const char*>, 3> sidebarRolloutStateKeys{
+    std::pair{ "rolloutInstallationId", "experimentInstallationId" },
+    std::pair{ "sidebarRolloutVersion", "sidebarExperimentVersion" },
+    std::pair{ "sidebarRolloutAssignment", "sidebarExperimentAssignment" },
+};
+
+static void migrateSidebarRolloutStateKeys(Json::Value& root)
+{
+    for (const auto& [current, previous] : sidebarRolloutStateKeys)
+    {
+        if (!root.isMember(current) && root.isMember(previous))
+        {
+            root[current] = root[previous];
+        }
+        root.removeMember(previous);
+    }
+}
+
 namespace Microsoft::Terminal::Settings::Model::JsonUtils
 {
     using namespace winrt::Microsoft::Terminal::Settings::Model;
@@ -318,6 +336,7 @@ namespace winrt::Microsoft::Terminal::Settings::Model::implementation
             const std::unique_ptr<Json::CharReader> reader{ Json::CharReaderBuilder{}.newCharReader() };
             THROW_HR_IF(WEB_E_INVALID_JSON_STRING, !reader->parse(contents.data(), contents.data() + contents.size(), &root, &errors) || !root.isObject());
         }
+        migrateSidebarRolloutStateKeys(root);
         return root;
     }
 
@@ -332,7 +351,7 @@ namespace winrt::Microsoft::Terminal::Settings::Model::implementation
                 root[key] = true;
             }
         }
-        for (const auto key : { "experimentInstallationId", "sidebarExperimentVersion", "sidebarExperimentAssignment" })
+        for (const auto key : { "rolloutInstallationId", "sidebarRolloutVersion", "sidebarRolloutAssignment" })
         {
             if (previous.isMember(key))
             {
@@ -347,20 +366,20 @@ namespace winrt::Microsoft::Terminal::Settings::Model::implementation
         const auto state = _state.lock();
         state->SidebarLayoutMigrationCompleted = JsonUtils::GetValueForKey<std::optional<bool>>(root, "sidebarLayoutMigrationCompleted");
         state->SidebarIntroductionShown = JsonUtils::GetValueForKey<std::optional<bool>>(root, "sidebarIntroductionShown");
-        state->ExperimentInstallationId = JsonUtils::GetValueForKey<std::optional<winrt::guid>>(root, "experimentInstallationId");
-        state->SidebarExperimentVersion = JsonUtils::GetValueForKey<std::optional<uint32_t>>(root, "sidebarExperimentVersion");
-        state->SidebarExperimentAssignment = JsonUtils::GetValueForKey<std::optional<winrt::hstring>>(root, "sidebarExperimentAssignment");
+        state->RolloutInstallationId = JsonUtils::GetValueForKey<std::optional<winrt::guid>>(root, "rolloutInstallationId");
+        state->SidebarRolloutVersion = JsonUtils::GetValueForKey<std::optional<uint32_t>>(root, "sidebarRolloutVersion");
+        state->SidebarRolloutAssignment = JsonUtils::GetValueForKey<std::optional<winrt::hstring>>(root, "sidebarRolloutAssignment");
     }
 
-    uint32_t ApplicationState::SidebarExperimentBucket(const winrt::guid& installationId) noexcept
+    uint32_t ApplicationState::SidebarRolloutBucket(const winrt::guid& installationId) noexcept
     {
-        // FNV-1a over the experiment ID and canonical GUID bytes, independent
+        // FNV-1a over the rollout ID and canonical GUID bytes, independent
         // of std::hash implementation and native GUID memory layout.
         uint32_t hash = 2166136261u;
         const auto add = [&](uint8_t byte) {
             hash = (hash ^ byte) * 16777619u;
         };
-        for (const auto byte : CurrentSidebarExperimentId)
+        for (const auto byte : CurrentSidebarRolloutId)
         {
             add(static_cast<uint8_t>(byte));
         }
@@ -383,35 +402,35 @@ namespace winrt::Microsoft::Terminal::Settings::Model::implementation
         return hash % 10000;
     }
 
-    Model::TabLayout ApplicationState::SidebarExperimentLayout() const noexcept
+    Model::TabLayout ApplicationState::SidebarRolloutLayout() const noexcept
     {
-        return SidebarExperimentBucket(ExperimentInstallationId()) < 8000 ? Model::TabLayout::Vertical : Model::TabLayout::Horizontal;
+        return SidebarRolloutBucket(RolloutInstallationId()) < 8000 ? Model::TabLayout::Vertical : Model::TabLayout::Horizontal;
     }
 
-    winrt::hstring ApplicationState::SidebarExperimentId() const
+    winrt::hstring ApplicationState::SidebarRolloutId() const
     {
-        return SidebarExperimentVersion() == CurrentSidebarExperimentVersion ? winrt::to_hstring(CurrentSidebarExperimentId) : winrt::hstring{};
+        return SidebarRolloutVersion() == CurrentSidebarRolloutVersion ? winrt::to_hstring(CurrentSidebarRolloutId) : winrt::hstring{};
     }
 
-    bool ApplicationState::PrepareSidebarExperiment() noexcept
+    bool ApplicationState::PrepareSidebarRollout() noexcept
     try
     {
         // The caller holds the cross-process lock. Persist identity before
         // changing settings so a failed migration retries the same assignment.
-        if (ExperimentInstallationId() == winrt::guid{})
+        if (RolloutInstallationId() == winrt::guid{})
         {
-            THROW_HR_IF(E_UNEXPECTED, SidebarExperimentVersion() != 0);
+            THROW_HR_IF(E_UNEXPECTED, SidebarRolloutVersion() != 0);
             auto root = _readSharedJson();
             const winrt::guid id{ ::Microsoft::Console::Utils::CreateGuid() };
-            JsonUtils::SetValueForKey(root, "experimentInstallationId", id);
+            JsonUtils::SetValueForKey(root, "rolloutInstallationId", id);
             _writeSharedContents(Json::writeString(Json::StreamWriterBuilder{}, root));
-            _state.lock()->ExperimentInstallationId = id;
+            _state.lock()->RolloutInstallationId = id;
         }
-        if (SidebarExperimentVersion() == CurrentSidebarExperimentVersion)
+        if (SidebarRolloutVersion() == CurrentSidebarRolloutVersion)
         {
-            THROW_HR_IF(E_UNEXPECTED, SidebarExperimentAssignment() != (SidebarExperimentLayout() == Model::TabLayout::Vertical ? L"Sidebar" : L"Horizontal"));
+            THROW_HR_IF(E_UNEXPECTED, SidebarRolloutAssignment() != (SidebarRolloutLayout() == Model::TabLayout::Vertical ? L"Sidebar" : L"Horizontal"));
         }
-        THROW_HR_IF(E_UNEXPECTED, SidebarExperimentVersion() > CurrentSidebarExperimentVersion);
+        THROW_HR_IF(E_UNEXPECTED, SidebarRolloutVersion() > CurrentSidebarRolloutVersion);
         return true;
     }
     catch (...)
@@ -430,20 +449,20 @@ namespace winrt::Microsoft::Terminal::Settings::Model::implementation
     bool ApplicationState::CompleteSidebarLayoutMigration() noexcept
     try
     {
-        if (!PrepareSidebarExperiment())
+        if (!PrepareSidebarRollout())
         {
             return false;
         }
         auto root = _readSharedJson();
         root["sidebarLayoutMigrationCompleted"] = true;
-        const winrt::hstring assignment{ SidebarExperimentLayout() == Model::TabLayout::Vertical ? L"Sidebar" : L"Horizontal" };
-        root["sidebarExperimentVersion"] = CurrentSidebarExperimentVersion;
-        JsonUtils::SetValueForKey(root, "sidebarExperimentAssignment", assignment);
+        const winrt::hstring assignment{ SidebarRolloutLayout() == Model::TabLayout::Vertical ? L"Sidebar" : L"Horizontal" };
+        root["sidebarRolloutVersion"] = CurrentSidebarRolloutVersion;
+        JsonUtils::SetValueForKey(root, "sidebarRolloutAssignment", assignment);
         _writeSharedContents(Json::writeString(Json::StreamWriterBuilder{}, root));
         const auto state = _state.lock();
         state->SidebarLayoutMigrationCompleted = true;
-        state->SidebarExperimentVersion = CurrentSidebarExperimentVersion;
-        state->SidebarExperimentAssignment = assignment;
+        state->SidebarRolloutVersion = CurrentSidebarRolloutVersion;
+        state->SidebarRolloutAssignment = assignment;
         return true;
     }
     catch (...)
@@ -516,6 +535,17 @@ namespace winrt::Microsoft::Terminal::Settings::Model::implementation
     void ApplicationState::FromJson(const Json::Value& root, FileSource parseSource) const noexcept
     {
         auto state = _state.lock();
+        // Preserve assignments from the pre-rename Dev build without rerolling.
+        const auto readKey = [&](const char* key) {
+            for (const auto& [current, previous] : sidebarRolloutStateKeys)
+            {
+                if (std::string_view{ key } == current && !root.isMember(current))
+                {
+                    return previous;
+                }
+            }
+            return key;
+        };
         // GetValueForKey() comes in two variants:
         // * take a std::optional<T> reference
         // * return std::optional<T> by value
@@ -527,7 +557,7 @@ namespace winrt::Microsoft::Terminal::Settings::Model::implementation
         // property, just skip it.
 #define MTSM_APPLICATION_STATE_GEN(source, type, name, key, ...) \
     if (WI_IsFlagSet(parseSource, source))                       \
-        state->name = JsonUtils::GetValueForKey<std::optional<type>>(root, key);
+        state->name = JsonUtils::GetValueForKey<std::optional<type>>(root, readKey(key));
 
         MTSM_APPLICATION_STATE_FIELDS(MTSM_APPLICATION_STATE_GEN)
 #undef MTSM_APPLICATION_STATE_GEN
@@ -541,6 +571,10 @@ namespace winrt::Microsoft::Terminal::Settings::Model::implementation
 
     Json::Value ApplicationState::_toJsonWithBlob(Json::Value& root, FileSource parseSource) const noexcept
     {
+        if (WI_IsFlagSet(parseSource, FileSource::Shared))
+        {
+            migrateSidebarRolloutStateKeys(root);
+        }
         {
             const auto state = _state.lock_shared();
 
