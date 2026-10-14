@@ -236,12 +236,29 @@ These hermetic checks do not establish live C427 acceptance.
 The report driver does not
 accept `-FullNameFilter`; use its whole-suite `-Path` option for release results.
 
-Ordinary revised Sidebar fixtures explicitly pass `-State @{
-sidebarLayoutMigrationCompleted = $true; sidebarIntroductionShown = $true }`
-to `Start-Terminal`. This is opt-in, applied only after the existing owned
+Ordinary revised Sidebar fixtures explicitly seed a deterministic completed
+rollout when calling `Start-Terminal`:
+
+```powershell
+Start-Terminal -Package Dev -State @{
+    rolloutInstallationId = '{00000000-0000-0000-0000-000000000001}'
+    sidebarRolloutVersion = 1
+    sidebarRolloutAssignment = 'Sidebar'
+    sidebarLayoutMigrationCompleted = $true
+    sidebarIntroductionShown = $true
+} -Settings @{ tabLayout = 'vertical' }
+```
+
+For the Horizontal cohort, use installation ID
+`{00000000-0000-0000-0000-000000000002}` and assignment `Horizontal`.
+The rollout version suppresses re-enrollment; the legacy
+`sidebarLayoutMigrationCompleted` flag alone does not. Completed fixtures
+preserve their configured layout independently of the fixed assignment.
+This is opt-in, applied only after the existing owned
 settings/state backup, and self-verifies persistence; default harness startup
-and fresh FRE behavior are unchanged. Upgrade tests intentionally supply false
-flags and preserve the migrated state across relaunch, restoring the original
+and fresh FRE behavior are unchanged. Upgrade tests intentionally supply
+incomplete migration/rollout state and preserve the migrated state across
+relaunch, restoring the original
 bytes only after their last owned process exits.
 The persistence-failure case prepares its protected baseline before launch and
 holds an existing `state.json` read handle without write/delete sharing.
