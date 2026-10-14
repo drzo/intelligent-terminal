@@ -506,6 +506,7 @@ namespace TerminalAppLocalTests
         TEST_METHOD(CliAgentClassifiesTab);
         TEST_METHOD(VisibleFieldsControlRichTabComposition);
         TEST_METHOD(RichTabAgentStatusColors);
+        TEST_METHOD(RichTabStatusColorsUsePresentationRevision);
         TEST_METHOD(RichTabPaneStatusColorsAreRetainedOnReuse);
         TEST_METHOD(RichTabMetadataSelectionIsLimitedToTwo);
         TEST_METHOD(RichTabGitAvailabilityControlsFilterOptions);
@@ -17534,6 +17535,7 @@ namespace TerminalAppLocalTests
 
         Snapshot snapshot;
         snapshot.fields.emplace("agentStatus", std::string{ "\xE6\xAD\xA3\xE5\x9C\xA8\xE5\xB7\xA5\xE4\xBD\x9C" });
+        snapshot.agentStatus = "Working";
         snapshot.fields.emplace("workingDirectory", std::string{ R"(C:\src\terminal)" });
         snapshot.fields.emplace("repository", std::string{ "\xE7\xBB\x88\xE7\xAB\xAF" });
         snapshot.fields.emplace("branch", std::string{ "\xE4\xB8\xBB\xE5\x88\x86\xE6\x94\xAF" });
@@ -17551,6 +17553,7 @@ namespace TerminalAppLocalTests
         VERIFY_ARE_EQUAL(size_t{ 1 }, defaults->agentStatusRanges.size());
         VERIFY_ARE_EQUAL(size_t{ 0 }, defaults->agentStatusRanges[0].start);
         VERIFY_ARE_EQUAL(size_t{ 4 }, defaults->agentStatusRanges[0].length);
+        VERIFY_ARE_EQUAL(std::string{ "Working" }, defaults->agentStatus);
 
         ProviderBroker::VisibleFieldMap visibleFields;
         visibleFields["git"].emplace("branch");
@@ -17562,9 +17565,93 @@ namespace TerminalAppLocalTests
             std::wstring{ L"Git branch: \u4E3B\u5206\u652F, Git changes: ~12 +200 -35" },
             branchOnly->accessibilityText);
         VERIFY_IS_TRUE(branchOnly->agentStatusRanges.empty());
+        VERIFY_IS_TRUE(branchOnly->agentStatus.empty());
 
         visibleFields["git"].clear();
         VERIFY_IS_FALSE(ProviderBroker::ComposePresentation({ provider }, snapshots, visibleFields).has_value());
+    }
+
+    void TabTests::RichTabStatusColorsUsePresentationRevision()
+    {
+        using namespace ::Microsoft::Terminal::RichTab::Provider;
+        using winrt::TerminalApp::TextHighlightColor;
+
+        const auto sourceConnection = winrt::make_self<TestConnection>(
+            winrt::guid{ L"{78c716ba-666a-44f2-ab6b-771e181545a8}" },
+            winrt::Microsoft::Terminal::TerminalConnection::ConnectionState::Connected);
+        Grid host{ nullptr };
+        TestOnUIThread([&]() {
+            host = Grid{};
+            host.Width(1200);
+            host.Height(600);
+        });
+        auto page = _commonSetup(*sourceConnection, host, std::nullopt, true);
+        std::shared_ptr<Pane> source;
+        std::shared_ptr<Pane> split;
+        const auto initialized = std::make_shared<::details::Event>();
+        TestOnUIThread([&]() {
+            const auto tab = page->_GetFocusedTabImpl();
+            const auto splitConnection = winrt::make_self<TestConnection>(
+                winrt::guid{ L"{1d084286-a852-4106-a144-8c81ac3cff36}" },
+                winrt::Microsoft::Terminal::TerminalConnection::ConnectionState::Connected);
+            split = page->_MakePane(nullptr, page->_GetFocusedTab(), *splitConnection);
+            split->GetTerminalControl().Initialized([initialized](auto&&, auto&&) { initialized->Set(); });
+            VERIFY_IS_TRUE(page->_SplitPane(tab, SplitDirection::Right, 0.5f, split));
+            page->UpdateLayout();
+        });
+        VERIFY_ARE_EQUAL(static_cast<DWORD>(WAIT_OBJECT_0), WaitForSingleObject(initialized->m_handle, 10000));
+        TestOnUIThread([&]() {
+            const auto tab = page->_GetFocusedTabImpl();
+            source = tab->GetRootPane()->FindPaneBySessionId(sourceConnection->SessionId());
+            VERIFY_IS_NOT_NULL(source);
+            page->_richTabAgentStatusSnapshotLoaded = true;
+
+            const auto apply = [&](const std::shared_ptr<Pane>& pane, const std::wstring& text, const std::string& status) {
+                const auto control = pane->GetTerminalControl();
+                VERIFY_IS_NOT_NULL(control);
+                VERIFY_ARE_EQUAL(winrt::Microsoft::Terminal::TerminalConnection::ConnectionState::Connected, control.ConnectionState());
+                VERIFY_IS_FALSE(page->_FindSessionIdForControl(control).empty());
+                page->_richTabAgentStatusByPaneId.insert_or_assign(
+                    pane->GetSessionId(),
+                    winrt::TerminalApp::implementation::TerminalPage::_RichTabAgentInfo{
+                        "latest-session", "Error", "custom:agent", std::nullopt, pane->GetSessionId() });
+                page->_AttachOrUpdateRichTabControl(control);
+                const auto key = reinterpret_cast<uintptr_t>(winrt::get_abi(control));
+                uint64_t reservation;
+                {
+                    std::lock_guard lock{ page->_richTabAttachmentsMutex };
+                    VERIFY_IS_TRUE(page->_richTabAttachments.contains(key));
+                    reservation = page->_richTabAttachments.at(key).reservation;
+                }
+                Presentation presentation;
+                presentation.text = text;
+                presentation.agentStatus = status;
+                presentation.agentStatusRanges.push_back({ 0, text.size() });
+                BrokerUpdate update;
+                update.sessionId = page->_FindSessionIdForControl(control);
+                update.sessionIncarnation = 1000;
+                update.updateSequence = 1000;
+                update.presentation = presentation;
+                page->_ApplyRichTabUpdate(key, reservation, update);
+            };
+            apply(source, L"Active", "Working");
+            apply(split, L"Waiting", "Attention");
+            VERIFY_ARE_EQUAL(TextHighlightColor::Caution, tab->_headerControl.MetadataHighlightColor());
+            VERIFY_ARE_EQUAL(winrt::hstring{ L"Waiting" }, tab->_headerControl.MetadataText());
+
+            page->_RefreshRichTabForTab(*tab, false, false);
+            VERIFY_ARE_EQUAL(TextHighlightColor::Caution, tab->_headerControl.MetadataHighlightColor());
+            page->_RefreshTabStripPaneItems(tab);
+            const auto strip = winrt::get_self<winrt::TerminalApp::implementation::TabStrip>(page->_tabStrip);
+            const auto display = strip->DisplayItemForTab(tab->TabViewItem());
+            VERIFY_ARE_EQUAL(2u, display.PaneItems().Size());
+            for (const auto& item : display.PaneItems())
+            {
+                const auto isSource = item.ContentId() == source->ContentId().value();
+                VERIFY_ARE_EQUAL(winrt::hstring{ isSource ? L"Active" : L"Waiting" }, item.MetadataText());
+                VERIFY_ARE_EQUAL(isSource ? TextHighlightColor::Success : TextHighlightColor::Caution, item.MetadataHighlightColor());
+            }
+        });
     }
 
     void TabTests::RichTabAgentStatusColors()
@@ -17629,11 +17716,12 @@ namespace TerminalAppLocalTests
                     Snapshot snapshot;
                     snapshot.fields.emplace("workingDirectory", winrt::to_string(cwd));
                     snapshot.fields.emplace("agentStatus", winrt::to_string(statusText));
+                    snapshot.agentStatus = status;
                     presentation = ProviderBroker::ComposePresentation({ provider }, { { "git", snapshot } });
                     VERIFY_IS_TRUE(presentation.has_value());
                     VERIFY_ARE_EQUAL(size_t{ 1 }, presentation->agentStatusRanges.size());
                     VERIFY_ARE_EQUAL(cwd.size() + 1, presentation->agentStatusRanges[0].start);
-                    tab->SetRichTabPresentation(presentation, status);
+                    tab->SetRichTabPresentation(presentation);
                     header.SearchText(statusText);
 
                     auto historyItem = winrt::make<winrt::TerminalApp::implementation::TabStripHistoryItem>();
@@ -17711,7 +17799,8 @@ namespace TerminalAppLocalTests
             Presentation coloredPresentation;
             coloredPresentation.text = L"Active";
             coloredPresentation.agentStatusRanges.push_back({ 0, coloredPresentation.text.size() });
-            tab->SetRichTabPresentation(coloredPresentation, "Working");
+            coloredPresentation.agentStatus = "Working";
+            tab->SetRichTabPresentation(coloredPresentation);
         });
         _waitForContentTransferReviewUI([&]() {
             return metadata.Text() == L"Active" && metadata.ColorHighlight() == TextHighlightColor::Success;
@@ -17720,10 +17809,11 @@ namespace TerminalAppLocalTests
             Presentation coloredPresentation;
             coloredPresentation.text = L"Active";
             coloredPresentation.agentStatusRanges.push_back({ 0, coloredPresentation.text.size() });
+            coloredPresentation.agentStatus = "Attention";
             auto replacement = winrt::make<winrt::TerminalApp::implementation::TabHeaderPresentation>();
             replacement.MetadataText(L"neutral metadata");
             header.Presentation(replacement);
-            tab->SetRichTabPresentation(coloredPresentation, "Attention");
+            tab->SetRichTabPresentation(coloredPresentation);
         });
         _waitForContentTransferReviewUI([&]() {
             return metadata.Text() == L"neutral metadata" && metadata.ColorHighlight() == TextHighlightColor::None;

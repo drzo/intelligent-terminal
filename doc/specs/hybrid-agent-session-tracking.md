@@ -384,6 +384,9 @@ Only the provider's `agentStatus` field is colored; working-directory and Git
 fields retain their existing appearance, including when they contain the same
 text as a status label. Idle and non-actionable states retain the normal metadata
 color. Status colors follow theme changes without removing search emphasis.
+Live metadata text and its semantic status come from the same accepted provider
+request. While a refresh is queued, both retain the previous snapshot; a failed
+refresh clears that provider's metadata rather than recoloring stale text.
 Host/WSL location remains searchable and available for routing; Host has no extra location
 label. Status-only updates preserve the provider, distro name, and age from the
 latest snapshot.

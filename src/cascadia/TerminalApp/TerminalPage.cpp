@@ -11632,6 +11632,7 @@ namespace winrt::TerminalApp::implementation
         if (const auto agentInfo = _RichTabAgentInfoForControl(control))
         {
             firstPartyFields.emplace("agentStatus", winrt::to_string(_SidebarHistoryStatusText(agentInfo->status)));
+            firstPartyFields.emplace("agentStatusId", agentInfo->status);
         }
         firstPartyFields.emplace("branchLabel", winrt::to_string(RS_(L"VerticalTabsMetadataBranch/Text")));
         firstPartyFields.emplace("changesLabel", winrt::to_string(RS_(L"VerticalTabsMetadataChanges/Text")));
@@ -11695,8 +11696,7 @@ namespace winrt::TerminalApp::implementation
         if (const auto presentation = _richTabPresentations.find(sessionId);
             presentation != _richTabPresentations.end())
         {
-            const auto agentInfo = _RichTabAgentInfoForControl(control);
-            tab.SetRichTabPresentation(presentation->second.presentation, agentInfo ? agentInfo->status : std::string_view{});
+            tab.SetRichTabPresentation(presentation->second.presentation);
         }
         else
         {
@@ -11888,8 +11888,7 @@ namespace winrt::TerminalApp::implementation
                 if (const auto activePane = tab->GetActivePane();
                     activePane && activePane->GetSessionId() == target)
                 {
-                    const auto agentInfo = _RichTabAgentInfoForControl(activePane->GetTerminalControl());
-                    tab->SetRichTabPresentation(update.presentation, agentInfo ? agentInfo->status : std::string_view{});
+                    tab->SetRichTabPresentation(update.presentation);
                 }
                 _ApplyTabListProjection(*tab);
             }
@@ -13427,10 +13426,7 @@ namespace winrt::TerminalApp::implementation
                     const auto& value = *presentation->second.presentation;
                     itemImpl->MetadataText(winrt::hstring{ value.text });
                     itemImpl->MetadataHighlightRanges(TabHeaderControl::BuildMetadataHighlightRanges(value));
-                    if (const auto agentInfo = _RichTabAgentInfoForControl(sourcePane ? sourcePane->GetTerminalControl() : nullptr))
-                    {
-                        itemImpl->MetadataHighlightColor(TabHeaderControl::AgentStatusHighlightColor(agentInfo->status));
-                    }
+                    itemImpl->MetadataHighlightColor(TabHeaderControl::AgentStatusHighlightColor(value.agentStatus));
                     itemImpl->MetadataVisibility(value.text.empty() ? Visibility::Collapsed : Visibility::Visible);
                     if (!value.accessibilityText.empty())
                     {

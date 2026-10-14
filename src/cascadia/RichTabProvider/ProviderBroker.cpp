@@ -700,6 +700,11 @@ namespace Microsoft::Terminal::RichTab::Provider
                 if (parsed)
                 {
                     snapshot = *parsed.value;
+                    if (const auto status = request.firstPartyFields.find("agentStatusId");
+                        status != request.firstPartyFields.end())
+                    {
+                        snapshot->agentStatus = status->second;
+                    }
                 }
                 else
                 {
@@ -835,6 +840,7 @@ namespace Microsoft::Terminal::RichTab::Provider
                     if (field.id == "agentStatus" && !valueText.empty())
                     {
                         result.agentStatusRanges.push_back({ result.text.size() - valueText.size(), valueText.size() });
+                        result.agentStatus = snapshot->second.agentStatus;
                     }
 
                     auto displayName = field.displayName;

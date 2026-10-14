@@ -38,6 +38,7 @@ namespace Microsoft::Terminal::RichTab::Provider
         std::wstring tooltip;
         std::wstring accessibilityText;
         std::vector<TextRange> agentStatusRanges;
+        std::string agentStatus;
 
         bool operator==(const Presentation&) const = default;
     };

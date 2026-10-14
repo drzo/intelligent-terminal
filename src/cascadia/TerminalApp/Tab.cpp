@@ -611,11 +611,10 @@ namespace winrt::TerminalApp::implementation
     }
 
     void Tab::SetRichTabPresentation(
-        const std::optional<::Microsoft::Terminal::RichTab::Provider::Presentation>& presentation,
-        const std::string_view agentStatus)
+        const std::optional<::Microsoft::Terminal::RichTab::Provider::Presentation>& presentation)
     {
         ASSERT_UI_THREAD();
-        _headerControl.MetadataHighlightColor(presentation ? TabHeaderControl::AgentStatusHighlightColor(agentStatus) : TerminalApp::TextHighlightColor::None);
+        _headerControl.MetadataHighlightColor(presentation ? TabHeaderControl::AgentStatusHighlightColor(presentation->agentStatus) : TerminalApp::TextHighlightColor::None);
         if (_richTabPresentation != presentation)
         {
             _richTabPresentation = presentation;

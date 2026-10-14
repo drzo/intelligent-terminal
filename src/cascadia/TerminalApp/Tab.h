@@ -68,8 +68,7 @@ namespace winrt::TerminalApp::implementation
 
         void UpdateSettings(const winrt::Microsoft::Terminal::Settings::Model::CascadiaSettings& settings);
         void UpdateTitle();
-        void SetRichTabPresentation(const std::optional<::Microsoft::Terminal::RichTab::Provider::Presentation>& presentation,
-                                    std::string_view agentStatus = {});
+        void SetRichTabPresentation(const std::optional<::Microsoft::Terminal::RichTab::Provider::Presentation>& presentation);
 
         void Close();
         void Shutdown();
