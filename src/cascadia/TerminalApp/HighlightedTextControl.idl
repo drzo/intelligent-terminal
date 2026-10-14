@@ -50,5 +50,8 @@ namespace TerminalApp
 
         Windows.UI.Xaml.Media.Brush CriticalHighlightBrush;
         static Windows.UI.Xaml.DependencyProperty CriticalHighlightBrushProperty { get; };
+
+        Double TextOpacity;
+        static Windows.UI.Xaml.DependencyProperty TextOpacityProperty { get; };
     }
 }

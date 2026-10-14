@@ -122,6 +122,19 @@ namespace TerminalAppLocalTests
         return root.FindName(indeterminate ? L"PaneIndeterminateProgressRing" : L"PaneProgressRing").as<Control>();
     }
 
+    static double _effectiveTextOpacity(const TextBlock& text, const Media::Brush& brush)
+    {
+        auto opacity = brush.Opacity() * brush.as<Media::SolidColorBrush>().Color().A / 255.0;
+        for (DependencyObject element = text; element; element = Media::VisualTreeHelper::GetParent(element))
+        {
+            if (const auto visual = element.try_as<UIElement>())
+            {
+                opacity *= visual.Opacity();
+            }
+        }
+        return opacity;
+    }
+
     class TestConnection : public winrt::implements<TestConnection, winrt::Microsoft::Terminal::TerminalConnection::ITerminalConnection>
     {
     public:
@@ -7539,6 +7552,9 @@ namespace TerminalAppLocalTests
     {
         TestOnUIThread([&]() {
             winrt::TerminalApp::HighlightedTextControl control;
+            ResourceDictionary highlightingResources;
+            highlightingResources.Source(winrt::Windows::Foundation::Uri{ L"ms-resource:///Files/TerminalApp/HighlightedTextControlStyle.xaml" });
+            control.Resources().MergedDictionaries().Append(highlightingResources);
             control.Text(L"PowerShell");
             control.SearchText(L"shell");
             control.ApplyTemplate();
@@ -17646,16 +17662,23 @@ namespace TerminalAppLocalTests
                     VERIFY_IS_NOT_NULL(metadata.SuccessHighlightBrush());
                     VERIFY_IS_NOT_NULL(metadata.CautionHighlightBrush());
                     VERIFY_IS_NOT_NULL(metadata.CriticalHighlightBrush());
-                    const auto highlighters = textBlock.TextHighlighters();
-                    VERIFY_ARE_EQUAL(color == TextHighlightColor::None ? 0u : 1u, highlighters.Size());
+                    const auto highlights = textBlock.TextHighlighters();
+                    VERIFY_ARE_EQUAL(color == TextHighlightColor::None ? 1u : 2u, highlights.Size());
+                    const auto neutral = highlights.GetAt(0);
+                    VERIFY_ARE_EQUAL(textBlock.Foreground().as<Media::SolidColorBrush>().Color(),
+                                     neutral.Foreground().as<Media::SolidColorBrush>().Color());
+                    VERIFY_IS_TRUE(std::abs(_effectiveTextOpacity(textBlock, textBlock.Foreground()) * 0.72 -
+                                            _effectiveTextOpacity(textBlock, neutral.Foreground())) < 0.000001);
                     if (color != TextHighlightColor::None)
                     {
-                        const auto highlighter = highlighters.GetAt(0);
+                        const auto highlighter = highlights.GetAt(1);
                         VERIFY_ARE_EQUAL(1u, highlighter.Ranges().Size());
                         VERIFY_ARE_EQUAL(gsl::narrow<int32_t>(cwd.size() + 1), highlighter.Ranges().GetAt(0).StartIndex);
                         VERIFY_ARE_EQUAL(gsl::narrow<int32_t>(statusText.size()), highlighter.Ranges().GetAt(0).Length);
                         VERIFY_ARE_EQUAL(historyText.Foreground().as<Media::SolidColorBrush>().Color(),
                                          highlighter.Foreground().as<Media::SolidColorBrush>().Color());
+                        VERIFY_ARE_EQUAL(_effectiveTextOpacity(historyText, historyText.Foreground()),
+                                         _effectiveTextOpacity(textBlock, highlighter.Foreground()));
                     }
                     bool highlightedStatus = false;
                     for (const auto& inlineText : textBlock.Inlines())
@@ -17709,6 +17732,21 @@ namespace TerminalAppLocalTests
             VERIFY_ARE_EQUAL(winrt::hstring{ L"neutral metadata" }, metadata.Text());
             VERIFY_ARE_EQUAL(TextHighlightColor::None, metadata.ColorHighlight());
             VERIFY_IS_NULL(metadata.ColorHighlightRanges());
+
+            Media::SolidColorBrush custom{ winrt::Windows::UI::Colors::Blue() };
+            custom.Opacity(0.8);
+            header.Foreground(custom);
+            host.UpdateLayout();
+            const auto textBlock = Media::VisualTreeHelper::GetChild(metadata, 0).as<TextBlock>();
+            VERIFY_ARE_EQUAL(1u, textBlock.TextHighlighters().Size());
+            const auto neutral = textBlock.TextHighlighters().GetAt(0);
+            VERIFY_ARE_EQUAL(custom.Color(), neutral.Foreground().as<Media::SolidColorBrush>().Color());
+            VERIFY_IS_TRUE(std::abs(custom.Opacity() * 0.72 - _effectiveTextOpacity(textBlock, neutral.Foreground())) < 0.000001);
+            custom.Color(winrt::Windows::UI::Colors::Red());
+            custom.Opacity(0.5);
+            const auto updated = textBlock.TextHighlighters().GetAt(0).Foreground();
+            VERIFY_ARE_EQUAL(custom.Color(), updated.as<Media::SolidColorBrush>().Color());
+            VERIFY_IS_TRUE(std::abs(custom.Opacity() * 0.72 - _effectiveTextOpacity(textBlock, updated)) < 0.000001);
         });
     }
 
@@ -17745,6 +17783,107 @@ namespace TerminalAppLocalTests
             VERIFY_ARE_EQUAL(winrt::TerminalApp::TextHighlightColor::None, original.MetadataHighlightColor());
             VERIFY_IS_NULL(original.MetadataHighlightRanges());
             VERIFY_ARE_EQUAL(0u, collectionChanges);
+        });
+
+        UIElement previousContent{ nullptr };
+        winrt::TerminalApp::TabStrip strip{ nullptr };
+        winrt::MUX::Controls::TabViewItem tab{ nullptr };
+        winrt::TerminalApp::TabStripPaneItem pane{ nullptr };
+        winrt::TerminalApp::HighlightedTextControl metadata{ nullptr };
+        ContentPresenter paneContainer{ nullptr };
+        Grid paneRoot{ nullptr };
+        const auto restore = wil::scope_exit([&]() {
+            TestOnUIThread([&]() {
+                Window::Current().Content(previousContent);
+            });
+        });
+        TestOnUIThread([&]() {
+            previousContent = Window::Current().Content();
+            strip = winrt::TerminalApp::TabStrip{};
+            strip.Width(240);
+            strip.Height(200);
+            tab = winrt::MUX::Controls::TabViewItem{};
+            tab.Header(winrt::TerminalApp::TabHeaderControl{});
+            strip.TabItems().Append(tab);
+            pane = winrt::make<winrt::TerminalApp::implementation::TabStripPaneItem>(tab, 11, L"", L"Pane", true);
+            pane.MetadataText(L"main\nActive");
+            pane.MetadataVisibility(Visibility::Visible);
+            strip.SetPaneItems(tab, winrt::single_threaded_vector<winrt::TerminalApp::TabStripPaneItem>({ pane }), true);
+            Window::Current().Content(strip);
+            Window::Current().Activate();
+            strip.UpdateLayout();
+        });
+        _waitForContentTransferReviewUI([&]() {
+            return strip.IsLoaded() && strip.ContainerFromIndex(0) != nullptr;
+        });
+        TestOnUIThread([&]() {
+            const auto root = strip.ContainerFromIndex(0).as<ListViewItem>().ContentTemplateRoot().as<StackPanel>();
+            const auto panes = root.Children().GetAt(1).as<ItemsControl>();
+            paneContainer = panes.ContainerFromIndex(0).as<ContentPresenter>();
+            paneRoot = Media::VisualTreeHelper::GetChild(paneContainer, 0).as<Grid>();
+            metadata = paneRoot.FindName(L"PaneMetadataText").as<winrt::TerminalApp::HighlightedTextControl>();
+            winrt::get_self<winrt::TerminalApp::implementation::TabStrip>(strip)->SetTabSearchText(tab, L"Active");
+        });
+        _waitForContentTransferReviewUI([&]() {
+            return metadata.IsLoaded();
+        });
+        for (const auto theme : { ElementTheme::Light, ElementTheme::Dark })
+        {
+            for (const auto color : { winrt::TerminalApp::TextHighlightColor::Success,
+                                      winrt::TerminalApp::TextHighlightColor::Caution,
+                                      winrt::TerminalApp::TextHighlightColor::Critical,
+                                      winrt::TerminalApp::TextHighlightColor::None })
+            {
+                TestOnUIThread([&]() {
+                    strip.RequestedTheme(theme);
+                    const auto replacement = winrt::make<winrt::TerminalApp::implementation::TabStripPaneItem>(tab, 11, L"", L"Pane", true);
+                    replacement.MetadataText(L"main\nActive");
+                    replacement.MetadataVisibility(Visibility::Visible);
+                    replacement.MetadataHighlightColor(color);
+                    replacement.MetadataHighlightRanges(winrt::single_threaded_vector<winrt::TerminalApp::HighlightedRun>({ { 5, 10 } }));
+                    strip.SetPaneItems(tab, winrt::single_threaded_vector<winrt::TerminalApp::TabStripPaneItem>({ replacement }), true);
+                    strip.UpdateLayout();
+                });
+                _waitForContentTransferReviewUI([&]() {
+                    return metadata.ColorHighlight() == color && metadata.ActualTheme() == theme;
+                });
+                TestOnUIThread([&]() {
+                    const auto display = winrt::get_self<winrt::TerminalApp::implementation::TabStrip>(strip)->DisplayItemForTab(tab);
+                    VERIFY_IS_TRUE(display.PaneItems().GetAt(0) == pane);
+                    VERIFY_IS_TRUE(Media::VisualTreeHelper::GetChild(paneContainer, 0) == paneRoot);
+                    const auto textBlock = Media::VisualTreeHelper::GetChild(metadata, 0).as<TextBlock>();
+                    const auto highlights = textBlock.TextHighlighters();
+                    VERIFY_ARE_EQUAL(color == winrt::TerminalApp::TextHighlightColor::None ? 1u : 2u, highlights.Size());
+                    VERIFY_IS_TRUE(std::abs(_effectiveTextOpacity(textBlock, textBlock.Foreground()) * 0.72 -
+                                            _effectiveTextOpacity(textBlock, highlights.GetAt(0).Foreground())) < 0.000001);
+                    if (color != winrt::TerminalApp::TextHighlightColor::None)
+                    {
+                        VERIFY_ARE_EQUAL(1.0, _effectiveTextOpacity(textBlock, highlights.GetAt(1).Foreground()));
+                        const auto expected = color == winrt::TerminalApp::TextHighlightColor::Success ? metadata.SuccessHighlightBrush() :
+                                              color == winrt::TerminalApp::TextHighlightColor::Caution ? metadata.CautionHighlightBrush() :
+                                                                                                         metadata.CriticalHighlightBrush();
+                        VERIFY_IS_TRUE(highlights.GetAt(1).Foreground() == expected);
+                    }
+                    const auto title = paneRoot.FindName(L"PaneTitleText").as<winrt::TerminalApp::HighlightedTextControl>();
+                    VERIFY_ARE_EQUAL(1.0, title.Opacity());
+                    VERIFY_ARE_EQUAL(1.0, title.TextOpacity());
+                    bool bold = false;
+                    for (const auto& inlineText : textBlock.Inlines())
+                    {
+                        const auto run = inlineText.as<Documents::Run>();
+                        bold |= run.Text() == L"Active" && run.FontWeight().Weight == FontWeights::Bold().Weight;
+                    }
+                    VERIFY_IS_TRUE(bold);
+                });
+            }
+        }
+        TestOnUIThread([&]() {
+            const auto replacement = winrt::make<winrt::TerminalApp::implementation::TabStripPaneItem>(tab, 11, L"", L"Pane", true);
+            strip.SetPaneItems(tab, winrt::single_threaded_vector<winrt::TerminalApp::TabStripPaneItem>({ replacement }), true);
+            strip.UpdateLayout();
+            VERIFY_ARE_EQUAL(Visibility::Collapsed, metadata.Visibility());
+            const auto textBlock = Media::VisualTreeHelper::GetChild(metadata, 0).as<TextBlock>();
+            VERIFY_ARE_EQUAL(0u, textBlock.TextHighlighters().Size());
         });
     }
 

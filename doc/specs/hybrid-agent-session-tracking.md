@@ -377,7 +377,9 @@ Active uses a theme-aware green success accent, Waiting for input a yellow cauti
 accent, and Error a red critical accent, matching the session management view.
 Only the status text is accented; the provider, distro name,
 age, and separators stay muted, and search matches remain highlighted.
-Live tab metadata and expanded split-pane metadata use the same status accents.
+Live tab metadata and expanded split-pane metadata use the same status accents
+at full opacity. Only neutral text retains the existing 0.72 opacity, applied
+to its foreground rather than the entire metadata control.
 Only the provider's `agentStatus` field is colored; working-directory and Git
 fields retain their existing appearance, including when they contain the same
 text as a status label. Idle and non-actionable states retain the normal metadata

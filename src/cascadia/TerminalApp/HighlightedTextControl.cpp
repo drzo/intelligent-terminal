@@ -32,6 +32,7 @@ namespace winrt::TerminalApp::implementation
     DependencyProperty HighlightedTextControl::_SuccessHighlightBrushProperty{ nullptr };
     DependencyProperty HighlightedTextControl::_CautionHighlightBrushProperty{ nullptr };
     DependencyProperty HighlightedTextControl::_CriticalHighlightBrushProperty{ nullptr };
+    DependencyProperty HighlightedTextControl::_TextOpacityProperty{ nullptr };
 
     HighlightedTextControlPropertyRegistration::HighlightedTextControlPropertyRegistration()
     {
@@ -40,6 +41,40 @@ namespace winrt::TerminalApp::implementation
     }
 
     HighlightedTextControl::HighlightedTextControl() = default;
+
+    HighlightedTextControl::~HighlightedTextControl()
+    {
+        if (_textBlock)
+        {
+            _textBlock.UnregisterPropertyChangedCallback(Controls::TextBlock::ForegroundProperty(), _foregroundToken);
+        }
+        if (_foreground)
+        {
+            _foreground.UnregisterPropertyChangedCallback(Media::SolidColorBrush::ColorProperty(), _colorToken);
+            _foreground.UnregisterPropertyChangedCallback(Media::Brush::OpacityProperty(), _opacityToken);
+        }
+    }
+
+    void HighlightedTextControl::_observeForeground()
+    {
+        if (_foreground)
+        {
+            _foreground.UnregisterPropertyChangedCallback(Media::SolidColorBrush::ColorProperty(), _colorToken);
+            _foreground.UnregisterPropertyChangedCallback(Media::Brush::OpacityProperty(), _opacityToken);
+        }
+        _foreground = _textBlock.Foreground().try_as<Media::SolidColorBrush>();
+        if (_foreground)
+        {
+            const auto changed = [weak = get_weak()](auto&&, auto&&) {
+                if (const auto self = weak.get())
+                {
+                    self->_updateColorHighlights();
+                }
+            };
+            _colorToken = _foreground.RegisterPropertyChangedCallback(Media::SolidColorBrush::ColorProperty(), changed);
+            _opacityToken = _foreground.RegisterPropertyChangedCallback(Media::Brush::OpacityProperty(), changed);
+        }
+    }
 
     void HighlightedTextControl::_InitializeProperties()
     {
@@ -104,6 +139,12 @@ namespace winrt::TerminalApp::implementation
                 xaml_typename<winrt::TerminalApp::HighlightedTextControl>(),
                 PropertyMetadata(nullptr, HighlightedTextControl::_onPropertyChanged));
 
+            _TextOpacityProperty = DependencyProperty::Register(
+                L"TextOpacity",
+                xaml_typename<double>(),
+                xaml_typename<winrt::TerminalApp::HighlightedTextControl>(),
+                PropertyMetadata(box_value(1.0), HighlightedTextControl::_onPropertyChanged));
+
             return true;
         }();
     }
@@ -119,6 +160,22 @@ namespace winrt::TerminalApp::implementation
 
     void HighlightedTextControl::OnApplyTemplate()
     {
+        if (_textBlock)
+        {
+            _textBlock.UnregisterPropertyChangedCallback(Controls::TextBlock::ForegroundProperty(), _foregroundToken);
+        }
+        _textBlock = GetTemplateChild(L"TextView").try_as<Controls::TextBlock>();
+        if (_textBlock)
+        {
+            _foregroundToken = _textBlock.RegisterPropertyChangedCallback(Controls::TextBlock::ForegroundProperty(), [weak = get_weak()](auto&&, auto&&) {
+                if (const auto self = weak.get())
+                {
+                    self->_observeForeground();
+                    self->_updateColorHighlights();
+                }
+            });
+            _observeForeground();
+        }
         _updateTextAndStyle();
     }
 
@@ -248,8 +305,29 @@ namespace winrt::TerminalApp::implementation
             }
         }
 
-        const auto highlighters = textBlock.TextHighlighters();
-        highlighters.Clear();
+        _updateColorHighlights();
+    }
+
+    void HighlightedTextControl::_updateColorHighlights()
+    {
+        if (!_textBlock)
+        {
+            return;
+        }
+        const auto text = Text();
+        const auto highlights = _textBlock.TextHighlighters();
+        highlights.Clear();
+        if (TextOpacity() != 1.0 && _foreground && !text.empty())
+        {
+            // Keep inherited/custom foreground intact; only neutral glyphs are muted.
+            Media::SolidColorBrush brush{ _foreground.Color() };
+            brush.Opacity(_foreground.Opacity() * TextOpacity());
+            Documents::TextHighlighter neutral;
+            neutral.Foreground(brush);
+            neutral.Background(Media::SolidColorBrush{ Windows::UI::Colors::Transparent() });
+            neutral.Ranges().Append(Documents::TextRange{ 0, gsl::narrow<int32_t>(text.size()) });
+            highlights.Append(neutral);
+        }
         const auto color = ColorHighlight();
         const auto colorRanges = ColorHighlightRanges();
         if (color != TerminalApp::TextHighlightColor::None && colorRanges && !text.empty())
@@ -291,7 +369,7 @@ namespace winrt::TerminalApp::implementation
             }
             if (ranges.Size() != 0)
             {
-                highlighters.Append(highlighter);
+                highlights.Append(highlighter);
             }
         }
     }
