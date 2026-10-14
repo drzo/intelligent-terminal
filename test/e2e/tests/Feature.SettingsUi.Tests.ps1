@@ -103,7 +103,7 @@ Describe 'Feature Settings editor language direction' -Tag 'Feature', 'SettingsR
                 alwaysShowNotificationIcon = $false
                 showTokenUsageAndCost = $true
                 'aiIntegration.coordinator.enabled' = $false
-            } -State @{ sidebarLayoutMigrationCompleted = $true; sidebarIntroductionShown = $true }
+            } -State @{ experimentInstallationId = '{00000000-0000-0000-0000-000000000001}'; sidebarExperimentVersion = 1; sidebarExperimentAssignment = 'Sidebar'; sidebarLayoutMigrationCompleted = $true; sidebarIntroductionShown = $true }
             if (-not (Test-WtWindowKeyFocusable -App $app)) {
                 $foregroundUnavailable = $true
                 Set-ItResult -Skipped -Because 'WT window cannot take foreground for the Ctrl+, accelerator'

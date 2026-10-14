@@ -203,6 +203,9 @@ namespace winrt::TerminalApp::implementation
         const auto primary = Telemetry::GetProviderSnapshot(globals, true);
         const auto delegate = Telemetry::GetProviderSnapshot(globals, false);
         const auto policy = Telemetry::SummarizePolicy(*::Microsoft::Terminal::Settings::Model::AgentPolicy::GetSnapshot());
+        const auto state = ApplicationState::SharedInstance();
+        const auto experimentId = state.SidebarExperimentId();
+        const auto experimentAssignment = experimentId.empty() ? winrt::hstring{ L"NotEnrolled" } : state.SidebarExperimentAssignment();
 
         TraceLoggingWrite(
             g_hTerminalAppProvider,
@@ -220,6 +223,8 @@ namespace winrt::TerminalApp::implementation
             TraceLoggingString(policy.allowedAgentsCategory, "AllowedAgentsPolicy"),
             TraceLoggingString(policy.allowCustomAgentsCategory, "AllowCustomAgentsPolicy"),
             TraceLoggingBool(globals.TabLayout() == TabLayout::Vertical, "SidebarEnabled"),
+            TraceLoggingWideString(experimentId.c_str(), "SidebarExperimentId"),
+            TraceLoggingWideString(experimentAssignment.c_str(), "SidebarExperimentAssignment"),
             TraceLoggingBool(_usingDefaultSettings, "DefaultsFallback"),
             TraceLoggingKeyword(MICROSOFT_KEYWORD_MEASURES),
             TelemetryPrivacyDataTag(PDT_ProductAndServiceUsage));

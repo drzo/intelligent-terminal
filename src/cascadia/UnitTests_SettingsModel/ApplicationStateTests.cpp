@@ -44,6 +44,11 @@ namespace SettingsModelUnitTests
         TEST_METHOD(SidebarMigrationRollbackFailureWarnsAndKeepsLastSavedLayout);
         TEST_METHOD(SidebarIntroductionCloseRetriesPendingDurability);
         TEST_METHOD(SidebarIntroductionFlushCompletesPendingDurability);
+        TEST_METHOD(SidebarExperimentBucketsAreStableAndEightyTwenty);
+        TEST_METHOD(SidebarExperimentAssignmentPersistsAcrossInstances);
+        TEST_METHOD(SidebarExperimentMigratesBothGroupsAfterLegacyMigration);
+        TEST_METHOD(SidebarExperimentFailedSaveKeepsIdentity);
+        TEST_METHOD(SidebarExperimentIdentityFailureDoesNotChangeLayout);
 
     private:
         static std::filesystem::path _tempRoot()
@@ -92,6 +97,14 @@ namespace SettingsModelUnitTests
             }
             json += '}';
             return winrt::make_self<implementation::CascadiaSettings>(std::string_view{ json }, std::string_view{ "{}" });
+        }
+
+        static winrt::com_ptr<implementation::ApplicationState> _sidebarState(const std::filesystem::path& root, bool sidebar = true)
+        {
+            til::io::write_utf8_string_to_file_atomic(root / L"state.json",
+                                                      sidebar ? R"({"experimentInstallationId":"{00000000-0000-0000-0000-000000000001}"})" :
+                                                                R"({"experimentInstallationId":"{00000000-0000-0000-0000-000000000002}"})");
+            return winrt::make_self<implementation::ApplicationState>(root);
         }
 
         static wil::unique_handle _denyReplacement(const std::filesystem::path& path)
@@ -216,7 +229,7 @@ namespace SettingsModelUnitTests
     {
         const auto root = _sidebarRoot();
         const auto cleanup = wil::scope_exit([&]() { std::filesystem::remove_all(root); });
-        auto state = winrt::make_self<implementation::ApplicationState>(root);
+        auto state = _sidebarState(root);
         auto settings = _sidebarSettings("horizontal");
         auto lock = state->LockSidebarState();
         auto saves = 0;
@@ -244,7 +257,7 @@ namespace SettingsModelUnitTests
     {
         const auto root = _sidebarRoot();
         const auto cleanup = wil::scope_exit([&]() { std::filesystem::remove_all(root); });
-        auto state = winrt::make_self<implementation::ApplicationState>(root);
+        auto state = _sidebarState(root);
         auto settings = _sidebarSettings("horizontal");
         const auto lock = state->LockSidebarState();
         VERIFY_IS_FALSE(settings->MigrateSidebarLayout(*state, []() { return false; }));
@@ -259,10 +272,11 @@ namespace SettingsModelUnitTests
     {
         const auto root = _sidebarRoot();
         const auto cleanup = wil::scope_exit([&]() { std::filesystem::remove_all(root); });
-        auto state = winrt::make_self<implementation::ApplicationState>(root);
+        auto state = _sidebarState(root);
         auto settings = _sidebarSettings("horizontal");
         const auto lock = state->LockSidebarState();
         // A directory at the file path deterministically makes persistence fail.
+        std::filesystem::remove(root / L"state.json");
         std::filesystem::create_directory(root / L"state.json");
         auto saves = 0;
         VERIFY_IS_FALSE(settings->MigrateSidebarLayout(*state, [&]() { ++saves; return true; }));
@@ -277,7 +291,7 @@ namespace SettingsModelUnitTests
         {
             const auto root = _sidebarRoot();
             const auto cleanup = wil::scope_exit([&]() { std::filesystem::remove_all(root); });
-            auto state = winrt::make_self<implementation::ApplicationState>(root);
+            auto state = _sidebarState(root);
             auto settings = _sidebarSettings(layout);
             const auto lock = state->LockSidebarState();
             VERIFY_IS_TRUE(settings->MigrateSidebarLayout(*state, []() { return true; }));
@@ -396,7 +410,7 @@ namespace SettingsModelUnitTests
         const auto cleanup = wil::scope_exit([&]() { std::filesystem::remove_all(root); });
         const auto path = root / L"settings.json";
         til::io::write_utf8_string_to_file_atomic(root / L"state.json", "{}");
-        auto state = winrt::make_self<implementation::ApplicationState>(root);
+        auto state = _sidebarState(root);
         auto settings = _sidebarSettings("horizontal");
         VERIFY_IS_TRUE(_saveFixture(*settings, path));
         const auto transactionLock = state->LockSidebarState();
@@ -417,7 +431,7 @@ namespace SettingsModelUnitTests
         const auto cleanup = wil::scope_exit([&]() { std::filesystem::remove_all(root); });
         const auto path = root / L"settings.json";
         til::io::write_utf8_string_to_file_atomic(root / L"state.json", "{}");
-        auto state = winrt::make_self<implementation::ApplicationState>(root);
+        auto state = _sidebarState(root);
         auto settings = _sidebarSettings("horizontal");
         VERIFY_IS_TRUE(_saveFixture(*settings, path));
         const auto transactionLock = state->LockSidebarState();
@@ -482,5 +496,154 @@ namespace SettingsModelUnitTests
         VERIFY_ARE_EQUAL(uint64_t{ 0 }, second->TryBeginSidebarIntroduction());
         // A page retaining the token can acknowledge writer completion safely.
         first->EndSidebarIntroduction(claim, false);
+    }
+
+    void ApplicationStateTests::SidebarExperimentBucketsAreStableAndEightyTwenty()
+    {
+        using State = implementation::ApplicationState;
+        const auto root = _sidebarRoot();
+        const auto cleanup = wil::scope_exit([&]() { std::filesystem::remove_all(root); });
+        auto state = winrt::make_self<State>(root);
+        VERIFY_ARE_EQUAL(uint32_t{ 1495 }, State::SidebarExperimentBucket(winrt::guid{ L"{00000000-0000-0000-0000-000000000001}" }));
+        VERIFY_ARE_EQUAL(uint32_t{ 9114 }, State::SidebarExperimentBucket(winrt::guid{ L"{00000000-0000-0000-0000-000000000002}" }));
+        uint32_t sidebar = 0;
+        uint32_t horizontal = 0;
+        bool validBuckets = true;
+        bool saw7999 = false;
+        bool saw8000 = false;
+        for (uint32_t i = 0; i < 100000; ++i)
+        {
+            winrt::guid id{};
+            id.Data1 = i;
+            const auto bucket = State::SidebarExperimentBucket(id);
+            validBuckets &= bucket < 10000;
+            saw7999 |= bucket == 7999;
+            saw8000 |= bucket == 8000;
+            if (bucket == 7999 || bucket == 8000)
+            {
+                state->ExperimentInstallationId(id);
+                VERIFY_ARE_EQUAL(bucket == 7999 ? TabLayout::Vertical : TabLayout::Horizontal, state->SidebarExperimentLayout());
+            }
+            bucket < 8000 ? ++sidebar : ++horizontal;
+        }
+        VERIFY_IS_TRUE(validBuckets);
+        VERIFY_IS_TRUE(saw7999 && saw8000);
+        VERIFY_IS_TRUE(sidebar > 79000 && sidebar < 81000);
+        VERIFY_ARE_EQUAL(uint32_t{ 100000 }, sidebar + horizontal);
+    }
+
+    void ApplicationStateTests::SidebarExperimentAssignmentPersistsAcrossInstances()
+    {
+        const auto root = _sidebarRoot();
+        const auto cleanup = wil::scope_exit([&]() { std::filesystem::remove_all(root); });
+        auto stale = winrt::make_self<implementation::ApplicationState>(root);
+        auto first = winrt::make_self<implementation::ApplicationState>(root);
+        winrt::guid id;
+        TabLayout layout;
+        {
+            const auto lock = first->LockSidebarState();
+            VERIFY_IS_TRUE(first->PrepareSidebarExperiment());
+            id = first->ExperimentInstallationId();
+            layout = first->SidebarExperimentLayout();
+            VERIFY_IS_TRUE(id != winrt::guid{});
+            VERIFY_IS_TRUE(first->CompleteSidebarLayoutMigration());
+        }
+        stale->AgentWelcomeShown(true);
+        stale->Flush();
+        auto restarted = winrt::make_self<implementation::ApplicationState>(root);
+        VERIFY_ARE_EQUAL(id, restarted->ExperimentInstallationId());
+        VERIFY_ARE_EQUAL(layout, restarted->SidebarExperimentLayout());
+        VERIFY_ARE_EQUAL(winrt::hstring{ L"sidebar-upgrade-v1" }, restarted->SidebarExperimentId());
+        VERIFY_ARE_EQUAL(first->SidebarExperimentAssignment(), restarted->SidebarExperimentAssignment());
+        const auto shared = restarted->ToJson(implementation::FileSource::Shared);
+        const auto local = restarted->ToJson(implementation::FileSource::Local);
+        VERIFY_IS_TRUE(shared.isMember("experimentInstallationId"));
+        VERIFY_IS_TRUE(shared.isMember("sidebarExperimentVersion"));
+        VERIFY_IS_TRUE(shared.isMember("sidebarExperimentAssignment"));
+        VERIFY_IS_FALSE(local.isMember("experimentInstallationId"));
+        VERIFY_IS_FALSE(local.isMember("sidebarExperimentVersion"));
+        VERIFY_IS_FALSE(local.isMember("sidebarExperimentAssignment"));
+        const auto lock = stale->LockSidebarState();
+        stale->RefreshSidebarState();
+        VERIFY_IS_TRUE(stale->PrepareSidebarExperiment());
+        VERIFY_ARE_EQUAL(id, stale->ExperimentInstallationId());
+        VERIFY_ARE_EQUAL(first->SidebarExperimentAssignment(), stale->SidebarExperimentAssignment());
+    }
+
+    void ApplicationStateTests::SidebarExperimentMigratesBothGroupsAfterLegacyMigration()
+    {
+        for (const auto sidebar : { false, true })
+        {
+            const auto root = _sidebarRoot();
+            const auto cleanup = wil::scope_exit([&]() { std::filesystem::remove_all(root); });
+            auto state = _sidebarState(root, sidebar);
+            auto json = state->ToJson(implementation::FileSource::Shared);
+            json["sidebarLayoutMigrationCompleted"] = true;
+            til::io::write_utf8_string_to_file_atomic(root / L"state.json", Json::writeString(Json::StreamWriterBuilder{}, json));
+            auto settings = _sidebarSettings(sidebar ? "horizontal" : "vertical");
+            auto lock = state->LockSidebarState();
+            state->RefreshSidebarState();
+            auto saves = 0;
+            const auto assigned = sidebar ? TabLayout::Vertical : TabLayout::Horizontal;
+            VERIFY_IS_TRUE(settings->MigrateSidebarLayout(*state, [&]() { ++saves; return true; }));
+            VERIFY_ARE_EQUAL(1, saves);
+            VERIFY_ARE_EQUAL(assigned, settings->GlobalSettings().TabLayout());
+            VERIFY_ARE_EQUAL(winrt::hstring{ sidebar ? L"Sidebar" : L"Horizontal" }, state->SidebarExperimentAssignment());
+            VERIFY_ARE_EQUAL(uint32_t{ 1 }, state->SidebarExperimentVersion());
+            lock.reset();
+            auto restarted = winrt::make_self<implementation::ApplicationState>(root);
+            auto changed = _sidebarSettings(sidebar ? "horizontal" : "vertical");
+            lock = restarted->LockSidebarState();
+            VERIFY_IS_TRUE(changed->MigrateSidebarLayout(*restarted, [&]() { ++saves; return true; }));
+            VERIFY_ARE_EQUAL(1, saves);
+            VERIFY_ARE_EQUAL(sidebar ? TabLayout::Horizontal : TabLayout::Vertical, changed->GlobalSettings().TabLayout());
+            VERIFY_ARE_EQUAL(state->SidebarExperimentAssignment(), restarted->SidebarExperimentAssignment());
+        }
+    }
+
+    void ApplicationStateTests::SidebarExperimentFailedSaveKeepsIdentity()
+    {
+        const auto root = _sidebarRoot();
+        const auto cleanup = wil::scope_exit([&]() { std::filesystem::remove_all(root); });
+        auto state = winrt::make_self<implementation::ApplicationState>(root);
+        auto settings = _sidebarSettings("horizontal");
+        auto lock = state->LockSidebarState();
+        VERIFY_IS_FALSE(settings->MigrateSidebarLayout(*state, []() { return false; }));
+        const auto id = state->ExperimentInstallationId();
+        VERIFY_IS_TRUE(id != winrt::guid{});
+        VERIFY_ARE_EQUAL(uint32_t{ 0 }, state->SidebarExperimentVersion());
+        VERIFY_IS_TRUE(state->SidebarExperimentId().empty());
+        VERIFY_IS_TRUE(_hasSaveWarning(*settings));
+        VERIFY_ARE_EQUAL(TabLayout::Horizontal, settings->GlobalSettings().TabLayout());
+        lock.reset();
+        auto restarted = winrt::make_self<implementation::ApplicationState>(root);
+        VERIFY_ARE_EQUAL(id, restarted->ExperimentInstallationId());
+        lock = restarted->LockSidebarState();
+        VERIFY_IS_TRUE(settings->MigrateSidebarLayout(*restarted, []() { return true; }));
+        VERIFY_ARE_EQUAL(id, restarted->ExperimentInstallationId());
+        VERIFY_ARE_EQUAL(restarted->SidebarExperimentLayout(), settings->GlobalSettings().TabLayout());
+        VERIFY_ARE_EQUAL(uint32_t{ 1 }, restarted->SidebarExperimentVersion());
+    }
+
+    void ApplicationStateTests::SidebarExperimentIdentityFailureDoesNotChangeLayout()
+    {
+        const auto root = _sidebarRoot();
+        const auto cleanup = wil::scope_exit([&]() { std::filesystem::remove_all(root); });
+        auto state = winrt::make_self<implementation::ApplicationState>(root);
+        auto settings = _sidebarSettings("horizontal");
+        const auto lock = state->LockSidebarState();
+        std::filesystem::create_directory(root / L"state.json");
+        auto saves = 0;
+        VERIFY_IS_FALSE(settings->MigrateSidebarLayout(*state, [&]() { ++saves; return true; }));
+        VERIFY_ARE_EQUAL(0, saves);
+        VERIFY_IS_TRUE(_hasSaveWarning(*settings));
+        VERIFY_ARE_EQUAL(TabLayout::Horizontal, settings->GlobalSettings().TabLayout());
+        VERIFY_ARE_EQUAL(winrt::guid{}, state->ExperimentInstallationId());
+        VERIFY_ARE_EQUAL(uint32_t{ 0 }, state->SidebarExperimentVersion());
+        std::filesystem::remove(root / L"state.json");
+        VERIFY_IS_TRUE(settings->MigrateSidebarLayout(*state, [&]() { ++saves; return true; }));
+        VERIFY_ARE_EQUAL(1, saves);
+        VERIFY_IS_TRUE(state->ExperimentInstallationId() != winrt::guid{});
+        VERIFY_ARE_EQUAL(uint32_t{ 1 }, state->SidebarExperimentVersion());
     }
 }

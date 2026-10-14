@@ -50,7 +50,7 @@ public static extern bool GetUserObjectInformation(System.IntPtr handle, int ind
         $fixtureCommand = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($fixtureCode))
         try {
             $script:app = Start-Terminal -Package Dev -PassFre $true -State @{
-                sidebarLayoutMigrationCompleted = $true; sidebarIntroductionShown = $true
+                experimentInstallationId = '{00000000-0000-0000-0000-000000000001}'; sidebarExperimentVersion = 1; sidebarExperimentAssignment = 'Sidebar'; sidebarLayoutMigrationCompleted = $true; sidebarIntroductionShown = $true
             } -Settings @{
                 language = 'en-US'; tabLayout = 'vertical'; startupActions = ''
                 firstWindowPreference = 'defaultProfile'; windowingBehavior = 'useNew'

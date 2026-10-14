@@ -54,7 +54,11 @@ Describe 'Feature: telemetry funnels' -Tag 'Feature', 'Telemetry' -Skip:($env:IT
             foreach ($name in @('AllowAutoFix', 'AllowedAgents', 'AllowCustomAgents')) {
                 Set-TelemetryPolicy -Transaction $script:policyTransaction -Name $name -Value $null
             }
-            $script:app = Start-Terminal -Package Dev -PassFre $true -Settings @{
+            $script:app = Start-Terminal -Package Dev -PassFre $true -State @{
+                experimentInstallationId = '{00000000-0000-0000-0000-000000000002}'
+                sidebarExperimentVersion = 1; sidebarExperimentAssignment = 'Horizontal'
+                sidebarLayoutMigrationCompleted = $true
+            } -Settings @{
                 acpAgent = 'custom:telemetry-fixture'; acpCustomCommand = $command; acpModel = ''
                 delegateAgent = 'copilot'; autoFixEnabled = $false; autoErrorDetectionEnabled = $true
                 tabLayout = 'horizontal'; 'agentPane.yoloMode' = $false
@@ -279,6 +283,8 @@ Describe 'Feature: telemetry funnels' -Tag 'Feature', 'Telemetry' -Skip:($env:IT
             AllowedAgentsPolicy = 'AnsiString'
             AllowCustomAgentsPolicy = 'AnsiString'
             SidebarEnabled = 'Boolean'
+            SidebarExperimentId = 'UnicodeString'
+            SidebarExperimentAssignment = 'UnicodeString'
             DefaultsFallback = 'Boolean'
         }
         @($created[0].Fields.Keys | Where-Object { $_ -ne 'PartA_PrivTags' } | Sort-Object) | Should -Be ($expected.Keys | Sort-Object)
@@ -286,6 +292,8 @@ Describe 'Feature: telemetry funnels' -Tag 'Feature', 'Telemetry' -Skip:($env:IT
             $created[0].Types[$field] | Should -Match ($expected[$field] + '$')
         }
         $created[0].Fields.PrimaryProvider | Should -Be 'custom'
+        $created[0].Fields.SidebarExperimentId | Should -Be 'sidebar-upgrade-v1'
+        $created[0].Fields.SidebarExperimentAssignment | Should -BeIn @('Sidebar', 'Horizontal')
         $created[0].Types.PartA_PrivTags | Should -Match 'UInt64$'
         @($script:records | Where-Object Name -in @('AgentProviderConfigured', 'CustomAgentConfigured', 'SidebarStateOnLaunch')) | Should -HaveCount 0
     }

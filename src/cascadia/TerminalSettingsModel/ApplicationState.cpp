@@ -332,6 +332,13 @@ namespace winrt::Microsoft::Terminal::Settings::Model::implementation
                 root[key] = true;
             }
         }
+        for (const auto key : { "experimentInstallationId", "sidebarExperimentVersion", "sidebarExperimentAssignment" })
+        {
+            if (previous.isMember(key))
+            {
+                root[key] = previous[key];
+            }
+        }
     }
 
     void ApplicationState::RefreshSidebarState() const
@@ -340,6 +347,77 @@ namespace winrt::Microsoft::Terminal::Settings::Model::implementation
         const auto state = _state.lock();
         state->SidebarLayoutMigrationCompleted = JsonUtils::GetValueForKey<std::optional<bool>>(root, "sidebarLayoutMigrationCompleted");
         state->SidebarIntroductionShown = JsonUtils::GetValueForKey<std::optional<bool>>(root, "sidebarIntroductionShown");
+        state->ExperimentInstallationId = JsonUtils::GetValueForKey<std::optional<winrt::guid>>(root, "experimentInstallationId");
+        state->SidebarExperimentVersion = JsonUtils::GetValueForKey<std::optional<uint32_t>>(root, "sidebarExperimentVersion");
+        state->SidebarExperimentAssignment = JsonUtils::GetValueForKey<std::optional<winrt::hstring>>(root, "sidebarExperimentAssignment");
+    }
+
+    uint32_t ApplicationState::SidebarExperimentBucket(const winrt::guid& installationId) noexcept
+    {
+        // FNV-1a over the experiment ID and canonical GUID bytes, independent
+        // of std::hash implementation and native GUID memory layout.
+        uint32_t hash = 2166136261u;
+        const auto add = [&](uint8_t byte) {
+            hash = (hash ^ byte) * 16777619u;
+        };
+        for (const auto byte : CurrentSidebarExperimentId)
+        {
+            add(static_cast<uint8_t>(byte));
+        }
+        for (auto shift = 24; shift >= 0; shift -= 8)
+        {
+            add(static_cast<uint8_t>(installationId.Data1 >> shift));
+        }
+        for (auto shift = 8; shift >= 0; shift -= 8)
+        {
+            add(static_cast<uint8_t>(installationId.Data2 >> shift));
+        }
+        for (auto shift = 8; shift >= 0; shift -= 8)
+        {
+            add(static_cast<uint8_t>(installationId.Data3 >> shift));
+        }
+        for (const auto byte : installationId.Data4)
+        {
+            add(byte);
+        }
+        return hash % 10000;
+    }
+
+    Model::TabLayout ApplicationState::SidebarExperimentLayout() const noexcept
+    {
+        return SidebarExperimentBucket(ExperimentInstallationId()) < 8000 ? Model::TabLayout::Vertical : Model::TabLayout::Horizontal;
+    }
+
+    winrt::hstring ApplicationState::SidebarExperimentId() const
+    {
+        return SidebarExperimentVersion() == CurrentSidebarExperimentVersion ? winrt::to_hstring(CurrentSidebarExperimentId) : winrt::hstring{};
+    }
+
+    bool ApplicationState::PrepareSidebarExperiment() noexcept
+    try
+    {
+        // The caller holds the cross-process lock. Persist identity before
+        // changing settings so a failed migration retries the same assignment.
+        if (ExperimentInstallationId() == winrt::guid{})
+        {
+            THROW_HR_IF(E_UNEXPECTED, SidebarExperimentVersion() != 0);
+            auto root = _readSharedJson();
+            const winrt::guid id{ ::Microsoft::Console::Utils::CreateGuid() };
+            JsonUtils::SetValueForKey(root, "experimentInstallationId", id);
+            _writeSharedContents(Json::writeString(Json::StreamWriterBuilder{}, root));
+            _state.lock()->ExperimentInstallationId = id;
+        }
+        if (SidebarExperimentVersion() == CurrentSidebarExperimentVersion)
+        {
+            THROW_HR_IF(E_UNEXPECTED, SidebarExperimentAssignment() != (SidebarExperimentLayout() == Model::TabLayout::Vertical ? L"Sidebar" : L"Horizontal"));
+        }
+        THROW_HR_IF(E_UNEXPECTED, SidebarExperimentVersion() > CurrentSidebarExperimentVersion);
+        return true;
+    }
+    catch (...)
+    {
+        LOG_CAUGHT_EXCEPTION();
+        return false;
     }
 
     void ApplicationState::_persistSidebarFlag(const std::string_view key) const
@@ -352,9 +430,20 @@ namespace winrt::Microsoft::Terminal::Settings::Model::implementation
     bool ApplicationState::CompleteSidebarLayoutMigration() noexcept
     try
     {
-        _persistSidebarFlag("sidebarLayoutMigrationCompleted");
+        if (!PrepareSidebarExperiment())
+        {
+            return false;
+        }
+        auto root = _readSharedJson();
+        root["sidebarLayoutMigrationCompleted"] = true;
+        const winrt::hstring assignment{ SidebarExperimentLayout() == Model::TabLayout::Vertical ? L"Sidebar" : L"Horizontal" };
+        root["sidebarExperimentVersion"] = CurrentSidebarExperimentVersion;
+        JsonUtils::SetValueForKey(root, "sidebarExperimentAssignment", assignment);
+        _writeSharedContents(Json::writeString(Json::StreamWriterBuilder{}, root));
         const auto state = _state.lock();
         state->SidebarLayoutMigrationCompleted = true;
+        state->SidebarExperimentVersion = CurrentSidebarExperimentVersion;
+        state->SidebarExperimentAssignment = assignment;
         return true;
     }
     catch (...)

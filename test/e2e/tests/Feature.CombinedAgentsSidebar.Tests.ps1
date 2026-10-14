@@ -1082,7 +1082,7 @@ Describe 'Feature: combined Agents sidebar' -Tag @('Feature', 'CombinedAgentsSid
             }
         }
         $startupState = @{
-            sidebarLayoutMigrationCompleted = $true; sidebarIntroductionShown = $true
+            experimentInstallationId = '{00000000-0000-0000-0000-000000000001}'; sidebarExperimentVersion = 1; sidebarExperimentAssignment = 'Sidebar'; sidebarLayoutMigrationCompleted = $true; sidebarIntroductionShown = $true
         }
         $startupSettings = @{
             language = 'en-US'; tabLayout = 'vertical'; tabLayoutVerticalWidth = 320
