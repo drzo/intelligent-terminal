@@ -927,10 +927,8 @@ Describe 'Feature: combined Agents sidebar' -Tag @('Feature', 'CombinedAgentsSid
                 }
                 $row = & $getTarget
                 (& $isReady $row (Get-CombinedElement ItemsList)) | Should -BeTrue -Because 'the fresh exact target must fit fully inside the shared viewport immediately before input'
-                $bounds = $row.Current.BoundingRectangle
-                $x = [int]($bounds.X + $bounds.Width / 2)
-                $y = [int]($bounds.Y + $bounds.Height / 2)
-                Invoke-UiMouseDrag -App $script:app -FromX $x -FromY $y -ToX $x -ToY $y -HoldMs 50 | Out-Null
+                $row.GetCurrentPattern([Windows.Automation.InvokePattern]::Pattern) | Out-Null
+                Invoke-UiElement -App $script:app -Selector $row.Current.Name | Out-Null
             }
             catch {
                 $original = $_
@@ -3738,8 +3736,10 @@ Describe 'Feature: combined Agents sidebar' -Tag @('Feature', 'CombinedAgentsSid
     It 'Combined sidebar history action restores a legitimate live session' {
         $tab = $script:tabs[2]
         $sid = 'combined-action-' + [guid]::NewGuid().ToString('N')
+        $actionDirectory = Join-Path $script:evidence $sid
+        New-Item -ItemType Directory -Path $actionDirectory | Out-Null
         $path = Join-Path $script:evidence 'action-hook.json'
-        @{ session_id = $sid; cwd = $script:evidence; tool_name = 'edit' } |
+        @{ session_id = $sid; cwd = $actionDirectory; tool_name = 'edit' } |
             ConvertTo-Json -Compress | Set-Content -LiteralPath $path -Encoding utf8
         Set-WtPaneFocus -App $script:app -SessionId $tab.session_id
         $command = "Get-Content -Raw -LiteralPath '$($path.Replace("'", "''"))' | & '$($script:app.WtcliPath.Replace("'", "''"))' agent-hook --cli-source copilot --event agent.tool.starting"
@@ -3765,7 +3765,7 @@ Describe 'Feature: combined Agents sidebar' -Tag @('Feature', 'CombinedAgentsSid
                 (Get-CombinedAttachedTabCount) -eq $before - 1
             } | Out-Null
             Set-CombinedView $true
-            Set-CombinedQuery (Split-Path $script:evidence -Leaf)
+            Set-CombinedQuery (Split-Path $actionDirectory -Leaf)
             try {
                 Wait-Until -TimeoutSec 15 -Because 'the detached known-provider row is available for a legitimate History action' -Condition {
                     @(Get-CombinedRows Recent).Count -eq 1
@@ -3775,7 +3775,7 @@ Describe 'Feature: combined Agents sidebar' -Tag @('Feature', 'CombinedAgentsSid
                 Save-CombinedActionEvidence 'known-provider-action' -Screenshot
                 throw
             }
-            Invoke-CombinedHistoryRow -Title (Split-Path $script:evidence -Leaf) -SessionId $sid -PaneId $tab.session_id -Status Working
+            Invoke-CombinedHistoryRow -Title (Split-Path $actionDirectory -Leaf) -SessionId $sid -PaneId $tab.session_id -Status Working
             Wait-Until -TimeoutSec 20 -Because 'the actual History click restores the original tab through master and COM' -Condition {
                 [string](Get-ActivePane -App $script:app).session_id -eq [string]$tab.session_id -and
                     (Get-CombinedAttachedTabCount) -eq $before

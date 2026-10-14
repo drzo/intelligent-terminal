@@ -137,7 +137,7 @@ const MVP_SESSIONS_ORIGIN_FILTER: crate::agent_sessions::OriginFilter =
 /// bookkeeping, pane lifecycle). Agent CLI hooks are NOT queued here: master
 /// subscribes to the COM broadcast and routes them itself, so one hook produces
 /// one master-side apply regardless of helper count.
-pub type QueuedSessionHook = crate::agent_sessions::SessionEvent;
+pub type QueuedSessionHook = crate::session_registry::SessionHookUpdate;
 
 /// Resolve the `/sessions` origin filter for this process.
 ///
@@ -3006,7 +3006,58 @@ impl App {
 
     fn publish_session_hook(&self, event: crate::agent_sessions::SessionEvent) {
         if let Some(tx) = &self.session_hook_tx {
-            if let Err(err) = tx.send(event) {
+            use crate::agent_sessions::SessionEvent;
+            let (key, pane) = match &event {
+                SessionEvent::SessionStarted {
+                    key,
+                    pane_session_id,
+                    ..
+                }
+                | SessionEvent::ResumePaneAssigned {
+                    key,
+                    pane_session_id,
+                } => (Some(key.as_str()), Some(pane_session_id.as_str())),
+                SessionEvent::ToolStarting { key, .. }
+                | SessionEvent::ToolCompleted { key }
+                | SessionEvent::Notification { key, .. }
+                | SessionEvent::SessionStopped { key, .. }
+                | SessionEvent::ResumeDispatched { key }
+                | SessionEvent::ResumeFailed { key, .. } => (Some(key.as_str()), None),
+                _ => (None, None),
+            };
+            let mut candidates = self
+                .tab_sessions
+                .values()
+                .filter_map(|tab| tab.agents_view.snapshot.as_ref())
+                .flatten()
+                .filter(|row| key.is_some_and(|key| row.session_id.0.as_ref() == key))
+                .filter(|row| {
+                    pane.is_none_or(|pane| {
+                        row.pane_session_id.as_deref().is_some_and(|owner| {
+                            crate::agent_sessions::pane_key(owner)
+                                == crate::agent_sessions::pane_key(pane)
+                        })
+                    })
+                })
+                .map(crate::session_registry::SessionIdentity::from_info)
+                .filter(|identity| identity.history_key.is_some())
+                .collect::<std::collections::HashSet<_>>();
+            let identity = if candidates.len() == 1 {
+                candidates.drain().next()
+            } else {
+                None
+            };
+            let mut scope = crate::session_registry::SessionHookScope {
+                identity,
+                pane_session_id: pane.map(str::to_owned),
+                ..Default::default()
+            };
+            if let SessionEvent::SessionStarted { cli_source, .. } = &event {
+                scope.cli_source = Some(crate::session_registry::SessionHookCliSource::from(
+                    cli_source,
+                ));
+            }
+            if let Err(err) = tx.send(crate::session_registry::SessionHookUpdate { event, scope }) {
                 tracing::warn!(
                     target: "session_hook",
                     error = %err,

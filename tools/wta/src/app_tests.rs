@@ -1877,11 +1877,57 @@ fn helper_still_publishes_events_it_originates() {
 
     assert!(
         matches!(
-            rx.try_recv(),
+            rx.try_recv().map(|update| update.event),
             Ok(SessionEvent::PaneClosed { ref pane_session_id }) if pane_session_id == pane
         ),
         "helper exit inference must remain available as a fallback"
     );
+}
+
+#[test]
+fn qualified_hooks_helper_queue_preserves_identity_for_tool_and_end() {
+    use crate::agent_sessions::{CliSource, SessionEvent, SessionLocation};
+    use crate::session_registry::{SessionIdentity, SessionInfo, WtaExtRequest};
+    let mut app = test_app();
+    let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+    app.set_session_hook_tx(tx);
+    let mut row = SessionInfo::new(
+        agent_client_protocol::schema::v1::SessionId::new("scoped-helper"),
+        std::path::PathBuf::from("/project"),
+    );
+    row.provider_id = Some("copilot".into());
+    row.cli_source = Some(CliSource::Copilot);
+    row.location = SessionLocation::Wsl {
+        distro: "Ubuntu".into(),
+    };
+    row.session_universe = Some("selected-home".into());
+    row.pane_session_id = Some("pane-b".into());
+    let identity = SessionIdentity::from_info(&row);
+    app.current_tab_mut().agents_view.snapshot = Some(vec![row]);
+    for event in [
+        SessionEvent::ToolStarting {
+            key: "scoped-helper".into(),
+            tool_name: "edit".into(),
+        },
+        SessionEvent::SessionStopped {
+            key: "scoped-helper".into(),
+            reason: "exit".into(),
+        },
+    ] {
+        app.publish_session_hook(event);
+        let update = rx.try_recv().unwrap();
+        assert_eq!(update.scope.identity, Some(identity.clone()));
+        let wire = crate::session_registry::build_scoped_session_hook_request(
+            &update.event,
+            &update.scope,
+        );
+        let WtaExtRequest::SessionHook(parsed) = crate::session_registry::parse_ext_request(wire)
+        else {
+            panic!("hook must parse");
+        };
+        assert_eq!(parsed.scope.identity, Some(identity.clone()));
+        assert_eq!(parsed.event, update.event);
+    }
 }
 
 pub(super) fn test_app_with_master_rx() -> (

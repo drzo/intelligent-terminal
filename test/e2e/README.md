@@ -211,6 +211,11 @@ Manual collapse and keyboard navigation use an empty query; nonempty search
 is separately checked to force expansion and disable manual collapse.
 History preservation targets a named fixture session, not its rank among
 legitimate external sessions, and realizes its owned row in the shared viewport.
+History action smoke requires the exact visible row's public InvokePattern and
+uses the existing root-scoped UIA invoke driver, without a physical pointer
+fallback. The known-provider restore fixture uses a session-specific cwd so
+global search does not also match every seeded history row's shared directory;
+its exact-target, shell PID, helper and session restoration assertions remain.
 After the build owner proves the deployed
 feature-head App/WTA hashes, run with explicit Dev and prerequisite validation:
 

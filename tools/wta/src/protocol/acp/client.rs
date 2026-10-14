@@ -3938,7 +3938,11 @@ pub async fn run_acp_client_over_pipe(
                 let conn_for_hook = conn.clone();
                 lifecycle_tasks.retain(|task| !task.is_finished());
                 lifecycle_tasks.push(tokio::task::spawn_local(async move {
-                    let req = crate::session_registry::build_session_hook_request(&event);
+                    let req = if event.scope == crate::session_registry::SessionHookScope::default() {
+                        crate::session_registry::build_session_hook_request(&event.event)
+                    } else {
+                        crate::session_registry::build_scoped_session_hook_request(&event.event, &event.scope)
+                    };
                     match conn_for_hook.ext_method(req).await {
                         Ok(response) => tracing::debug!(
                             target: "session_hook",
@@ -5405,7 +5409,7 @@ fn close_client_receivers(
     drop_session_rx: &mut mpsc::UnboundedReceiver<DropSessionRequest>,
     rename_session_rx: &mut mpsc::UnboundedReceiver<RenameSessionRequest>,
     restart_rx: &mut mpsc::UnboundedReceiver<AgentLifecycleRequest>,
-    session_hook_rx: &mut mpsc::UnboundedReceiver<crate::agent_sessions::SessionEvent>,
+    session_hook_rx: &mut mpsc::UnboundedReceiver<crate::app::QueuedSessionHook>,
     master_ext_rx: &mut mpsc::UnboundedReceiver<MasterExtRequest>,
 ) {
     retire_queued_prompt_submissions(prompt_rx);

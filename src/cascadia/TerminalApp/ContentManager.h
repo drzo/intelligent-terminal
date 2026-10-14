@@ -62,6 +62,22 @@ namespace winrt::TerminalApp::implementation
             Ended,
             Failed,
         };
+        struct PaneSessionIdentity
+        {
+            winrt::hstring sessionId;
+            winrt::hstring agent;
+            winrt::hstring source;
+            winrt::hstring distro;
+            winrt::hstring universe;
+
+            bool Matches(const PaneSessionIdentity& other) const noexcept
+            {
+                return sessionId == other.sessionId &&
+                       (agent.empty() || other.agent.empty() || agent == other.agent) &&
+                       (source.empty() || other.source.empty() ||
+                        (source == other.source && distro == other.distro && universe == other.universe));
+            }
+        };
         struct PaneMetadata
         {
             uint64_t contentId{};
@@ -75,8 +91,20 @@ namespace winrt::TerminalApp::implementation
             bool identityQualified{};
             bool interactiveResume{};
             bool resumeCommandlineTrusted{};
+            bool awaitingSessionStart{};
             winrt::hstring eventJson;
-            std::vector<winrt::hstring> supersededSessionIds;
+            std::vector<PaneSessionIdentity> supersededSessions;
+
+            PaneSessionIdentity Identity() const
+            {
+                return { session.sessionId, session.agent, source, wslDistro, universe };
+            }
+            bool IsSuperseded(const PaneSessionIdentity& identity) const
+            {
+                return std::ranges::any_of(supersededSessions, [&](const auto& previous) {
+                    return previous.Matches(identity);
+                });
+            }
 
             bool HasAgent() const noexcept
             {
@@ -92,7 +120,7 @@ namespace winrt::TerminalApp::implementation
         std::optional<PaneMetadata> MetadataForPane(const winrt::guid& paneId) const;
         void ResetPaneConnection(uint64_t contentId, const winrt::guid& paneId);
         void BindPaneSession(const winrt::guid& paneId, const PaneAgentSession& session, const winrt::hstring& source = {}, const winrt::hstring& distro = {}, const winrt::hstring& universe = {}, bool interactiveResume = false);
-        void EndPaneSession(const winrt::guid& paneId, const winrt::hstring& sessionId = {}, const winrt::hstring& agent = {});
+        void EndPaneSession(const winrt::guid& paneId, const winrt::hstring& sessionId = {}, const winrt::hstring& agent = {}, const winrt::hstring& source = {}, const winrt::hstring& distro = {}, std::optional<winrt::hstring> universe = winrt::hstring{});
         void SetPaneConnectionState(const winrt::guid& paneId, bool failed);
         void UpdatePaneSessionIdentity(const winrt::guid& paneId, const PaneAgentSession& session, const winrt::hstring& source, const winrt::hstring& distro, const winrt::hstring& universe);
         til::typed_event<winrt::TerminalApp::ContentManager, winrt::guid> PaneMetadataChanged;

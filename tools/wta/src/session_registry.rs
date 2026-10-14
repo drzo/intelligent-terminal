@@ -741,7 +741,7 @@ pub enum WtaExtRequest {
     /// `_intellterm.wta/session_hook` — a helper-originated session event
     /// (resume bookkeeping, pane lifecycle). Agent CLI hooks reach master over
     /// the COM broadcast instead.
-    SessionHook(crate::agent_sessions::SessionEvent),
+    SessionHook(SessionHookUpdate),
     /// `_intellterm.wta/session_born_bound` — a #266 binding-only registration
     /// (same body as `SessionHook` plus an optional `wsl_distro` → binding-only
     /// semantics). The second field is the WSL distro when the born-bound
@@ -802,7 +802,7 @@ pub fn parse_ext_request(req: acp::schema::v1::ExtRequest) -> WtaExtRequest {
     } else if ext_method_matches(&req.method, INTELLTERM_METHOD_SESSION_ACTIVATION_STATUS) {
         decode!(SessionActivationStatus, parse_session_activate_params)
     } else if ext_method_matches(&req.method, INTELLTERM_METHOD_SESSION_HOOK) {
-        decode!(SessionHook, parse_session_hook_params)
+        decode!(SessionHook, parse_session_hook_update)
     } else if ext_method_matches(&req.method, INTELLTERM_METHOD_SESSION_BORN_BOUND) {
         match parse_born_bound_params(&req.params) {
             Ok((ev, wsl_distro, universe)) => {
@@ -1163,6 +1163,54 @@ impl From<SessionHookParams> for crate::agent_sessions::SessionEvent {
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
 pub struct SessionHookResponse {
     pub applied: bool,
+}
+
+/// Routing metadata is independent of event kind: tool/end events must retain
+/// the same provenance as a start, rather than falling back to a raw SID.
+#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
+pub struct SessionHookScope {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub identity: Option<SessionIdentity>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cli_source: Option<SessionHookCliSource>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pane_session_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub agent_source: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub wsl_distro: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub session_universe: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+pub struct SessionHookUpdate {
+    pub event: SessionEvent,
+    pub scope: SessionHookScope,
+}
+
+pub fn parse_session_hook_update(
+    raw: &serde_json::value::RawValue,
+) -> Result<SessionHookUpdate, serde_json::Error> {
+    Ok(SessionHookUpdate {
+        event: parse_session_hook_params(raw)?,
+        scope: serde_json::from_str(raw.get())?,
+    })
+}
+
+pub fn build_scoped_session_hook_request(
+    event: &SessionEvent,
+    scope: &SessionHookScope,
+) -> acp::schema::v1::ExtRequest {
+    let mut value = serde_json::to_value(SessionHookParams::from(event))
+        .expect("SessionHookParams serialization is infallible");
+    let fields = serde_json::to_value(scope).expect("SessionHookScope serialization is infallible");
+    value
+        .as_object_mut()
+        .expect("hook is an object")
+        .extend(fields.as_object().expect("scope is an object").clone());
+    let raw = serde_json::value::to_raw_value(&value).expect("hook serialization is infallible");
+    acp::schema::v1::ExtRequest::new(INTELLTERM_METHOD_SESSION_HOOK, Arc::from(raw))
 }
 
 /// Build a fire-and-forget helper → master `session_hook` ExtRequest.
@@ -1533,6 +1581,8 @@ pub trait SessionRegistry: Send + Sync {
     /// Apply a helper-observed session event to the master-side reducer state.
     async fn apply_event(&self, ev: SessionEvent) -> bool;
 
+    async fn apply_event_identity(&self, identity: &SessionIdentity, ev: SessionEvent) -> bool;
+
     /// Update origin metadata on an existing row.
     async fn set_origin(&self, sid: &acp::schema::v1::SessionId, origin: SessionOrigin) -> bool;
 
@@ -1792,6 +1842,11 @@ impl SessionRegistry for InMemoryRegistry {
     async fn apply_event(&self, ev: SessionEvent) -> bool {
         let mut guard = self.inner.lock().await;
         apply_event_locked(&mut guard, ev)
+    }
+
+    async fn apply_event_identity(&self, identity: &SessionIdentity, ev: SessionEvent) -> bool {
+        let mut guard = self.inner.lock().await;
+        apply_event_scoped_locked(&mut guard, ev, Some(identity))
     }
 
     async fn set_origin(&self, sid: &acp::schema::v1::SessionId, origin: SessionOrigin) -> bool {
@@ -2114,6 +2169,53 @@ fn end_entry(state: &mut RegistryState, identity: &SessionIdentity, now: u64) ->
 
 #[allow(dead_code)] // Task B calls this via SessionRegistry::apply_event.
 fn apply_event_locked(state: &mut RegistryState, ev: SessionEvent) -> bool {
+    apply_event_scoped_locked(state, ev, None)
+}
+
+fn apply_event_scoped_locked(
+    state: &mut RegistryState,
+    ev: SessionEvent,
+    qualified: Option<&SessionIdentity>,
+) -> bool {
+    if let Some(identity) = qualified {
+        let key = match &ev {
+            SessionEvent::SessionStarted { key, .. }
+            | SessionEvent::ToolStarting { key, .. }
+            | SessionEvent::ToolCompleted { key }
+            | SessionEvent::Notification { key, .. }
+            | SessionEvent::SessionStopped { key, .. }
+            | SessionEvent::ResumeDispatched { key }
+            | SessionEvent::ResumePaneAssigned { key, .. }
+            | SessionEvent::ResumeFailed { key, .. } => Some(key),
+            _ => None,
+        };
+        if key.is_none_or(|key| key != identity.session_id.0.as_ref())
+            || identity.history_key.as_ref().is_none_or(|scope| {
+                scope.session_id != identity.session_id.0.as_ref()
+                    || HistoryRowKey::new(
+                        &scope.provider_id,
+                        scope.location.clone(),
+                        &scope.session_id,
+                        scope.session_universe.clone(),
+                    )
+                    .as_ref()
+                        != Some(scope)
+            })
+        {
+            tracing::warn!(target: "session_hook", "rejected inconsistent qualified reducer identity");
+            return false;
+        }
+        if let SessionEvent::SessionStarted { cli_source, .. } = &ev {
+            if cli_source.canonical_provider_id().as_deref()
+                != identity
+                    .history_key
+                    .as_ref()
+                    .map(|key| key.provider_id.as_str())
+            {
+                return false;
+            }
+        }
+    }
     let now = now_ms();
     let ev = match ev {
         SessionEvent::SessionStarted {
@@ -2166,7 +2268,20 @@ fn apply_event_locked(state: &mut RegistryState, ev: SessionEvent) -> bool {
         } => {
             let sid = acp::schema::v1::SessionId::new(key.clone());
             let pane_known = !pane_session_id.is_empty();
-            let existing_identity = unique_identity_for_raw(state, &sid);
+            // Absent and ambiguous are different: an ambiguous legacy birth
+            // must never fabricate/overwrite the Host/default identity.
+            if qualified.is_none()
+                && state
+                    .identities_by_raw
+                    .get(&sid)
+                    .is_some_and(|ids| ids.len() > 1)
+            {
+                tracing::warn!(target: "session_hook", session_id = %sid, "rejected ambiguous session start");
+                return false;
+            }
+            let existing_identity = qualified
+                .cloned()
+                .or_else(|| unique_identity_for_raw(state, &sid));
 
             // GUARD: PowerShell shell-integration hooks fire from wherever
             // an agent ran a tool, NOT from the agent's home pane. For
@@ -2248,7 +2363,9 @@ fn apply_event_locked(state: &mut RegistryState, ev: SessionEvent) -> bool {
                 }
             }
 
-            let is_new_entry = existing_identity.is_none();
+            let is_new_entry = existing_identity
+                .as_ref()
+                .is_none_or(|identity| !state.sessions.contains_key(identity));
             let mut entry = existing_identity
                 .as_ref()
                 .and_then(|identity| remove_identity_locked(state, identity))
@@ -2260,6 +2377,11 @@ fn apply_event_locked(state: &mut RegistryState, ev: SessionEvent) -> bool {
             }
             entry.provider_id = cli_source.canonical_provider_id();
             entry.cli_source = Some(cli_source);
+            if let Some(scope) = qualified.and_then(|identity| identity.history_key.as_ref()) {
+                entry.provider_id = Some(scope.provider_id.clone());
+                entry.location = scope.location.clone();
+                entry.session_universe = scope.session_universe.clone();
+            }
             if entry.location == SessionLocation::Unknown {
                 entry.location = SessionLocation::Host;
             }
@@ -2301,7 +2423,10 @@ fn apply_event_locked(state: &mut RegistryState, ev: SessionEvent) -> bool {
         }
         SessionEvent::ToolStarting { key, tool_name } => {
             let sid = acp::schema::v1::SessionId::new(key);
-            let Some(identity) = unique_identity_for_raw(state, &sid) else {
+            let Some(identity) = qualified
+                .cloned()
+                .or_else(|| unique_identity_for_raw(state, &sid))
+            else {
                 return false;
             };
             let Some(entry) = state.sessions.get_mut(&identity) else {
@@ -2330,7 +2455,10 @@ fn apply_event_locked(state: &mut RegistryState, ev: SessionEvent) -> bool {
         }
         SessionEvent::ToolCompleted { key } => {
             let sid = acp::schema::v1::SessionId::new(key);
-            let Some(identity) = unique_identity_for_raw(state, &sid) else {
+            let Some(identity) = qualified
+                .cloned()
+                .or_else(|| unique_identity_for_raw(state, &sid))
+            else {
                 return false;
             };
             let Some(entry) = state.sessions.get_mut(&identity) else {
@@ -2359,7 +2487,10 @@ fn apply_event_locked(state: &mut RegistryState, ev: SessionEvent) -> bool {
         }
         SessionEvent::Notification { key, message } => {
             let sid = acp::schema::v1::SessionId::new(key);
-            let Some(identity) = unique_identity_for_raw(state, &sid) else {
+            let Some(identity) = qualified
+                .cloned()
+                .or_else(|| unique_identity_for_raw(state, &sid))
+            else {
                 return false;
             };
             let Some(entry) = state.sessions.get_mut(&identity) else {
@@ -2382,7 +2513,10 @@ fn apply_event_locked(state: &mut RegistryState, ev: SessionEvent) -> bool {
         }
         SessionEvent::SessionStopped { key, reason } => {
             let sid = acp::schema::v1::SessionId::new(key);
-            let Some(identity) = unique_identity_for_raw(state, &sid) else {
+            let Some(identity) = qualified
+                .cloned()
+                .or_else(|| unique_identity_for_raw(state, &sid))
+            else {
                 return false;
             };
             let reason_keeps_session_alive = reason == "complete";
@@ -2460,7 +2594,10 @@ fn apply_event_locked(state: &mut RegistryState, ev: SessionEvent) -> bool {
         }
         SessionEvent::ResumeDispatched { key } => {
             let sid = acp::schema::v1::SessionId::new(key);
-            let Some(identity) = unique_identity_for_raw(state, &sid) else {
+            let Some(identity) = qualified
+                .cloned()
+                .or_else(|| unique_identity_for_raw(state, &sid))
+            else {
                 return false;
             };
             mark_resume_dispatched_identity_locked(state, &identity)
@@ -2468,7 +2605,10 @@ fn apply_event_locked(state: &mut RegistryState, ev: SessionEvent) -> bool {
         }
         SessionEvent::ResumeFailed { key, reason } => {
             let sid = acp::schema::v1::SessionId::new(key);
-            let Some(identity) = unique_identity_for_raw(state, &sid) else {
+            let Some(identity) = qualified
+                .cloned()
+                .or_else(|| unique_identity_for_raw(state, &sid))
+            else {
                 return false;
             };
             let Some(entry) = state.sessions.get_mut(&identity) else {
@@ -2487,7 +2627,10 @@ fn apply_event_locked(state: &mut RegistryState, ev: SessionEvent) -> bool {
             pane_session_id,
         } => {
             let sid = acp::schema::v1::SessionId::new(key);
-            let Some(identity) = unique_identity_for_raw(state, &sid) else {
+            let Some(identity) = qualified
+                .cloned()
+                .or_else(|| unique_identity_for_raw(state, &sid))
+            else {
                 return false;
             };
             assign_resume_pane_identity_locked(state, &identity, pane_session_id, now)

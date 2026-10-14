@@ -101,7 +101,7 @@ title.
 
 ### Dedup: how the watcher coordinates with hooks and born-bound
 
-The master keeps **two disjoint** ownership sets (`master/mod.rs`):
+The master retains **two disjoint legacy raw-ID** ownership sets (`master/mod.rs`):
 
 - `hook_owned: Mutex<HashSet<SessionId>>` — sessions a **real** producer owns
   outright (native CLI hooks, ACP agent-pane events). Owns binding **and**
@@ -109,6 +109,11 @@ The master keeps **two disjoint** ownership sets (`master/mod.rs`):
 - `born_bound: Mutex<HashSet<SessionId>>` — #266 **born-bound** sessions
   (WTA-launched delegate `?<prompt>` and `/sessions` resume). These provide a
   pane binding but **no activity** — binding-only.
+
+`scoped_hook_ownership` additionally records real-hook versus binding-only
+ownership by `SessionIdentity` (provider, SID, source/distro and universe).
+Qualified hook transitions claim that exact identity rather than letting one
+store's raw-SID claim suppress another store's activity.
 
 `handle_session_hook` routes each inbound event: a binding-only event (the
 dedicated `intellterm.wta/session_born_bound` method, or a
@@ -126,14 +131,16 @@ every watcher status event for the resumed row was dropped and the row sat at
 `Idle` for its whole life. A real hook re-claims ownership on its very next
 event, so nothing is lost when hooks are working.
 
-Watcher processing then, in order:
+Watcher events still carry raw SIDs. Processing first requires a unique registry
+identity, then prefers its qualified ownership over any stale legacy claim:
 
-1. `hook_owned.contains(sid)` → **drop** (the hook owns binding and activity);
-2. `born_bound` → **apply status only**, never re-bind;
+1. real-hook ownership → **drop** (the hook owns binding and activity);
+2. binding-only ownership → **apply status only**, never re-bind;
 3. anything else → drop rather than guess.
 
-There is no ordering requirement and the row identity is the same session id
-throughout, so no duplicate is ever produced.
+If multiple stores/providers have the same raw SID, watcher-only activity is
+conservatively dropped: transcript events lack the provenance needed to choose
+one. Real scoped hooks continue to update the matching row independently.
 
 ### Born-bound activity fallback
 
@@ -143,7 +150,7 @@ it in `born_bound`. It supplies the **binding** but emits **no activity**. With
 hooks installed the CLI's hook supplies activity (and takes over); with **no**
 hooks the row would otherwise sit at `Idle` forever.
 
-Because born-bound hands us the **exact** session id, the watcher already knows
+When that SID uniquely identifies a registry row, the watcher already knows
 which transcript to read — the binding ambiguity that limits the *typed*
 Claude/Gemini path doesn't apply. So for a `born_bound` session
 `apply_watcher_event` applies the watcher's **status** event (Working / Idle /
@@ -176,16 +183,46 @@ against authoritative pane identity both after manager updates and at replay,
 so independent page/manager dispatch order cannot revive an ended or replaced
 session. Retaining an existing command during identity binding retains its
 existing provenance; an empty command argument does not promote trust.
+Pane lifecycle transitions compare provider, SID, source, distro and universe.
+A start without an SID confirms an application-prebound resume while that
+binding awaits its real start; it does not retire the requested conversation.
+Once the real start has arrived, a subsequent sessionless start begins a new
+lifecycle and retires the old identity. Retired identities are scope-qualified:
+late activity, end events and History enrichment cannot resurrect them or clear
+a different store's current binding. History enrichment is not a new birth.
+Identity replacement clears the previous command, cwd and trust provenance;
+only enrichment of the same identity may inherit them.
+Native start, prompt and end hooks distinguish an omitted universe from an
+explicit empty one. Omission resolves through a confirmed binding on the same
+pane with matching SID, provider and source/distro; it preserves that binding's
+store and command provenance. Explicit empty selects the default store, and
+explicit different values retain their scope rather than borrowing the current
+store. The same resolution applies before stale-event checks and end handling.
+
 Trusted commands persist in an `intellterm-resume-v1` layout envelope containing
 the exact command, provider, SID, host/WSL backend (including distro), cwd, and
-session universe. Restoration validates and unwraps it before creating settings
-or launching a connection; malformed envelopes fail rather than execute literally.
+session universe. Restoration validates it before creating settings and uses a
+separate unwrapped settings argument. The forwarding argument retains its envelope
+through automatic elevation, including split restoration; only the process that
+creates the connection unwraps it for execution and prebinding. Malformed envelopes
+fail rather than execute literally.
 StartingDirectory remains a normal layout field, and restored agent conversations
 skip saved shell-buffer replay. Pending births bind and replay the same qualified
 identity, including the expected universe; a replacement in any scope cannot
 replay the old birth. The helper-to-master birth request retains that universe;
 explicit-store births bind the qualified row without first mutating a raw-SID
 collision in another store. VT command strings never enter this envelope.
+
+**Subsequent hooks.** `SessionHookUpdate` retains routing scope across start,
+tool and end events. COM and typed helper ingress resolve validated explicit
+scope or matching authoritative pane ownership before applying a qualified
+registry transition. An omitted universe does not constrain store selection;
+a present empty universe explicitly selects the default store. A supplied full
+identity must agree with the event SID and any supplied scope. Legacy events
+remain valid when their matching identity is unique. Ambiguity is rejected and
+logged, not interpreted as an absent row that should be inserted as Host/default.
+Helper queues preserve a uniquely resolved snapshot identity instead of choosing
+arbitrarily among same-SID stores.
 
 CLI resume rejects unsupported alternate universes before creating a pane or
 marking/binding a session, both in Sidebar History and the helper picker. An empty
