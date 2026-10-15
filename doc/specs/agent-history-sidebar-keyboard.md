@@ -66,12 +66,6 @@ instead of letting unordered snapshot rows repeatedly change the icon.
   flag. Report `SidebarRolloutName` and `SidebarRolloutAssignment` in
   `AppCreated`; the fixed assignment is separate from current `SidebarEnabled`.
   Do not emit the installation GUID.
-- Preserve the pre-rename Dev build's identity and completion when converting
-  its hidden experiment-named state keys to rollout-named keys. Read both
-  `rolloutInstallationId` and `experimentInstallationId` as legacy aliases for
-  `featureRolloutId`, preferring the current key, then `rolloutInstallationId`;
-  remove legacy keys on subsequent shared state writes. Renaming must
-  not reassign the installation or override a later user layout choice.
 - Later choosing horizontal tabs must not reset either state. Restarting,
   reloading settings, opening another window, or another ordinary upgrade must
   not force Sidebar again or repeat an already-shown introduction.

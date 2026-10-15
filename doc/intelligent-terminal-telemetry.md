@@ -514,10 +514,6 @@ It is not included in telemetry: `SidebarRolloutName` is the fixed
 `sidebar-upgrade-v1` label, not the GUID. Its scope is the current settings/state
 directory, shared across elevation levels, not the entire physical device.
 Deleting state starts a new identity and assignment.
-Both `rolloutInstallationId` and `experimentInstallationId` are read as legacy
-aliases for `featureRolloutId`; the current key wins, followed by
-`rolloutInstallationId`. Legacy keys are removed on the next shared state write,
-preserving identity, assignment, and migration completion.
 
 The assigned layout is applied once, only recording completion after both
 settings and state are saved. Subsequent user layout changes are preserved.

@@ -21,25 +21,6 @@ static constexpr std::string_view InitialPositionKey{ "initialPosition" };
 static constexpr std::string_view InitialSizeKey{ "initialSize" };
 static constexpr std::string_view LaunchModeKey{ "launchMode" };
 
-static constexpr std::array<std::pair<const char*, const char*>, 4> rolloutStateKeys{
-    std::pair{ "featureRolloutId", "rolloutInstallationId" },
-    std::pair{ "featureRolloutId", "experimentInstallationId" },
-    std::pair{ "sidebarRolloutVersion", "sidebarExperimentVersion" },
-    std::pair{ "sidebarRolloutAssignment", "sidebarExperimentAssignment" },
-};
-
-static void migrateRolloutStateKeys(Json::Value& root)
-{
-    for (const auto& [current, previous] : rolloutStateKeys)
-    {
-        if (!root.isMember(current) && root.isMember(previous))
-        {
-            root[current] = root[previous];
-        }
-        root.removeMember(previous);
-    }
-}
-
 namespace Microsoft::Terminal::Settings::Model::JsonUtils
 {
     using namespace winrt::Microsoft::Terminal::Settings::Model;
@@ -337,7 +318,6 @@ namespace winrt::Microsoft::Terminal::Settings::Model::implementation
             const std::unique_ptr<Json::CharReader> reader{ Json::CharReaderBuilder{}.newCharReader() };
             THROW_HR_IF(WEB_E_INVALID_JSON_STRING, !reader->parse(contents.data(), contents.data() + contents.size(), &root, &errors) || !root.isObject());
         }
-        migrateRolloutStateKeys(root);
         return root;
     }
 
@@ -536,17 +516,6 @@ namespace winrt::Microsoft::Terminal::Settings::Model::implementation
     void ApplicationState::FromJson(const Json::Value& root, FileSource parseSource) const noexcept
     {
         auto state = _state.lock();
-        // Preserve assignments from the pre-rename Dev build without rerolling.
-        const auto readKey = [&](const char* key) {
-            for (const auto& [current, previous] : rolloutStateKeys)
-            {
-                if (std::string_view{ key } == current && !root.isMember(current) && root.isMember(previous))
-                {
-                    return previous;
-                }
-            }
-            return key;
-        };
         // GetValueForKey() comes in two variants:
         // * take a std::optional<T> reference
         // * return std::optional<T> by value
@@ -558,7 +527,7 @@ namespace winrt::Microsoft::Terminal::Settings::Model::implementation
         // property, just skip it.
 #define MTSM_APPLICATION_STATE_GEN(source, type, name, key, ...) \
     if (WI_IsFlagSet(parseSource, source))                       \
-        state->name = JsonUtils::GetValueForKey<std::optional<type>>(root, readKey(key));
+        state->name = JsonUtils::GetValueForKey<std::optional<type>>(root, key);
 
         MTSM_APPLICATION_STATE_FIELDS(MTSM_APPLICATION_STATE_GEN)
 #undef MTSM_APPLICATION_STATE_GEN
@@ -572,10 +541,6 @@ namespace winrt::Microsoft::Terminal::Settings::Model::implementation
 
     Json::Value ApplicationState::_toJsonWithBlob(Json::Value& root, FileSource parseSource) const noexcept
     {
-        if (WI_IsFlagSet(parseSource, FileSource::Shared))
-        {
-            migrateRolloutStateKeys(root);
-        }
         {
             const auto state = _state.lock_shared();
 
