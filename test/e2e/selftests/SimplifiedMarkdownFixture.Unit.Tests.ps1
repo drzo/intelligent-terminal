@@ -158,10 +158,10 @@ Describe 'Simplified Markdown restored-pane binding' -Tag 'Unit' {
 Describe 'Simplified Markdown release-report mapping' -Tag 'Unit' {
     BeforeAll {
         $script:markdownCases = [ordered]@{
-            C429 = 'Completed agent replies switch from raw text to Markdown'
-            C430 = 'Cancelled agent replies format their received text'
-            C431 = 'Raw Markdown preference bypasses formatting from helper startup'
-            C432 = 'Selected raw replies survive completion without blocking queued requests'
+            C437 = 'Completed agent replies switch from raw text to Markdown'
+            C438 = 'Cancelled agent replies format their received text'
+            C439 = 'Raw Markdown preference bypasses formatting from helper startup'
+            C440 = 'Selected raw replies survive completion without blocking queued requests'
             C433 = 'Saved agent replies use Markdown without changing raw history'
             C434 = 'FRE and Settings share a live Markdown preference without restarting the session'
             C435 = 'Failed agent replies format their received text'
@@ -183,6 +183,15 @@ Describe 'Simplified Markdown release-report mapping' -Tag 'Unit' {
     BeforeEach {
         $script:reportRoot = Join-Path $TestDrive ([guid]::NewGuid().ToString('N'))
         New-Item -ItemType Directory -Path $script:reportRoot -ErrorAction Stop | Out-Null
+    }
+
+    It 'keeps Markdown checklist IDs unique across unrelated cases' {
+        $text = Get-Content -LiteralPath (Join-Path $PSScriptRoot '..\..\..\doc\release-check-list.md') -Raw
+        $ids = @([regex]::Matches($text, '(?m)^\s*- \[[ xX]\] `(?<id>C\d+)`') |
+            ForEach-Object { $_.Groups['id'].Value })
+        foreach ($id in $script:markdownCases.Keys) {
+            @($ids | Where-Object { $_ -eq $id }) | Should -HaveCount 1
+        }
     }
 
     It 'maps exactly the literal live scenario titles used by focused filters' {
@@ -211,16 +220,20 @@ Describe 'Simplified Markdown release-report mapping' -Tag 'Unit' {
                 $pattern = '(?m)^- \[x\] `' + $entry.Key + '` .*\*\*' + [regex]::Escape($entry.Value) + ':'
                 $text | Should -Match $pattern
             }
+            foreach ($id in 429..432) {
+                $text | Should -Match ('(?m)^- \[ \] `C' + $id + '` .*\*\*OpenCode ')
+                $text | Should -Not -Match ('(?m)^- \[x\] `C' + $id + '`')
+            }
         }
     }
 
     It 'does not credit prompt errors or transport exits when only cancellation ran' {
         $xml = Join-Path $script:reportRoot 'partial-synthetic.xml'
-        Write-MarkdownReportFixture -Path $xml -Passed $script:markdownCases.C430
+        Write-MarkdownReportFixture -Path $xml -Passed $script:markdownCases.C438
         $report = Join-Path $script:reportRoot 'partial.md'
         & (Join-Path $PSScriptRoot '..\New-ReleaseReport.ps1') -ResultsXml $xml -OutFile $report
         $text = Get-Content -LiteralPath $report -Raw
-        $text | Should -Match '(?m)^- \[x\] `C430`'
+        $text | Should -Match '(?m)^- \[x\] `C438`'
         foreach ($id in @('C435', 'C436')) {
             $text | Should -Match ('(?m)^- \[ \] `' + $id + '`')
             $text | Should -Not -Match ('(?m)^- \[x\] `' + $id + '`')

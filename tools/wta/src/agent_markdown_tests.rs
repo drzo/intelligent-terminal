@@ -122,6 +122,107 @@ fn clear_selection(app: &mut App) {
     assert!(app.text_selection.selected_text().is_none());
 }
 
+fn held_thought_app() -> (App, String, Vec<String>) {
+    let mut app = super::tests::test_app();
+    app.state = ConnectionState::Connected;
+    super::tests::submit_test_prompt(&mut app, "thinking");
+    app.current_tab_mut()
+        .messages
+        .push(ChatMessage::Error("obsolete".into()));
+    app.current_tab_mut().append_thought_chunk(
+        &(0..500)
+            .map(|index| format!("THINK_{index:03} 界e\u{301}\r\n"))
+            .collect::<String>(),
+    );
+    render(&mut app, 90, 30);
+    app.current_tab_mut().chat_scroll.by(130);
+    let text = plain(&render(&mut app, 90, 30));
+    let selected = text
+        .lines()
+        .find_map(|line| {
+            line.find("THINK_")
+                .map(|byte| line[byte..byte + 9].to_owned())
+        })
+        .unwrap();
+    select_text(&mut app, &selected);
+    assert!(app.current_tab().holds_markdown_selection());
+    let rows = plain(&render(&mut app, 90, 30))
+        .lines()
+        .take(5)
+        .map(str::to_owned)
+        .collect();
+    (app, selected, rows)
+}
+
+#[test]
+fn agent_markdown_held_anchor_tracks_utf8_thought_retention() {
+    let _locale = crate::test_support::lock_locale();
+    let (mut app, selected, rows) = held_thought_app();
+    for chunk in ["界", "e\u{301}\r\n", "more 界\r\n"] {
+        let before = app.current_tab().markdown_reading_position().unwrap();
+        let (id, byte) = before.thought_source.unwrap();
+        let cut_at = app
+            .current_tab()
+            .streaming_thought_text()
+            .unwrap()
+            .char_indices()
+            .nth(chunk.chars().count())
+            .unwrap()
+            .0;
+        app.current_tab_mut().append_thought_chunk(chunk);
+        assert_eq!(
+            app.current_tab()
+                .markdown_reading_position()
+                .unwrap()
+                .thought_source,
+            Some((id, byte.saturating_sub(cut_at)))
+        );
+        for _ in 0..2 {
+            let after = plain(&render(&mut app, 90, 30));
+            assert_eq!(after.lines().take(5).collect::<Vec<_>>(), rows);
+            assert_eq!(
+                app.text_selection.selected_text().as_deref(),
+                Some(selected.as_str())
+            );
+            assert!(app.current_tab().holds_markdown_selection());
+        }
+    }
+}
+
+#[test]
+fn agent_markdown_held_anchor_tracks_retained_message_indices() {
+    let _locale = crate::test_support::lock_locale();
+    let (mut app, selected, rows) = held_thought_app();
+    let before = app.current_tab().markdown_reading_position().unwrap();
+    app.current_tab_mut()
+        .retain_current_messages(|message| !matches!(message, ChatMessage::Error(_)));
+    let after = app.current_tab().markdown_reading_position().unwrap();
+    assert_eq!(
+        after.message_index,
+        before.message_index.map(|index| index - 1)
+    );
+    assert_eq!(after.thought_source, before.thought_source);
+    assert_eq!(after.row_offset, before.row_offset);
+    for _ in 0..2 {
+        let rendered = plain(&render(&mut app, 90, 30));
+        assert_eq!(rendered.lines().take(5).collect::<Vec<_>>(), rows);
+        assert_eq!(
+            app.text_selection.selected_text().as_deref(),
+            Some(selected.as_str())
+        );
+    }
+    app.current_tab_mut()
+        .retain_current_messages(|message| !matches!(message, ChatMessage::Thought { .. }));
+    let fallback = app.current_tab().markdown_reading_position().unwrap();
+    assert_eq!(fallback.message_index, Some(0));
+    assert_eq!(fallback.row_offset, 0);
+    assert!(fallback.thought_source.is_none());
+    assert!(app.current_tab().holds_markdown_selection());
+    app.current_tab_mut().retain_current_messages(|_| false);
+    assert!(app.current_tab().markdown_reading_position().is_none());
+    assert!(app.current_tab().holds_markdown_selection());
+}
+
 #[test]
 fn agent_markdown_streams_raw_and_formats_completed_reply() {
     let _locale = crate::test_support::lock_locale();

@@ -1366,7 +1366,11 @@ impl TabSession {
                 .nth(remove_chars)
                 .map_or(current.len(), |(index, _)| index);
             current.drain(..cut_at);
-            if let Some(position) = &mut self.chat_reading_position {
+            for position in self.chat_reading_position.iter_mut().chain(
+                self.markdown_selection_hold
+                    .as_mut()
+                    .and_then(|held| held.reading_position.as_mut()),
+            ) {
                 if position.turn_index == self.completed_turns.len()
                     && position.message_index == Some(index)
                 {
@@ -1589,7 +1593,11 @@ impl TabSession {
                 if streaming_thought_index == Some(original_index) {
                     self.streaming_thought = None;
                 }
-                if let Some(position) = &mut self.chat_reading_position {
+                for position in self.chat_reading_position.iter_mut().chain(
+                    self.markdown_selection_hold
+                        .as_mut()
+                        .and_then(|held| held.reading_position.as_mut()),
+                ) {
                     if position.turn_index == self.completed_turns.len() {
                         if let Some(anchor_index) = &mut position.message_index {
                             if *anchor_index > index {
@@ -1610,21 +1618,26 @@ impl TabSession {
         if removed_agent {
             self.agent_markdown.get_mut().invalidate_current();
         }
-        if self.messages.is_empty()
-            && self
-                .chat_reading_position
-                .is_some_and(|position| position.turn_index == self.completed_turns.len())
-        {
-            self.chat_reading_position = None;
-        }
-        if let Some(position) = &mut self.chat_reading_position {
-            if position.turn_index == self.completed_turns.len() {
-                position.message_index = position.message_index.and_then(|index| {
-                    self.messages
-                        .len()
-                        .checked_sub(1)
-                        .map(|last| index.min(last))
-                });
+        for position in std::iter::once(&mut self.chat_reading_position).chain(
+            self.markdown_selection_hold
+                .as_mut()
+                .map(|held| &mut held.reading_position),
+        ) {
+            if self.messages.is_empty()
+                && position
+                    .is_some_and(|position| position.turn_index == self.completed_turns.len())
+            {
+                *position = None;
+            }
+            if let Some(position) = position {
+                if position.turn_index == self.completed_turns.len() {
+                    position.message_index = position.message_index.and_then(|index| {
+                        self.messages
+                            .len()
+                            .checked_sub(1)
+                            .map(|last| index.min(last))
+                    });
+                }
             }
         }
         if self.active_tool_viewport_anchor.as_ref().is_some_and(|(id, _)| {
