@@ -3646,9 +3646,13 @@ namespace winrt::TerminalApp::implementation
         bool refreshSessionWorkingDirectory = false;
         if (paneId)
         {
+            const auto workingDirectoryFallback = [](const _RichTabAgentInfo& info) -> std::string_view {
+                return info.status == "Ended" || info.status == "Historical" ? std::string_view{} : info.workingDirectory;
+            };
             auto& paneInfo = _richTabAgentStatusByPaneId[*paneId];
-            refreshSessionWorkingDirectory = !paneInfo.workingDirectory.empty() || !sessionInfo.workingDirectory.empty();
+            const std::string previousWorkingDirectory{ workingDirectoryFallback(paneInfo) };
             updateInfo(paneInfo, sessionInfo);
+            refreshSessionWorkingDirectory = previousWorkingDirectory != workingDirectoryFallback(paneInfo);
         }
         for (const auto& runtimeTab : _RuntimeTabs())
         {

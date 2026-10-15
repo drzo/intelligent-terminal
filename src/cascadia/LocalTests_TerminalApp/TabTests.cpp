@@ -7946,15 +7946,54 @@ namespace TerminalAppLocalTests
             const auto otherPane = page->_MakePane(args, nullptr, *otherConnection);
             VERIFY_IS_FALSE(page->_BuildRichTabFirstPartyFields(otherPane->GetTerminalControl()).contains("sessionWorkingDirectory"));
 
+            auto& broker = ::Microsoft::Terminal::RichTab::Provider::ProviderBroker::Instance();
+            const auto revision = std::make_shared<std::atomic<uint64_t>>(0);
+            const auto uiThreadId = GetCurrentThreadId();
+            const auto observer = broker.Attach(
+                {
+                    page->_FindSessionIdForControl(control),
+                    std::filesystem::path{ control.WorkingDirectory().c_str() },
+                    false,
+                    std::nullopt,
+                    fields(),
+                },
+                [revision, uiThreadId](const auto& update) {
+                    // Observe context invalidation, not asynchronous provider completion.
+                    if (GetCurrentThreadId() == uiThreadId)
+                    {
+                        revision->store(update.contextRevision);
+                    }
+                });
+            VERIFY_ARE_NOT_EQUAL(uint64_t{ 0 }, observer);
+            const auto detachObserver = wil::scope_exit([&broker, observer]() {
+                broker.Detach(observer);
+            });
+            broker.UpdateFirstPartyFields(observer, fields());
+            const auto initialRevision = revision->load();
+
             VERIFY_IS_TRUE(page->_ApplyAgentSessionStatusDelta(
                 resumed.sessionId, paneIdString, "copilot", 2000, "Working"));
             VERIFY_ARE_EQUAL(resumed.workingDirectory, fields().at("sessionWorkingDirectory"));
+            VERIFY_ARE_EQUAL(initialRevision, revision->load());
+            VERIFY_IS_TRUE(page->_ApplyAgentSessionStatusDelta(
+                resumed.sessionId, paneIdString, "copilot", 2500, "Attention"));
+            VERIFY_ARE_EQUAL(initialRevision, revision->load());
             VERIFY_IS_TRUE(page->_ApplyAgentSessionStatusDelta(
                 resumed.sessionId, paneIdString, "copilot", 3000, "Ended"));
             VERIFY_IS_FALSE(fields().contains("sessionWorkingDirectory"));
+            VERIFY_IS_TRUE(revision->load() > initialRevision);
+            const auto endedRevision = revision->load();
+            VERIFY_IS_TRUE(page->_ApplyAgentSessionStatusDelta(
+                resumed.sessionId, paneIdString, "copilot", 3500, "Historical"));
+            VERIFY_ARE_EQUAL(endedRevision, revision->load());
             VERIFY_IS_TRUE(page->_ApplyAgentSessionStatusDelta(
                 "replacement-session", paneIdString, "claude", 4000, "Idle"));
             VERIFY_IS_FALSE(fields().contains("sessionWorkingDirectory"));
+            VERIFY_ARE_EQUAL(endedRevision, revision->load());
+            page->_tabStrip.RichTabAgentStatusVisible(true);
+            VERIFY_IS_TRUE(page->_ApplyAgentSessionStatusDelta(
+                "replacement-session", paneIdString, "claude", 4500, "Working"));
+            VERIFY_IS_TRUE(revision->load() > endedRevision);
         });
     }
 

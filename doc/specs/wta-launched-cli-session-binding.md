@@ -94,6 +94,9 @@ Before a resumed CLI reports one, the host supplies the active session's saved
 `sessionWorkingDirectory` field. Status-only deltas preserve that directory for
 the same session binding; a new binding without a directory requests a full
 snapshot. Ended and historical sessions do not supply this fallback.
+When agent-status metadata is hidden, status-only transitions refresh providers
+only when the effective saved-directory fallback changes, avoiding repeated Git
+queries for unchanged directory metadata.
 
 The built-in Git provider accepts the fallback only for an existing absolute
 Windows drive directory. Profile defaults remain non-authoritative, and the
