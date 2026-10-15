@@ -211,6 +211,96 @@ Describe 'Localized WTA text matching' -Tag 'Unit' {
             }
         }
     }
+
+    It 'matches a wrapped authentication subtitle in <Case>' -TestCases @(
+        @{
+            Case = 'English sign-in at a word boundary'
+            Key = 'setup.auth.sign_in'
+            OtherKey = 'setup.auth.select_method'
+            Text = "Your agent `"Agent`" requires authentication. Follow the steps below to sign`r`n      in. To switch agents, go to Intelligent Terminal Settings > Agent."
+        }
+        @{
+            Case = 'English method selection with row padding'
+            Key = 'setup.auth.select_method'
+            OtherKey = 'setup.auth.sign_in'
+            Text = "Your agent `"Agent`" requires authentication. Select a sign-in method       `r`n    to continue here. To switch agents, go to Intelligent Terminal Settings > Agent."
+        }
+        @{
+            Case = 'English sign-in within a long word'
+            Key = 'setup.auth.sign_in'
+            OtherKey = 'setup.auth.select_method'
+            Text = "Your agent `"Agent`" requires authentication. Fol`n    low the steps below to sign in. To switch agents, go to Intelligent Terminal Settings > Agent."
+        }
+        @{
+            Case = 'Simplified Chinese without a source space'
+            Key = 'setup.auth.sign_in'
+            OtherKey = 'setup.auth.select_method'
+            Text = "您的智能体需要身份验证。请按照以下步`r`n    骤登录。如需切换智能体，请前往智能终端 Settings > Agent。"
+        }
+        @{
+            Case = 'Traditional Chinese method selection without a source space'
+            Key = 'setup.auth.select_method'
+            OtherKey = 'setup.auth.sign_in'
+            Text = "您的智能體需要驗證。請選擇登入方式以在此`n    處繼續。若要切換智能體，請前往智慧終端機 Settings > Agent。"
+        }
+        @{
+            Case = 'mirrored Unicode sign-in guidance'
+            Key = 'setup.auth.sign_in'
+            OtherKey = 'setup.auth.select_method'
+            Text = '[!! ' + [char]0x202e + "Fol_low the steps below to sign`r`n    in." + [char]0x202c + ' !!]'
+        }
+    ) {
+        param($Case, $Key, $OtherKey, $Text)
+        $expected = Get-WtaLocalizedTextRegex -Key $Key -AllowLineWrap
+        $other = Get-WtaLocalizedTextRegex -Key $OtherKey -AllowLineWrap
+
+        $expected | Should -Not -BeNullOrEmpty
+        $other | Should -Not -BeNullOrEmpty
+        $Text | Should -Match $expected
+        $Text | Should -Not -Match $other
+    }
+
+    It 'rejects incorrect guidance despite layout tolerance in <Case>' -TestCases @(
+        @{ Case = 'changed wording'; Key = 'setup.auth.sign_in'; Text = "Follow the steps above to sign`r`n    in." }
+        @{ Case = 'missing source word boundary'; Key = 'setup.auth.sign_in'; Text = 'Follow the steps below to signin.' }
+        @{ Case = 'changed CJK destination'; Key = 'setup.auth.select_method'; Text = "請選擇登入方式以在彼`n    處繼續。" }
+    ) {
+        param($Case, $Key, $Text)
+        $pattern = Get-WtaLocalizedTextRegex -Key $Key -AllowLineWrap
+
+        $pattern | Should -Not -BeNullOrEmpty
+        $Text | Should -Not -Match $pattern
+    }
+
+    It 'caches literal and wrapped matching independently when <Case> is requested first' -TestCases @(
+        @{ Case = 'literal'; WrapFirst = $false }
+        @{ Case = 'wrapped'; WrapFirst = $true }
+    ) {
+        param($Case, $WrapFirst)
+        $first = Get-WtaLocalizedTextRegex -Key 'setup.auth.sign_in' -AllowLineWrap:$WrapFirst
+        $second = Get-WtaLocalizedTextRegex -Key 'setup.auth.sign_in' -AllowLineWrap:(-not $WrapFirst)
+        $literal = if ($WrapFirst) { $second } else { $first }
+        $wrapped = if ($WrapFirst) { $first } else { $second }
+
+        'Follow the steps below to sign in.' | Should -Match $literal
+        "Follow the steps below to sign`n    in." | Should -Not -Match $literal
+        "Follow the steps below to sign`n    in." | Should -Match $wrapped
+    }
+
+    It 'allows line breaks only between complete Unicode text elements' {
+        InModuleScope ItE2E {
+            $script:LocaleScalarMatch = [regex]::Match('unit.wrap: "Connected e\u0301\U0001F680 now"', '^unit\.wrap:\s*(\S.*)$')
+            Mock Select-String { [pscustomobject]@{ Matches = @($script:LocaleScalarMatch) } }
+            $rocket = [char]::ConvertFromUtf32(0x1f680)
+            $accent = [char]0x0301
+            $pattern = Get-WtaLocalizedTextRegex -Key 'unit.wrap' -AllowLineWrap
+
+            $pattern | Should -Not -BeNullOrEmpty
+            ("Connected e" + $accent + "`r`n    " + $rocket + ' now') | Should -Match $pattern
+            ("Connected e`r`n    " + $accent + $rocket + ' now') | Should -Not -Match $pattern
+            ("Connected e" + $accent + $rocket[0] + "`n    " + $rocket[1] + ' now') | Should -Not -Match $pattern
+        }
+    }
 }
 
 Describe 'Log observation' -Tag 'Unit' {

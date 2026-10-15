@@ -138,12 +138,18 @@ function Get-WtaLocalizedTextRegex {
         Each value is normalized by stripping a trailing " (…)" key-hint and trailing "." run
         (e.g. "Select model (↑ ↓ • Enter • Esc)" -> "Select model", "Ask anything, / for
         commands.." -> "Ask anything, / for commands"). YAML x/u/U Unicode escapes are decoded;
-        escaped backslashes remain literal. Cached per key. Returns $null when the
-        bundle/key can't be read so callers can fall back to an en-US literal.
+        escaped backslashes remain literal. AllowLineWrap tolerates terminal row breaks and
+        padding between complete Unicode text elements; literal matching remains the default.
+        Cached per key and wrapping mode. Returns $null when the bundle/key can't be read so
+        callers can fall back to an en-US literal.
     #>
-    [CmdletBinding()] param([Parameter(Mandatory)][string]$Key)
+    [CmdletBinding()] param(
+        [Parameter(Mandatory)][string]$Key,
+        [switch]$AllowLineWrap
+    )
+    $cacheKey = "$Key|lineWrap=$([bool]$AllowLineWrap)"
     if (-not $script:WtaLocaleRegexCache) { $script:WtaLocaleRegexCache = @{} }
-    if ($script:WtaLocaleRegexCache.ContainsKey($Key)) { return $script:WtaLocaleRegexCache[$Key] }
+    if ($script:WtaLocaleRegexCache.ContainsKey($cacheKey)) { return $script:WtaLocaleRegexCache[$cacheKey] }
     $result = $null
     try {
         $localeDir = Join-Path $PSScriptRoot '..\..\..\..\tools\wta\locales'
@@ -177,7 +183,33 @@ function Get-WtaLocalizedTextRegex {
                     # being stripped to an empty string.
                     $val -replace '\s+\u21B5\s*$', '' -replace '\s+\([^)]*\)\s*$', '' -replace '\.+\s*$', ''
                 } |
-                Where-Object { $_ } | Select-Object -Unique | ForEach-Object { [regex]::Escape($_) }
+                Where-Object { $_ } | Select-Object -Unique | ForEach-Object {
+                    if (-not $AllowLineWrap) {
+                        [regex]::Escape($_)
+                    }
+                    else {
+                        $elements = [Globalization.StringInfo]::GetTextElementEnumerator($_)
+                        $pattern = [Text.StringBuilder]::new()
+                        $hasPrevious = $false
+                        $previousWhitespace = $false
+                        while ($elements.MoveNext()) {
+                            $element = $elements.GetTextElement()
+                            $whitespace = [string]::IsNullOrWhiteSpace($element)
+                            if ($whitespace) {
+                                if (-not $previousWhitespace) { [void]$pattern.Append('\s+') }
+                            }
+                            else {
+                                if ($hasPrevious -and -not $previousWhitespace) {
+                                    [void]$pattern.Append('(?:[^\S\r\n]*(?:\r\n|\r|\n)[^\S\r\n]*)?')
+                                }
+                                [void]$pattern.Append([regex]::Escape($element))
+                            }
+                            $hasPrevious = $true
+                            $previousWhitespace = $whitespace
+                        }
+                        $pattern.ToString()
+                    }
+                }
             $pats = @($pats)
             if ($pats.Count) { $result = '(?i)(' + ($pats -join '|') + ')' }
         }
@@ -186,7 +218,7 @@ function Get-WtaLocalizedTextRegex {
         Write-ItLog -Level WARN -Message "Could not read WTA locale key '$Key': $($_.Exception.Message)"
         $result = $null
     }
-    $script:WtaLocaleRegexCache[$Key] = $result
+    $script:WtaLocaleRegexCache[$cacheKey] = $result
     $result
 }
 

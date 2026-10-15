@@ -178,8 +178,8 @@ Describe 'Feature: ACP first-login authentication' -Tag 'Feature', 'AcpAuthentic
         $script:connectedRegex = & (Get-Module ItE2E) { Get-AgentConnectedPlaceholderRegex }
         $script:signInRegex = Get-WtaLocalizedTextRegex -Key 'setup.title.sign_in'
         if (-not $script:signInRegex) { $script:signInRegex = 'Sign in required' }
-        $script:signInInstructionsRegex = Get-WtaLocalizedTextRegex -Key 'setup.auth.sign_in'
-        $script:selectMethodInstructionsRegex = Get-WtaLocalizedTextRegex -Key 'setup.auth.select_method'
+        $script:signInInstructionsRegex = Get-WtaLocalizedTextRegex -Key 'setup.auth.sign_in' -AllowLineWrap
+        $script:selectMethodInstructionsRegex = Get-WtaLocalizedTextRegex -Key 'setup.auth.select_method' -AllowLineWrap
         if (-not $script:signInInstructionsRegex -or -not $script:selectMethodInstructionsRegex) {
             throw 'The deployed sign-in instruction resources are unavailable.'
         }
