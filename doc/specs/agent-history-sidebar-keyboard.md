@@ -106,6 +106,14 @@ Tabs heading has no activation action or keyboard focus stop. Recent-session
 loading is triggered when the section is needed by its preference or a query,
 using the existing backend and matching rules.
 
+Switching between Sidebar and horizontal tabs preserves the Sidebar search's
+open/closed state and query, along with both filter preferences. Horizontal tabs
+show all open tabs without applying or highlighting the hidden Sidebar query.
+Returning to Sidebar restores the search box and reapplies the retained query.
+Explicitly closing search still clears the query; explicitly hiding or
+collapsing Sidebar retains its existing close-search behavior. Search is
+window-local runtime state, not a new persisted setting.
+
 The default **+** action always opens a normal terminal tab using the configured
 default profile. Filters, search, and tab layout do not change its action,
 accessible name, help text, or tooltip. Creating an agent requires an explicit

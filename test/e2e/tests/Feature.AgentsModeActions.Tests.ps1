@@ -441,6 +441,9 @@ Describe 'Feature: Agents mode actions' -Tag @('Feature', 'AgentsModeActions') {
                             $box -and -not $box.Current.IsOffscreen
                         } | Out-Null
                         Assert-ActionFilterState -AgentsOnly $agentsOnly -Recent $recent
+                        (Get-ActionElement SearchTabsButton).GetCurrentPattern(
+                            [Windows.Automation.TogglePattern]::Pattern).Current.ToggleState |
+                            Should -Be ([Windows.Automation.ToggleState]::On)
                         Get-UiValue -App $script:app -Selector SearchTextBox -ValuePattern | Should -Be $query
                     }
                 }
@@ -716,6 +719,9 @@ Describe 'Feature: Agents mode actions' -Tag @('Feature', 'AgentsModeActions') {
                                 } | Out-Null
                             }
                             Assert-ActionFilterState -AgentsOnly $agentsOnly -Recent $recent
+                            (Get-ActionElement SearchTabsButton).GetCurrentPattern(
+                                [Windows.Automation.TogglePattern]::Pattern).Current.ToggleState |
+                                Should -Be ([Windows.Automation.ToggleState]::On)
                             Get-UiValue -App $script:app -Selector SearchTextBox -ValuePattern | Should -Be $query
                             Close-WtPane -App $script:app -SessionId $split.session_id
                         }

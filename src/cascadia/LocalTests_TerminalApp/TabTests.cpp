@@ -406,6 +406,7 @@ namespace TerminalAppLocalTests
         TEST_METHOD(VerticalTabStripBindsBackground);
         TEST_METHOD(VerticalTabHistorySharesBackdrop);
         TEST_METHOD(LiveTabLayoutRoundTripPreservesState);
+        TEST_METHOD(LiveTabLayoutRoundTripPreservesSearch);
         TEST_METHOD(LiveTabLayoutLatestRequestWins);
         TEST_METHOD(TabLayoutSwitchMenuTracksOrientation);
         TEST_METHOD(VerticalTabStripPreservesClosePolicy);
@@ -7250,6 +7251,102 @@ namespace TerminalAppLocalTests
         });
     }
 
+    void TabTests::LiveTabLayoutRoundTripPreservesSearch()
+    {
+        using State = winrt::Microsoft::Terminal::TerminalConnection::ConnectionState;
+        const auto connection = winrt::make_self<TestConnection>(
+            winrt::guid{ L"{6239a42c-eeee-49a3-80bd-e8fdd0451801}" }, State::Connected);
+        const auto otherConnection = winrt::make_self<TestConnection>(
+            winrt::guid{ L"{6239a42c-eeee-49a3-80bd-e8fdd0451802}" }, State::Connected);
+        auto page = _commonSetup(*connection, nullptr, std::nullopt, true);
+        const auto releasePage = wil::scope_exit([&]() {
+            LOG_IF_FAILED(RunOnUIThread([&]() { page = nullptr; }));
+        });
+
+        TestOnUIThread([&]() {
+            page->_historyRefreshInFlight = true;
+            const auto first = page->_GetFocusedTabImpl();
+            first->SuppressAgentPrewarm();
+            first->SetTabText(L"layout-match");
+            const auto pane = page->_MakeTerminalPane(NewTerminalArgs{ 1 }, nullptr, *otherConnection);
+            VERIFY_IS_NOT_NULL(pane);
+            VERIFY_IS_NOT_NULL(page->_CreateNewTabFromPane(pane));
+            const auto second = page->_GetFocusedTabImpl();
+            second->SuppressAgentPrewarm();
+            second->SetTabText(L"another shell");
+            const auto strip = winrt::get_self<winrt::TerminalApp::implementation::TabStrip>(page->_tabStrip);
+            const auto filters = page->_tabStrip.SidebarFilters();
+
+            for (const auto agentsOnly : { false, true })
+            {
+                for (const auto recent : { false, true })
+                {
+                    filters.ShowAgentsOnly(agentsOnly);
+                    filters.ShowRecentAgentSessions(recent);
+                    for (const auto& query : { winrt::hstring{}, winrt::hstring{ L"layout-match" }, winrt::hstring{ L"no-matching-layout-tab" } })
+                    {
+                        for (const auto active : { false, true })
+                        {
+                            if (!active && !query.empty())
+                            {
+                                continue;
+                            }
+                            page->_tabStrip.SearchActive(active);
+                            page->_tabStrip.SearchQuery(query);
+                            const auto verifySearch = [&]() {
+                                VERIFY_ARE_EQUAL(active, page->_tabSearchActive);
+                                VERIFY_ARE_EQUAL(active, page->_tabStrip.SearchActive());
+                                VERIFY_ARE_EQUAL(query, page->_tabSearchQuery);
+                                VERIFY_ARE_EQUAL(query, strip->SearchTextBox().Text());
+                                VERIFY_ARE_EQUAL(agentsOnly, filters.ShowAgentsOnly());
+                                VERIFY_ARE_EQUAL(recent, filters.ShowRecentAgentSessions());
+                            };
+                            const auto verifyProjection = [&]() {
+                                VERIFY_ARE_EQUAL(query.empty() ? !agentsOnly : query == L"layout-match",
+                                                 page->_IsTabVisibleInProjection(first));
+                                VERIFY_ARE_EQUAL(query.empty() && !agentsOnly,
+                                                 page->_IsTabVisibleInProjection(second));
+                            };
+                            page->UpdateLayout();
+                            verifySearch();
+                            verifyProjection();
+
+                            VERIFY_IS_TRUE(page->_ApplyTabLayout(TabLayout::Horizontal));
+                            page->_CompleteTabLayoutChange(page->_tabLayoutGeneration);
+                            page->UpdateLayout();
+                            verifySearch();
+                            VERIFY_ARE_EQUAL(Visibility::Collapsed, page->_tabStrip.Visibility());
+                            VERIFY_ARE_EQUAL(2u, page->_tabView.TabItems().Size());
+                            for (const auto& tab : { first, second })
+                            {
+                                VERIFY_IS_TRUE(page->_IsTabVisibleInProjection(tab));
+                                const auto header = tab->TabViewItem().Header().as<winrt::TerminalApp::TabHeaderControl>();
+                                VERIFY_ARE_EQUAL(Visibility::Visible, header.Visibility());
+                                VERIFY_IS_TRUE(header.SearchText().empty());
+                            }
+
+                            VERIFY_IS_TRUE(page->_ApplyTabLayout(TabLayout::Vertical));
+                            page->_CompleteTabLayoutChange(page->_tabLayoutGeneration);
+                            page->UpdateLayout();
+                            verifySearch();
+                            verifyProjection();
+                            VERIFY_ARE_EQUAL(active ? Visibility::Visible : Visibility::Collapsed,
+                                             strip->SearchPanel().Visibility());
+
+                            strip->SearchTabsButton().IsChecked(false);
+                            strip->OnSearchToggleClick(nullptr, nullptr);
+                            VERIFY_IS_FALSE(page->_tabSearchActive);
+                            VERIFY_IS_TRUE(page->_tabSearchQuery.empty());
+                            VERIFY_IS_TRUE(strip->SearchTextBox().Text().empty());
+                            VERIFY_ARE_EQUAL(agentsOnly, filters.ShowAgentsOnly());
+                            VERIFY_ARE_EQUAL(recent, filters.ShowRecentAgentSessions());
+                        }
+                    }
+                }
+            }
+        });
+    }
+
     void TabTests::VerticalTabChromeBackgroundTracksTheme()
     {
         const CascadiaSettings settings{ LR"({
@@ -13672,6 +13769,7 @@ namespace TerminalAppLocalTests
 
         TestOnUIThread([&]() {
             stripImpl->CommitHistorySnapshot({ item1, item2 });
+            strip.SearchActive(true);
             VERIFY_ARE_EQUAL(2u, strip.HistoryItems().Size());
         });
 

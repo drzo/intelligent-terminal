@@ -6255,7 +6255,7 @@ namespace winrt::TerminalApp::implementation
 
         if (succeeded && !targetVertical)
         {
-            _ClearTabSearch();
+            // Horizontal projection ignores Sidebar search; retain it for the return.
             _sidebarHotkeyReturnControl = {};
         }
 
