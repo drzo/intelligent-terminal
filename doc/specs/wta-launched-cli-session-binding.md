@@ -86,6 +86,22 @@ pane's root Pid** synchronously at launch.
 
 ## Design
 
+### Rich-tab working directory after resume
+
+Rich-tab metadata uses the shell-reported working directory when available.
+Before a resumed CLI reports one, the host supplies the active session's saved
+`cwd` from the existing session-registry snapshot as the first-party
+`sessionWorkingDirectory` field. Status-only deltas preserve that directory for
+the same session binding; a new binding without a directory requests a full
+snapshot. Ended and historical sessions do not supply this fallback.
+
+The built-in Git provider accepts the fallback only for an existing absolute
+Windows drive directory. Profile defaults remain non-authoritative, and the
+fallback does not mark the terminal as having received shell integration.
+Git discovery retains its local-drive, reparse-point, and repository checks.
+The saved directory is initial session context, not a guarantee of the agent
+process's current directory; a later shell report takes precedence.
+
 ### Mechanism — born-bound registration at launch
 
 At each in-scope launch:
