@@ -1792,7 +1792,11 @@ namespace winrt::TerminalApp::implementation
                         return;
                     }
                     // A zoomed shell detaches agent content without marking the pane hidden.
-                    if (fromKeyboard && !activeTab->IsZoomed())
+                    if (fromKeyboard && activeTab->IsZoomed())
+                    {
+                        activeTab->ExitZoom();
+                    }
+                    else if (fromKeyboard)
                     {
                         // Sidebar focus can leave the agent marked as the active pane.
                         const auto root = agentContent.XamlRoot();

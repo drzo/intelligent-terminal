@@ -5150,9 +5150,9 @@ namespace TerminalAppLocalTests
         });
         TestOnUIThread([&]() {
             invoke();
+            VERIFY_IS_FALSE(tab->IsZoomed());
             VERIFY_IS_TRUE(tab->FindAgentPane()->IsHidden());
             VERIFY_IS_TRUE(tab->FindAgentPaneContent() == agentContent);
-            tab->ExitZoom();
         });
         _waitForContentTransferReviewUI([&]() {
             return !tab->IsZoomed() && tab->FindAgentPane()->IsHidden() &&
