@@ -227,7 +227,7 @@ Describe 'Feature: layout-aware agent history and sidebar hotkeys' -Tag @('Featu
         $app = $null
         $layout = $null
         try {
-            $app = & $script:StartLayoutApp 'horizontal'
+            $app = & $script:StartLayoutApp 'vertical'
             if (-not (Test-WtWindowKeyFocusable -App $app)) {
                 Set-ItResult -Skipped -Because 'physical input requires foreground before the shortcut'
                 return
@@ -279,6 +279,32 @@ Describe 'Feature: layout-aware agent history and sidebar hotkeys' -Tag @('Featu
             $focusedSession.PaneSessionId | Should -Be $agent.PaneSessionId
             $focusedSession.AcpSessionId | Should -Be $agent.AcpSessionId
             Save-UiScreenshot -App $app -Path (Join-Path $script:evidenceDir 'agent-focus-direct-input.png') | Out-Null
+
+            & $script:OpenSharedSearch $app
+            Wait-Until -TimeoutSec 5 -Because 'Sidebar search to own keyboard focus' -Condition {
+                & $script:TabSearchFocused $app
+            } | Out-Null
+            (Get-ActivePane -App $app).session_id | Should -Be $agent.PaneSessionId
+            Send-WtWindowKey -App $app -Vk 0xBE -Ctrl -Shift -RequireForeground | Out-Null
+            Test-AgentPaneOpen -App $app | Should -BeTrue -Because 'Sidebar focus is outside the last-active agent pane'
+            Wait-Until -TimeoutSec 5 -Because 'the shortcut to return from Sidebar search to chat input' -Condition {
+                [Windows.Automation.Automation]::Compare(
+                    $agentFocus, [Windows.Automation.AutomationElement]::FocusedElement)
+            } | Out-Null
+            Assert-AgentPaneText -App $app -PaneSessionId $agent.PaneSessionId -Pattern $draftPattern -TimeoutSec 8
+
+            Send-WtWindowKey -App $app -Vk 0x49 -Ctrl -Shift -RequireForeground | Out-Null
+            Wait-Until -TimeoutSec 5 -Because 'the separate focus shortcut to return to the shell without hiding chat' -Condition {
+                [Windows.Automation.Automation]::Compare(
+                    $shellFocus, [Windows.Automation.AutomationElement]::FocusedElement)
+            } | Out-Null
+            Test-AgentPaneOpen -App $app | Should -BeTrue
+            Send-WtWindowKey -App $app -Vk 0x49 -Ctrl -Shift -RequireForeground | Out-Null
+            Wait-Until -TimeoutSec 5 -Because 'the separate focus shortcut to return to chat without hiding it' -Condition {
+                [Windows.Automation.Automation]::Compare(
+                    $agentFocus, [Windows.Automation.AutomationElement]::FocusedElement)
+            } | Out-Null
+            Test-AgentPaneOpen -App $app | Should -BeTrue
 
             Send-WtWindowKey -App $app -Vk 0xBE -Ctrl -Shift -RequireForeground | Out-Null
             Wait-Until -TimeoutSec 8 -Because 'the focused-pane hotkey to stash chat' -Condition {

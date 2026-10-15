@@ -4952,7 +4952,7 @@ namespace TerminalAppLocalTests
         const auto agentConnection = winrt::make_self<TestConnection>(
             winrt::guid{ L"{6239a42c-ff02-49a3-80bd-e8fdd045185c}" },
             winrt::Microsoft::Terminal::TerminalConnection::ConnectionState::Connected);
-        const auto page = _commonSetup(*shellConnection);
+        const auto page = _commonSetup(*shellConnection, nullptr, std::nullopt, true);
 
         TestOnUIThread([&]() {
             const auto tab = page->_GetFocusedTabImpl();
@@ -4988,6 +4988,32 @@ namespace TerminalAppLocalTests
             VERIFY_IS_FALSE(tab->FindAgentPane()->IsHidden());
             VERIFY_IS_TRUE(agent.FocusState() != FocusState::Unfocused);
             VERIFY_IS_TRUE(tab->FindAgentPaneContent() == agentContent);
+
+            const auto strip = winrt::get_self<winrt::TerminalApp::implementation::TabStrip>(page->_tabStrip);
+            strip->SearchTabsButton().IsChecked(true);
+            strip->OnSearchToggleClick(nullptr, nullptr);
+            VERIFY_IS_TRUE(strip->SearchTextBox().Focus(FocusState::Programmatic));
+            VERIFY_IS_TRUE(tab->GetActivePane()->GetTerminalControl() == agent);
+            VERIFY_ARE_EQUAL(FocusState::Unfocused, agent.FocusState());
+            invoke(chord);
+            VERIFY_IS_FALSE(tab->FindAgentPane()->IsHidden());
+            VERIFY_IS_TRUE(agent.FocusState() != FocusState::Unfocused);
+
+            ActionEventArgs focusArgs{};
+            page->_HandleFocusAgentPane(chord, focusArgs);
+            VERIFY_IS_TRUE(focusArgs.Handled());
+            VERIFY_IS_FALSE(tab->FindAgentPane()->IsHidden());
+            VERIFY_IS_TRUE(shell.FocusState() != FocusState::Unfocused);
+            page->_HandleFocusAgentPane(chord, focusArgs);
+            VERIFY_IS_FALSE(tab->FindAgentPane()->IsHidden());
+            VERIFY_IS_TRUE(agent.FocusState() != FocusState::Unfocused);
+
+            agentContent.SetSessionsView(true);
+            VERIFY_IS_TRUE(shell.Focus(FocusState::Programmatic));
+            invoke(chord);
+            VERIFY_IS_FALSE(tab->FindAgentPane()->IsHidden());
+            VERIFY_IS_TRUE(agent.FocusState() != FocusState::Unfocused);
+            agentContent.SetSessionsView(false);
 
             VERIFY_IS_TRUE(shell.Focus(FocusState::Programmatic));
             invoke(nullptr);

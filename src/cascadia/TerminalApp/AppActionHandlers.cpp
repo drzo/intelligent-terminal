@@ -1760,7 +1760,7 @@ namespace winrt::TerminalApp::implementation
         }
     }
 
-    void TerminalPage::_HandleOpenAgentPane(const IInspectable& /*sender*/,
+    void TerminalPage::_HandleOpenAgentPane(const IInspectable& sender,
                                             const ActionEventArgs& args)
     {
         OutputDebugStringW(L"[AgentPane] _HandleOpenAgentPane called\n");
@@ -1769,12 +1769,9 @@ namespace winrt::TerminalApp::implementation
         const bool stashedPre = agentPanePre && agentPanePre->IsHidden();
         _agentPaneLog(std::string{ "_HandleOpenAgentPane fired hasPane=" } + (agentPanePre ? "yes" : "no") + " stashed=" + (stashedPre ? "yes" : "no"));
 
-        // Per-tab. Three cases (in priority order):
-        //   * Pane stashed (hidden) → fall through to _OpenOrReuseAgentPane
-        //     which unstashes via wta. Don't switch view here — restore in
-        //     whatever view it had when hidden.
-        //   * Pane visible, sessions view → switch to chat view.
-        //   * Pane visible, chat view OR no pane → fall through.
+        // Restore hidden panes below; switch visible sessions to chat.
+        // Only keyboard actions focus an inactive visible chat before hiding it.
+        const bool fromKeyboard = sender.try_as<KeyChord>() != nullptr;
         const auto activeTab = _GetFocusedTabImpl();
         if (activeTab)
         {
@@ -1787,8 +1784,30 @@ namespace winrt::TerminalApp::implementation
                     if (agentContent.IsSessionsView())
                     {
                         _RequestAgentStateForTab(activeTab, "chat", std::nullopt);
+                        if (fromKeyboard)
+                        {
+                            agentPane->GetContent().Focus(FocusState::Programmatic);
+                        }
                         args.Handled(true);
                         return;
+                    }
+                    if (fromKeyboard)
+                    {
+                        // Sidebar focus can leave the agent marked as the active pane.
+                        const auto root = agentContent.XamlRoot();
+                        auto focusedElementOrAncestor = root ?
+                                                            Input::FocusManager::GetFocusedElement(root).try_as<DependencyObject>() :
+                                                            nullptr;
+                        while (focusedElementOrAncestor && focusedElementOrAncestor != agentContent)
+                        {
+                            focusedElementOrAncestor = Media::VisualTreeHelper::GetParent(focusedElementOrAncestor);
+                        }
+                        if (!focusedElementOrAncestor)
+                        {
+                            agentPane->GetContent().Focus(FocusState::Programmatic);
+                            args.Handled(true);
+                            return;
+                        }
                     }
                 }
             }
