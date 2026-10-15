@@ -17169,6 +17169,187 @@ async fn restored_birth_preserves_universe_without_mutating_colliding_row() {
 }
 
 #[tokio::test]
+async fn qualified_master_ingress_pane_hooks_preserve_replacement_owner() {
+    use crate::agent_sessions::{AgentStatus, CliSource, SessionEvent, SessionLocation};
+    use crate::session_registry::{
+        SessionHookScope, SessionHookUpdate, SessionIdentity, SessionInfo,
+    };
+    for (closed, legacy) in [(false, false), (true, false), (false, true), (true, true)] {
+        let state = make_state();
+        let mut old = SessionInfo::new(
+            acp::schema::v1::SessionId::new("old-owner"),
+            std::path::PathBuf::from("C:\\repo"),
+        );
+        old.provider_id = Some("copilot".into());
+        old.cli_source = Some(CliSource::Copilot);
+        old.location = SessionLocation::Host;
+        old.status = Some(AgentStatus::Working);
+        old.pane_session_id = Some("reused-pane".into());
+        let old_identity = SessionIdentity::from_info(&old);
+        state.registry.upsert(old.clone()).await;
+        let mut replacement = old.clone();
+        replacement.session_id = acp::schema::v1::SessionId::new("replacement-owner");
+        state.registry.upsert(replacement.clone()).await;
+        let replacement_identity = SessionIdentity::from_info(&replacement);
+        let event = if closed {
+            SessionEvent::PaneClosed {
+                pane_session_id: "REUSED-PANE".into(),
+            }
+        } else {
+            SessionEvent::ConnectionFailed {
+                pane_session_id: "REUSED-PANE".into(),
+                reason: "stale failure".into(),
+            }
+        };
+        for identity in [old_identity, replacement_identity.clone()] {
+            let scope = if legacy && identity == replacement_identity {
+                // Flattened legacy pane events also deserialize their pane
+                // field into scope; that alone is not supplied provenance.
+                SessionHookScope {
+                    pane_session_id: Some("REUSED-PANE".into()),
+                    ..Default::default()
+                }
+            } else {
+                SessionHookScope {
+                    identity: Some(identity.clone()),
+                    ..Default::default()
+                }
+            };
+            handle_scoped_session_hook(
+                &state,
+                SessionHookUpdate {
+                    event: event.clone(),
+                    scope,
+                },
+            )
+            .await
+            .unwrap();
+            let current = state
+                .registry
+                .lookup_identity(&replacement_identity)
+                .await
+                .unwrap();
+            if identity != replacement_identity {
+                assert_eq!(current, replacement);
+            } else {
+                assert_eq!(
+                    current.status,
+                    Some(if closed {
+                        AgentStatus::Ended
+                    } else {
+                        AgentStatus::Error
+                    })
+                );
+            }
+        }
+    }
+}
+
+#[tokio::test]
+async fn qualified_master_ingress_resume_survives_membership_change() {
+    use crate::agent_sessions::{AgentStatus, CliSource, SessionEvent, SessionLocation};
+    use crate::session_registry::{
+        SessionHookScope, SessionHookUpdate, SessionIdentity, SessionInfo,
+    };
+    let state = make_state();
+    let sid = acp::schema::v1::SessionId::new("replaced-history");
+    let mut selected = SessionInfo::new(sid.clone(), std::path::PathBuf::from("C:\\repo"));
+    selected.provider_id = Some("copilot".into());
+    selected.cli_source = Some(CliSource::Copilot);
+    selected.location = SessionLocation::Host;
+    selected.status = Some(AgentStatus::Ended);
+    let identity = SessionIdentity::from_info(&selected);
+    state.registry.upsert(selected.clone()).await;
+    let gate = session_lifecycle_gate(&state, &sid).await;
+    let guard = gate.lock().await;
+    let hook = handle_scoped_session_hook(
+        &state,
+        SessionHookUpdate {
+            event: SessionEvent::ResumePaneAssigned {
+                key: sid.to_string(),
+                pane_session_id: "occupied-pane".into(),
+            },
+            scope: SessionHookScope {
+                identity: Some(identity.clone()),
+                ..Default::default()
+            },
+        },
+    );
+    tokio::pin!(hook);
+    assert!(futures::poll!(&mut hook).is_pending());
+    state.registry.remove_identity(&identity).await.unwrap();
+    let mut foreign = selected.clone();
+    foreign.session_universe = Some("foreign-home".into());
+    state.registry.upsert(foreign.clone()).await;
+    let foreign_identity = SessionIdentity::from_info(&foreign);
+    let mut owner = selected;
+    owner.session_id = acp::schema::v1::SessionId::new("pane-owner");
+    owner.status = Some(AgentStatus::Working);
+    owner.pane_session_id = Some("occupied-pane".into());
+    let owner_identity = SessionIdentity::from_info(&owner);
+    state.registry.upsert(owner.clone()).await;
+    drop(guard);
+    hook.await.unwrap();
+    assert!(state.registry.lookup_identity(&identity).await.is_none());
+    assert_eq!(
+        state
+            .registry
+            .lookup_identity(&foreign_identity)
+            .await
+            .unwrap(),
+        foreign
+    );
+    assert_eq!(
+        state
+            .registry
+            .lookup_identity(&owner_identity)
+            .await
+            .unwrap(),
+        owner
+    );
+}
+
+#[tokio::test]
+async fn qualified_master_ingress_foreign_activity_cannot_claim_pane() {
+    use crate::agent_sessions::{AgentStatus, CliSource, SessionLocation};
+    use crate::session_registry::{SessionIdentity, SessionInfo};
+    let state = make_state();
+    let mut owner = SessionInfo::new(
+        acp::schema::v1::SessionId::new("same-provider-id"),
+        std::path::PathBuf::from("C:\\repo"),
+    );
+    owner.provider_id = Some("copilot".into());
+    owner.cli_source = Some(CliSource::Copilot);
+    owner.location = SessionLocation::Host;
+    owner.status = Some(AgentStatus::Working);
+    owner.pane_session_id = Some("owned-pane".into());
+    let identity = SessionIdentity::from_info(&owner);
+    state.registry.upsert(owner.clone()).await;
+    state
+        .hook_owned
+        .lock()
+        .await
+        .insert(owner.session_id.clone());
+    handle_master_wt_event(
+        &state,
+        serde_json::json!({
+            "method": "agent_event", "params": {
+                "event": "agent.tool.starting", "cli_source": "copilot",
+                "agent_session_id": "same-provider-id", "pane_id": "owned-pane",
+                "agent_source": "host", "session_universe": "unseen-home",
+                "payload": { "cwd": "C:\\foreign", "tool_name": "foreign tool" }
+            }
+        }),
+    )
+    .await;
+    assert_eq!(state.registry.snapshot().await.len(), 1);
+    assert_eq!(
+        state.registry.lookup_identity(&identity).await.unwrap(),
+        owner
+    );
+}
+
+#[tokio::test]
 async fn qualified_hooks_route_collision_through_com_and_typed_wire() {
     use crate::agent_sessions::{AgentStatus, CliSource, SessionEvent, SessionLocation};
     use crate::session_registry::{SessionHookScope, SessionIdentity, SessionInfo, WtaExtRequest};

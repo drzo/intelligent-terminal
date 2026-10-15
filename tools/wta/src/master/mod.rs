@@ -8551,8 +8551,22 @@ async fn handle_scoped_session_hook(
     state: &Arc<MasterStateInner>,
     update: crate::session_registry::SessionHookUpdate,
 ) -> acp::Result<acp::schema::v1::ExtResponse> {
-    let Some(key) = session_event_key(&update.event).map(str::to_owned) else {
-        return handle_session_hook(state, update.event, false).await;
+    let key = match session_event_key(&update.event) {
+        Some(key) => key.to_owned(),
+        None => match &update.scope.identity {
+            Some(identity) => identity.session_id.to_string(),
+            None if update.scope.cli_source.is_none()
+                && update.scope.agent_source.is_none()
+                && update.scope.wsl_distro.is_none()
+                && update.scope.session_universe.is_none() =>
+            {
+                return handle_session_hook(state, update.event, false).await;
+            }
+            None => {
+                return Err(acp::Error::invalid_params()
+                    .data("scoped pane hook requires a qualified identity"));
+            }
+        },
     };
     let identity = resolve_hook_identity(state, &key, &update.scope)
         .await
@@ -8741,7 +8755,15 @@ async fn apply_qualified_master_session_event(
                         && key.session_universe.is_none()
                 })))
     {
-        let result = apply_master_session_event(state, event, is_born_bound).await;
+        // Uniqueness chooses compatibility bookkeeping only. Keep the exact
+        // identity through the mutation lock even if registry membership changes.
+        let result = apply_master_session_event_inner(
+            state,
+            event,
+            is_born_bound,
+            identity.history_key.as_ref().map(|_| identity),
+        )
+        .await;
         if result.0 {
             state.scoped_hook_ownership.lock().await.remove(identity);
         }
@@ -8788,6 +8810,15 @@ async fn apply_master_session_event(
     event: crate::agent_sessions::SessionEvent,
     is_born_bound: bool,
 ) -> (bool, Option<String>) {
+    apply_master_session_event_inner(state, event, is_born_bound, None).await
+}
+
+async fn apply_master_session_event_inner(
+    state: &MasterStateInner,
+    event: crate::agent_sessions::SessionEvent,
+    is_born_bound: bool,
+    identity: Option<&crate::session_registry::SessionIdentity>,
+) -> (bool, Option<String>) {
     // Capture the session key BEFORE moving `event` into the reducer so
     // we can dispatch the post-apply title refresh against the right
     // row. Pane-keyed variants (PaneClosed, ConnectionFailed) don't
@@ -8795,7 +8826,7 @@ async fn apply_master_session_event(
     // Error, where the title is whatever it already was, so skipping
     // the refresh is fine.
     let refresh_key = session_event_key(&event).map(str::to_owned);
-    if let Some(key) = &refresh_key {
+    if let Some(key) = refresh_key.as_ref().filter(|_| identity.is_none()) {
         let sid = acp::schema::v1::SessionId::new(key.clone());
         if state.registry.lookup(&sid).await.is_none()
             && state
@@ -8820,7 +8851,10 @@ async fn apply_master_session_event(
         let sid = acp::schema::v1::SessionId::new(key.clone());
         let gate = session_lifecycle_gate(state, &sid).await;
         let _gate_guard = gate.lock().await;
-        let applied = state.registry.apply_event(event).await;
+        let applied = match identity {
+            Some(identity) => state.registry.apply_event_identity(identity, event).await,
+            None => state.registry.apply_event(event).await,
+        };
         if applied {
             state.hook_owned.lock().await.remove(&sid);
             state.born_bound.lock().await.remove(&sid);
@@ -8892,7 +8926,10 @@ async fn apply_master_session_event(
                     &event,
                     crate::agent_sessions::SessionEvent::ResumeDispatched { .. }
                 );
-            let applied = state.registry.apply_event(event).await;
+            let applied = match identity {
+                Some(identity) => state.registry.apply_event_identity(identity, event).await,
+                None => state.registry.apply_event(event).await,
+            };
             if applied || starts_new_generation {
                 // A real binding transition starts a hook-free generation: the
                 // watcher may supply activity but may not re-bind the pane.
@@ -8916,12 +8953,18 @@ async fn apply_master_session_event(
                 state.hook_owned.lock().await.insert(sid.clone());
                 state.born_bound.lock().await.remove(&sid);
             }
-            let applied = state.registry.apply_event(event).await;
+            let applied = match identity {
+                Some(identity) => state.registry.apply_event_identity(identity, event).await,
+                None => state.registry.apply_event(event).await,
+            };
             return (applied, refresh_key);
         }
     }
 
-    let applied = state.registry.apply_event(event).await;
+    let applied = match identity {
+        Some(identity) => state.registry.apply_event_identity(identity, event).await,
+        None => state.registry.apply_event(event).await,
+    };
     (applied, refresh_key)
 }
 
@@ -10854,7 +10897,7 @@ async fn handle_master_agent_event(state: &Arc<MasterStateInner>, params: &serde
     let pane_key = crate::agent_sessions::pane_key(pane_id);
     let pane_owned_by_other = !pane_key.is_empty()
         && state.registry.snapshot().await.iter().any(|row| {
-            (row.session_id.0.as_ref() != key || row.cli_source.as_ref() != Some(&cli_source))
+            crate::session_registry::SessionIdentity::from_info(row) != identity
                 && matches!(
                     row.status,
                     Some(

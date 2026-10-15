@@ -2193,7 +2193,10 @@ fn apply_event_scoped_locked(
             | SessionEvent::ResumeFailed { key, .. } => Some(key.as_str()),
             SessionEvent::ConnectionFailed {
                 pane_session_id, ..
-            } if state.active_by_pane.get(&pane_key(pane_session_id)) == Some(identity) => {
+            }
+            | SessionEvent::PaneClosed { pane_session_id }
+                if state.active_by_pane.get(&pane_key(pane_session_id)) == Some(identity) =>
+            {
                 Some(identity.session_id.0.as_ref())
             }
             _ => None,
