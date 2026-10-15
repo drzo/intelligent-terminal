@@ -13845,6 +13845,59 @@ fn antigravity_install_completion_cannot_cross_execution_sources() {
 }
 
 #[test]
+fn antigravity_wsl_install_completion_preserves_an_already_connected_transport() {
+    for was_connected in [true, false] {
+        let mut app = test_app();
+        let source = crate::agent_source::AgentSource::Wsl {
+            distro: "Ubuntu".into(),
+        };
+        app.set_master_pipe_acp_params(
+            "master-pipe".into(),
+            "agy_acp_server.par --uid=".into(),
+            Some("antigravity".into()),
+            None,
+            None,
+            source.clone(),
+            None,
+            Some(DEFAULT_TAB_ID.into()),
+            Arc::clone(&app.shell_mgr),
+            true,
+        );
+        app.current_agent_id = "antigravity".into();
+        app.current_agent_source = source.clone();
+        app.state = if was_connected {
+            ConnectionState::Connected
+        } else {
+            ConnectionState::Disconnected
+        };
+        app.pending_acp_start = false;
+        app.reconnect_after_transport_retired = false;
+        app.pending_agent_install = Some(PendingAgentInstall {
+            request_id: 1,
+            agent_id: "antigravity".into(),
+            binding_generation: app.agent_binding_generation,
+            agent_source: source,
+        });
+
+        app.handle_event(AppEvent::AgentInstallComplete {
+            request_id: 1,
+            agent_id: "antigravity".into(),
+            outcome: crate::agent_check::AgentInstallOutcome::Installed,
+        });
+
+        assert!(app.pending_agent_install.is_none());
+        assert!(!app.pending_acp_start);
+        if was_connected {
+            assert_eq!(app.state, ConnectionState::Connected);
+            assert!(!app.reconnect_after_transport_retired);
+        } else {
+            assert!(matches!(app.state, ConnectionState::Connecting(_)));
+            assert!(app.reconnect_after_transport_retired);
+        }
+    }
+}
+
+#[test]
 fn antigravity_policy_blocks_install_before_any_background_work() {
     let mut app = test_app();
     app.current_agent_id = "antigravity".into();

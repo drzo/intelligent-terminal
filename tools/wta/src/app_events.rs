@@ -4280,7 +4280,11 @@ impl App {
                         self.current_agent_source,
                         crate::agent_source::AgentSource::Wsl { .. }
                     ) {
-                        self.reconnect_confirmed_available_agent(&agent_id);
+                        if self.state != ConnectionState::Connected
+                            || !self.current_agent_id.eq_ignore_ascii_case(&agent_id)
+                        {
+                            self.reconnect_confirmed_available_agent(&agent_id);
+                        }
                         return;
                     }
                     let status = crate::agent_check::recheck_agent(&agent_id);
