@@ -80,7 +80,7 @@ namespace winrt::Microsoft::Terminal::Settings::Model::implementation
         void Flush();
         void Reset() noexcept;
 
-        void FromJson(const Json::Value& root, FileSource parseSource) const noexcept;
+        void FromJson(const Json::Value& root, FileSource parseSource) const;
         Json::Value ToJson(FileSource parseSource) const noexcept;
 
         void AppendPersistedWindowLayout(Model::WindowLayout layout);

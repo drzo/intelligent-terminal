@@ -520,7 +520,7 @@ namespace winrt::Microsoft::Terminal::Settings::Model::implementation
     //   the specified parseSource - so if we're reading the Local state file,
     //   we won't destroy previously parsed Shared data.
     // - READ: there's no layering for app state.
-    void ApplicationState::FromJson(const Json::Value& root, FileSource parseSource) const noexcept
+    void ApplicationState::FromJson(const Json::Value& root, FileSource parseSource) const
     {
         auto state = _state.lock();
         // GetValueForKey() comes in two variants:
