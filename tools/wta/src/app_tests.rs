@@ -12,6 +12,62 @@ use serde_json::json;
 use std::sync::Mutex;
 
 #[test]
+fn helper_persisted_resume_commandline_only_wraps_host_commands() {
+    let host = "copilot --resume session-id";
+    assert_eq!(
+        helper_persisted_resume_commandline(&SessionLocation::Host, host),
+        format!("cmd /d /s /c \"{host}\"")
+    );
+    let wsl = "wsl.exe -d Ubuntu -- bash -lc \"copilot --resume session-id\"";
+    for location in [
+        SessionLocation::Wsl {
+            distro: "Ubuntu".into(),
+        },
+        SessionLocation::Unknown,
+    ] {
+        assert_eq!(helper_persisted_resume_commandline(&location, wsl), wsl);
+    }
+}
+
+#[cfg(windows)]
+#[test]
+fn resumed_pane_host_wrapper_executes_quoted_cmd_shim() {
+    use std::os::windows::process::CommandExt;
+
+    let directory = std::env::current_dir()
+        .unwrap()
+        .join(format!("wta resume shim {}", uuid::Uuid::new_v4()));
+    std::fs::create_dir(&directory).unwrap();
+    let shim = directory.join("copilot shim.cmd");
+    std::fs::write(&shim, "@echo off\r\necho resume-args:%~1:%~2\r\n").unwrap();
+    let command = format!("\"{}\" --resume \"session-id\"", shim.display());
+    let persisted = helper_persisted_resume_commandline(&SessionLocation::Host, &command);
+    let output = crate::wt_protocol_events::resumed_pane_binding_event(
+        "copilot",
+        "session-id",
+        "pane-new",
+        &SessionLocation::Host,
+        None,
+        &persisted,
+        None,
+    )
+    .unwrap();
+    let event: serde_json::Value = serde_json::from_str(&output).unwrap();
+    let persisted = event["params"]["resume_commandline"].as_str().unwrap();
+    let result = std::process::Command::new("cmd")
+        .raw_arg(persisted.strip_prefix("cmd ").unwrap())
+        .output();
+    std::fs::remove_file(&shim).unwrap();
+    std::fs::remove_dir(&directory).unwrap();
+    let result = result.unwrap();
+    assert!(result.status.success(), "{:?}", result);
+    assert_eq!(
+        String::from_utf8(result.stdout).unwrap().trim(),
+        "resume-args:--resume:session-id"
+    );
+}
+
+#[test]
 fn qualified_session_removal_only_demotes_matching_helper_scope() {
     let params = crate::session_registry::SessionRemovedParams {
         session_id: agent_client_protocol::schema::v1::SessionId::new("same-id"),

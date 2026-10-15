@@ -2107,6 +2107,10 @@ fn assign_resume_pane_identity_locked(
     pane_session_id: String,
     now: u64,
 ) -> bool {
+    // A stale qualified callback must not evict the pane's current owner.
+    if !state.sessions.contains_key(identity) {
+        return false;
+    }
     let pane_session_id = pane_key(&pane_session_id);
     if let Some(previous) = state.active_by_pane.get(&pane_session_id).cloned() {
         if &previous != identity {
@@ -2870,6 +2874,124 @@ mod tests {
         assert!(reg.lookup_active_by_pane("pane-third").await.is_some());
         assert!(reg.remove_identity(&identity).await.is_some());
         assert!(reg.lookup_active_by_pane("pane-third").await.is_none());
+    }
+
+    #[tokio::test]
+    async fn resume_pane_assignment_missing_qualified_target_preserves_occupied_pane() {
+        for via_event in [false, true] {
+            for mismatch in ["provider", "location", "universe", "session"] {
+                let reg = InMemoryRegistry::new();
+                let mut owner =
+                    qualified_info("same-id", "copilot", SessionLocation::Host, "current");
+                owner.status = Some(AgentStatus::Working);
+                owner.pane_session_id = Some("abcdefab-1234-5678-9abc-defabcdefabc".into());
+                owner.last_activity_at_ms = Some(42);
+                owner.current_tool = Some("edit".into());
+                owner.attention_reason = Some("confirmation".into());
+                owner.born_bound_pane = true;
+                reg.upsert(owner.clone()).await;
+
+                let mut absent = owner.clone();
+                match mismatch {
+                    "provider" => absent.provider_id = Some("claude".into()),
+                    "location" => {
+                        absent.location = SessionLocation::Wsl {
+                            distro: "Ubuntu".into(),
+                        };
+                    }
+                    "universe" => absent.session_universe = Some("other".into()),
+                    "session" => {
+                        absent.session_id = acp::schema::v1::SessionId::new("missing");
+                    }
+                    _ => unreachable!(),
+                }
+                let identity = SessionIdentity::from_info(&absent);
+                let before = {
+                    let state = reg.inner.lock().await;
+                    (
+                        state.sessions.clone(),
+                        state.identities_by_raw.clone(),
+                        state.active_by_pane.clone(),
+                    )
+                };
+                let pane = "{ABCDEFAB-1234-5678-9ABC-DEFABCDEFABC}".to_string();
+                let changed = if via_event {
+                    reg.apply_event_identity(
+                        &identity,
+                        SessionEvent::ResumePaneAssigned {
+                            key: absent.session_id.0.to_string(),
+                            pane_session_id: pane,
+                        },
+                    )
+                    .await
+                } else {
+                    reg.assign_resume_pane_identity(&identity, pane).await
+                };
+                assert!(!changed, "via_event={via_event}, mismatch={mismatch}");
+                let state = reg.inner.lock().await;
+                assert_eq!(state.sessions, before.0);
+                assert_eq!(state.identities_by_raw, before.1);
+                assert_eq!(state.active_by_pane, before.2);
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn resume_pane_assignment_replaces_owner_and_duplicate_preserves_activity() {
+        for via_event in [false, true] {
+            let reg = InMemoryRegistry::new();
+            let mut owner = qualified_info("old", "copilot", SessionLocation::Host, "old");
+            owner.status = Some(AgentStatus::Working);
+            owner.pane_session_id = Some("pane-occupied".into());
+            owner.current_tool = Some("edit".into());
+            owner.born_bound_pane = true;
+            let owner_identity = SessionIdentity::from_info(&owner);
+            reg.upsert(owner).await;
+            let mut target = qualified_info("new", "copilot", SessionLocation::Host, "new");
+            target.status = Some(AgentStatus::Idle);
+            let identity = SessionIdentity::from_info(&target);
+            reg.upsert(target).await;
+
+            let event = SessionEvent::ResumePaneAssigned {
+                key: "new".into(),
+                pane_session_id: "pane-occupied".into(),
+            };
+            let changed = if via_event {
+                reg.apply_event_identity(&identity, event.clone()).await
+            } else {
+                reg.assign_resume_pane_identity(&identity, "pane-occupied".into())
+                    .await
+            };
+            assert!(changed);
+            let ended = reg.lookup_identity(&owner_identity).await.unwrap();
+            assert_eq!(ended.status, Some(AgentStatus::Ended));
+            assert!(ended.pane_session_id.is_none());
+            assert!(ended.current_tool.is_none());
+            assert!(!ended.born_bound_pane);
+            let mut bound = reg.lookup_identity(&identity).await.unwrap();
+            assert_eq!(bound.pane_session_id.as_deref(), Some("pane-occupied"));
+            assert!(bound.born_bound_pane);
+            assert_eq!(
+                reg.lookup_active_by_pane("pane-occupied").await,
+                Some(bound.clone())
+            );
+
+            // A fixed timestamp makes duplicate activity preservation deterministic.
+            bound.last_activity_at_ms = Some(7);
+            reg.upsert(bound.clone()).await;
+            let changed = if via_event {
+                reg.apply_event_identity(&identity, event).await
+            } else {
+                reg.assign_resume_pane_identity(&identity, "pane-occupied".into())
+                    .await
+            };
+            assert!(!changed);
+            assert_eq!(reg.lookup_identity(&identity).await, Some(bound.clone()));
+            assert_eq!(
+                reg.lookup_active_by_pane("pane-occupied").await,
+                Some(bound)
+            );
+        }
     }
 
     #[tokio::test]

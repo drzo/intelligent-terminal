@@ -1523,6 +1523,19 @@ pub const SELECTION_COPIED_HINT_WINDOW: std::time::Duration =
 // scans on-disk history; the session view renders from master's `session/list`
 // snapshot. See doc/specs/per-cli-history-filtering.md.)
 
+fn helper_persisted_resume_commandline(
+    location: &crate::agent_sessions::SessionLocation,
+    commandline: &str,
+) -> String {
+    // Only helper CLI resumes rely on cmd's PATHEXT resolution for npm shims.
+    // Persist that wrapper without the one-shot loading banner.
+    if matches!(location, crate::agent_sessions::SessionLocation::Host) {
+        format!("cmd /d /s /c \"{commandline}\"")
+    } else {
+        commandline.to_string()
+    }
+}
+
 /// Reverse of `CliSource::from_agent_id` — yields the lowercase CLI id
 /// used by the command-synthesis template and dispatch routing.
 /// Returns `None` for `CliSource::Unknown(_)` so each call-site retains
@@ -3579,7 +3592,7 @@ impl App {
         let cb_key = key.clone();
         let cb_location = s.location.clone();
         let cb_universe = resume_universe;
-        let cb_commandline = commandline.clone();
+        let cb_commandline = helper_persisted_resume_commandline(&s.location, &commandline);
         let cb_cwd = s.cwd.to_string_lossy().into_owned();
         let event_tx = self.agent_event_tx.clone();
         let on_pane_id: Option<Box<dyn FnOnce(String) + Send + 'static>> =
