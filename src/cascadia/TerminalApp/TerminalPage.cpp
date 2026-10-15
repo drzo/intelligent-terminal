@@ -12270,10 +12270,10 @@ namespace winrt::TerminalApp::implementation
             for (const auto& row : values)
             {
                 if (!row.isObject() || !row["status"].isString() ||
-                    (row.isMember("provider_id") && !row["provider_id"].isString()) ||
+                    (!row["provider_id"].isNull() && !row["provider_id"].isString()) ||
                     (row.isMember("session_id") && !row["session_id"].isString()) ||
                     (row.isMember("agent_session_id") && !row["agent_session_id"].isString()) ||
-                    (row.isMember("pane_session_id") && !row["pane_session_id"].isString()) ||
+                    (!row["pane_session_id"].isNull() && !row["pane_session_id"].isString()) ||
                     (row.isMember("pane_id") && !row["pane_id"].isString()) ||
                     (native && (!row["mode_epoch"].isUInt64() || !row["window_id"].isUInt64() ||
                                 !row["tab_id"].isString() || !row["provider_id"].isString())))

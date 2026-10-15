@@ -436,6 +436,7 @@ namespace TerminalAppLocalTests
         TEST_METHOD(LatestBuiltinAgentReportWinsForPane);
         TEST_METHOD(AgentSnapshotTiesPreserveLastReceivedPaneReport);
         TEST_METHOD(SessionSnapshotsUseOwnedMasterPipe);
+        TEST_METHOD(AgentStatusSnapshotPreservesNullableOptionalFields);
         TEST_METHOD(SharedWtaNativeReceiverGenerationSurvivesWaitRetirement);
         TEST_METHOD(NativeAgentReceiverSnapshotsRequireReadyGeneration);
         TEST_METHOD(NativeAgentReceiverReplayIsPageLocalAndOrdered);
@@ -8091,6 +8092,84 @@ namespace TerminalAppLocalTests
         VERIFY_ARE_EQUAL(
             std::wstring{ L"sessions list --origin shell --json --include-status" },
             Page::_BuildSessionsListArguments({}, true));
+    }
+
+    void TabTests::AgentStatusSnapshotPreservesNullableOptionalFields()
+    {
+        using Page = winrt::TerminalApp::implementation::TerminalPage;
+        const std::string pane{ "62711111-2222-3333-4444-555555555555" };
+        const winrt::guid paneId{ winrt::to_hstring(pane) };
+        Json::Value canonical;
+        canonical["session_id"] = "known-conversation";
+        canonical["status"] = "Working";
+        canonical["cli_source"] = "Copilot";
+        for (const auto providerKind : { 0, 1, 2, 3 })
+        {
+            for (const auto paneKind : { 0, 1, 2, 3 })
+            {
+                auto row = canonical;
+                if (providerKind != 0)
+                {
+                    row["provider_id"] = providerKind == 1 ? Json::Value{} : Json::Value{ providerKind == 2 ? "" : "claude" };
+                }
+                if (paneKind != 0)
+                {
+                    row["pane_session_id"] = paneKind == 1 ? Json::Value{} : Json::Value{ paneKind == 2 ? "" : pane };
+                }
+                Json::Value response;
+                response["sessions"].append(row);
+                const auto parsed = Page::_ParseAgentStatusResponse(response);
+                VERIFY_ARE_EQUAL(size_t{ 1 }, parsed.size());
+                const auto snapshot = Page::_BuildAgentStatusSnapshot(parsed, {});
+                VERIFY_ARE_EQUAL(size_t{ 1 }, snapshot.bySession.size());
+                const auto& info = snapshot.bySession.at("known-conversation");
+                VERIFY_ARE_EQUAL(std::string{ providerKind == 3 ? "claude" : "copilot" }, info.providerId);
+                VERIFY_ARE_EQUAL(std::string{ "Working" }, info.status);
+                VERIFY_ARE_EQUAL(paneKind == 3, info.paneSessionId.has_value());
+                if (paneKind == 3)
+                {
+                    VERIFY_ARE_EQUAL(paneId, info.paneSessionId.value());
+                }
+                else
+                {
+                    VERIFY_IS_TRUE(snapshot.byPane.empty());
+                }
+            }
+        }
+        for (const auto field : { "provider_id", "pane_session_id" })
+        {
+            for (const auto& invalid : { Json::Value{ true }, Json::Value{ 7 }, Json::Value{ 1.5 },
+                                         Json::Value{ Json::arrayValue }, Json::Value{ Json::objectValue } })
+            {
+                auto row = canonical;
+                row[field] = invalid;
+                Json::Value response;
+                response["sessions"].append(row);
+                auto retained = canonical;
+                retained["session_id"] = "retained-conversation";
+                response["sessions"].append(retained);
+                const auto parsed = Page::_ParseAgentStatusResponse(response);
+                VERIFY_ARE_EQUAL(size_t{ 1 }, parsed.size());
+                VERIFY_ARE_EQUAL(std::string{ "retained-conversation" }, parsed[0].sessionId);
+            }
+        }
+        Json::Value native;
+        native["pane_id"] = pane;
+        native["provider_id"] = "copilot";
+        native["status"] = "Working";
+        native["window_id"] = Json::UInt64{ 0 };
+        native["mode_epoch"] = Json::UInt64{ 1 };
+        native["tab_id"] = "owned-tab";
+        native["cli_source"] = "Copilot";
+        for (const auto field : { "provider_id", "pane_id" })
+        {
+            auto row = native;
+            row[field] = Json::Value{};
+            Json::Value response;
+            response["sessions"] = Json::arrayValue;
+            response["native_pane_observations"].append(row);
+            VERIFY_IS_TRUE(Page::_ParseAgentStatusResponse(response).empty());
+        }
     }
 
     void TabTests::SharedWtaNativeReceiverGenerationSurvivesWaitRetirement()
