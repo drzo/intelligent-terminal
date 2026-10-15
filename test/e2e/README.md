@@ -389,6 +389,12 @@ coverage and must not be credited from this case.
 The suite table describes available cases, not a blanket pass result for every package or
 environment. Use `Invoke-ItE2EReport.ps1` and its full or incremental release report for the
 selected revision's actual passed, failed, skipped and remaining checklist items.
+Combined Sidebar history activation uses the exact row's public UIA Invoke
+action, including cross-window activation and whole-background-tab restoration;
+these are not physical-pointer coverage. Physical Enter independently verifies
+cross-window keyboard activation. Header-tooltip hover retains the strict
+deep-hit guard and cannot be credited when the host exposes only an opaque
+Window from point queries.
 `Feature.AgentHotkeys` keeps physical Ctrl+Shift+/ input and observes the native
 `VerticalTabsHeader`/`HistoryList` projection. `Feature.SessionRefresh` opens the
 current Tabs/Agents header, not the retired History toolbar or search box, and

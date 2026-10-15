@@ -203,6 +203,11 @@ last active pane. Activating another pane in a zoomed tab exits zoom first.
   Collapsing this section does not clear shared search, delete sessions, or close
   tabs. Its action tooltip says **Expand recent agent sessions** or
   **Collapse recent agent sessions**, matching the current expanded state.
+  If a Recent row owns keyboard focus when the section collapses, move focus to
+  the heading before removing the row. Collapsing from another control must not
+  steal its focus. Tab from the last visible live row reaches the Recent heading;
+  Shift+Tab from that heading returns to the last visible live row. Neither
+  traversal selects a tab or activates a session.
   A nonempty global query expands the results and disables manual section
   collapse without changing the remembered non-search expansion preference.
   Expansion is not selection: the heading retains neutral theme styling rather

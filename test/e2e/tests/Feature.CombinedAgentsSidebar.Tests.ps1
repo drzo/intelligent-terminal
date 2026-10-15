@@ -1848,7 +1848,11 @@ Describe 'Feature: combined Agents sidebar' -Tag @('Feature', 'CombinedAgentsSid
                 $script:app = $sourceApp
                 Set-CombinedView $true
                 Set-CombinedQuery (Split-Path $folder -Leaf)
-                Wait-Until -TimeoutSec 15 -Condition { @(Get-CombinedRows Recent).Count -eq 1 } | Out-Null
+                Wait-Until -TimeoutSec 15 -Because 'the rendered history snapshot confirms the moved owner window' -Condition {
+                    $rows = @(Get-CombinedRows Recent)
+                    $rows.Count -eq 1 -and
+                        (Get-CombinedRowText $rows[0]).Contains("$([char]0xB7) In another window")
+                } | Out-Null
                 Assert-CombinedHistoryMetadata -Title (Split-Path $folder -Leaf) -Cwd $folder -Status $state.Status -Provider Copilot -OtherWindow
                 Assert-CombinedOwnershipHint OtherWindow | Out-Null
                 Save-CombinedActionEvidence "other-window-$($state.Status)" -Screenshot
@@ -1879,12 +1883,9 @@ Describe 'Feature: combined Agents sidebar' -Tag @('Feature', 'CombinedAgentsSid
             $historyRows.Count | Should -Be 1
             Set-WtWindowForeground -App $sourceApp -Attempts 3 -DelayMs 150 | Should -BeTrue
             $historyRow = Assert-CombinedOwnershipHint OtherWindow
-            $rowBounds = $historyRow.Current.BoundingRectangle
-            Invoke-UiMouseDrag -App $sourceApp -FromX ([int]($rowBounds.X + $rowBounds.Width / 2)) `
-                -FromY ([int]($rowBounds.Y + $rowBounds.Height / 2)) `
-                -ToX ([int]($rowBounds.X + $rowBounds.Width / 2)) `
-                -ToY ([int]($rowBounds.Y + $rowBounds.Height / 2)) -HoldMs 50 | Out-Null
-            Wait-Until -TimeoutSec 15 -Because 'clicking the history row focuses the existing owner window' -Condition {
+            $historyRow.GetCurrentPattern([Windows.Automation.InvokePattern]::Pattern) | Out-Null
+            Invoke-UiElement -App $sourceApp -Selector $historyRow.Current.Name | Out-Null
+            Wait-Until -TimeoutSec 15 -Because 'invoking the history row focuses the existing owner window' -Condition {
                 $foreground = [ItE2E.ItWtWin32Input]::GetForegroundWindow()
                 $foreground.ToInt64() -eq [long]$foreignHwnd -and
                     [ItE2E.ItWtWin32Input]::GetWindowProcessId($foreground) -eq $sourceApp.Pid
@@ -2591,9 +2592,8 @@ Describe 'Feature: combined Agents sidebar' -Tag @('Feature', 'CombinedAgentsSid
             Set-CombinedQuery (Split-Path $fixture.Folder -Leaf)
             Wait-Until -TimeoutSec 5 -Condition { @(Get-CombinedRows Recent).Count -eq 1 } | Out-Null
             $historyRow = Assert-CombinedOwnershipHint Background
-            $bounds = $historyRow.Current.BoundingRectangle
-            Invoke-UiMouseDrag -App $script:app -FromX ([int]($bounds.X + $bounds.Width / 2)) -FromY ([int]($bounds.Y + $bounds.Height / 2)) `
-                -ToX ([int]($bounds.X + $bounds.Width / 2)) -ToY ([int]($bounds.Y + $bounds.Height / 2)) -HoldMs 50 | Out-Null
+            $historyRow.GetCurrentPattern([Windows.Automation.InvokePattern]::Pattern) | Out-Null
+            Invoke-UiElement -App $script:app -Selector $historyRow.Current.Name | Out-Null
             Wait-Until -TimeoutSec 15 -Condition { (Get-CombinedAttachedTabCount) -eq $count } | Out-Null
             $restored = @(Get-WtPanes -App $script:app -WindowId $script:app.WindowId -TabId $tab.tab_id)
             $restored.Count | Should -Be 2

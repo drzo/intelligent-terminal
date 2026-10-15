@@ -528,6 +528,8 @@ namespace TerminalAppLocalTests
         TEST_METHOD(VerticalTabSearchToggleClearsHistoryProjection);
         TEST_METHOD(VerticalTabProgrammaticSearchQueryFiltersHistory);
         TEST_METHOD(VerticalTabHistorySingleViewportCollapseAndSizing);
+        TEST_METHOD(VerticalTabHistoryCollapseKeepsFocusInSection);
+        TEST_METHOD(VerticalTabHistoryBoundaryFocusDoesNotActivate);
         TEST_METHOD(VerticalTabHistoryTemplateInstancesOwnDistinctVisuals);
         TEST_METHOD(AgentsViewTabVectorChangesKeepViewportInSync);
         TEST_METHOD(VerticalTabHistoryClosePreservesForegroundSelection);
@@ -13888,6 +13890,118 @@ namespace TerminalAppLocalTests
             // Clearing SearchQuery programmatically restores all items in lower history
             strip.SearchQuery(L"");
             VERIFY_ARE_EQUAL(2u, strip.HistoryItems().Size());
+        });
+    }
+
+    void TabTests::VerticalTabHistoryCollapseKeepsFocusInSection()
+    {
+        unsigned int activationRequests{};
+        HistoryTestView view;
+        const auto strip = view.strip;
+        const auto stripImpl = winrt::get_self<winrt::TerminalApp::implementation::TabStrip>(strip);
+        TestOnUIThread([&]() {
+            strip.Width(320);
+            strip.Height(400);
+            winrt::MUX::Controls::TabViewItem tab;
+            tab.Header(winrt::box_value(L"Live tab"));
+            strip.TabItems().Append(tab);
+            strip.SelectedItem(tab);
+            const auto history = winrt::make<winrt::TerminalApp::implementation::TabStripHistoryItem>();
+            history.SessionId(L"focused-history");
+            history.Title(L"Focused history");
+            history.Status(L"Historical");
+            history.IsHistorical(true);
+            stripImpl->CommitHistorySnapshot({ history });
+            stripImpl->TabFocusRequested([&](auto&&, auto&&) { ++activationRequests; });
+            strip.HistoryActivationRequested([&](auto&&, auto&&) { ++activationRequests; });
+            strip.UpdateLayout();
+        });
+        _waitForContentTransferReviewUI([&]() {
+            strip.UpdateLayout();
+            return stripImpl->HistoryHeaderButton() &&
+                   stripImpl->ItemsList().ContainerFromItem(strip.HistoryItems().GetAt(0));
+        });
+        TestOnUIThread([&]() {
+            const auto selected = strip.SelectedItem();
+            const auto row = stripImpl->ItemsList().ContainerFromItem(strip.HistoryItems().GetAt(0)).as<ListViewItem>();
+            VERIFY_IS_TRUE(row.Focus(FocusState::Keyboard));
+            VERIFY_IS_TRUE(Input::FocusManager::GetFocusedElement(strip.XamlRoot()) == row);
+            const auto heading = stripImpl->HistoryHeaderButton();
+            const auto peer = Automation::Peers::FrameworkElementAutomationPeer::CreatePeerForElement(heading);
+            const auto provider = peer.GetPattern(Automation::Peers::PatternInterface::ExpandCollapse)
+                                      .as<Automation::Provider::IExpandCollapseProvider>();
+            provider.Collapse();
+            VERIFY_IS_TRUE(Input::FocusManager::GetFocusedElement(strip.XamlRoot()) == heading);
+            VERIFY_IS_FALSE(heading.IsChecked().Value());
+            VERIFY_ARE_EQUAL(2u, stripImpl->ItemsList().Items().Size());
+            VERIFY_ARE_EQUAL(1u, strip.HistoryItems().Size());
+            VERIFY_IS_TRUE(strip.SelectedItem() == selected);
+            VERIFY_IS_TRUE(strip.SearchQuery().empty());
+            VERIFY_ARE_EQUAL(0u, activationRequests);
+
+            provider.Expand();
+            strip.SearchActive(true);
+            const auto search = stripImpl->SearchTextBox();
+            VERIFY_IS_TRUE(search.Focus(FocusState::Keyboard));
+            provider.Collapse();
+            VERIFY_IS_TRUE(Input::FocusManager::GetFocusedElement(strip.XamlRoot()) == search);
+            VERIFY_IS_TRUE(strip.SelectedItem() == selected);
+            VERIFY_IS_TRUE(strip.SearchActive());
+            VERIFY_ARE_EQUAL(0u, activationRequests);
+        });
+    }
+
+    void TabTests::VerticalTabHistoryBoundaryFocusDoesNotActivate()
+    {
+        unsigned int activationRequests{};
+        HistoryTestView view;
+        const auto strip = view.strip;
+        const auto stripImpl = winrt::get_self<winrt::TerminalApp::implementation::TabStrip>(strip);
+        TestOnUIThread([&]() {
+            strip.Width(320);
+            strip.Height(500);
+            for (const auto title : { L"First live", L"Last live", L"Hidden live" })
+            {
+                winrt::MUX::Controls::TabViewItem tab;
+                tab.Header(winrt::box_value(title));
+                strip.TabItems().Append(tab);
+            }
+            strip.SelectedItem(strip.TabItems().GetAt(0));
+            strip.SetTabItemVisibility(strip.TabItems().GetAt(2), false);
+            const auto history = winrt::make<winrt::TerminalApp::implementation::TabStripHistoryItem>();
+            history.SessionId(L"boundary-history");
+            history.Title(L"Boundary history");
+            history.Status(L"Historical");
+            history.IsHistorical(true);
+            stripImpl->CommitHistorySnapshot({ history });
+            stripImpl->TabFocusRequested([&](auto&&, auto&&) { ++activationRequests; });
+            strip.HistoryActivationRequested([&](auto&&, auto&&) { ++activationRequests; });
+            strip.UpdateLayout();
+        });
+        _waitForContentTransferReviewUI([&]() {
+            strip.UpdateLayout();
+            return stripImpl->HistoryHeaderButton() && stripImpl->ItemsList().ContainerFromIndex(1);
+        });
+        TestOnUIThread([&]() {
+            const auto selected = strip.SelectedItem();
+            const auto heading = stripImpl->HistoryHeaderButton();
+            const auto first = stripImpl->ItemsList().ContainerFromIndex(0).as<ListViewItem>();
+            const auto last = stripImpl->ItemsList().ContainerFromIndex(1).as<ListViewItem>();
+            VERIFY_IS_TRUE(heading.Focus(FocusState::Keyboard));
+            VERIFY_IS_TRUE(stripImpl->_tryMoveHistoryBoundaryFocus(true));
+            VERIFY_IS_TRUE(Input::FocusManager::GetFocusedElement(strip.XamlRoot()) == last);
+            VERIFY_IS_TRUE(stripImpl->_tryMoveHistoryBoundaryFocus(false));
+            VERIFY_IS_TRUE(Input::FocusManager::GetFocusedElement(strip.XamlRoot()) == heading);
+            VERIFY_IS_TRUE(first.Focus(FocusState::Keyboard));
+            VERIFY_IS_FALSE(stripImpl->_tryMoveHistoryBoundaryFocus(false));
+            VERIFY_IS_FALSE(stripImpl->_tryMoveHistoryBoundaryFocus(true));
+            VERIFY_IS_TRUE(Input::FocusManager::GetFocusedElement(strip.XamlRoot()) == first);
+            strip.SearchActive(true);
+            VERIFY_IS_TRUE(stripImpl->SearchTextBox().Focus(FocusState::Keyboard));
+            VERIFY_IS_FALSE(stripImpl->_tryMoveHistoryBoundaryFocus(true));
+            VERIFY_IS_TRUE(Input::FocusManager::GetFocusedElement(strip.XamlRoot()) == stripImpl->SearchTextBox());
+            VERIFY_IS_TRUE(strip.SelectedItem() == selected);
+            VERIFY_ARE_EQUAL(0u, activationRequests);
         });
     }
 
