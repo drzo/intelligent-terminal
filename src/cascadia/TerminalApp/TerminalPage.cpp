@@ -11801,7 +11801,11 @@ namespace winrt::TerminalApp::implementation
             return;
         }
 
-        const auto pane = tab.GetActivePane();
+        // The auxiliary assistant is not a sidebar pane; its focus must not replace terminal metadata.
+        const auto activePane = tab.GetActivePane();
+        const auto pane = activePane && activePane->IsAgentPane() ?
+                              _SourceTerminalPaneForTab(tab.get_strong()) :
+                              activePane;
         const auto control = pane ? pane->GetTerminalControl() : nullptr;
         if (!control)
         {
@@ -12013,8 +12017,11 @@ namespace winrt::TerminalApp::implementation
                 {
                     continue;
                 }
-                if (const auto activePane = tab->GetActivePane();
-                    activePane && activePane->GetSessionId() == target)
+                const auto activePane = tab->GetActivePane();
+                const auto presentedPane = activePane && activePane->IsAgentPane() ?
+                                               _SourceTerminalPaneForTab(tab) :
+                                               activePane;
+                if (presentedPane && presentedPane->GetSessionId() == target)
                 {
                     tab->SetRichTabPresentation(update.presentation);
                 }
