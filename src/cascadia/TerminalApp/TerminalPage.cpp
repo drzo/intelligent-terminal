@@ -89,6 +89,9 @@ using namespace std::chrono_literals;
 static constexpr double railMin = 180.0;
 static constexpr double railMax = 480.0;
 static constexpr double railCollapsedWidth = 40.0;
+static constexpr auto sidebarHistoryMasterRecoveryTimeout = std::chrono::seconds{ 15 };
+static constexpr auto sidebarHistoryFastRefreshInterval = std::chrono::seconds{ 5 };
+static constexpr auto sidebarHistoryRefreshInterval = std::chrono::seconds{ 60 };
 
 #define HOOKUP_ACTION(action) _actionDispatch->action({ this, &TerminalPage::_Handle##action });
 
@@ -323,10 +326,7 @@ namespace winrt::TerminalApp::implementation
         {
             _sidebarIntroductionTimer.Stop();
         }
-        if (_historyRefreshCancellation)
-        {
-            _historyRefreshCancellation->store(true, std::memory_order_relaxed);
-        }
+        _StopSidebarHistoryRefreshTimer();
         if constexpr (Feature_RichTabProviders::IsEnabled())
         {
             std::vector<::Microsoft::Terminal::RichTab::Provider::ProviderBroker::AttachmentId> attachments;
@@ -519,6 +519,8 @@ namespace winrt::TerminalApp::implementation
             }
         }
 
+        _ApplySidebarFilterSettings();
+
         // Upon settings update we reload the system settings for scrolling as well.
         // TODO: consider reloading this value periodically.
         _systemRowsToScroll = _ReadSystemRowsToScroll();
@@ -561,6 +563,7 @@ namespace winrt::TerminalApp::implementation
         _tabRow = this->TabRow();
         _tabView = _tabRow.TabView();
         _tabStrip = this->VerticalTabStrip();
+        _ApplySidebarFilterSettings();
         auto tabRowImpl = winrt::get_self<implementation::TabRowControl>(_tabRow);
         _rearranging = false;
         _hasTitlebarHost = _settings.GlobalSettings().ShowTabsInTitlebar();
@@ -740,6 +743,7 @@ namespace winrt::TerminalApp::implementation
                 page->_UpdateRecentAgentSessionsVisibility();
             }
         });
+        _tabStrip.SidebarFilters().PropertyChanged({ get_weak(), &TerminalPage::_OnSidebarFilterSettingsChanged });
         _tabStrip.SearchActivationRequested([weakThis{ get_weak() }](auto&&, auto&&) {
             if (const auto page = weakThis.get())
             {
@@ -6613,6 +6617,84 @@ namespace winrt::TerminalApp::implementation
         }
     }
 
+    void TerminalPage::_ApplySidebarFilterSettings()
+    {
+        if (!_tabStrip)
+        {
+            return;
+        }
+
+        const auto globals = _settings.GlobalSettings();
+        const auto filters = _tabStrip.SidebarFilters();
+        filters.ShowAgentsOnly(globals.SidebarShowAgentsOnly());
+        filters.ShowRecentAgentSessions(globals.SidebarShowRecentAgentSessions());
+        _tabFilterMode = _tabStrip.FilterMode();
+    }
+
+    void TerminalPage::_OnSidebarFilterSettingsChanged(const IInspectable& sender,
+                                                       const WUX::Data::PropertyChangedEventArgs& args)
+    {
+        const auto agentsOnlyChanged = args.PropertyName() == L"ShowAgentsOnly";
+        if (!agentsOnlyChanged && args.PropertyName() != L"ShowRecentAgentSessions")
+        {
+            return;
+        }
+
+        const auto globals = _settings.GlobalSettings();
+        const auto filters = sender.as<TerminalApp::SidebarFiltersViewModel>();
+        const auto value = agentsOnlyChanged ? filters.ShowAgentsOnly() : filters.ShowRecentAgentSessions();
+        const auto previous = agentsOnlyChanged ? globals.SidebarShowAgentsOnly() : globals.SidebarShowRecentAgentSessions();
+        // Restoring settings must not write them back or save a temporary search projection.
+        if (value == previous)
+        {
+            return;
+        }
+
+        const auto hadValue = agentsOnlyChanged ? globals.HasSidebarShowAgentsOnly() : globals.HasSidebarShowRecentAgentSessions();
+        if (agentsOnlyChanged)
+        {
+            globals.SidebarShowAgentsOnly(value);
+        }
+        else
+        {
+            globals.SidebarShowRecentAgentSessions(value);
+        }
+
+        if (_settings.WriteSettingsToDisk())
+        {
+            return;
+        }
+
+        if (agentsOnlyChanged)
+        {
+            if (hadValue)
+            {
+                globals.SidebarShowAgentsOnly(previous);
+            }
+            else
+            {
+                globals.ClearSidebarShowAgentsOnly();
+            }
+            filters.ShowAgentsOnly(previous);
+        }
+        else
+        {
+            if (hadValue)
+            {
+                globals.SidebarShowRecentAgentSessions(previous);
+            }
+            else
+            {
+                globals.ClearSidebarShowRecentAgentSessions();
+            }
+            filters.ShowRecentAgentSessions(previous);
+        }
+
+        auto warnings = winrt::single_threaded_vector<SettingsLoadWarnings>();
+        warnings.Append(SettingsLoadWarnings::FailedToWriteToSettings);
+        ShowLoadWarningsDialog.raise(*this, warnings.GetView());
+    }
+
     void TerminalPage::_UpdateRecentAgentSessionsVisibility()
     {
         if (_AreRecentAgentSessionsVisible())
@@ -6700,7 +6782,7 @@ namespace winrt::TerminalApp::implementation
         if (!_historyRefreshTimer)
         {
             _historyRefreshTimer = Windows::UI::Xaml::DispatcherTimer{};
-            _historyRefreshTimer.Interval(std::chrono::seconds{ 60 });
+            _historyRefreshTimer.Interval(sidebarHistoryRefreshInterval);
             _historyRefreshTimer.Tick([weakThis{ get_weak() }](auto&&, auto&&) {
                 if (const auto page = weakThis.get(); page && page->_AreRecentAgentSessionsVisible())
                 {
@@ -6719,10 +6801,53 @@ namespace winrt::TerminalApp::implementation
         }
         ++_historyRequestGeneration;
         _historyRefreshPending = false;
+        _ResetSidebarHistoryMasterRecovery();
         if (_historyRefreshCancellation)
         {
             _historyRefreshCancellation->store(true, std::memory_order_relaxed);
         }
+    }
+
+    void TerminalPage::_ResetSidebarHistoryMasterRecovery()
+    {
+        if (_historyMasterRecoveryTimer)
+        {
+            _historyMasterRecoveryTimer.Stop();
+        }
+        _historyMasterUnavailableSince.reset();
+    }
+
+    bool TerminalPage::_ExpireSidebarHistoryMasterRecovery(const std::chrono::steady_clock::time_point now)
+    {
+        if (!_historyMasterUnavailableSince || !_AreRecentAgentSessionsVisible())
+        {
+            return false;
+        }
+        const auto remaining = *_historyMasterUnavailableSince + sidebarHistoryMasterRecoveryTimeout - now;
+        if (remaining > std::chrono::steady_clock::duration::zero())
+        {
+            if (_historyMasterRecoveryTimer && _historyMasterRecoveryTimer.IsEnabled())
+            {
+                _historyMasterRecoveryTimer.Interval(std::chrono::ceil<Windows::Foundation::TimeSpan>(remaining));
+            }
+            return false;
+        }
+        if (_historyMasterRecoveryTimer)
+        {
+            if (!_historyMasterRecoveryTimer.IsEnabled())
+            {
+                return true;
+            }
+            _historyMasterRecoveryTimer.Stop();
+        }
+        // Expire the UI without releasing ownership of a capture that is still running.
+        winrt::get_self<implementation::TabStrip>(_tabStrip)->HistoryRefreshError(RS_(L"VerticalTabsHistoryLoadError"));
+        _tabStrip.HistoryLoading(false);
+        if (_historyRefreshTimer)
+        {
+            _historyRefreshTimer.Interval(sidebarHistoryRefreshInterval);
+        }
+        return true;
     }
 
     void TerminalPage::_CloseSidebarHistory(const bool restoreFocus)
@@ -6752,11 +6877,16 @@ namespace winrt::TerminalApp::implementation
         }
         if (initialLoad)
         {
+            _ResetSidebarHistoryMasterRecovery();
             _historyRetryDelay = std::chrono::seconds{ 0 };
             _historyNextRefresh = {};
             _tabStrip.HistoryError(L"");
             winrt::get_self<implementation::TabStrip>(_tabStrip)->HistoryRefreshError(L"");
             _tabStrip.HistoryLoading(!winrt::get_self<implementation::TabStrip>(_tabStrip)->HasHistoryItems());
+        }
+        else
+        {
+            _ExpireSidebarHistoryMasterRecovery(std::chrono::steady_clock::now());
         }
         if (_historyRefreshInFlight)
         {
@@ -7130,6 +7260,24 @@ namespace winrt::TerminalApp::implementation
         return snapshot;
     }
 
+    TerminalPage::_SidebarHistorySnapshot TerminalPage::_ParseSidebarHistoryFailure(const std::string& output)
+    {
+        _SidebarHistorySnapshot snapshot;
+        Json::Value response;
+        Json::CharReaderBuilder builder;
+        builder["failIfExtra"] = true;
+        std::istringstream json{ output };
+        std::string errors;
+        if (Json::parseFromStream(builder, json, &response, &errors) &&
+            response.isObject() && response["error"].isObject() &&
+            response["error"]["kind"].isString() &&
+            response["error"]["kind"].asString() == "master_unavailable")
+        {
+            snapshot.state = _SidebarHistorySnapshot::State::MasterUnavailable;
+        }
+        return snapshot;
+    }
+
     safe_void_coroutine TerminalPage::_LoadSidebarHistory(const uint64_t generation)
     {
         const auto weakThis = get_weak();
@@ -7167,6 +7315,10 @@ namespace winrt::TerminalApp::implementation
         }
         else
         {
+            if (result.completed)
+            {
+                snapshot = _ParseSidebarHistoryFailure(result.output);
+            }
             _agentPaneLog(
                 "sidebar history unavailable completed=" + std::to_string(result.completed) +
                 " exit=" + std::to_string(result.exitCode));
@@ -7200,7 +7352,45 @@ namespace winrt::TerminalApp::implementation
         }
         if (snapshot.state == State::Cancelled)
         {
+            _ResetSidebarHistoryMasterRecovery();
             return;
+        }
+        const auto now = std::chrono::steady_clock::now();
+        if (snapshot.state == State::MasterUnavailable)
+        {
+            if (!_historyMasterUnavailableSince)
+            {
+                _historyMasterUnavailableSince = now;
+                if (!_historyMasterRecoveryTimer)
+                {
+                    _historyMasterRecoveryTimer = Windows::UI::Xaml::DispatcherTimer{};
+                    _historyMasterRecoveryTimer.Tick([weakThis{ get_weak() }](auto&&, auto&&) {
+                        if (const auto page = weakThis.get())
+                        {
+                            page->_ExpireSidebarHistoryMasterRecovery(std::chrono::steady_clock::now());
+                        }
+                    });
+                }
+                _historyMasterRecoveryTimer.Interval(std::chrono::ceil<Windows::Foundation::TimeSpan>(
+                    *_historyMasterUnavailableSince + sidebarHistoryMasterRecoveryTimeout - std::chrono::steady_clock::now()));
+                _historyMasterRecoveryTimer.Start();
+            }
+            if (now - *_historyMasterUnavailableSince >= sidebarHistoryMasterRecoveryTimeout)
+            {
+                _historyMasterRecoveryTimer.Stop();
+                snapshot.state = State::Error;
+                _agentPaneLog("sidebar history master recovery timed out");
+            }
+        }
+        else
+        {
+            _ResetSidebarHistoryMasterRecovery();
+        }
+        if (_historyRefreshTimer)
+        {
+            _historyRefreshTimer.Interval(snapshot.state == State::MasterUnavailable || snapshot.state == State::Loading ?
+                                              sidebarHistoryFastRefreshInterval :
+                                              sidebarHistoryRefreshInterval);
         }
         if (snapshot.state == State::Timeout)
         {
@@ -7266,18 +7456,25 @@ namespace winrt::TerminalApp::implementation
         {
             strip->HistoryRefreshError(L"");
         }
-        if (snapshot.state == State::Error || snapshot.state == State::InvalidResponse || snapshot.state == State::Timeout)
+        if (snapshot.state == State::MasterUnavailable)
+        {
+            _agentPaneLog("sidebar history master temporarily unavailable; retrying");
+            _historyRetryDelay = sidebarHistoryFastRefreshInterval;
+            _historyNextRefresh = now + _historyRetryDelay;
+            _historyRefreshPending = false;
+        }
+        else if (snapshot.state == State::Error || snapshot.state == State::InvalidResponse || snapshot.state == State::Timeout)
         {
             _historyRetryDelay = (std::min)((std::max)(_historyRetryDelay * 2, std::chrono::seconds{ 5 }), std::chrono::seconds{ 60 });
             _historyNextRefresh = std::chrono::steady_clock::now() + _historyRetryDelay;
             _historyRefreshPending = false;
         }
-        else if (snapshot.state == State::Ready)
+        else if (snapshot.state == State::Ready || snapshot.state == State::Loading)
         {
             _historyRetryDelay = std::chrono::seconds{ 0 };
             _historyNextRefresh = {};
         }
-        _tabStrip.HistoryLoading((snapshot.state == State::Loading || snapshot.state == State::Timeout) && !strip->HasHistoryItems());
+        _tabStrip.HistoryLoading((snapshot.state == State::Loading || snapshot.state == State::Timeout || snapshot.state == State::MasterUnavailable) && !strip->HasHistoryItems());
         strip->TryCompleteAgentFilterTelemetry();
         if (_historyRefreshPending)
         {

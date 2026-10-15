@@ -32,14 +32,24 @@ wt-agent-hooks/
 │   └── wt-agent-hooks/hooks/hooks.json     # native hook commands
 ├── opencode/                                # copied to OpenCode's global plugins dir
 │   ├── plugin.json                          # managed bundle version
-│   └── wt-agent-hooks.js                    # OpenCode V1 plugin
+│   └── wt-agent-hooks.js                    # OpenCode V1/V2 plugin
 └── hook-debug/                             # dev utility, not part of the install bundle
     └── state-logger.ps1
 ```
 
 Every integration dispatches through the native `wtcli agent-hook` command,
 invoked directly from `hooks.json` with no script or batch launcher in between.
-Claude and Copilot share the same plugin manifest and event schema.
+Claude and Copilot share the same non-version plugin metadata and event schema.
+
+Hook versions are independent per provider. Bump only the manifest for the
+provider whose installed payload changes; for Claude and Copilot, also update
+that provider's marketplace plugin version. Keep the already-shipped versions
+of unchanged providers: do not roll them back to undo a coordinated release.
+Update only that provider's exact expected release version in the version-policy
+test with its manifest; unrelated providers keep their own expected versions.
+Reconciliation compares each provider's installed version against its own
+bundle version. A JavaScript-only OpenCode change still needs a version bump
+because its installed plugin is a copy, not a live link to the bundle.
 
 ## How install works
 
@@ -205,11 +215,34 @@ hook, so the CLI blocks on it. Turn-level Working is unaffected because
 `UserPromptSubmit` already maps to `ToolStarting`; what is given up is the
 tool's name in the session row, not its status.
 
-OpenCode uses its V1 plugin API rather than a hook manifest. The plugin maps
-`session.created/updated`, `chat.message`, `tool.execute.before`,
-`permission.*`, `question.*`, `session.idle/error/deleted`, and `dispose` to
-the same WTA topics. Child sessions with `parentID` are ignored so OpenCode's
-internal subagents do not create extra rows.
+OpenCode uses a plugin definition with a V1 `server()` entrypoint and a V2
+`setup()` entrypoint rather than a hook manifest. Both forward prompt, tool,
+session lifecycle, and permission/question events to the same WTA topics.
+Child sessions with `parentID` are ignored so OpenCode's internal subagents
+do not create extra rows.
+OpenCode's explicit session titles reach both the helper and master registry;
+rename events replace the previous title, while prompts without a title retain
+it. Other providers keep their existing title/history behavior.
+
+The V1 server path has been checked with OpenCode 1.17.20 and 1.18.16; older
+loaders that accept only function exports are not supported. The V2 entrypoint
+targets the `id`/`setup()` plugin API; the original loading report used
+OpenCode 2.0.22. Automated real-server evidence records the CLI version actually
+tested and does not imply V2 acceptance when run with a V1 CLI. Entry selection
+belongs to OpenCode's loader, not a version probe inside this plugin.
+Hook attribution uses the server process's inherited
+`WT_SESSION`; location filtering does not establish ownership for multiple
+Terminal clients sharing one external server.
+
+Run the dependency-free Windows component regressions from the repository root:
+
+```powershell
+node --test test\e2e\selftests\OpenCodeHooks.test.mjs
+```
+
+These execute both entrypoints with controlled SDK inputs and capture bridge
+requests. The packaged delivery tests are documented in `test\e2e\README.md`;
+controlled SDK inputs do not substitute for validation of a real V2 loader.
 
 OpenCode's `question` tool is recognized as a user-input tool by both the native
 hook bridge and WTA. Its `agent.tool.starting` event and the `agent.notification`
