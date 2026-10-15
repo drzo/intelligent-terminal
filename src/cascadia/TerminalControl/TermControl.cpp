@@ -3,7 +3,6 @@
 
 #include "pch.h"
 #include "TermControl.h"
-#include "../inc/StartupTiming.h"
 
 #include <inputpaneinterop.h>
 
@@ -1458,23 +1457,18 @@ namespace winrt::Microsoft::Terminal::Control::implementation
             return false;
         }
 
-        const auto timingConnection = _core.Connection();
-        ::IntelligentTerminal::StartupTiming timing{ "terminal_initialize", timingConnection ? timingConnection.SessionId() : winrt::guid{} };
         // If we're re-attaching an existing content, then we want to proceed even though the Terminal was already initialized.
         if (reason == InitializeReason::Create)
         {
-            timing.Mark("core_initialize_begin");
             const auto coreInitialized = _core.Initialize(panelWidth,
                                                           panelHeight,
                                                           panelScaleX);
-            timing.Mark("core_initialize_end");
             if (!coreInitialized)
             {
                 return false;
             }
 
             _interactivity.Initialize();
-            timing.Mark("interactivity_initialized");
 
             if (!_restorePath.empty())
             {
@@ -1482,9 +1476,7 @@ namespace winrt::Microsoft::Terminal::Control::implementation
             }
             else
             {
-                timing.Mark("connection_start_begin");
                 _core.Connection().Start();
-                timing.Mark("connection_start_end");
             }
         }
         else
@@ -1493,11 +1485,9 @@ namespace winrt::Microsoft::Terminal::Control::implementation
         }
 
         _core.EnablePainting();
-        timing.Mark("painting_enabled");
 
         // Now that the renderer is set up, update the appearance for initialization
         _UpdateAppearanceFromUIThread(_core.FocusedAppearance());
-        timing.Mark("appearance_updated");
 
         _initializedTerminal = true;
         // Reattachment must not turn scrollbar initialization into user input
@@ -1529,9 +1519,7 @@ namespace winrt::Microsoft::Terminal::Control::implementation
 
         // Likewise, run the event handlers outside of lock (they could
         // be reentrant)
-        timing.Mark("initialized_event_begin");
         Initialized.raise(*this, nullptr);
-        timing.Mark("initialized_event_end");
         return true;
     }
 

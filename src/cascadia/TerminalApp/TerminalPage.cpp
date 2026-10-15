@@ -45,7 +45,6 @@
 #include "DebugTapConnection.h"
 #include "FreOverlay.h"
 #include "../inc/AgentPaneRestore.h"
-#include "../inc/StartupTiming.h"
 #include "../inc/WindowPersistence.h"
 #include "MarkdownPaneContent.h"
 #include "Remoting.h"
@@ -7594,15 +7593,6 @@ namespace winrt::TerminalApp::implementation
         const auto weakThis = get_weak();
         const auto dispatcher = Dispatcher();
         const auto request = _PrepareSidebarHistoryActivation(item);
-        const auto activationId = winrt::to_string(request.id);
-        const auto sessionId = winrt::to_string(item.SessionId());
-        ::IntelligentTerminal::StartupTiming timing{
-            "sidebar_activation",
-            fmt::format("activation_id={} session_id={}", activationId, sessionId) };
-        const auto trace = [&](const char* stage) {
-            timing.Mark(stage);
-        };
-        trace(request.statusOnly ? "status_retry" : "clicked");
         auto args = request.arguments;
         args.append(L" --activation-id \"").append(request.id.c_str()).append(L"\"");
         if (request.statusOnly)
@@ -7614,20 +7604,11 @@ namespace winrt::TerminalApp::implementation
         _tabStrip.HistoryActivating(true);
         _tabStrip.HistoryError(L"");
 
-        trace("background_queue");
         co_await winrt::resume_background();
-        trace("background_ready");
         namespace Wta = ::Microsoft::Terminal::WtaProcess;
         const auto wtaPath = Wta::ResolveWtaExePath();
-        trace("wta_path_resolved");
         const auto capture = [&](const DWORD timeout) {
-            trace("wta_capture_begin");
             const auto result = Wta::RunWtaCapture(wtaPath, args, timeout, nullptr, false);
-            trace("wta_capture_end");
-            timing.AppendContext(fmt::format("[capture completed={} exit_code={} timeout_ms={}]",
-                                             result.completed,
-                                             result.exitCode,
-                                             timeout));
             if (result.completed && result.exitCode == 0)
             {
                 return _ParseSidebarHistoryActivation(result.output, request.id);
@@ -7641,13 +7622,10 @@ namespace winrt::TerminalApp::implementation
         {
             // A timeout may follow a successful mutation. Never redispatch it.
             args.append(L" --status-only");
-            trace("status_query");
             result = capture(5'000);
         }
 
-        trace("foreground_queue");
         co_await wil::resume_foreground(dispatcher);
-        trace("foreground_ready");
         if (const auto page = weakThis.get())
         {
             // Closing/reopening invalidates the UI callback, not the operation ID.
@@ -7658,8 +7636,6 @@ namespace winrt::TerminalApp::implementation
                 page->_RequestSidebarHistoryRefresh(false);
             }
         }
-        timing.AppendContext(fmt::format("state={} accepted={}", static_cast<int>(result.state), result.accepted));
-        trace("complete");
     }
 
     bool TerminalPage::_CompleteSidebarHistoryActivation(const uint64_t activationSerial, const bool accepted, const winrt::hstring& detail)
@@ -15343,15 +15319,6 @@ namespace winrt::TerminalApp::implementation
             return resultPane;
         }
 
-        const auto timingEnabled = newTerminalArgs && !newTerminalArgs.NativeAgentProviderId().empty();
-        ::IntelligentTerminal::StartupTiming timing{
-            "agent_pane_create",
-            timingEnabled ? fmt::format("provider={}", winrt::to_string(newTerminalArgs.NativeAgentProviderId())) : std::string{},
-            timingEnabled };
-        const auto trace = [&](const char* stage) {
-            timing.Mark(stage);
-        };
-        trace("settings_begin");
         const auto restoredAgent = newTerminalArgs ?
                                        ::Microsoft::Terminal::AgentPaneRestore::ParseResumeCommandline(newTerminalArgs.Commandline()) :
                                        ::Microsoft::Terminal::AgentPaneRestore::ResumeTarget{};
@@ -15391,18 +15358,13 @@ namespace winrt::TerminalApp::implementation
         if (newTerminalArgs && newTerminalArgs.NativeAgentProviderId().empty() && !restoredAgent.agent.empty())
         {
             newTerminalArgs.NativeAgentProviderId(winrt::hstring{ restoredAgent.agent });
-            timing.Enable(fmt::format("provider={}", winrt::to_string(newTerminalArgs.NativeAgentProviderId())));
         }
-        trace("settings_end");
 
         // Try to handle auto-elevation
-        trace("elevation_begin");
         if (_maybeElevate(newTerminalArgs, controlSettings, profile))
         {
-            trace("elevated");
             return nullptr;
         }
-        trace("elevation_end");
         if (persistedResume)
         {
             // Cross-process forwarding retains the envelope; only this process's
@@ -15414,7 +15376,6 @@ namespace winrt::TerminalApp::implementation
         const auto hasSessionId = sessionId != winrt::guid{};
 
         TerminalConnection::ITerminalConnection connection{ nullptr };
-        trace("connection_begin");
         if (existingConnection)
         {
             connection = existingConnection;
@@ -15424,7 +15385,6 @@ namespace winrt::TerminalApp::implementation
         {
             connection = _CreateConnectionFromSettings(profile, *controlSettings.DefaultSettings(), hasSessionId);
         }
-        trace("connection_end");
 
         TerminalConnection::ITerminalConnection debugConnection{ nullptr };
         if (_settings.GlobalSettings().DebugFeaturesEnabled())
@@ -15446,9 +15406,7 @@ namespace winrt::TerminalApp::implementation
         const auto nativeAgentProvider = !profileProvider.empty() ?
                                              winrt::hstring{ profileProvider } :
                                              newTerminalArgs ? newTerminalArgs.NativeAgentProviderId() : winrt::hstring{};
-        trace("control_begin");
         const auto control = _CreateNewControlAndContent(controlSettings, connection, nativeAgentProvider);
-        trace("control_end");
 
         // Two kinds of pane replay their own history and must not also be
         // seeded from the saved buffer: one running an agent resume command,
@@ -15469,11 +15427,9 @@ namespace winrt::TerminalApp::implementation
             control.RestoreFromPath(path);
         }
 
-        trace("pane_content_begin");
         auto paneContent{ winrt::make<TerminalPaneContent>(profile, _terminalSettingsCache, control, _manager) };
 
         auto resultPane = std::make_shared<Pane>(paneContent);
-        trace("pane_content_end");
 
         if (debugConnection) // this will only be set if global debugging is on and tap is active
         {
@@ -15525,11 +15481,6 @@ namespace winrt::TerminalApp::implementation
             }
         }
 
-        if (connection && newTerminalArgs && !newTerminalArgs.NativeAgentProviderId().empty())
-        {
-            timing.AppendContext(fmt::format("pane_id={}", winrt::to_string(winrt::to_hstring(connection.SessionId()))));
-        }
-        trace("complete");
         return resultPane;
     }
 

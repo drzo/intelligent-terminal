@@ -121,13 +121,6 @@ where
     Ok((retained, truncated))
 }
 
-fn timing_command(args: &[String]) -> Option<&str> {
-    let command_index = usize::from(args.first().is_some_and(|arg| arg == "--json"));
-    args.get(command_index)
-        .map(String::as_str)
-        .filter(|command| matches!(*command, "new-tab" | "focus-pane"))
-}
-
 async fn run_wtcli_one_shot(
     path: &str,
     args: &[String],
@@ -135,11 +128,6 @@ async fn run_wtcli_one_shot(
     capture_stderr: bool,
     timeout: Duration,
 ) -> Result<std::process::Output, WtcliOneShotError> {
-    let started = std::time::Instant::now();
-    let timing_command = timing_command(args);
-    if let Some(command) = timing_command {
-        tracing::info!(target: "wtcli_timing", command, stage = "spawn_begin", "WT mutation timing");
-    }
     let mut command = tokio::process::Command::new(path);
     command
         .args(args)
@@ -156,15 +144,7 @@ async fn run_wtcli_one_shot(
         })
         .kill_on_drop(true);
 
-    let spawned = command.spawn();
-    if let Some(command) = timing_command {
-        tracing::info!(target: "wtcli_timing", command, stage = "spawn_end", success = spawned.is_ok(), elapsed_ms = started.elapsed().as_millis() as u64, "WT mutation timing");
-    }
-    let mut child = spawned.map_err(WtcliOneShotError::Spawn)?;
-    let child_pid = child.id();
-    if let Some(command) = timing_command {
-        tracing::info!(target: "wtcli_timing", command, stage = "wait_begin", child_pid, elapsed_ms = started.elapsed().as_millis() as u64, "WT mutation timing");
-    }
+    let mut child = command.spawn().map_err(WtcliOneShotError::Spawn)?;
     let stdout = child.stdout.take();
     let stderr = child.stderr.take();
     // Keep process completion and both pipe readers under one deadline. If it
@@ -174,9 +154,6 @@ async fn run_wtcli_one_shot(
         async move { tokio::join!(child.wait(), read_pipe(stdout), read_pipe(stderr),) }
     })
     .await;
-    if let Some(command) = timing_command {
-        tracing::info!(target: "wtcli_timing", command, stage = "wait_end", child_pid, timed_out = completed.is_err(), elapsed_ms = started.elapsed().as_millis() as u64, "WT mutation timing");
-    }
 
     match completed {
         Ok((status, stdout, stderr)) => Ok(std::process::Output {
@@ -1328,37 +1305,6 @@ impl WtChannel for CliChannel {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn mutation_timing_command_handles_optional_json_prefix() {
-        let cases: &[(&[&str], Option<&str>)] = &[
-            (&["new-tab"], Some("new-tab")),
-            (&["new-tab", "--background"], Some("new-tab")),
-            (&["--json", "new-tab"], Some("new-tab")),
-            (&["--json", "new-tab", "--background"], Some("new-tab")),
-            (&["focus-pane"], Some("focus-pane")),
-            (&["focus-pane", "-t", "pane-id"], Some("focus-pane")),
-            (&["--json", "focus-pane"], Some("focus-pane")),
-            (
-                &["--json", "focus-pane", "-t", "pane-id"],
-                Some("focus-pane"),
-            ),
-            (&[], None),
-            (&[""], None),
-            (&["--json"], None),
-            (&["--json", ""], None),
-            (&["list-panes"], None),
-            (&["--json", "list-panes"], None),
-            (&["send-keys", "new-tab"], None),
-            (&["capture-pane", "focus-pane"], None),
-            (&["--json", "send-keys", "focus-pane"], None),
-            (&["--existing-only", "new-tab"], None),
-        ];
-        for (args, expected) in cases {
-            let args: Vec<String> = args.iter().map(|arg| (*arg).to_string()).collect();
-            assert_eq!(timing_command(&args), *expected, "args: {args:?}");
-        }
-    }
 
     #[test]
     fn passive_transport_listener_uses_existing_only() {

@@ -155,22 +155,6 @@ pub(crate) async fn run_activate(
     status_only: bool,
     json_mode: bool,
 ) -> Result<()> {
-    let started = std::time::Instant::now();
-    let trace_activation_id = activation_id.clone();
-    let trace = |stage: &str| {
-        tracing::info!(
-            target: "session_activation",
-            activation_id = %trace_activation_id,
-            session_id,
-            provider,
-            window_id,
-            status_only,
-            stage,
-            elapsed_ms = started.elapsed().as_millis() as u64,
-            "sidebar activation CLI timing"
-        );
-    };
-    trace("started");
     let location = match location {
         "host" => crate::agent_sessions::SessionLocation::Host,
         "wsl" => crate::agent_sessions::SessionLocation::Wsl {
@@ -192,9 +176,7 @@ pub(crate) async fn run_activate(
     let local = tokio::task::LocalSet::new();
     let response = local
         .run_until(async move {
-            trace("master_connect_begin");
             let pipe = connect_master_pipe(None).await?;
-            trace("pipe_connected");
             let (read_half, write_half) = tokio::io::split(pipe);
             let outgoing = write_half.compat_write();
             let incoming = read_half.compat();
@@ -206,25 +188,22 @@ pub(crate) async fn run_activate(
                 let _ = handle_io.await;
             });
             let result = async {
-                trace("initialize_begin");
                 conn.initialize(control_initialize_request(
                     "wta-sidebar-history",
                     "Windows Terminal Sidebar History",
                 ))
                 .await
                 .context("initialize wta-master activation client")?;
-                trace("initialize_end");
                 let request = crate::session_registry::build_session_activate_request(
                     identity,
                     window_id,
                     activation_id,
                     status_only,
                 );
-                trace("request_begin");
-                let raw = conn.ext_method(request).await;
-                trace("request_end");
-                let raw =
-                    raw.map_err(|error| anyhow::anyhow!("session activation failed: {error}"))?;
+                let raw = conn
+                    .ext_method(request)
+                    .await
+                    .map_err(|error| anyhow::anyhow!("session activation failed: {error}"))?;
                 crate::session_registry::parse_session_activate_response(&raw.0)
                     .context("parse session activation response")
             }
@@ -234,22 +213,7 @@ pub(crate) async fn run_activate(
             let _ = io_task.await;
             result
         })
-        .await;
-    trace(if response.is_ok() {
-        "complete"
-    } else {
-        "failed"
-    });
-    let response = response?;
-    tracing::info!(
-        target: "session_activation",
-        activation_id = %response.activation_id,
-        action = %response.action,
-        state = ?response.state,
-        accepted = response.accepted,
-        elapsed_ms = started.elapsed().as_millis() as u64,
-        "sidebar activation receipt"
-    );
+        .await?;
 
     if json_mode {
         println!("{}", serde_json::to_string(&response)?);

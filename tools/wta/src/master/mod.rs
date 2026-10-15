@@ -7995,12 +7995,8 @@ async fn handle_session_activate(
 ) -> acp::Result<acp::schema::v1::ExtResponse> {
     use crate::session_registry::{SessionActivateResponse, SessionActivationState};
 
-    let started = std::time::Instant::now();
-    tracing::info!(target: "session_activation", activation_id = %parsed.activation_id, window_id = parsed.window_id, stage = "received", "sidebar activation master timing");
     let mut receipts = state.session_activation_receipts.lock().await;
-    tracing::info!(target: "session_activation", activation_id = %parsed.activation_id, stage = "receipt_lock_acquired", elapsed_ms = started.elapsed().as_millis() as u64, "sidebar activation master timing");
     if let Some(receipt) = receipts.get(&parsed.activation_id) {
-        tracing::info!(target: "session_activation", activation_id = %parsed.activation_id, stage = "receipt_replayed", state = ?receipt.response.state, "sidebar activation master timing");
         return read_session_activation_receipt(receipt, parsed);
     }
     if parsed.window_id == 0 || parsed.activation_id.trim().is_empty() {
@@ -8039,9 +8035,7 @@ async fn handle_session_activate(
     let parsed = parsed.clone();
     let (sender, receiver) = tokio::sync::oneshot::channel();
     tokio::task::spawn_local(async move {
-        tracing::info!(target: "session_activation", activation_id = %parsed.activation_id, stage = "worker_started", elapsed_ms = started.elapsed().as_millis() as u64, "sidebar activation master timing");
         let response = execute_session_activation(&state, &parsed).await;
-        tracing::info!(target: "session_activation", activation_id = %parsed.activation_id, stage = "worker_complete", action = %response.action, state = ?response.state, accepted = response.accepted, elapsed_ms = started.elapsed().as_millis() as u64, "sidebar activation master timing");
         state.session_activation_receipts.lock().await.insert(
             parsed.activation_id.clone(),
             SessionActivationReceipt {
@@ -8088,18 +8082,6 @@ where
         decide_enter_action, liveness_from_status, EnterAction, RowSnapshot,
     };
 
-    let started = std::time::Instant::now();
-    let trace = |stage: &str| {
-        tracing::info!(
-            target: "session_activation",
-            activation_id = %parsed.activation_id,
-            session_id = %parsed.identity.session_id,
-            window_id = parsed.window_id,
-            stage,
-            elapsed_ms = started.elapsed().as_millis() as u64,
-            "sidebar activation dispatch timing"
-        );
-    };
     macro_rules! respond {
         ($action:expr, $accepted:expr, $detail:expr) => {
             respond!($action, $accepted, $detail, Complete)
@@ -8129,23 +8111,19 @@ where
                 Some("Terminal activation service is unavailable.".to_string())
             );
         };
-        trace("focus_begin");
         let result = wt
             .request(
                 "focus_pane",
                 serde_json::json!({ "session_id": pane_session_id }),
             )
             .await;
-        trace("focus_end");
         match result {
             Ok(_) => respond!("focus", true, None),
             Err(error) => failed("focus", error),
         }
     };
 
-    trace("lookup_begin");
     let row = state.registry.lookup_identity(&parsed.identity).await;
-    trace("lookup_end");
     let Some(mut row) = row else {
         return respond!(
             "not_found",
@@ -8250,7 +8228,6 @@ where
     match action {
         EnterAction::Focus { pane_session_id } => focus(pane_session_id).await,
         EnterAction::ResumeInAgentPane { .. } => {
-            trace("resume_agent_pane");
             let provider_id = provider_id.expect("known provider was checked above");
             let (agent_source, wsl_distro) = match &row.location {
                 crate::agent_sessions::SessionLocation::Host => ("host", None),
@@ -8296,13 +8273,10 @@ where
                     "wsl_distro": wsl_distro.unwrap_or_default(),
                 }
             });
-            trace("resume_event_begin");
             crate::wt_protocol_events::send(event.to_string());
-            trace("resume_event_end");
             respond!("resume_agent_pane", true, None)
         }
         EnterAction::ResumeCliFlag { .. } => {
-            trace("resume_cli");
             let Some(wt) = state.wt.as_ref() else {
                 return respond!(
                     "resume_cli",
@@ -8404,9 +8378,7 @@ where
             if let Some(title) = row.title.as_ref().filter(|title| !title.trim().is_empty()) {
                 params["title"] = serde_json::Value::String(title.clone());
             }
-            trace("create_tab_begin");
             let result = wt.request("create_tab", params).await;
-            trace("create_tab_end");
             match result {
                 Ok(result) => {
                     let Some(pane_session_id) = result
@@ -8429,8 +8401,6 @@ where
                             Unknown
                         );
                     };
-                    tracing::info!(target: "session_activation", activation_id = %parsed.activation_id, stage = "pane_created", pane_id = %pane_session_id, client_pid = ?result.get("pid").and_then(serde_json::Value::as_u64), elapsed_ms = started.elapsed().as_millis() as u64, "sidebar activation dispatch timing");
-                    trace("binding_begin");
                     if state
                         .registry
                         .mark_resume_dispatched_identity(&parsed.identity)
@@ -8484,21 +8454,16 @@ where
                         &commandline,
                         Some(row.cwd.to_string_lossy().as_ref()),
                     ) {
-                        trace("binding_event_begin");
                         crate::wt_protocol_events::send(binding);
-                        trace("binding_event_end");
                     }
-                    trace("binding_end");
                     // Only this History activation preserves the sidebar: background
                     // creation followed by focus of the exact newly returned pane.
-                    trace("focus_begin");
                     let result = wt
                         .request(
                             "focus_pane",
                             serde_json::json!({ "session_id": pane_session_id }),
                         )
                         .await;
-                    trace("focus_end");
                     match result {
                         Ok(_) => respond!("resume_cli", true, None),
                         Err(error) => respond!(

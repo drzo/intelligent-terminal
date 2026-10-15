@@ -720,44 +720,6 @@ Set `WTA_LOG=debug` for verbose output (debug builds default to `debug`, release
 to `info`). The F12 debug panel in the TUI shows protocol traffic live without
 tailing log files.
 
-Sidebar session activation emits `session_activation` timing records at `info`
-in the CLI and master logs. Match `activation_id` to the buffered
-`startup_timing operation=sidebar_activation` summaries in
-`terminal-agent-pane.log` to follow pipe discovery, initialization,
-registry lookup, resume routing, tab creation, binding, focus, and the return to
-the UI. `elapsed_ms` is cumulative within each operation; native `stage_ms`
-measures the interval since the preceding stage.
-
-Buffered native `protocol_tab_create` summaries split UI dispatcher wait, pane
-creation, tab insertion, synchronous layout, selection, and tab lookup. Each
-summary retains `trace_id`, resulting pane identity, `completed`, and
-`last_stage`, including early returns and exceptions. Checkpoints do no
-formatting or file I/O; the summary is emitted once after the UI-critical work.
-`startup_timing operation=agent_pane_create` further
-splits native agent pane creation into settings, elevation, connection, control,
-and pane-content construction. Buffered `startup_timing` summaries in the same
-native log split `terminal_initialize` into core/rendering initialization,
-interactivity, connection startup, painting, appearance, and initialized-event
-handlers. `conpty_start` splits pseudoconsole creation, client launch, and release;
-`conpty_client_launch` splits process attributes, environment preparation,
-`CreateProcess`, and client-name resolution. Checkpoints are measured in memory
-and emitted together on a background thread when each operation exits (including
-exception unwinding), so formatting and file I/O do not run on the UI dispatcher.
-The line's UTC timestamp is its emission time, not its start time; background
-emission can reorder summaries, so correlate their identities rather than line order.
-`startup_first_output` records the first decoded nonempty output and
-`since_release_ms` measures from pseudoconsole release, not the sidebar click.
-These diagnostics apply to terminal startup generally, including prewarmed
-helpers, so use the pane identity rather than proximity alone. Match the resulting `pane_id`
-and `client_pid` with the master's `pane_created` record and the provider's own
-startup log. `wtcli_timing` records separately measure spawning and waiting for
-`new-tab` and `focus-pane` bridge processes, with or without the `--json` prefix.
-In a buffered summary, `completed=false` and `last_stage` identify the point
-where creation stopped; an unfinished `*_begin` stage in unbuffered records
-identifies an in-flight operation. Buffered checkpoints are not visible while
-an operation is still running. These timing records do not include prompts,
-command lines, working directories, or credentials.
-
 ### Standalone Copilot ACP CPU probe
 
 On Windows with PowerShell 7, compare idle CPU, five-second `session/list`
