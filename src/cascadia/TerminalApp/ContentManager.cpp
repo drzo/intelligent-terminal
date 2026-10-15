@@ -87,6 +87,7 @@ namespace winrt::TerminalApp::implementation
         metadata.interactiveResume = false;
         metadata.resumeCommandlineTrusted = false;
         metadata.awaitingSessionStart = false;
+        metadata.sessionStartConfirmed = false;
         metadata.eventJson.clear();
     }
 
@@ -333,6 +334,7 @@ namespace winrt::TerminalApp::implementation
             metadata.identityQualified = !identity.source.empty();
             metadata.interactiveResume = interactiveResume;
             metadata.awaitingSessionStart = !session.sessionId.empty();
+            metadata.sessionStartConfirmed = false;
         }
         PaneMetadataChanged.raise(*this, paneId);
     }
@@ -576,16 +578,22 @@ namespace winrt::TerminalApp::implementation
             }
             if (started || prompt || name.empty())
             {
+                const auto preservesPendingResume = started && metadata.awaitingSessionStart &&
+                                                    !metadata.session.sessionId.empty() && metadata.session.agent == agent &&
+                                                    metadata.session.sessionId != agentSessionId &&
+                                                    (source.empty() || !metadata.identityQualified ||
+                                                     (metadata.source == source && metadata.wslDistro == distro)) &&
+                                                    (!params.isMember("session_universe") || metadata.universe == universe);
+                if (preservesPendingResume && !agentSessionId.empty())
+                {
+                    // Copilot may start a bootstrap session before switching to the selected resume target.
+                    return;
+                }
                 if (started)
                 {
                     std::erase_if(metadata.supersededSessions, [&](const auto& previous) { return previous.Matches(identity); });
                 }
-                const auto confirmsPendingResume = started && agentSessionId.empty() &&
-                                                   metadata.awaitingSessionStart && !metadata.session.sessionId.empty() &&
-                                                   metadata.session.agent == agent &&
-                                                   (source.empty() || !metadata.identityQualified ||
-                                                    (metadata.source == source && metadata.wslDistro == distro && metadata.universe == universe));
-                const auto startsNewIdentity = started && !confirmsPendingResume && !metadata.Identity().Matches(identity);
+                const auto startsNewIdentity = started && !preservesPendingResume && !metadata.Identity().Matches(identity);
                 if (startsNewIdentity)
                 {
                     _RetirePaneSession(metadata);
@@ -597,11 +605,16 @@ namespace winrt::TerminalApp::implementation
                     if (started)
                     {
                         metadata.awaitingSessionStart = false;
+                        metadata.sessionStartConfirmed = true;
                     }
                     if (const auto resume = winrt::to_hstring(params.get("resume_commandline", "").asString()); trustResumeCommandline && !resume.empty())
                     {
                         metadata.session.resumeCommandline = resume;
                         metadata.resumeCommandlineTrusted = true;
+                        if (name.empty())
+                        {
+                            metadata.awaitingSessionStart = !metadata.sessionStartConfirmed;
+                        }
                     }
                     if (!(prompt && agent == L"copilot" && hadSession))
                     {

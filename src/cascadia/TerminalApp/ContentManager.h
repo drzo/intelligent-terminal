@@ -92,6 +92,7 @@ namespace winrt::TerminalApp::implementation
             bool interactiveResume{};
             bool resumeCommandlineTrusted{};
             bool awaitingSessionStart{};
+            bool sessionStartConfirmed{};
             winrt::hstring eventJson;
             std::vector<PaneSessionIdentity> supersededSessions;
 

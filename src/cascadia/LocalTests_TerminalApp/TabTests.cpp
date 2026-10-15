@@ -569,6 +569,10 @@ namespace TerminalAppLocalTests
         TEST_METHOD(PaneResumeRejectsTerminalCommandline);
         TEST_METHOD(TrustedResumeEnvelopeRoundTripsQualifiedIdentity);
         TEST_METHOD(PaneResumeSurvivesSessionlessStartup);
+        TEST_METHOD(PaneWtaResumeBindingSurvivesSessionlessStartup);
+        TEST_METHOD(PaneResumeBootstrapCannotReplaceTarget);
+        TEST_METHOD(PaneResumeBootstrapProtectionRespectsScope);
+        TEST_METHOD(PaneUntrustedBindingCannotArmResumeProtection);
         TEST_METHOD(PaneHookUniversePresenceUsesConfirmedBinding);
         TEST_METHOD(PaneMissingUniverseDoesNotBorrowForeignIdentity);
         TEST_METHOD(PaneQualifiedReplacementRetiresCommandAndRejectsOldEnd);
@@ -746,6 +750,7 @@ namespace TerminalAppLocalTests
         void _verifyContentTransferReviewScroll(bool transfer, bool reject = true);
         void _verifyContentTransferReviewSuppression(bool singlePane, bool destinationSuppressed = false);
         void _waitForContentTransferReviewUI(const std::function<bool()>& predicate);
+        void _verifyPaneResumeStartup(bool protocolBinding, bool bootstrap);
         TransferTabSnapshot _snapshotTransferTab(const winrt::com_ptr<winrt::TerminalApp::implementation::TerminalPage>& page,
                                                const winrt::com_ptr<winrt::TerminalApp::implementation::Tab>& tab);
         void _verifyTransferTabUnchanged(const winrt::com_ptr<winrt::TerminalApp::implementation::TerminalPage>& page,
@@ -3998,6 +4003,232 @@ namespace TerminalAppLocalTests
         });
     }
 
+    void TabTests::_verifyPaneResumeStartup(const bool protocolBinding, const bool bootstrap)
+    {
+        using Manager = winrt::TerminalApp::implementation::ContentManager;
+        const auto page = _commonSetup(nullptr, nullptr, std::nullopt, true);
+        TestOnUIThread([&]() {
+            const auto id = page->_GetFocusedTabImpl()->GetActivePane()->GetSessionId();
+            const auto manager = winrt::get_self<Manager>(page->_manager);
+            const auto contentId = _paneMetadata(page->_manager, id)->contentId;
+            for (const auto wsl : { false, true })
+            {
+                for (const auto scope : { 0, 1, 2 })
+                {
+                    for (const auto started : { "agent.session.start", "agent.session.started" })
+                    {
+                        manager->ResetPaneConnection(contentId, id);
+                        const winrt::hstring command{ wsl ? L"wsl.exe -d Ubuntu --exec copilot --resume resume-session" :
+                                                            L"\"C:\\resolved tools\\copilot.exe\" --resume resume-session" };
+                        Json::Value binding;
+                        binding["type"] = "event";
+                        binding["method"] = "pane_agent_session_changed";
+                        auto& selected = binding["params"];
+                        selected["pane_id"] = _formatPaneId(id);
+                        selected["agent"] = "copilot";
+                        selected["agent_session_id"] = "resume-session";
+                        selected["agent_source"] = wsl ? "wsl" : "host";
+                        selected["wsl_distro"] = wsl ? "Ubuntu" : "";
+                        selected["session_universe"] = "selected-home";
+                        selected["resume_commandline"] = winrt::to_string(command);
+                        if (wsl)
+                        {
+                            selected["agent_backend"] = "wsl:Ubuntu:copilot";
+                            selected["cwd"] = "/saved";
+                        }
+                        const auto bindingJson = winrt::to_hstring(Json::writeString(Json::StreamWriterBuilder{}, binding));
+                        if (protocolBinding)
+                        {
+                            page->_manager.OnPaneAgentSessionChanged(bindingJson);
+                        }
+                        else
+                        {
+                            manager->BindPaneSession(id,
+                                                     { L"resume-session", L"copilot", command, wsl ? L"wsl:Ubuntu:copilot" : L"host:copilot", wsl ? L"/saved" : L"" },
+                                                     wsl ? L"wsl" : L"host",
+                                                     wsl ? L"Ubuntu" : L"",
+                                                     L"selected-home");
+                        }
+                        const auto before = _paneMetadata(page->_manager, id);
+                        VERIFY_IS_TRUE(before->awaitingSessionStart);
+                        const auto verifyBinding = [&]() {
+                            const auto metadata = _paneMetadata(page->_manager, id);
+                            VERIFY_ARE_EQUAL(winrt::hstring{ L"resume-session" }, metadata->session.sessionId);
+                            VERIFY_ARE_EQUAL(before->session.agent, metadata->session.agent);
+                            VERIFY_ARE_EQUAL(before->session.backend, metadata->session.backend);
+                            VERIFY_ARE_EQUAL(before->session.cwd, metadata->session.cwd);
+                            VERIFY_ARE_EQUAL(before->source, metadata->source);
+                            VERIFY_ARE_EQUAL(before->wslDistro, metadata->wslDistro);
+                            VERIFY_ARE_EQUAL(winrt::hstring{ L"selected-home" }, metadata->universe);
+                            VERIFY_ARE_EQUAL(command, metadata->session.resumeCommandline);
+                            VERIFY_IS_TRUE(metadata->resumeCommandlineTrusted);
+                            VERIFY_IS_FALSE(metadata->IsSuperseded(before->Identity()));
+                        };
+                        Json::Value hook;
+                        auto& params = hook["params"];
+                        params["pane_id"] = _formatPaneId(id);
+                        params["agent"] = "copilot";
+                        params["event"] = started;
+                        params["agent_session_id"] = bootstrap ? "bootstrap-session" : "";
+                        if (scope != 0)
+                        {
+                            params["agent_source"] = wsl ? "wsl" : "host";
+                            params["wsl_distro"] = wsl ? "Ubuntu" : "";
+                        }
+                        if (scope == 2)
+                        {
+                            params["session_universe"] = "selected-home";
+                        }
+                        if (bootstrap)
+                        {
+                            params["cwd"] = "bootstrap-cwd";
+                        }
+                        manager->OnPaneAgentSessionChanged(winrt::to_hstring(Json::writeString(Json::StreamWriterBuilder{}, hook)), false);
+                        verifyBinding();
+                        VERIFY_IS_TRUE(_paneMetadata(page->_manager, id)->awaitingSessionStart);
+                        VERIFY_ARE_EQUAL(before->eventJson, _paneMetadata(page->_manager, id)->eventJson);
+
+                        params.removeMember("cwd");
+                        params["agent_session_id"] = "resume-session";
+                        params["event"] = "agent.prompt.submit";
+                        if (wsl)
+                        {
+                            params["wsl_distro"] = "Ubuntu";
+                        }
+                        manager->OnPaneAgentSessionChanged(winrt::to_hstring(Json::writeString(Json::StreamWriterBuilder{}, hook)), false);
+                        verifyBinding();
+                        VERIFY_ARE_EQUAL(winrt::hstring{ L"Working" }, _paneMetadata(page->_manager, id)->activity);
+                        VERIFY_IS_TRUE(_paneMetadata(page->_manager, id)->awaitingSessionStart);
+
+                        params["event"] = started;
+                        manager->OnPaneAgentSessionChanged(winrt::to_hstring(Json::writeString(Json::StreamWriterBuilder{}, hook)), false);
+                        verifyBinding();
+                        VERIFY_IS_FALSE(_paneMetadata(page->_manager, id)->awaitingSessionStart);
+                        VERIFY_ARE_EQUAL(winrt::hstring{ L"Working" }, _paneMetadata(page->_manager, id)->activity);
+                        // A delayed copy of the binding must not re-arm an already confirmed session.
+                        page->_manager.OnPaneAgentSessionChanged(bindingJson);
+                        VERIFY_IS_FALSE(_paneMetadata(page->_manager, id)->awaitingSessionStart);
+
+                        params["agent_session_id"] = "next-session";
+                        params["agent_source"] = wsl ? "wsl" : "host";
+                        params["wsl_distro"] = wsl ? "Ubuntu" : "";
+                        params["session_universe"] = "selected-home";
+                        manager->OnPaneAgentSessionChanged(winrt::to_hstring(Json::writeString(Json::StreamWriterBuilder{}, hook)), false);
+                        const auto replacement = _paneMetadata(page->_manager, id);
+                        VERIFY_ARE_EQUAL(winrt::hstring{ L"next-session" }, replacement->session.sessionId);
+                        VERIFY_IS_TRUE(replacement->IsSuperseded(before->Identity()));
+                        VERIFY_IS_FALSE(replacement->resumeCommandlineTrusted);
+                        VERIFY_ARE_NOT_EQUAL(command, replacement->session.resumeCommandline);
+                        VERIFY_IS_FALSE(replacement->awaitingSessionStart);
+                        params["agent_session_id"] = "resume-session";
+                        params["event"] = "agent.prompt.submit";
+                        manager->OnPaneAgentSessionChanged(winrt::to_hstring(Json::writeString(Json::StreamWriterBuilder{}, hook)), false);
+                        VERIFY_ARE_EQUAL(replacement->session.sessionId, _paneMetadata(page->_manager, id)->session.sessionId);
+                        VERIFY_ARE_EQUAL(replacement->activity, _paneMetadata(page->_manager, id)->activity);
+                    }
+                }
+            }
+        });
+    }
+
+    void TabTests::PaneWtaResumeBindingSurvivesSessionlessStartup()
+    {
+        _verifyPaneResumeStartup(true, false);
+    }
+
+    void TabTests::PaneResumeBootstrapCannotReplaceTarget()
+    {
+        for (const auto protocolBinding : { false, true })
+        {
+            _verifyPaneResumeStartup(protocolBinding, true);
+        }
+    }
+
+    void TabTests::PaneResumeBootstrapProtectionRespectsScope()
+    {
+        using Manager = winrt::TerminalApp::implementation::ContentManager;
+        const auto page = _commonSetup(nullptr, nullptr, std::nullopt, true);
+        TestOnUIThread([&]() {
+            const auto id = page->_GetFocusedTabImpl()->GetActivePane()->GetSessionId();
+            const auto manager = winrt::get_self<Manager>(page->_manager);
+            const auto contentId = _paneMetadata(page->_manager, id)->contentId;
+            for (const auto mismatch : { 0, 1, 2, 3, 4, 5 })
+            {
+                manager->ResetPaneConnection(contentId, id);
+                manager->BindPaneSession(id,
+                                         { L"resume-session", L"copilot", L"trusted-wrapper", L"wsl:Ubuntu:copilot", L"/saved" },
+                                         L"wsl",
+                                         L"Ubuntu",
+                                         L"selected-home");
+                const auto before = _paneMetadata(page->_manager, id);
+                Json::Value hook;
+                auto& params = hook["params"];
+                params["pane_id"] = _formatPaneId(mismatch == 5 ? winrt::guid{ Microsoft::Console::Utils::CreateGuid() } : id);
+                params["agent"] = mismatch == 0 ? "claude" : "copilot";
+                params["agent_session_id"] = "bootstrap-session";
+                params["event"] = "agent.session.start";
+                params["agent_source"] = mismatch == 1 ? "host" : "wsl";
+                params["wsl_distro"] = mismatch == 1 ? "" : mismatch == 2 ? "Debian" :
+                                                                            "Ubuntu";
+                params["session_universe"] = mismatch == 3 ? "" : mismatch == 4 ? "other-home" :
+                                                                                  "selected-home";
+                manager->OnPaneAgentSessionChanged(winrt::to_hstring(Json::writeString(Json::StreamWriterBuilder{}, hook)), false);
+                const auto after = _paneMetadata(page->_manager, id);
+                if (mismatch == 5)
+                {
+                    VERIFY_IS_TRUE(after->Identity().Matches(before->Identity()));
+                    VERIFY_IS_TRUE(after->awaitingSessionStart);
+                    VERIFY_IS_TRUE(after->resumeCommandlineTrusted);
+                    VERIFY_ARE_EQUAL(before->session.resumeCommandline, after->session.resumeCommandline);
+                }
+                else
+                {
+                    VERIFY_ARE_EQUAL(winrt::hstring{ L"bootstrap-session" }, after->session.sessionId);
+                    VERIFY_IS_TRUE(after->IsSuperseded(before->Identity()));
+                    VERIFY_IS_FALSE(after->awaitingSessionStart);
+                    VERIFY_IS_FALSE(after->resumeCommandlineTrusted);
+                    VERIFY_ARE_NOT_EQUAL(before->session.resumeCommandline, after->session.resumeCommandline);
+                }
+            }
+        });
+    }
+
+    void TabTests::PaneUntrustedBindingCannotArmResumeProtection()
+    {
+        using Manager = winrt::TerminalApp::implementation::ContentManager;
+        const auto page = _commonSetup(nullptr, nullptr, std::nullopt, true);
+        TestOnUIThread([&]() {
+            const auto id = page->_GetFocusedTabImpl()->GetActivePane()->GetSessionId();
+            const auto manager = winrt::get_self<Manager>(page->_manager);
+            const auto contentId = _paneMetadata(page->_manager, id)->contentId;
+            for (const auto bindingCase : { 0, 1, 2 })
+            {
+                manager->ResetPaneConnection(contentId, id);
+                Json::Value event;
+                auto& params = event["params"];
+                params["pane_id"] = _formatPaneId(id);
+                params["agent"] = "copilot";
+                params["agent_session_id"] = "unprotected-session";
+                params["agent_source"] = "host";
+                if (bindingCase != 1)
+                {
+                    params["resume_commandline"] = "copilot --resume unprotected-session";
+                }
+                if (bindingCase == 2)
+                {
+                    params["event"] = "agent.prompt.submit";
+                }
+                manager->OnPaneAgentSessionChanged(winrt::to_hstring(Json::writeString(Json::StreamWriterBuilder{}, event)), bindingCase != 0);
+                VERIFY_IS_FALSE(_paneMetadata(page->_manager, id)->awaitingSessionStart);
+                params.removeMember("resume_commandline");
+                params["event"] = "agent.session.start";
+                params["agent_session_id"] = "next-session";
+                manager->OnPaneAgentSessionChanged(winrt::to_hstring(Json::writeString(Json::StreamWriterBuilder{}, event)), false);
+                VERIFY_ARE_EQUAL(winrt::hstring{ L"next-session" }, _paneMetadata(page->_manager, id)->session.sessionId);
+            }
+        });
+    }
+
     void TabTests::PaneHookUniversePresenceUsesConfirmedBinding()
     {
         using Manager = winrt::TerminalApp::implementation::ContentManager;
@@ -4103,6 +4334,19 @@ namespace TerminalAppLocalTests
                                              L"wsl",
                                              L"Ubuntu",
                                              L"selected-home");
+                    if (mismatch == 0)
+                    {
+                        // A later SID may take over only after the resume target confirms its own start.
+                        Json::Value confirmation;
+                        auto& confirmed = confirmation["params"];
+                        confirmed["pane_id"] = _formatPaneId(id);
+                        confirmed["agent"] = "copilot";
+                        confirmed["agent_session_id"] = "same-session";
+                        confirmed["event"] = "agent.session.start";
+                        confirmed["wsl_distro"] = "Ubuntu";
+                        page->_manager.OnPaneAgentSessionChanged(winrt::to_hstring(Json::writeString(Json::StreamWriterBuilder{}, confirmation)));
+                        VERIFY_IS_FALSE(_paneMetadata(page->_manager, id)->awaitingSessionStart);
+                    }
                     Json::Value event;
                     auto& params = event["params"];
                     params["pane_id"] = _formatPaneId(mismatch == 4 ? winrt::guid{ Microsoft::Console::Utils::CreateGuid() } : id);
@@ -4444,6 +4688,18 @@ namespace TerminalAppLocalTests
                 _bindPaneSession(page->_manager, id, { L"restore-session", L"copilot", {} });
                 page->_pendingRestoredSessionBindings.insert_or_assign(
                     id, Page::_PendingRestoredSessionBinding{ L"restore-session", L"copilot", {} });
+                if (!ended)
+                {
+                    const auto bootstrap = _keepRunningHook(id, "agent.session.start", "bootstrap-session");
+                    page->OnPaneAgentSessionChanged(bootstrap);
+                    page->_manager.OnPaneAgentSessionChanged(bootstrap);
+                    page->_OnPaneMetadataChanged(id);
+                    VERIFY_IS_TRUE(page->_pendingRestoredSessionBindings.contains(id));
+                    VERIFY_ARE_EQUAL(winrt::hstring{ L"restore-session" }, _paneMetadata(page->_manager, id)->session.sessionId);
+                    // Only a confirmed target permits the later replacement tested below.
+                    page->_manager.OnPaneAgentSessionChanged(_keepRunningHook(id, "agent.session.start", "restore-session"));
+                    VERIFY_IS_FALSE(_paneMetadata(page->_manager, id)->awaitingSessionStart);
+                }
                 const auto event = _keepRunningHook(id, ended ? "agent.session.end" : "agent.session.start",
                                                    ended ? "restore-session" : "replacement-session");
                 page->OnPaneAgentSessionChanged(event);

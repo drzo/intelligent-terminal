@@ -261,6 +261,18 @@ silently dropped every event. The flag clears itself whenever the row gives up
 the pane (`SessionStopped`, `PaneClosed`, `end_entry`) or once a `SessionStarted`
 for the *same* key claims it, so the protection needs no timer.
 
+Terminal's `ContentManager` applies the same startup protection to direct resume
+prebinding and trusted WTA `pane_agent_session_changed` bindings carrying a resume
+command, even when `params.event` is absent. While awaiting the selected session's
+start, a sessionless startup preserves the binding, and a different bootstrap SID
+from the same provider and compatible source/distro/universe cannot replace it.
+An omitted universe does not change that confirmed scope; an explicit empty or
+different universe remains a different identity. Prompt activity for the selected
+SID is accepted without ending the protection. Its own Start confirms the binding
+and allows later session replacement. A delayed duplicate WTA binding cannot
+re-arm a confirmed session, and untrusted terminal output cannot establish this
+resume protection.
+
 ### User-typed PowerShell resume: binding before the first conversation
 
 When Intelligent Terminal's shell integration is loaded in PowerShell, accepting
