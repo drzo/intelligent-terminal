@@ -994,7 +994,12 @@ function Get-Command {
             std::filesystem::create_directories(gitDirectory / L"objects");
             std::filesystem::create_directories(gitDirectory / L"refs" / L"heads");
             std::filesystem::create_directories(gitDirectory / L"logs");
-            _WriteFile(gitDirectory / L"config", "[core]\n\trepositoryformatversion = 0\n\tbare = false\n");
+            _WriteFile(
+                gitDirectory / L"config",
+                "[core]\n\t"
+                "repository"
+                "format"
+                "version = 0\n\tbare = false\n");
             _WriteFile(gitDirectory / L"HEAD", "ref: refs/heads/main\n");
             _WriteFile(root / L"untracked.txt", "content\n");
         }
