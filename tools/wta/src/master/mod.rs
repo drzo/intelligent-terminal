@@ -8961,7 +8961,14 @@ async fn handle_scoped_session_born_bound(
     universe: Option<String>,
 ) -> acp::Result<acp::schema::v1::ExtResponse> {
     let universe = universe.filter(|value| !value.trim().is_empty());
-    if universe.is_none() && wsl_distro.is_none() {
+    let known_provider = matches!(
+        &event,
+        crate::agent_sessions::SessionEvent::SessionStarted { cli_source, .. }
+            if !matches!(cli_source, crate::agent_sessions::CliSource::Unknown(_))
+    );
+    // Missing scope means Host/default for known providers, not a raw-SID
+    // registration that may overwrite another source or store.
+    if universe.is_none() && wsl_distro.is_none() && !known_provider {
         return handle_session_born_bound(state, event, wsl_distro).await;
     }
     let crate::agent_sessions::SessionEvent::SessionStarted {

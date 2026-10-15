@@ -16945,6 +16945,131 @@ async fn session_born_bound_marks_born_bound_not_hook_owned() {
 }
 
 #[tokio::test]
+async fn host_default_birth_preserves_unknown_provider_legacy_fallback() {
+    use crate::agent_sessions::{CliSource, SessionEvent};
+    for provider in ["", "custom-provider"] {
+        let state = make_state();
+        let sid = acp::schema::v1::SessionId::new("legacy-birth");
+        let event = SessionEvent::SessionStarted {
+            key: sid.to_string(),
+            cli_source: CliSource::Unknown(provider.into()),
+            pane_session_id: "legacy-pane".into(),
+            cwd: std::path::PathBuf::from("C:\\legacy"),
+            title: "Legacy conversation".into(),
+        };
+        handle_scoped_session_born_bound(&state, event, None, None)
+            .await
+            .unwrap();
+        let row = state.registry.lookup(&sid).await.unwrap();
+        assert_eq!(row.pane_session_id.as_deref(), Some("legacy-pane"));
+        assert!(state.born_bound.lock().await.contains(&sid));
+        assert!(state.scoped_hook_ownership.lock().await.is_empty());
+    }
+}
+
+#[tokio::test]
+async fn host_default_birth_preserves_single_foreign_collision() {
+    assert_host_default_birth_preserves_foreign_collisions(false).await;
+}
+
+#[tokio::test]
+async fn host_default_birth_preserves_multiple_foreign_collisions() {
+    assert_host_default_birth_preserves_foreign_collisions(true).await;
+}
+
+async fn assert_host_default_birth_preserves_foreign_collisions(multiple: bool) {
+    use crate::agent_sessions::{AgentStatus, CliSource, SessionEvent, SessionLocation};
+    use crate::session_registry::{SessionIdentity, SessionInfo, WtaExtRequest};
+
+    for wsl in [false, true] {
+        let state = make_state();
+        let sid = acp::schema::v1::SessionId::new("host-default-collision");
+        let mut foreign_rows = Vec::new();
+        for index in 0..if multiple { 2 } else { 1 } {
+            let mut foreign =
+                SessionInfo::new(sid.clone(), std::path::PathBuf::from("C:\\foreign"));
+            foreign.provider_id = Some("copilot".into());
+            foreign.cli_source = Some(CliSource::Copilot);
+            foreign.location = SessionLocation::Host;
+            if wsl {
+                foreign.location = SessionLocation::Wsl {
+                    distro: format!("Ubuntu-{index}"),
+                };
+            } else {
+                foreign.session_universe = Some(format!("foreign-home-{index}"));
+            }
+            foreign.status = Some(AgentStatus::Working);
+            foreign.pane_session_id = Some(format!("foreign-pane-{index}"));
+            foreign.title = Some("Foreign conversation".into());
+            foreign.current_tool = Some("Foreign tool".into());
+            state.registry.upsert(foreign.clone()).await;
+            foreign_rows.push(foreign);
+        }
+        let event = SessionEvent::SessionStarted {
+            key: sid.to_string(),
+            cli_source: CliSource::Copilot,
+            pane_session_id: "host-pane".into(),
+            cwd: std::path::PathBuf::from("C:\\host"),
+            title: "Host conversation".into(),
+        };
+        // Exercise the same omitted-field wire request used by Host delegates.
+        let request = crate::session_registry::build_born_bound_request(&event);
+        let WtaExtRequest::SessionBornBound(event, distro, universe) =
+            crate::session_registry::parse_ext_request(request)
+        else {
+            panic!("born-bound request must parse");
+        };
+        assert!(distro.is_none());
+        assert!(universe.is_none());
+        handle_scoped_session_born_bound(&state, event, distro, universe)
+            .await
+            .unwrap();
+
+        for foreign in &foreign_rows {
+            let unchanged = state
+                .registry
+                .lookup_identity(&SessionIdentity::from_info(foreign))
+                .await
+                .unwrap();
+            assert_eq!(unchanged.cwd, foreign.cwd);
+            assert_eq!(unchanged.title, foreign.title);
+            assert_eq!(unchanged.pane_session_id, foreign.pane_session_id);
+            assert_eq!(unchanged.status, foreign.status);
+            assert_eq!(unchanged.current_tool, foreign.current_tool);
+            assert_eq!(unchanged.location, foreign.location);
+            assert_eq!(unchanged.session_universe, foreign.session_universe);
+        }
+        let mut expected = SessionInfo::new(sid, std::path::PathBuf::from("C:\\host"));
+        expected.provider_id = Some("copilot".into());
+        expected.cli_source = Some(CliSource::Copilot);
+        expected.location = SessionLocation::Host;
+        let identity = SessionIdentity::from_info(&expected);
+        let host = state.registry.lookup_identity(&identity).await.unwrap();
+        assert_eq!(host.location, SessionLocation::Host);
+        assert!(host.session_universe.is_none());
+        assert_eq!(host.cwd, expected.cwd);
+        assert_eq!(host.title.as_deref(), Some("Host conversation"));
+        assert_eq!(host.pane_session_id.as_deref(), Some("host-pane"));
+        assert_eq!(host.status, Some(AgentStatus::Idle));
+        assert!(host.born_bound_pane);
+        assert_eq!(
+            SessionIdentity::from_info(
+                &state
+                    .registry
+                    .lookup_active_by_pane("host-pane")
+                    .await
+                    .unwrap()
+            ),
+            identity
+        );
+        assert_eq!(
+            state.registry.snapshot().await.len(),
+            foreign_rows.len() + 1
+        );
+    }
+}
+
+#[tokio::test]
 async fn restored_birth_preserves_universe_without_mutating_colliding_row() {
     use crate::agent_sessions::{AgentStatus, CliSource, SessionEvent, SessionLocation};
     use crate::session_registry::{SessionIdentity, SessionInfo};
