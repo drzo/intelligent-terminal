@@ -4956,20 +4956,37 @@ namespace TerminalAppLocalTests
         const auto agentConnection = winrt::make_self<TestConnection>(
             winrt::guid{ L"{6239a42c-ff02-49a3-80bd-e8fdd045185c}" },
             winrt::Microsoft::Terminal::TerminalConnection::ConnectionState::Connected);
-        const auto page = _commonSetup(*shellConnection, nullptr, std::nullopt, true);
+        Grid host{ nullptr };
+        TestOnUIThread([&]() {
+            host = Grid{};
+            host.Width(1200);
+            host.Height(800);
+        });
+        const auto page = _commonSetup(*shellConnection, host, std::nullopt, true);
+        winrt::Microsoft::Terminal::Control::TermControl shell{ nullptr };
+        winrt::Microsoft::Terminal::Control::TermControl agent{ nullptr };
+        winrt::TerminalApp::AgentPaneContent agentContent{ nullptr };
 
         TestOnUIThread([&]() {
             const auto tab = page->_GetFocusedTabImpl();
             tab->SuppressAgentPrewarm();
-            const auto shell = page->_GetActiveControl();
+            shell = page->_GetActiveControl();
             const auto agentPane = page->_WrapInAgentPaneContent(
                 page->_MakePane(nullptr, nullptr, *agentConnection));
-            const auto agentContent = agentPane->GetContent().as<winrt::TerminalApp::AgentPaneContent>();
+            agentContent = agentPane->GetContent().as<winrt::TerminalApp::AgentPaneContent>();
             tab->SplitPaneAtRoot(SplitDirection::Down, agentPane, 0.5f);
             page->UpdateLayout();
-            const auto agent = tab->FindAgentPane()->GetTerminalControl();
+            agent = tab->FindAgentPane()->GetTerminalControl();
             VERIFY_IS_NOT_NULL(agent);
+        });
+        _waitForContentTransferReviewUI([&]() {
+            return shell.IsLoaded() && agent.IsLoaded() &&
+                   shell.ActualWidth() > 0 && shell.ActualHeight() > 0 &&
+                   agent.ActualWidth() > 0 && agent.ActualHeight() > 0;
+        });
 
+        TestOnUIThread([&]() {
+            const auto tab = page->_GetFocusedTabImpl();
             // Existing TestConnection panes need discovery, but never launch WTA.
             const auto fixtureRoot = std::filesystem::temp_directory_path() /
                                      (L"AgentHotkeyWta-" + std::to_wstring(GetCurrentProcessId()) +
