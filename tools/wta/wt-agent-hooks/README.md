@@ -187,6 +187,15 @@ error" — earlier wta builds shipped an undocumented `ErrorOccurred` name
 which is no longer used. Gemini's manifest has no native equivalents for
 the failure topics, so those rows are silent on Gemini.
 
+**Notifications do not always mean user input is required.** WTA reads both
+`notification_type` and Copilot's `notificationType`. Copilot's
+`shell_completed`, `shell_detached_completed`, `agent_completed`, and
+`agent_idle` describe background work, so they leave the owning session's
+activity unchanged, including any pending approval. Claude's `idle_prompt` is
+also ignored. `permission_prompt` and Copilot's `elicitation_dialog` still
+produce Attention (Waiting for input). Missing or unknown types retain that
+Attention fallback so an unrecognised approval request remains visible.
+
 Two topics keep a routing arm in `app.rs` that outlives their subscription in
 the Claude and Copilot bundles: `agent.subagent.stop`, which no shipped manifest
 claims at all, and `agent.tool.starting`, which Gemini still sends as

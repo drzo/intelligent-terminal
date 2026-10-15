@@ -500,6 +500,7 @@ pub const CONSUMED_PAYLOAD_KEYS: &[&str] = &[
     "tool_input",
     "message",
     "notification_type",
+    "notificationType",
     "reason",
     "error",
 ];
@@ -532,7 +533,7 @@ pub struct AgentEventFacts {
 #[derive(Debug, Default)]
 pub struct AgentEventPlan {
     /// Session events to apply, in emit order. Empty when the hook is
-    /// deliberately ignored (tool completions, `idle_prompt` notifications).
+    /// deliberately ignored (tool completions, informational notifications).
     pub events: Vec<crate::agent_sessions::SessionEvent>,
     /// Set when a real `agent.session.started` should supersede any
     /// `pane:`-keyed placeholder previously minted for this pane.
@@ -680,18 +681,25 @@ pub fn plan_agent_event(
         }
         "agent.stop" | "agent.subagent.stop" => SessionEvent::ToolCompleted { key },
         "agent.notification" => {
-            // Claude's `Notification` hook covers two cases. `permission_prompt`
-            // is genuinely Attention: nothing proceeds until the user acts.
-            // `idle_prompt` fires *after* `agent.stop` already moved the row to
-            // Idle, so treating it as Attention would park every session at
-            // "waiting for your input" between turns. Unknown types stay
-            // Attention on purpose — over-reporting costs a stale badge the
-            // next event clears, under-reporting loses a permission request.
+            // Background work and idle reminders do not block the owning session.
+            // Drop them rather than resetting activity: a pending approval may
+            // still need Attention. Unknown types stay visible as Attention.
             let notification_type = payload
                 .get("notification_type")
                 .and_then(|v| v.as_str())
+                .filter(|value| !value.is_empty())
+                .or_else(|| payload.get("notificationType").and_then(|v| v.as_str()))
                 .unwrap_or("");
-            if notification_type == "idle_prompt" {
+            if notification_type == "idle_prompt"
+                || (matches!(cli_source, crate::agent_sessions::CliSource::Copilot)
+                    && matches!(
+                        notification_type,
+                        "shell_completed"
+                            | "shell_detached_completed"
+                            | "agent_completed"
+                            | "agent_idle"
+                    ))
+            {
                 plan.events.clear();
                 return plan;
             }

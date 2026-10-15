@@ -172,7 +172,7 @@ namespace wtcli
 
     // Per-field ceiling applied when an event overflows `kMaxHookEventChars`.
     // Sized so the reduced payload is always well under budget even if every
-    // retained member is at its limit (8 strings + 3 nested = 5.5 KB of values).
+    // retained member is at its limit (9 strings + 3 nested = 6 KB of values).
     inline constexpr size_t kMaxRetainedFieldChars = 512;
 
     // Members of the hook payload that WTA reads, and the members it reads out
@@ -187,6 +187,7 @@ namespace wtcli
         "tool_input",
         "message",
         "notification_type",
+        "notificationType",
         "reason",
         "error",
     };

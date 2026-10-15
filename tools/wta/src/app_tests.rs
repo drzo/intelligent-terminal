@@ -1672,9 +1672,133 @@ fn claude_permission_prompt_notification_still_sets_attention() {
     );
 }
 
-/// The filter is a denylist of one known-inert type, not an allowlist of known
-/// types: CLIs that send no `notification_type` at all (Copilot, Gemini,
-/// OpenCode) and any type Claude adds later must keep reaching Attention.
+#[test]
+fn copilot_background_notifications_preserve_session_activity() {
+    use crate::agent_sessions::{AgentSessionRegistry, CliSource, SessionEvent};
+
+    let key = "copilot-sid".to_string();
+    let pane = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa";
+    for activity in [
+        SessionEvent::ToolStarting {
+            key: key.clone(),
+            tool_name: "prompt".into(),
+        },
+        SessionEvent::ToolCompleted { key: key.clone() },
+        SessionEvent::Notification {
+            key: key.clone(),
+            message: "Permission needed".into(),
+        },
+    ] {
+        for type_field in ["notificationType", "notification_type"] {
+            for notification_type in [
+                "shell_completed",
+                "shell_detached_completed",
+                "agent_completed",
+                "agent_idle",
+            ] {
+                let mut reg = AgentSessionRegistry::new();
+                reg.apply(SessionEvent::SessionStarted {
+                    key: key.clone(),
+                    cli_source: CliSource::Copilot,
+                    pane_session_id: pane.into(),
+                    cwd: std::path::PathBuf::from("C:\\repo"),
+                    title: "copilot".into(),
+                });
+                reg.apply(activity.clone());
+                let before = reg.get(&key).unwrap().clone();
+                reg.take_dirty();
+
+                let mut payload = json!({ "message": "Background work completed" });
+                payload[type_field] = json!(notification_type);
+                let params = json!({
+                    "event": "agent.notification",
+                    "cli_source": "copilot",
+                    "agent_session_id": key,
+                    "payload": payload,
+                });
+                let mut applied = Vec::new();
+                let changed = route_agent_event_to_registry_with_hook_sink(
+                    &mut reg,
+                    pane,
+                    &params,
+                    |event| applied.push(event),
+                );
+
+                let after = reg.get(&key).unwrap();
+                assert_eq!(
+                    after.status, before.status,
+                    "{type_field}={notification_type}"
+                );
+                assert_eq!(after.current_tool, before.current_tool);
+                assert_eq!(after.attention_reason, before.attention_reason);
+                assert!(!changed);
+                assert!(!reg.take_dirty());
+                assert!(applied.is_empty());
+            }
+        }
+    }
+}
+
+#[test]
+fn copilot_background_notification_does_not_create_a_session() {
+    use crate::agent_sessions::AgentSessionRegistry;
+
+    let mut reg = AgentSessionRegistry::new();
+    let params = json!({
+        "event": "agent.notification",
+        "cli_source": "copilot",
+        "agent_session_id": "copilot-sid",
+        "payload": {
+            "message": "Shell command has completed successfully",
+            "notificationType": "shell_completed",
+        },
+    });
+    let mut applied = Vec::new();
+    let changed = route_agent_event_to_registry_with_hook_sink(
+        &mut reg,
+        "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+        &params,
+        |event| applied.push(event),
+    );
+    assert!(reg.iter_sorted().is_empty());
+    assert!(!changed);
+    assert!(applied.is_empty());
+}
+
+#[test]
+fn copilot_actionable_notifications_still_set_attention() {
+    use crate::agent_sessions::{AgentSessionRegistry, AgentStatus};
+
+    for type_field in ["notificationType", "notification_type"] {
+        for notification_type in ["permission_prompt", "elicitation_dialog"] {
+            let mut reg = AgentSessionRegistry::new();
+            let mut payload = json!({ "message": "User action needed" });
+            payload[type_field] = json!(notification_type);
+            let params = json!({
+                "event": "agent.notification",
+                "cli_source": "copilot",
+                "agent_session_id": "copilot-sid",
+                "payload": payload,
+            });
+            route_agent_event_to_registry_with_hook_sink(
+                &mut reg,
+                "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+                &params,
+                |_| {},
+            );
+
+            let session = reg.get(&"copilot-sid".to_string()).unwrap();
+            assert_eq!(session.status, AgentStatus::Attention);
+            assert_eq!(
+                session.attention_reason.as_deref(),
+                Some("User action needed")
+            );
+        }
+    }
+}
+
+/// The filter is a denylist of known-inert types, not an allowlist of known
+/// types: CLIs that send no type and any type added later must keep reaching Attention.
 /// Under-reporting silently loses an approval request; over-reporting only
 /// costs a badge the next event clears.
 #[test]
@@ -1683,6 +1807,7 @@ fn notification_without_a_known_type_still_sets_attention() {
     for payload in [
         json!({ "message": "approve: rm -rf foo" }),
         json!({ "message": "something new", "notification_type": "some_future_prompt" }),
+        json!({ "message": "something new", "notificationType": "some_future_prompt" }),
     ] {
         let mut reg = AgentSessionRegistry::new();
         reg.apply(SessionEvent::SessionStarted {

@@ -17139,6 +17139,70 @@ async fn born_bound_delegate_clears_a_stale_hook_ownership_claim() {
     assert!(state.born_bound.lock().await.contains(&sid));
 }
 
+#[tokio::test]
+async fn copilot_background_notifications_do_not_mutate_master_registry() {
+    use crate::agent_sessions::{AgentStatus, CliSource, SessionLocation};
+    use crate::session_registry::SessionInfo;
+
+    for type_field in ["notificationType", "notification_type"] {
+        for notification_type in [
+            "shell_completed",
+            "shell_detached_completed",
+            "agent_completed",
+            "agent_idle",
+        ] {
+            for status in [
+                None,
+                Some(AgentStatus::Working),
+                Some(AgentStatus::Idle),
+                Some(AgentStatus::Attention),
+            ] {
+                let state = make_state();
+                let sid = SessionId::new("copilot-background");
+                let existing = status.is_some();
+                if let Some(status) = status {
+                    let mut row = SessionInfo::new(sid.clone(), PathBuf::from("C:\\repo"));
+                    row.cli_source = Some(CliSource::Copilot);
+                    row.status = Some(status);
+                    row.location = SessionLocation::Host;
+                    row.pane_session_id = Some("owner".into());
+                    row.current_tool = Some("prompt".into());
+                    row.attention_reason = Some("Pending approval".into());
+                    state.registry.upsert(row).await;
+                    state.born_bound.lock().await.insert(sid.clone());
+                }
+                let before = state.registry.snapshot().await;
+                let mut payload = serde_json::json!({
+                    "message": "Background work completed",
+                    "cwd": "C:\\repo",
+                });
+                payload[type_field] = serde_json::json!(notification_type);
+                handle_master_wt_event(
+                    &state,
+                    serde_json::json!({
+                        "method": "agent_event",
+                        "params": {
+                            "event": "agent.notification",
+                            "cli_source": "copilot",
+                            "agent_session_id": "copilot-background",
+                            "pane_id": "owner",
+                            "payload": payload,
+                        },
+                    }),
+                )
+                .await;
+                assert_eq!(
+                    state.registry.snapshot().await,
+                    before,
+                    "{type_field}={notification_type}"
+                );
+                assert!(state.hook_owned.lock().await.is_empty());
+                assert_eq!(state.born_bound.lock().await.contains(&sid), existing);
+            }
+        }
+    }
+}
+
 /// The authoritative hook path is the master's own COM subscription, not a
 /// helper's pipe. One `agent_event` for an unseen session must create the row,
 /// apply the reported transition, and claim hook ownership in one pass.
