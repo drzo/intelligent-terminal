@@ -289,7 +289,7 @@ Describe 'Feature: layout-aware agent history and sidebar hotkeys' -Tag @('Featu
             Wait-Until -TimeoutSec 5 -Because 'Sidebar search to own keyboard focus' -Condition {
                 & $script:TabSearchFocused $app
             } | Out-Null
-            (Get-ActivePane -App $app).session_id | Should -Be $agent.PaneSessionId
+            (Get-ActivePane -App $app).session_id | Should -Be $shell.session_id -Because 'protocol queries retain the source shell while UI focus moves'
             Send-WtWindowKey -App $app -Vk 0xBE -Ctrl -Shift -RequireForeground | Out-Null
             Test-AgentPaneOpen -App $app | Should -BeTrue -Because 'Sidebar focus is outside the last-active agent pane'
             Wait-Until -TimeoutSec 5 -Because 'the shortcut to return from Sidebar search to chat input' -Condition {
@@ -327,6 +327,7 @@ Describe 'Feature: layout-aware agent history and sidebar hotkeys' -Tag @('Featu
                 [Windows.Automation.Automation]::Compare(
                     $shellFocus, [Windows.Automation.AutomationElement]::FocusedElement)
             } | Out-Null
+            Save-UiScreenshot -App $app -Path (Join-Path $script:evidenceDir 'agent-focus-stashed.png') | Out-Null
 
             Send-WtWindowKey -App $app -Vk 0xBE -Ctrl -Shift -RequireForeground | Out-Null
             Wait-Until -TimeoutSec 8 -Because 'the hidden-pane hotkey to restore chat' -Condition {
@@ -337,6 +338,7 @@ Describe 'Feature: layout-aware agent history and sidebar hotkeys' -Tag @('Featu
             $restored = Get-AgentPaneSession -App $app
             $restored.PaneSessionId | Should -Be $agent.PaneSessionId
             $restored.AcpSessionId | Should -Be $agent.AcpSessionId
+            Save-UiScreenshot -App $app -Path (Join-Path $script:evidenceDir 'agent-focus-restored.png') | Out-Null
 
             Set-WtPaneFocus -App $app -SessionId $shell.session_id
             Invoke-UiElement -App $app -Selector AgentToggleButton | Out-Null
