@@ -12101,6 +12101,11 @@ namespace winrt::TerminalApp::implementation
                 initialProgress["progress_state"] = Json::UInt64{ control.TaskbarState() };
                 _RaiseProtocolEvent("native_agent_observation", initialProgress);
             }
+            if (!enabled && (!previous || previous->modeEpoch != identity.modeEpoch) &&
+                SharedWta::Instance().IsRunning())
+            {
+                _RequestRichTabAgentStatusRefresh();
+            }
         }
         if (kind != "reset" && (!enabled || kind == "removed"))
         {
