@@ -11,6 +11,7 @@ setup.subtitle.agent_missing: "Agenttiasi \"%{agent}\" ei ole asennettu. Asenna 
 setup.subtitle.copilot_auth: "Agenttisi \"%{agent}\" vaatii todennuksen. Kirjaudu sisään seuraamalla alla olevia ohjeita. Vaihtaaksesi agenttia siirry kohtaan Älykäs Pääte Settings > Agent."
 setup.subtitle.agent_auth: "Agenttisi \"%{agent}\" vaatii todennuksen. Kirjaudu sisään agentin kautta ja valitse sitten alta \"Olen kirjautunut sisään\". Vaihtaaksesi agenttia siirry kohtaan Älykäs Pääte Settings > Agent."
 setup.subtitle.connection_failed: "Agenttia \"%{agent}\" ei voitu käynnistää."
+setup.subtitle.acp_missing: "Agentin %{agent} ACP-palvelinta ei ole asennettu. Se asennetaan automaattisesti."  # Shown when the ordinary CLI exists but its separate ACP server is missing. %{agent} is the AI agent display name. {Locked="ACP"}
 
 # {Locked=qps-ploc,qps-ploca,qps-plocm}
 
@@ -22,6 +23,7 @@ setup.option.retry_auth: "Olen kirjautunut sisään — yritä yhdistää uudell
 setup.option.retry_connection: "Yritä yhdistää uudelleen"
 setup.status.installing: "Asennetaan..."
 setup.status.installing_copilot_cli: "Asennetaan GitHub Copilot CLI"
+setup.status.installing_acp: "Asennetaan agentin %{agent} ACP-palvelinta"  # Busy status while downloading and preparing the separate ACP server; %{agent} is the AI agent display name. {Locked="ACP"}
 setup.status.connecting_agent: "Yhdistetään palveluun %{agent}"
 setup.status.install_failed: "Asennus epäonnistui: "
 setup.status.installing_winget: " Asennetaan winget-paketinhallinnan kautta..."
@@ -116,6 +118,7 @@ agent.install.launch_failed: "Failed to launch winget: %{error}"
 agent.install.winget_exited: "winget exited unexpectedly: %{error}"
 agent.install.winget_failed_code: "winget install failed (exit code %{code})"
 agent.install.unsupported: "Automatic install not supported for %{agent}"
+agent.install.acp_failed: "Agentin %{agent} ACP-palvelinta ei voitu asentaa: %{error}"  # Installation failure; %{agent} is the AI agent display name and %{error} is a diagnostic description. {Locked="ACP"}
 agent.custom.auth_hint: "Varmista, että %{name} on asennettu ja PATH-muuttujassa."  # {Locked="PATH"}
 
 # ── Agents view (src/ui/agents_view.rs) ─────────────────────────────────────

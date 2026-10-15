@@ -11,6 +11,7 @@ setup.subtitle.agent_missing: "Jou agent \"%{agent}\" is nie geïnstalleer nie. 
 setup.subtitle.copilot_auth: "Jou agent \"%{agent}\" vereis stawing. Volg die stappe hieronder om aan te meld. Om van agent te wissel, gaan na Intelligente Terminaal Settings > Agent."
 setup.subtitle.agent_auth: "Jou agent \"%{agent}\" vereis stawing. Meld aan via die agent en kies dan \"Ek het aangemeld\" hieronder. Om van agent te wissel, gaan na Intelligente Terminaal Settings > Agent."
 setup.subtitle.connection_failed: "Kon %{agent} nie begin nie."
+setup.subtitle.acp_missing: "Die ACP-bediener vir %{agent} is nie geïnstalleer nie. Dit sal outomaties geïnstalleer word."  # Shown when the ordinary CLI exists but its separate ACP server is missing. %{agent} is the AI agent display name. {Locked="ACP"}
 
 # {Locked=qps-ploc,qps-ploca,qps-plocm}, {Locked="Settings"}
 
@@ -22,6 +23,7 @@ setup.option.retry_auth: "Ek het aangemeld — probeer weer koppel"
 setup.option.retry_connection: "Probeer weer koppel"
 setup.status.installing: "Installeer tans..."
 setup.status.installing_copilot_cli: "GitHub Copilot CLI word geïnstalleer"
+setup.status.installing_acp: "%{agent} se ACP word geïnstalleer"  # Busy status while downloading and preparing the separate ACP server; %{agent} is the AI agent display name. {Locked="ACP"}
 setup.status.connecting_agent: "Koppel tans aan %{agent}"
 setup.status.install_failed: "Installasie het misluk: "
 setup.status.installing_winget: " Installeer tans via winget..."
@@ -117,6 +119,7 @@ agent.install.launch_failed: "Kon nie winget begin nie: %{error}"
 agent.install.winget_exited: "winget het onverwags afgesluit: %{error}"
 agent.install.winget_failed_code: "winget-installasie het misluk (uittreekode %{code})"
 agent.install.unsupported: "Outomatiese installasie word nie ondersteun vir %{agent} nie"
+agent.install.acp_failed: "Kon nie die ACP-bediener vir %{agent} installeer nie: %{error}"  # Installation failure; %{agent} is the AI agent display name and %{error} is a diagnostic description. {Locked="ACP"}
 agent.custom.auth_hint: "Maak seker %{name} is geïnstalleer en op jou PATH."  # {Locked="PATH"}
 
 # ── Agenteaansig (src/ui/agents_view.rs) ─────────────────────────────────

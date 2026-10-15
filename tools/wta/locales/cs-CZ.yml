@@ -11,6 +11,7 @@ setup.subtitle.agent_missing: "Váš agent \"%{agent}\" není nainstalován. Př
 setup.subtitle.copilot_auth: "Váš agent \"%{agent}\" vyžaduje ověření. Postupujte podle níže uvedených kroků a přihlaste se. Chcete-li přepnout agenta, přejděte do Inteligentní Terminál Settings > Agent."
 setup.subtitle.agent_auth: "Váš agent \"%{agent}\" vyžaduje ověření. Přihlaste se přes agenta a pak vyberte \"Přihlásil/a jsem se\" níže. Chcete-li přepnout agenta, přejděte do Inteligentní Terminál Settings > Agent."
 setup.subtitle.connection_failed: "Nepodařilo se spustit agenta %{agent}."
+setup.subtitle.acp_missing: "Server ACP pro agenta %{agent} není nainstalován. Nainstaluje se automaticky."  # Shown when the ordinary CLI exists but its separate ACP server is missing. %{agent} is the AI agent display name. {Locked="ACP"}
 
 # {Locked=qps-ploc,qps-ploca,qps-plocm}
 
@@ -22,6 +23,7 @@ setup.option.retry_auth: "Přihlásil/a jsem se — zkusit se znovu připojit"
 setup.option.retry_connection: "Zkusit se znovu připojit"
 setup.status.installing: "Instalace..."
 setup.status.installing_copilot_cli: "Instalace GitHub Copilot CLI"
+setup.status.installing_acp: "Instalace ACP pro agenta %{agent}"  # Busy status while downloading and preparing the separate ACP server; %{agent} is the AI agent display name. {Locked="ACP"}
 setup.status.connecting_agent: "Připojování k %{agent}"
 setup.status.install_failed: "Instalace se nezdařila: "
 setup.status.installing_winget: " Instalace přes winget..."
@@ -126,6 +128,7 @@ agent.install.launch_failed: "Failed to launch winget: %{error}"
 agent.install.winget_exited: "winget exited unexpectedly: %{error}"
 agent.install.winget_failed_code: "winget install failed (exit code %{code})"
 agent.install.unsupported: "Automatic install not supported for %{agent}"
+agent.install.acp_failed: "Nepodařilo se nainstalovat server ACP pro agenta %{agent}: %{error}"  # Installation failure; %{agent} is the AI agent display name and %{error} is a diagnostic description. {Locked="ACP"}
 agent.custom.auth_hint: "Ujistěte se, že %{name} je nainstalován a je v PATH."  # {Locked="PATH"}
 
 # ── Agents view (src/ui/agents_view.rs) ─────────────────────────────────────

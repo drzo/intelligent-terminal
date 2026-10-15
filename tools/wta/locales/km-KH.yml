@@ -13,6 +13,7 @@ setup.subtitle.agent_missing: "AI អេជេន្ត់របស់អ្ន�
 setup.subtitle.copilot_auth: "AI អេជេន្ត់របស់អ្នក \"%{agent}\" ត្រូវការផ្ទៀងផ្ទាត់។ សូមធ្វើតាមជំហានខាងក្រោមដើម្បីចូល។ ដើម្បីប្តូរ AI អេជេន្ត់ សូមទៅ ស្ថានីយឆ្លាតវៃ Settings > Agent។"
 setup.subtitle.agent_auth: "AI អេជេន្ត់របស់អ្នក \"%{agent}\" ត្រូវការផ្ទៀងផ្ទាត់។ សូមចូលតាមរយៈ AI អេជេន្ត់ រួចជ្រើសរើស \"ខ្ញុំបានចូលហើយ\" ខាងក្រោម។ ដើម្បីប្តូរ AI អេជេន្ត់ សូមទៅ ស្ថានីយឆ្លាតវៃ Settings > Agent។"
 setup.subtitle.connection_failed: "យើងមិនអាចចាប់ផ្តើម %{agent} បានទេ។"
+setup.subtitle.acp_missing: "ម៉ាស៊ីនមេ ACP សម្រាប់ %{agent} មិនទាន់ត្រូវបានតំឡើងទេ។ វានឹងត្រូវបានតំឡើងដោយស្វ័យប្រវត្តិ។"  # Shown when the ordinary CLI exists but its separate ACP server is missing. %{agent} is the AI agent display name. {Locked="ACP"}
 
 # {Locked=qps-ploc,qps-ploca,qps-plocm}
 
@@ -24,6 +25,7 @@ setup.option.retry_auth: "ខ្ញុំបានចូលហើយ — សា�
 setup.option.retry_connection: "សាកល្បងតភ្ជាប់ម្តងទៀត"
 setup.status.installing: "កំពុងតំឡើង..."
 setup.status.installing_copilot_cli: "កំពុងតំឡើង GitHub Copilot CLI"
+setup.status.installing_acp: "កំពុងតំឡើង ACP សម្រាប់ %{agent}"  # Busy status while downloading and preparing the separate ACP server; %{agent} is the AI agent display name. {Locked="ACP"}
 setup.status.connecting_agent: "កំពុងតភ្ជាប់ទៅ %{agent}"
 setup.status.install_failed: "ការតំឡើងបរាជ័យ: "
 setup.status.installing_winget: " កំពុងតំឡើងតាមរយៈ winget..."
@@ -125,6 +127,7 @@ agent.install.launch_failed: "បរាជ័យក្នុងការចា�
 agent.install.winget_exited: "winget បានបញ្ចប់ដោយមិនរំពឹង: %{error}"
 agent.install.winget_failed_code: "ការតំឡើង winget បរាជ័យ (កូដចាកចេញ %{code})"
 agent.install.unsupported: "ការតំឡើងស្វ័យប្រវត្តិមិនត្រូវបានគាំទ្រសម្រាប់ %{agent}"
+agent.install.acp_failed: "មិនអាចតំឡើងម៉ាស៊ីនមេ ACP សម្រាប់ %{agent} បានទេ៖ %{error}"  # Installation failure; %{agent} is the AI agent display name and %{error} is a diagnostic description. {Locked="ACP"}
 agent.custom.auth_hint: "សូមប្រាកដថា %{name} ត្រូវបានតំឡើង និងនៅលើ PATH របស់អ្នក។"  # {Locked="PATH"}
 
 # ── Agents view (src/ui/agents_view.rs) ───────────────────────────────────────────────────────────────

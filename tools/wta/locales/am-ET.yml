@@ -11,6 +11,7 @@ setup.subtitle.agent_missing: "ኤጅንትዎ \"%{agent}\" አልተጠቀመ�
 setup.subtitle.copilot_auth: "ኤጅንትዎ \"%{agent}\" ማረጋገጥ ያስፈልገወል። ለመግባት ከታች ያሉትን ደረጃዎች ይተግበሩ። ኤጅንትን ለመቀየር ብልህ ተርሚናል Settings > Agent ይሂዱ።"
 setup.subtitle.agent_auth: "ኤጅንትዎ \"%{agent}\" ማረጋገጥ ያስፈልገዋል። እባክዎን በኤጅንቱ በኩል ይግቡ እና ከዚያ በታች \"ገብቻለሁ\" ን ይምረጡ። ኤጅንትን ለመቀየር ብልህ ተርሚናል Settings > Agent ይሂዱ።"
 setup.subtitle.connection_failed: "%{agent} ማስጀመር አልቻልንም።"
+setup.subtitle.acp_missing: "የ%{agent} ACP አገልጋይ አልተጫነም። በራስ-ሰር ይጫናል።"  # Shown when the ordinary CLI exists but its separate ACP server is missing. %{agent} is the AI agent display name. {Locked="ACP"}
 
 # {Locked=qps-ploc,qps-ploca,qps-plocm}
 
@@ -22,6 +23,7 @@ setup.option.retry_auth: "ገብቻለሁ — እንደገና ማገናኘት �
 setup.option.retry_connection: "እንደገና ለመገናኘት ይሞክሩ"
 setup.status.installing: "በመጠቀም ላይ..."
 setup.status.installing_copilot_cli: "GitHub Copilot CLI በመጫን ላይ"
+setup.status.installing_acp: "የ%{agent} ACP በመጫን ላይ"  # Busy status while downloading and preparing the separate ACP server; %{agent} is the AI agent display name. {Locked="ACP"}
 setup.status.connecting_agent: "ከ%{agent} ጋር በመገናኘት ላይ"
 setup.status.install_failed: "መጠቀም አልተሳካም፡ "
 setup.status.installing_winget: " በ winget በኩል በመጠቀም ላይ..."
@@ -117,6 +119,7 @@ agent.install.launch_failed: "Failed to launch winget: %{error}"
 agent.install.winget_exited: "winget exited unexpectedly: %{error}"
 agent.install.winget_failed_code: "winget install failed (exit code %{code})"
 agent.install.unsupported: "Automatic install not supported for %{agent}"
+agent.install.acp_failed: "የ%{agent} ACP አገልጋይን መጫን አልተቻለም፦ %{error}"  # Installation failure; %{agent} is the AI agent display name and %{error} is a diagnostic description. {Locked="ACP"}
 agent.custom.auth_hint: "Make sure %{name} is installed and on your PATH."  # {Locked="PATH"}
 
 # ── Agents view (src/ui/agents_view.rs) ─────────────────────────────────────

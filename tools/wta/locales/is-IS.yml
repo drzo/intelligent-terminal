@@ -11,6 +11,7 @@ setup.subtitle.agent_missing: "Agentinn þinn \"%{agent}\" er ekki uppsettur. Se
 setup.subtitle.copilot_auth: "Agentinn þinn \"%{agent}\" krefst auðkenningar. Fylgdu skrefunum hér að neðan til að skrá þig inn. Til að skipta um agent, farðu í Snjallútstöð Settings > Agent."
 setup.subtitle.agent_auth: "Agentinn þinn \"%{agent}\" krefst auðkenningar. Skráðu þig inn í gegnum agentinn og veldu svo \"Ég hef skráð mig inn\" hér að neðan. Til að skipta um agent, farðu í Snjallútstöð Settings > Agent."
 setup.subtitle.connection_failed: "Ekki tókst að ræsa %{agent}."
+setup.subtitle.acp_missing: "ACP-þjónninn fyrir %{agent} er ekki uppsettur. Hann verður settur upp sjálfkrafa."  # Shown when the ordinary CLI exists but its separate ACP server is missing. %{agent} is the AI agent display name. {Locked="ACP"}
 
 # {Locked=qps-ploc,qps-ploca,qps-plocm}
 
@@ -22,6 +23,7 @@ setup.option.retry_auth: "Ég hef skráð mig inn — reyndu að tengjast aftur"
 setup.option.retry_connection: "Reyndu að tengjast aftur"
 setup.status.installing: "Set upp..."
 setup.status.installing_copilot_cli: "Uppsetning GitHub Copilot CLI"
+setup.status.installing_acp: "Uppsetning ACP fyrir %{agent}"  # Busy status while downloading and preparing the separate ACP server; %{agent} is the AI agent display name. {Locked="ACP"}
 setup.status.connecting_agent: "Tenging við %{agent}"
 setup.status.install_failed: "Uppsetning mistókst: "
 setup.status.installing_winget: " Set upp í gegnum winget..."
@@ -116,6 +118,7 @@ agent.install.launch_failed: "Failed to launch winget: %{error}"
 agent.install.winget_exited: "winget exited unexpectedly: %{error}"
 agent.install.winget_failed_code: "winget install failed (exit code %{code})"
 agent.install.unsupported: "Automatic install not supported for %{agent}"
+agent.install.acp_failed: "Ekki tókst að setja upp ACP-þjóninn fyrir %{agent}: %{error}"  # Installation failure; %{agent} is the AI agent display name and %{error} is a diagnostic description. {Locked="ACP"}
 agent.custom.auth_hint: "Gakktu úr skugga um að %{name} sé uppsett og á PATH."  # {Locked="PATH"}
 
 # ── Agents view (src/ui/agents_view.rs) ─────────────────────────────────────

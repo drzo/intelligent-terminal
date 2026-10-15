@@ -11,6 +11,7 @@ setup.subtitle.agent_missing: "Aracınız \"%{agent}\" yüklü değil. Lütfen e
 setup.subtitle.copilot_auth: "Aracınız \"%{agent}\" kimlik doğrulama gerektiriyor. Oturum açmak için aşağıdaki adımları izleyin. Aracı değiştirmek için Akıllı Terminal Settings > Agent'e gidin."
 setup.subtitle.agent_auth: "Aracınız \"%{agent}\" kimlik doğrulama gerektiriyor. Lütfen aracı üzerinden oturum açın, ardından aşağıda \"Oturum açtım\" seçeneğini belirleyin. Aracı değiştirmek için Akıllı Terminal Settings > Agent'e gidin."
 setup.subtitle.connection_failed: "%{agent} başlatılamadı."
+setup.subtitle.acp_missing: "%{agent} için ACP sunucusu yüklü değil. Otomatik olarak yüklenecek."  # Shown when the ordinary CLI exists but its separate ACP server is missing. %{agent} is the AI agent display name. {Locked="ACP"}
 
 # {Locked=qps-ploc,qps-ploca,qps-plocm}
 
@@ -22,6 +23,7 @@ setup.option.retry_auth: "Oturum açtım — tekrar bağlanmayı dene"
 setup.option.retry_connection: "Tekrar bağlanmayı dene"
 setup.status.installing: "Yükleniyor..."
 setup.status.installing_copilot_cli: "GitHub Copilot CLI yükleniyor"
+setup.status.installing_acp: "%{agent} için ACP yükleniyor"  # Busy status while downloading and preparing the separate ACP server; %{agent} is the AI agent display name. {Locked="ACP"}
 setup.status.connecting_agent: "%{agent} ile bağlantı kuruluyor"
 setup.status.install_failed: "Yükleme başarısız: "
 setup.status.installing_winget: " winget üzerinden yükleniyor..."
@@ -129,6 +131,7 @@ agent.install.launch_failed: "winget başlatılamadı: %{error}"
 agent.install.winget_exited: "winget beklenmedik şekilde çıktı: %{error}"
 agent.install.winget_failed_code: "winget install başarısız oldu (çıkış kodu %{code})"
 agent.install.unsupported: "%{agent} için otomatik yükleme desteklenmiyor"
+agent.install.acp_failed: "%{agent} için ACP sunucusu yüklenemedi: %{error}"  # Installation failure; %{agent} is the AI agent display name and %{error} is a diagnostic description. {Locked="ACP"}
 agent.custom.auth_hint: "%{name} yüklü olduğundan ve PATH'te bulunduğundan emin olun."  # {Locked="PATH"}
 
 # ── Agents view (src/ui/agents_view.rs) ─────────────────────────────────────

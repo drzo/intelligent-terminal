@@ -11,6 +11,7 @@ setup.subtitle.agent_missing: "Teie agent \"%{agent}\" pole installitud. Install
 setup.subtitle.copilot_auth: "Teie agent \"%{agent}\" nõuab autentimist. Järgige allolevaid juhiseid sisselogimiseks. Agendi vahetamiseks avage Nutikas Terminal Settings > Agent."
 setup.subtitle.agent_auth: "Teie agent \"%{agent}\" nõuab autentimist. Logige sisse agendi kaudu ja valige seejärel allpool \"Olen sisse loginud\". Agendi vahetamiseks avage Nutikas Terminal Settings > Agent."
 setup.subtitle.connection_failed: "Agent %{agent} ei käivitunud."
+setup.subtitle.acp_missing: "Agendi %{agent} ACP-server pole installitud. See installitakse automaatselt."  # Shown when the ordinary CLI exists but its separate ACP server is missing. %{agent} is the AI agent display name. {Locked="ACP"}
 
 # {Locked=qps-ploc,qps-ploca,qps-plocm}
 
@@ -22,6 +23,7 @@ setup.option.retry_auth: "Olen sisse loginud — proovi uuesti ühendust luua"
 setup.option.retry_connection: "Proovi uuesti ühendust luua"
 setup.status.installing: "Installimine..."
 setup.status.installing_copilot_cli: "GitHub Copilot CLI installimine"
+setup.status.installing_acp: "Agendi %{agent} ACP installimine"  # Busy status while downloading and preparing the separate ACP server; %{agent} is the AI agent display name. {Locked="ACP"}
 setup.status.connecting_agent: "Ühenduse loomine teenusega %{agent}"
 setup.status.install_failed: "Installimine nurjus: "
 setup.status.installing_winget: " Installimine winget kaudu..."
@@ -116,6 +118,7 @@ agent.install.launch_failed: "Failed to launch winget: %{error}"
 agent.install.winget_exited: "winget exited unexpectedly: %{error}"
 agent.install.winget_failed_code: "winget install failed (exit code %{code})"
 agent.install.unsupported: "Automatic install not supported for %{agent}"
+agent.install.acp_failed: "Agendi %{agent} ACP-serverit ei saanud installida: %{error}"  # Installation failure; %{agent} is the AI agent display name and %{error} is a diagnostic description. {Locked="ACP"}
 agent.custom.auth_hint: "Veenduge, et %{name} on installitud ja teie PATH-is."  # {Locked="PATH"}
 
 # ── Agents view (src/ui/agents_view.rs) ─────────────────────────────────────

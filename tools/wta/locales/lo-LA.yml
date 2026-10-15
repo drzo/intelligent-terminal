@@ -11,6 +11,7 @@ setup.subtitle.agent_missing: "Agent ຂອງທ່ານ \"%{agent}\" ບໍ�
 setup.subtitle.copilot_auth: "Agent ຂອງທ່ານ \"%{agent}\" ຕ້ອງການການຢືນຢັນຕົວຕົນ། ໃຫ້ເຮັດຕາມຂັ້ນຕອນຂ້າງລຸ່ມເພື່ອເຂົ້າສູ່ລະບົບ། ເພື່ອປ່ຽນ agent, ໄປທີ່ ເທອຮ໌ມິນັລອັດຊະລິຍະ Settings > Agent།"
 setup.subtitle.agent_auth: "Agent ຂອງທ່ານ \"%{agent}\" ຕ້ອງການການຢືນຢັນຕົວຕົນ། ກະລຸນາເຂົ້າສູ່ລະບົບຜ່ານ agent, ຈາກນັ້ນເລືອກ \"ຂ້ອຍໄດ້ເຂົ້າສູ່ລະບົບແລ້ວ\" ຂ້າງລຸ່ມ། ເພື່ອປ່ຽນ agent, ໄປທີ່ ເທອຮ໌ມິນັລອັດຊະລິຍະ Settings > Agent།"
 setup.subtitle.connection_failed: "ພວກເຮົາບໍ່ສາມາດເລີ່ມ %{agent} ໄດ້."
+setup.subtitle.acp_missing: "ເຊີບເວີ ACP ສຳລັບ %{agent} ຍັງບໍ່ໄດ້ຕິດຕັ້ງ. ລະບົບຈະຕິດຕັ້ງໃຫ້ໂດຍອັດຕະໂນມັດ."  # Shown when the ordinary CLI exists but its separate ACP server is missing. %{agent} is the AI agent display name. {Locked="ACP"}
 
 # {Locked=qps-ploc,qps-ploca,qps-plocm}
 
@@ -22,6 +23,7 @@ setup.option.retry_auth: "ຂ້ອຍໄດ້ເຂົ້າສູ່ລະບ
 setup.option.retry_connection: "ລອງເຊື່ອມຕໍ່ອີກຄັ້ງ"
 setup.status.installing: "ກຳລັງຕິດຕັ້ງ..."
 setup.status.installing_copilot_cli: "ກຳລັງຕິດຕັ້ງ GitHub Copilot CLI"
+setup.status.installing_acp: "ກຳລັງຕິດຕັ້ງ ACP ສຳລັບ %{agent}"  # Busy status while downloading and preparing the separate ACP server; %{agent} is the AI agent display name. {Locked="ACP"}
 setup.status.connecting_agent: "ກຳລັງເຊື່ອມຕໍ່ຫາ %{agent}"
 setup.status.install_failed: "ການຕິດຕັ້ງລົ້ມເຫລວ: "
 setup.status.installing_winget: " ກຳລັງຕິດຕັ້ງຜ່ານ winget..."
@@ -116,6 +118,7 @@ agent.install.launch_failed: "Failed to launch winget: %{error}"
 agent.install.winget_exited: "winget exited unexpectedly: %{error}"
 agent.install.winget_failed_code: "winget install failed (exit code %{code})"
 agent.install.unsupported: "Automatic install not supported for %{agent}"
+agent.install.acp_failed: "ບໍ່ສາມາດຕິດຕັ້ງເຊີບເວີ ACP ສຳລັບ %{agent} ໄດ້: %{error}"  # Installation failure; %{agent} is the AI agent display name and %{error} is a diagnostic description. {Locked="ACP"}
 agent.custom.auth_hint: "Make sure %{name} is installed and on your PATH."  # {Locked="PATH"}
 
 # ── Agents view (src/ui/agents_view.rs) ─────────────────────────────────────

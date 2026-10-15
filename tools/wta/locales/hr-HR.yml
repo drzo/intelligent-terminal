@@ -11,6 +11,7 @@ setup.subtitle.agent_missing: "Vaš agent \"%{agent}\" nije instaliran. Ručno g
 setup.subtitle.copilot_auth: "Vaš agent \"%{agent}\" zahtijeva provjeru autentičnosti. Slijedite donje korake za prijavu. Za promjenu agenta idite na Inteligentni Terminal Settings > Agent."
 setup.subtitle.agent_auth: "Vaš agent \"%{agent}\" zahtijeva provjeru autentičnosti. Prijavite se putem agenta pa odaberite \"Prijavio/la sam se\" u nastavku. Za promjenu agenta idite na Inteligentni Terminal Settings > Agent."
 setup.subtitle.connection_failed: "Nismo mogli pokrenuti %{agent}."
+setup.subtitle.acp_missing: "ACP poslužitelj za %{agent} nije instaliran. Automatski će se instalirati."  # Shown when the ordinary CLI exists but its separate ACP server is missing. %{agent} is the AI agent display name. {Locked="ACP"}
 
 # {Locked=qps-ploc,qps-ploca,qps-plocm}
 
@@ -22,6 +23,7 @@ setup.option.retry_auth: "Prijavio/la sam se — pokušaj ponovno povezati"
 setup.option.retry_connection: "Pokušaj se ponovno povezati"
 setup.status.installing: "Instaliranje..."
 setup.status.installing_copilot_cli: "Instaliranje aplikacije GitHub Copilot CLI"
+setup.status.installing_acp: "Instaliranje ACP-a za %{agent}"  # Busy status while downloading and preparing the separate ACP server; %{agent} is the AI agent display name. {Locked="ACP"}
 setup.status.connecting_agent: "Povezivanje s %{agent}"
 setup.status.install_failed: "Instalacija nije uspjela: "
 setup.status.installing_winget: " Instaliranje putem winget..."
@@ -125,6 +127,7 @@ agent.install.launch_failed: "Failed to launch winget: %{error}"
 agent.install.winget_exited: "winget exited unexpectedly: %{error}"
 agent.install.winget_failed_code: "winget install failed (exit code %{code})"
 agent.install.unsupported: "Automatic install not supported for %{agent}"
+agent.install.acp_failed: "Nije moguće instalirati ACP poslužitelj za %{agent}: %{error}"  # Installation failure; %{agent} is the AI agent display name and %{error} is a diagnostic description. {Locked="ACP"}
 agent.custom.auth_hint: "Provjerite je li %{name} instaliran i nalazi li se u PATH."  # {Locked="PATH"}
 
 # ── Agents view (src/ui/agents_view.rs) ─────────────────────────────────────

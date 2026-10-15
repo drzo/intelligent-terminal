@@ -11,6 +11,7 @@ setup.subtitle.agent_missing: "আপোনাৰ এজেণ্ট \"%{agent}\
 setup.subtitle.copilot_auth: "আপোনাৰ এজেণ্ট \"%{agent}\" ৰ প্ৰমাণীকৰণ প্ৰয়োজন। চাইন ইন কৰিবলৈ তলৰ পদক্ষেপসমূহ অনুসৰণ কৰক। এজেণ্ট সলনি কৰিবলৈ ইন্টেলিজেন্ট টাৰ্মিনেল Settings > Agent লৈ যাওক।"
 setup.subtitle.agent_auth: "আপোনাৰ এজেণ্ট \"%{agent}\"-ৰ প্ৰমাণীকৰণৰ প্ৰয়োজন। অনুগ্ৰহ কৰি এজেণ্টৰ জৰিয়তে ছাইন ইন কৰক, তাৰ পিছত তলত \"মই চাইন ইন কৰিলোঁ\" নিৰ্বাচন কৰক। এজেণ্ট সলাবলৈ ইন্টেলিজেন্ট টাৰ্মিনেল Settings > Agent লৈ যাওক।"
 setup.subtitle.connection_failed: "আমি %{agent} আৰম্ভ কৰিব নোৱাৰিলোঁ।"
+setup.subtitle.acp_missing: "%{agent}-ৰ বাবে ACP ছাৰ্ভাৰ ইনষ্টল কৰা হোৱা নাই। ইয়াক স্বয়ংক্ৰিয়ভাৱে ইনষ্টল কৰা হ'ব।"  # Shown when the ordinary CLI exists but its separate ACP server is missing. %{agent} is the AI agent display name. {Locked="ACP"}
 
 # {Locked=qps-ploc,qps-ploca,qps-plocm}
 
@@ -22,6 +23,7 @@ setup.option.retry_auth: "মই চাইন ইন কৰিলোঁ — প�
 setup.option.retry_connection: "পুনৰ সংযোগ কৰিবলৈ চেষ্টা কৰক"
 setup.status.installing: "ইনষ্টল হৈ আছে..."
 setup.status.installing_copilot_cli: "GitHub Copilot CLI ইনষ্টল হৈ আছে"
+setup.status.installing_acp: "%{agent}-ৰ ACP ইনষ্টল হৈ আছে"  # Busy status while downloading and preparing the separate ACP server; %{agent} is the AI agent display name. {Locked="ACP"}
 setup.status.connecting_agent: "%{agent}ৰ সৈতে সংযোগ হৈ আছে"
 setup.status.install_failed: "ইনষ্টল বিফল: "
 setup.status.installing_winget: " winget ৰ জৰিয়তে ইনষ্টল হৈ আছে..."
@@ -130,6 +132,7 @@ agent.install.launch_failed: "winget আৰম্ভ কৰাত বিফল: 
 agent.install.winget_exited: "winget অপ্ৰত্যাশিতভাৱে বন্ধ হ'ল: %{error}"
 agent.install.winget_failed_code: "winget ইনষ্টল বিফল (এক্সিট ক'ড %{code})"
 agent.install.unsupported: "%{agent} ৰ বাবে স্বয়ংক্ৰিয় ইনষ্টল সমৰ্থিত নহয়"
+agent.install.acp_failed: "%{agent}-ৰ বাবে ACP ছাৰ্ভাৰ ইনষ্টল কৰিব পৰা নগ'ল: %{error}"  # Installation failure; %{agent} is the AI agent display name and %{error} is a diagnostic description. {Locked="ACP"}
 agent.custom.auth_hint: "%{name} ইনষ্টল কৰা হৈছে আৰু আপোনাৰ PATH ত আছে বুলি নিশ্চিত কৰক।"  # {Locked="PATH"}
 
 # ── এজেণ্ট দৃশ্য (src/ui/agents_view.rs) ─────────────────────────────────────

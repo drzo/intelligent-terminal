@@ -335,7 +335,15 @@ fn spawn_host_agent_process(
         .copied()
         .ok_or_else(|| anyhow!("empty agent command"))?;
     let args: Vec<&str> = parts[1..].to_vec();
-    let resolved_program = crate::agent_registry::resolve_bare_agent_name(raw_program);
+    let resolved_program = if resolve_spawn_profile(agent_cmd, agent_id).id
+        == crate::agent_registry::ANTIGRAVITY_AGENT_ID
+        && raw_program.eq_ignore_ascii_case("agy_acp_server.exe")
+    {
+        crate::agent_check::find_acp_exe(crate::agent_registry::ANTIGRAVITY_AGENT_ID)
+            .context("Antigravity ACP is not ready after dependency preparation")?
+    } else {
+        crate::agent_registry::resolve_bare_agent_name(raw_program)
+    };
     let needs_cmd = crate::coordinator::needs_shell_launch(&resolved_program);
 
     let is_npx = resolved_program.eq_ignore_ascii_case("npx")
@@ -657,7 +665,7 @@ pub(crate) fn spawn_history_agent_process(
 fn spawn_wsl_agent_process(
     agent_cmd: &str,
     distro: &str,
-    _agent_id: Option<&str>,
+    agent_id: Option<&str>,
     environment_policy: ChildEnvironmentPolicy,
     history_only: bool,
 ) -> Result<AgentSpawn> {
@@ -673,6 +681,11 @@ fn spawn_wsl_agent_process(
         .then(|| parts.iter().find(|arg| arg.starts_with('@')).cloned())
         .flatten();
     let mut script = wsl_agent_launch_script(&parts, environment_policy);
+    if resolve_spawn_profile(agent_cmd, agent_id).id == crate::agent_registry::ANTIGRAVITY_AGENT_ID
+        && raw_program == "agy_acp_server.par"
+    {
+        script = antigravity_wsl_launch_script(&parts, environment_policy);
+    }
     let wsl_history_marker = history_only.then(|| format!("wta-history-{}", uuid::Uuid::new_v4()));
     if let Some(marker) = &wsl_history_marker {
         script = super::history_process::wsl_history_script(&script, marker);
@@ -768,13 +781,35 @@ fn wsl_agent_launch_script(parts: &[String], environment_policy: ChildEnvironmen
         .map(|part| crate::coordinator::sh_quote(part))
         .collect::<Vec<_>>()
         .join(" ");
+    wsl_login_script(&format!("exec {invocation}"), environment_policy)
+}
+
+fn antigravity_wsl_launch_script(
+    parts: &[String],
+    environment_policy: ChildEnvironmentPolicy,
+) -> String {
+    let args = parts[1..]
+        .iter()
+        .map(|part| crate::coordinator::sh_quote(part))
+        .collect::<Vec<_>>()
+        .join(" ");
+    let invocation = format!(
+        "{}; if [ -z \"$resolved\" ]; then \
+         printf '%s\\n' 'Antigravity ACP installation is incomplete.' >&2; exit 127; fi; \
+         exec \"$resolved\" {args}",
+        crate::antigravity_acp::wsl_server_resolution_script()
+    );
+    wsl_login_script(&invocation, environment_policy)
+}
+
+fn wsl_login_script(invocation: &str, environment_policy: ChildEnvironmentPolicy) -> String {
     let mut unset_names = vec!["CLAUDECODE"];
     if environment_policy == ChildEnvironmentPolicy::CleanCloudDiscovery {
         unset_names
             .extend_from_slice(crate::custom_model_provider::cloud_discovery_environment_keys());
     }
     let inner = format!(
-        "exec 1>&3 3>&-; unset {}; exec {invocation}",
+        "exec 1>&3 3>&-; unset {}; {invocation}",
         unset_names.join(" ")
     );
     format!(
@@ -848,6 +883,29 @@ mod tests {
                 !script.contains(key),
                 "normal WSL launch must preserve the distro's own {key}: {script}"
             );
+        }
+    }
+
+    #[test]
+    fn antigravity_wsl_managed_launch_preserves_uid_and_cloud_environment_policy() {
+        let parts = vec!["agy_acp_server.par".into(), "--uid=".into()];
+        for policy in [
+            ChildEnvironmentPolicy::ApplySharedProvider,
+            ChildEnvironmentPolicy::CleanCloudDiscovery,
+        ] {
+            let script = antigravity_wsl_launch_script(&parts, policy);
+            assert!(script.contains("--uid="));
+            assert!(script.contains("localharness_external"));
+            assert!(script.contains("readlink -f"));
+            assert!(script.contains(".intelligent-terminal-acp.json"));
+            assert!(script.contains("unset CLAUDECODE"));
+            for key in crate::custom_model_provider::cloud_discovery_environment_keys() {
+                assert_eq!(
+                    script.contains(key),
+                    policy == ChildEnvironmentPolicy::CleanCloudDiscovery,
+                    "wrong WSL provider environment policy for {key}"
+                );
+            }
         }
     }
 

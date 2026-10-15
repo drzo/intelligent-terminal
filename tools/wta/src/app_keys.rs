@@ -291,6 +291,7 @@ impl App {
                                 selected_index: 0,
                                 preflight: PreflightResult {
                                     agent_id: agent_id.clone(),
+                                    acp_bootstrap_available: false,
                                     display_name: profile.display_name.to_string(),
                                     cli_status: CheckStatus::Passed,
                                     cli_path: None,

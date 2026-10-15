@@ -11,6 +11,7 @@ setup.subtitle.agent_missing: "Сіздің \"%{agent}\" агентіңіз ор
 setup.subtitle.copilot_auth: "Сіздің \"%{agent}\" агентіңіз аутентификацияны талап етеді. Жүйеге кіру үшін төмендегі қадамдарды орындаңыз. Агентті ауыстыру үшін Зияткер терминал Settings > Agent бөліміне өтіңіз."
 setup.subtitle.agent_auth: "Сіздің \"%{agent}\" агентіңіз аутентификацияны талап етеді. Агент арқылы жүйеге кіріп, төменде \"Мен кірдім\" таңдаңыз. Агентті ауыстыру үшін Зияткер терминал Settings > Agent бөліміне өтіңіз."
 setup.subtitle.connection_failed: "%{agent} іске қосылмады."
+setup.subtitle.acp_missing: "%{agent} үшін ACP сервері орнатылмаған. Ол автоматты түрде орнатылады."  # Shown when the ordinary CLI exists but its separate ACP server is missing. %{agent} is the AI agent display name. {Locked="ACP"}
 
 # {Locked=qps-ploc,qps-ploca,qps-plocm}
 
@@ -22,6 +23,7 @@ setup.option.retry_auth: "Мен кірдім — қайта қосылып кө
 setup.option.retry_connection: "Қайта қосылып көріңіз"
 setup.status.installing: "Орнатылуда..."
 setup.status.installing_copilot_cli: "GitHub Copilot CLI орнатылуда"
+setup.status.installing_acp: "%{agent} үшін ACP орнатылуда"  # Busy status while downloading and preparing the separate ACP server; %{agent} is the AI agent display name. {Locked="ACP"}
 setup.status.connecting_agent: "%{agent} қызметіне қосылуда"
 setup.status.install_failed: "Орнату сәтсіз: "
 setup.status.installing_winget: " winget арқылы орнатылуда..."
@@ -129,6 +131,7 @@ agent.install.launch_failed: "winget іске қосылмады: %{error}"
 agent.install.winget_exited: "winget күтпеген жерден шықты: %{error}"
 agent.install.winget_failed_code: "winget install сәтсіз аяқталды (шығу коды %{code})"
 agent.install.unsupported: "%{agent} үшін автоматты орнату қолдау көрсетілмейді"
+agent.install.acp_failed: "%{agent} үшін ACP серверін орнату мүмкін болмады: %{error}"  # Installation failure; %{agent} is the AI agent display name and %{error} is a diagnostic description. {Locked="ACP"}
 agent.custom.auth_hint: "%{name} орнатылғанына және PATH-те екеніне көз жеткізіңіз."  # {Locked="PATH"}
 
 # ── Agents view (src/ui/agents_view.rs) ─────────────────────────────────────

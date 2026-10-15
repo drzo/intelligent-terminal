@@ -11,6 +11,7 @@ setup.subtitle.agent_missing: "Сезнең \"%{agent}\" агентыгыз ур
 setup.subtitle.copilot_auth: "Сезнең \"%{agent}\" агентыгыз аутентификация таләп итә. Керү өчен түбәндәге адымнарны үтәгез. Агентны алыштыру өчен Акыллы терминал Settings > Agent бүлегенә күчегез."
 setup.subtitle.agent_auth: "Сезнең \"%{agent}\" агентыгыз аутентификация таләп итә. Зинһар, агент аша керегез, аннан түбәндә \"Мин кердем\" сайлагыз. Агентны алыштыру өчен Акыллы терминал Settings > Agent бүлегенә күчегез."
 setup.subtitle.connection_failed: "%{agent} эшләтеп җибәреп булмады."
+setup.subtitle.acp_missing: "%{agent} өчен ACP серверы урнатылмаган. Ул автоматик рәвештә урнатылачак."  # Shown when the ordinary CLI exists but its separate ACP server is missing. %{agent} is the AI agent display name. {Locked="ACP"}
 
 # {Locked=qps-ploc,qps-ploca,qps-plocm}
 
@@ -22,6 +23,7 @@ setup.option.retry_auth: "Мин кердем — яңадан тоташырг�
 setup.option.retry_connection: "Яңадан тоташырга тырышыгыз"
 setup.status.installing: "Урнатыла..."
 setup.status.installing_copilot_cli: "GitHub Copilot CLI урнатыла"
+setup.status.installing_acp: "%{agent} өчен ACP урнатыла"  # Busy status while downloading and preparing the separate ACP server; %{agent} is the AI agent display name. {Locked="ACP"}
 setup.status.connecting_agent: "%{agent} белән тоташу"
 setup.status.install_failed: "Урнату уңышсыз: "
 setup.status.installing_winget: " winget аша урнатыла..."
@@ -129,6 +131,7 @@ agent.install.launch_failed: "winget эшкә кушылмады: %{error}"
 agent.install.winget_exited: "winget көтелмәгәндә чыкты: %{error}"
 agent.install.winget_failed_code: "winget install уңышсыз булды (чыгу коды %{code})"
 agent.install.unsupported: "%{agent} өчен автоматик урнату кулланылмый"
+agent.install.acp_failed: "%{agent} өчен ACP серверын урнатып булмады: %{error}"  # Installation failure; %{agent} is the AI agent display name and %{error} is a diagnostic description. {Locked="ACP"}
 agent.custom.auth_hint: "%{name} урнатылуына һәм PATH-та булуына ышаныгыз."  # {Locked="PATH"}
 
 # ── Agents view (src/ui/agents_view.rs) ─────────────────────────────────────

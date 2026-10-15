@@ -11,6 +11,7 @@ setup.subtitle.agent_missing: "Ο παράγοντάς σας \"%{agent}\" δε�
 setup.subtitle.copilot_auth: "Ο παράγοντάς σας \"%{agent}\" απαιτεί έλεγχο ταυτότητας. Ακολουθήστε τα παρακάτω βήματα για να συνδεθείτε. Για αλλαγή παράγοντα, μεταβείτε στο Έξυπνο Τερματικό Settings > Agent."
 setup.subtitle.agent_auth: "Ο παράγοντάς σας \"%{agent}\" απαιτεί έλεγχο ταυτότητας. Συνδεθείτε μέσω του παράγοντα και επιλέξτε \"Έχω συνδεθεί\" παρακάτω. Για αλλαγή παράγοντα, μεταβείτε στο Έξυπνο Τερματικό Settings > Agent."
 setup.subtitle.connection_failed: "Δεν ήταν δυνατή η εκκίνηση του %{agent}."
+setup.subtitle.acp_missing: "Ο διακομιστής ACP για τον παράγοντα %{agent} δεν είναι εγκατεστημένος. Θα εγκατασταθεί αυτόματα."  # Shown when the ordinary CLI exists but its separate ACP server is missing. %{agent} is the AI agent display name. {Locked="ACP"}
 
 # {Locked=qps-ploc,qps-ploca,qps-plocm}
 
@@ -22,6 +23,7 @@ setup.option.retry_auth: "Έχω συνδεθεί — δοκιμάστε ξαν�
 setup.option.retry_connection: "Δοκιμάστε να συνδεθείτε ξανά"
 setup.status.installing: "Εγκατάσταση..."
 setup.status.installing_copilot_cli: "Εγκατάσταση του GitHub Copilot CLI"
+setup.status.installing_acp: "Εγκατάσταση του ACP για τον παράγοντα %{agent}"  # Busy status while downloading and preparing the separate ACP server; %{agent} is the AI agent display name. {Locked="ACP"}
 setup.status.connecting_agent: "Σύνδεση με %{agent}"
 setup.status.install_failed: "Η εγκατάσταση απέτυχε: "
 setup.status.installing_winget: " Εγκατάσταση μέσω winget..."
@@ -117,6 +119,7 @@ agent.install.launch_failed: "Αποτυχία εκκίνησης winget: %{erro
 agent.install.winget_exited: "Το winget τερματίστηκε απροσδόκητα: %{error}"
 agent.install.winget_failed_code: "Η εγκατάσταση winget απέτυχε (κωδικός εξόδου %{code})"
 agent.install.unsupported: "Η αυτόματη εγκατάσταση δεν υποστηρίζεται για %{agent}"
+agent.install.acp_failed: "Δεν ήταν δυνατή η εγκατάσταση του διακομιστή ACP για τον παράγοντα %{agent}: %{error}"  # Installation failure; %{agent} is the AI agent display name and %{error} is a diagnostic description. {Locked="ACP"}
 agent.custom.auth_hint: "Βεβαιωθείτε ότι το %{name} είναι εγκατεστημένο και βρίσκεται στο PATH."  # {Locked="PATH"}
 
 # ── Agents view (src/ui/agents_view.rs) ─────────────────────────────────────

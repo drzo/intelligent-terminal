@@ -11,6 +11,7 @@ setup.subtitle.agent_missing: "आपका एजेंट \"%{agent}\" इं�
 setup.subtitle.copilot_auth: "आपके एजेंट \"%{agent}\" को प्रमाणीकरण की आवश्यकता है। साइन इन करने के लिए नीचे दिए गए चरणों का पालन करें। एजेंट बदलने के लिए इंटेलिजेंट टर्मिनल Settings > Agent पर जाएँ।"
 setup.subtitle.agent_auth: "आपके एजेंट \"%{agent}\" को प्रमाणीकरण की आवश्यकता है। कृपया एजेंट से साइन इन करें, फिर नीचे \"मैंने साइन इन कर लिया है\" चुनें। एजेंट बदलने के लिए इंटेलिजेंट टर्मिनल Settings > Agent पर जाएँ।"
 setup.subtitle.connection_failed: "हम %{agent} को शुरू नहीं कर सके।"
+setup.subtitle.acp_missing: "%{agent} के लिए ACP सर्वर इंस्टॉल नहीं है। यह स्वचालित रूप से इंस्टॉल हो जाएगा।"  # Shown when the ordinary CLI exists but its separate ACP server is missing. %{agent} is the AI agent display name. {Locked="ACP"}
 
 # {Locked=qps-ploc,qps-ploca,qps-plocm}
 
@@ -22,6 +23,7 @@ setup.option.retry_auth: "मैंने साइन इन कर लिय�
 setup.option.retry_connection: "पुनः कनेक्ट करने का प्रयास करें"
 setup.status.installing: "इंस्टॉल हो रहा है..."
 setup.status.installing_copilot_cli: "GitHub Copilot CLI इंस्टॉल हो रहा है"
+setup.status.installing_acp: "%{agent} के लिए ACP इंस्टॉल हो रहा है"  # Busy status while downloading and preparing the separate ACP server; %{agent} is the AI agent display name. {Locked="ACP"}
 setup.status.connecting_agent: "%{agent} से कनेक्ट हो रहा है"
 setup.status.install_failed: "इंस्टॉल विफल: "
 setup.status.installing_winget: " winget के माध्यम से इंस्टॉल हो रहा है..."
@@ -129,6 +131,7 @@ agent.install.launch_failed: "winget लॉन्च करने में व�
 agent.install.winget_exited: "winget अप्रत्याशित रूप से बंद हुआ: %{error}"
 agent.install.winget_failed_code: "winget इंस्टॉल विफल (एग्ज़िट कोड %{code})"
 agent.install.unsupported: "%{agent} के लिए स्वचालित इंस्टॉल समर्थित नहीं है"
+agent.install.acp_failed: "%{agent} के लिए ACP सर्वर इंस्टॉल नहीं किया जा सका: %{error}"  # Installation failure; %{agent} is the AI agent display name and %{error} is a diagnostic description. {Locked="ACP"}
 agent.custom.auth_hint: "सुनिश्चित करें कि %{name} इंस्टॉल है और आपके PATH पर है।"  # {Locked="PATH"}
 
 # ── एजेंट दृश्य (src/ui/agents_view.rs) ─────────────────────────────────────

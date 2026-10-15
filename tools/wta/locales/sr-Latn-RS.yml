@@ -11,6 +11,7 @@ setup.subtitle.agent_missing: "Vaš agent \"%{agent}\" nije instaliran. Ponovo g
 setup.subtitle.copilot_auth: "Vaš agent \"%{agent}\" zahteva autentifikaciju. Pratite korake ispod da biste se prijavili. Za promenu agenta idite u Inteligentni Terminal Settings > Agent."
 setup.subtitle.agent_auth: "Vaš agent \"%{agent}\" zahteva autentifikaciju. Prijavite se preko agenta, pa izaberite \"Prijavio/la sam se\" ispod. Za promenu agenta idite u Inteligentni Terminal Settings > Agent."
 setup.subtitle.connection_failed: "Nismo mogli da pokrenemo %{agent}."
+setup.subtitle.acp_missing: "ACP server za %{agent} nije instaliran. Biće automatski instaliran."  # Shown when the ordinary CLI exists but its separate ACP server is missing. %{agent} is the AI agent display name. {Locked="ACP"}
 
 # {Locked=qps-ploc,qps-ploca,qps-plocm}
 
@@ -22,6 +23,7 @@ setup.option.retry_auth: "Prijavio/la sam se — pokušaj ponovo da se povežeš
 setup.option.retry_connection: "Pokušaj ponovo da se povežeš"
 setup.status.installing: "Instaliranje..."
 setup.status.installing_copilot_cli: "Instaliranje GitHub Copilot CLI"
+setup.status.installing_acp: "Instaliranje ACP-a za %{agent}"  # Busy status while downloading and preparing the separate ACP server; %{agent} is the AI agent display name. {Locked="ACP"}
 setup.status.connecting_agent: "Povezivanje sa %{agent}"
 setup.status.install_failed: "Instalacija nije uspela: "
 setup.status.installing_winget: " Instaliranje preko winget..."
@@ -125,6 +127,7 @@ agent.install.launch_failed: "Pokretanje winget nije uspelo: %{error}"
 agent.install.winget_exited: "winget se neočekivano zatvorio: %{error}"
 agent.install.winget_failed_code: "winget install nije uspeo (izlazni kod %{code})"
 agent.install.unsupported: "Automatska instalacija nije podržana za %{agent}"
+agent.install.acp_failed: "Instaliranje ACP servera za %{agent} nije uspelo: %{error}"  # Installation failure; %{agent} is the AI agent display name and %{error} is a diagnostic description. {Locked="ACP"}
 agent.custom.auth_hint: "Proverite da je %{name} instaliran i da se nalazi u PATH."  # {Locked="PATH"}
 
 # ── Agents view (src/ui/agents_view.rs) ─────────────────────────────────────

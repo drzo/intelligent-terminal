@@ -11,6 +11,7 @@ setup.subtitle.agent_missing: "הסוכן \"%{agent}\" אינו מותקן. הת
 setup.subtitle.copilot_auth: "הסוכן \"%{agent}\" דורש אימות. בצע את השלבים שלהלן כדי להיכנס. כדי להחליף סוכנים, עבור אל מסוף חכם Settings > Agent."
 setup.subtitle.agent_auth: "הסוכן \"%{agent}\" דורש אימות. היכנס דרך הסוכן ולאחר מכן בחר \"נכנסתי\" למטה. כדי להחליף סוכנים, עבור אל מסוף חכם Settings > Agent."
 setup.subtitle.connection_failed: "לא הצלחנו להפעיל את %{agent}."
+setup.subtitle.acp_missing: "שרת ה-ACP של %{agent} אינו מותקן. הוא יותקן באופן אוטומטי."  # Shown when the ordinary CLI exists but its separate ACP server is missing. %{agent} is the AI agent display name. {Locked="ACP"}
 
 # {Locked=qps-ploc,qps-ploca,qps-plocm}
 
@@ -22,6 +23,7 @@ setup.option.retry_auth: "נכנסתי — נסה להתחבר שוב"
 setup.option.retry_connection: "נסה להתחבר שוב"
 setup.status.installing: "מתקין..."
 setup.status.installing_copilot_cli: "מתקין את GitHub Copilot CLI"
+setup.status.installing_acp: "מתקין את ה-ACP של %{agent}"  # Busy status while downloading and preparing the separate ACP server; %{agent} is the AI agent display name. {Locked="ACP"}
 setup.status.connecting_agent: "מתחבר ל-%{agent}"
 setup.status.install_failed: "ההתקנה נכשלה: "
 setup.status.installing_winget: " מתקין באמצעות winget..."
@@ -129,6 +131,7 @@ agent.install.launch_failed: "כשל בהפעלת winget: %{error}"
 agent.install.winget_exited: "winget יצא באופן בלתי צפוי: %{error}"
 agent.install.winget_failed_code: "התקנת winget נכשלה (קוד יציאה %{code})"
 agent.install.unsupported: "התקנה אוטומטית אינה נתמכת עבור %{agent}"
+agent.install.acp_failed: "לא ניתן היה להתקין את שרת ה-ACP של %{agent}: %{error}"  # Installation failure; %{agent} is the AI agent display name and %{error} is a diagnostic description. {Locked="ACP"}
 agent.custom.auth_hint: "ודא ש-%{name} מותקן ונמצא ב-PATH שלך."  # {Locked="PATH"}
 
 # ── תצוגת סוכנים (src/ui/agents_view.rs) ─────────────────────────────────────

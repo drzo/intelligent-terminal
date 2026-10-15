@@ -101,7 +101,9 @@ pub(super) struct HistoryProcess {
 }
 
 impl HistoryProcess {
-    fn spawn(target: &HistoryTarget) -> Result<Self> {
+    async fn spawn(target: &HistoryTarget) -> Result<Self> {
+        crate::antigravity_acp::prepare(&target.command, Some(&target.agent_id), &target.source)
+            .await?;
         let mut spawned = crate::protocol::acp::spawn::spawn_history_agent_process(
             &target.command,
             &target.agent_id,
@@ -381,9 +383,12 @@ impl HistoryQuery {
             return Err(anyhow!("history ACP process or transport exited"));
         }
         if self.process.is_none() {
-            self.process = Some(HistoryProcess::spawn(
-                target.ok_or_else(|| anyhow!("history launch target missing"))?,
-            )?);
+            self.process = Some(
+                HistoryProcess::spawn(
+                    target.ok_or_else(|| anyhow!("history launch target missing"))?,
+                )
+                .await?,
+            );
         }
         if let Some(process) = self.process.as_mut().filter(|process| !process.initialized) {
             self.recycling = true;

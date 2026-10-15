@@ -11,6 +11,7 @@ setup.subtitle.agent_missing: "Din agent \"%{agent}\" är inte installerad. Inst
 setup.subtitle.copilot_auth: "Din agent \"%{agent}\" kräver autentisering. Följ stegen nedan för att logga in. Om du vill byta agent, gå till Intelligent Terminal Settings > Agent."
 setup.subtitle.agent_auth: "Din agent \"%{agent}\" kräver autentisering. Logga in via agenten och välj sedan \"Jag har loggat in\" nedan. Om du vill byta agent, gå till Intelligent Terminal Settings > Agent."
 setup.subtitle.connection_failed: "Det gick inte att starta %{agent}."
+setup.subtitle.acp_missing: "ACP-servern för %{agent} är inte installerad. Den installeras automatiskt."  # Shown when the ordinary CLI exists but its separate ACP server is missing. %{agent} is the AI agent display name. {Locked="ACP"}
 
 # {Locked="Intelligent Terminal"}
 
@@ -22,6 +23,7 @@ setup.option.retry_auth: "Jag har loggat in — försök ansluta igen"
 setup.option.retry_connection: "Försök ansluta igen"
 setup.status.installing: "Installerar..."
 setup.status.installing_copilot_cli: "Installerar GitHub Copilot CLI"
+setup.status.installing_acp: "Installerar ACP för %{agent}"  # Busy status while downloading and preparing the separate ACP server; %{agent} is the AI agent display name. {Locked="ACP"}
 setup.status.connecting_agent: "Ansluter till %{agent}"
 setup.status.install_failed: "Installationen misslyckades: "
 setup.status.installing_winget: " Installerar via winget..."
@@ -116,6 +118,7 @@ agent.install.launch_failed: "Failed to launch winget: %{error}"
 agent.install.winget_exited: "winget exited unexpectedly: %{error}"
 agent.install.winget_failed_code: "winget install failed (exit code %{code})"
 agent.install.unsupported: "Automatic install not supported for %{agent}"
+agent.install.acp_failed: "Det gick inte att installera ACP-servern för %{agent}: %{error}"  # Installation failure; %{agent} is the AI agent display name and %{error} is a diagnostic description. {Locked="ACP"}
 agent.custom.auth_hint: "Se till att %{name} är installerat och finns i din PATH."  # {Locked="PATH"}
 
 # ── Agents view (src/ui/agents_view.rs) ─────────────────────────────────────

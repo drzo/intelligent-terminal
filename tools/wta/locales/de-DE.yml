@@ -11,6 +11,7 @@ setup.subtitle.agent_missing: "Ihr Agent \"%{agent}\" ist nicht installiert. Bit
 setup.subtitle.copilot_auth: "Ihr Agent \"%{agent}\" erfordert eine Authentifizierung. Führen Sie die folgenden Schritte aus, um sich anzumelden. Um den Agenten zu wechseln, gehen Sie zu Intelligentes Terminal-Einstellungen > Agent."
 setup.subtitle.agent_auth: "Ihr Agent \"%{agent}\" erfordert eine Authentifizierung. Bitte melden Sie sich über den Agent an und wählen Sie dann unten \"Ich habe mich angemeldet\" aus. Um den Agenten zu wechseln, gehen Sie zu Intelligentes Terminal-Einstellungen > Agent."
 setup.subtitle.connection_failed: "%{agent} konnte nicht gestartet werden."
+setup.subtitle.acp_missing: "Der ACP-Server für %{agent} ist nicht installiert. Er wird automatisch installiert."  # Shown when the ordinary CLI exists but its separate ACP server is missing. %{agent} is the AI agent display name. {Locked="ACP"}
 
 # {Locked=qps-ploc,qps-ploca,qps-plocm}
 
@@ -22,6 +23,7 @@ setup.option.retry_auth: "Ich habe mich angemeldet — erneut verbinden"
 setup.option.retry_connection: "Erneut verbinden"
 setup.status.installing: "Installation läuft..."
 setup.status.installing_copilot_cli: "GitHub Copilot CLI wird installiert"
+setup.status.installing_acp: "ACP für %{agent} wird installiert"  # Busy status while downloading and preparing the separate ACP server; %{agent} is the AI agent display name. {Locked="ACP"}
 setup.status.connecting_agent: "Verbindung mit %{agent} wird hergestellt"
 setup.status.install_failed: "Installation fehlgeschlagen: "
 setup.status.installing_winget: " Installation über winget..."
@@ -117,6 +119,7 @@ agent.install.launch_failed: "winget konnte nicht gestartet werden: %{error}"
 agent.install.winget_exited: "winget wurde unerwartet beendet: %{error}"
 agent.install.winget_failed_code: "winget-Installation fehlgeschlagen (Exitcode %{code})"
 agent.install.unsupported: "Automatische Installation für %{agent} wird nicht unterstützt"
+agent.install.acp_failed: "Der ACP-Server für %{agent} konnte nicht installiert werden: %{error}"  # Installation failure; %{agent} is the AI agent display name and %{error} is a diagnostic description. {Locked="ACP"}
 agent.custom.auth_hint: "Stellen Sie sicher, dass %{name} installiert und im PATH ist."  # {Locked="PATH"}
 
 # ── Agentenansicht (src/ui/agents_view.rs) ─────────────────────────────────────

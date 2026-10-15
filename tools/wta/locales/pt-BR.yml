@@ -11,6 +11,7 @@ setup.subtitle.agent_missing: "Seu agente \"%{agent}\" não está instalado. Rei
 setup.subtitle.copilot_auth: "Seu agente \"%{agent}\" requer autenticação. Siga as etapas abaixo para entrar. Para trocar de agente, vá para Configurações do Terminal Inteligente > Agente."
 setup.subtitle.agent_auth: "Seu agente \"%{agent}\" requer autenticação. Entre pelo agente e selecione \"Já entrei\" abaixo. Para trocar de agente, vá para Configurações do Terminal Inteligente > Agente."
 setup.subtitle.connection_failed: "Não foi possível iniciar %{agent}."
+setup.subtitle.acp_missing: "O servidor ACP de %{agent} não está instalado. Ele será instalado automaticamente."  # Shown when the ordinary CLI exists but its separate ACP server is missing. %{agent} is the AI agent display name. {Locked="ACP"}
 
 # {Locked=qps-ploc,qps-ploca,qps-plocm}
 
@@ -22,6 +23,7 @@ setup.option.retry_auth: "Já entrei — tentar conectar novamente"
 setup.option.retry_connection: "Tentar conectar novamente"
 setup.status.installing: "Instalando..."
 setup.status.installing_copilot_cli: "Instalando GitHub Copilot CLI"
+setup.status.installing_acp: "Instalando ACP para %{agent}"  # Busy status while downloading and preparing the separate ACP server; %{agent} is the AI agent display name. {Locked="ACP"}
 setup.status.connecting_agent: "Conectando com %{agent}"
 setup.status.install_failed: "Falha na instalação: "
 setup.status.installing_winget: " Instalando via winget..."
@@ -116,6 +118,7 @@ agent.install.launch_failed: "Falha ao iniciar o winget: %{error}"
 agent.install.winget_exited: "winget encerrado inesperadamente: %{error}"
 agent.install.winget_failed_code: "Falha na instalação do winget (código de saída %{code})"
 agent.install.unsupported: "Instalação automática não suportada para %{agent}"
+agent.install.acp_failed: "Não foi possível instalar o servidor ACP de %{agent}: %{error}"  # Installation failure; %{agent} is the AI agent display name and %{error} is a diagnostic description. {Locked="ACP"}
 agent.custom.auth_hint: "Certifique-se de que %{name} esteja instalado e no PATH."  # {Locked="PATH"}
 
 # ── Visualização de agentes (src/ui/agents_view.rs) ─────────────────────────────────────

@@ -267,6 +267,7 @@ fn agent_rebind_event_for_window(
 fn passed_preflight(agent_id: &str, display_name: &str) -> PreflightResult {
     PreflightResult {
         agent_id: agent_id.into(),
+        acp_bootstrap_available: false,
         display_name: display_name.into(),
         cli_status: CheckStatus::Passed,
         cli_path: Some(format!(r"C:\Agents\{agent_id}.exe")),
@@ -6028,6 +6029,7 @@ fn settings_agent_rebind_targets_owner_and_resets_only_agent_state() {
 
     app.handle_event(AppEvent::PreflightComplete(PreflightResult {
         agent_id: "copilot".into(),
+        acp_bootstrap_available: false,
         display_name: "GitHub Copilot".into(),
         cli_status: CheckStatus::Failed("stale result".into()),
         cli_path: None,
@@ -6249,6 +6251,7 @@ fn settings_agent_rebind_missing_target_enters_install_setup_after_retirement() 
         generation: 1,
         result: PreflightResult {
             agent_id: "copilot".into(),
+            acp_bootstrap_available: false,
             display_name: "GitHub Copilot".into(),
             cli_status: CheckStatus::Failed("Not found on PATH".into()),
             cli_path: None,
@@ -6360,6 +6363,7 @@ fn settings_agent_rebind_invalidates_completed_older_target_preflight() {
         generation: 2,
         result: PreflightResult {
             agent_id: "codex".into(),
+            acp_bootstrap_available: false,
             display_name: "Codex".into(),
             cli_status: CheckStatus::Failed("Not found on PATH".into()),
             cli_path: None,
@@ -13672,6 +13676,7 @@ fn duplicate_startup_preflight_does_not_replace_active_install() {
 
     app.handle_event(AppEvent::PreflightComplete(PreflightResult {
         agent_id: "copilot".into(),
+        acp_bootstrap_available: false,
         display_name: "GitHub Copilot".into(),
         cli_status: CheckStatus::Failed("Not found on PATH".into()),
         cli_path: None,
@@ -13722,6 +13727,7 @@ fn late_fre_auto_install_event_is_consumed_after_passed_preflight() {
 
     app.handle_event(AppEvent::PreflightComplete(PreflightResult {
         agent_id: "copilot".into(),
+        acp_bootstrap_available: false,
         display_name: "GitHub Copilot".into(),
         cli_status: CheckStatus::Passed,
         cli_path: Some("copilot.exe".into()),
@@ -13808,6 +13814,78 @@ fn install_completion_cannot_reconnect_after_binding_change() {
     assert!(app.pending_agent_install.is_none());
     assert_eq!(app.current_agent_id, "claude");
     assert!(!app.pending_acp_start);
+}
+
+#[test]
+fn antigravity_install_completion_cannot_cross_execution_sources() {
+    let mut app = test_app();
+    app.current_agent_id = "antigravity".into();
+    app.current_agent_source = crate::agent_source::AgentSource::Wsl {
+        distro: "Ubuntu".into(),
+    };
+    app.pending_agent_install = Some(PendingAgentInstall {
+        request_id: 1,
+        agent_id: "antigravity".into(),
+        binding_generation: app.agent_binding_generation,
+        agent_source: crate::agent_source::AgentSource::Host,
+    });
+    app.handle_event(AppEvent::AgentInstallComplete {
+        request_id: 1,
+        agent_id: "antigravity".into(),
+        outcome: crate::agent_check::AgentInstallOutcome::Installed,
+    });
+    assert!(app.pending_agent_install.is_none());
+    assert!(!app.pending_acp_start);
+    assert_eq!(
+        app.current_agent_source,
+        crate::agent_source::AgentSource::Wsl {
+            distro: "Ubuntu".into()
+        }
+    );
+}
+
+#[test]
+fn antigravity_policy_blocks_install_before_any_background_work() {
+    let mut app = test_app();
+    app.current_agent_id = "antigravity".into();
+    app.host_agent_allowlist_present = true;
+    app.allowed_agent_ids = vec!["copilot".into()];
+    app.start_agent_install("antigravity".into());
+    assert!(app.pending_agent_install.is_none());
+    assert!(!app.pending_acp_start);
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn antigravity_cli_only_preflight_starts_one_source_bound_install() {
+    tokio::task::LocalSet::new()
+        .run_until(async {
+            for source in [
+                crate::agent_source::AgentSource::Host,
+                crate::agent_source::AgentSource::Wsl {
+                    distro: "Ubuntu".into(),
+                },
+            ] {
+                let mut app = test_app();
+                let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
+                app.set_event_tx(tx);
+                app.current_agent_id = "antigravity".into();
+                app.current_agent_source = source.clone();
+                let mut preflight = passed_preflight("antigravity", "Google Antigravity");
+                preflight.cli_status = CheckStatus::Failed("ACP dependency missing".into());
+                preflight.acp_bootstrap_available = true;
+                app.show_preflight_setup(preflight);
+                assert!(app.try_start_automatic_agent_install());
+                assert!(!app.try_start_automatic_agent_install());
+                let pending = app.pending_agent_install.as_ref().unwrap();
+                assert_eq!(pending.agent_id, "antigravity");
+                assert_eq!(pending.agent_source, source);
+                assert!(matches!(
+                    app.setup.as_ref().unwrap().phase,
+                    SetupPhase::Installing
+                ));
+            }
+        })
+        .await;
 }
 
 #[test]

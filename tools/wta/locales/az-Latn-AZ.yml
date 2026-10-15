@@ -11,6 +11,7 @@ setup.subtitle.agent_missing: "Agentiniz \"%{agent}\" quraşdırılmayıb. Lütf
 setup.subtitle.copilot_auth: "Agentiniz \"%{agent}\" kimlik doğrulaması tələb edir. Daxil olmaq üçün aşağıdakı addımları izləyin. Agenti dəyişmək üçün Ağıllı Terminal Settings > Agent-ə keçin."
 setup.subtitle.agent_auth: "Agentiniz \"%{agent}\" kimlik doğrulaması tələb edir. Lütfən agent vasitəsilə daxil olun, sonra aşağıda \"Daxil oldum\" seçin. Agenti dəyişmək üçün Ağıllı Terminal Settings > Agent-ə keçin."
 setup.subtitle.connection_failed: "%{agent} başladıla bilmədi."
+setup.subtitle.acp_missing: "%{agent} üçün ACP serveri quraşdırılmayıb. O, avtomatik quraşdırılacaq."  # Shown when the ordinary CLI exists but its separate ACP server is missing. %{agent} is the AI agent display name. {Locked="ACP"}
 
 # {Locked=qps-ploc,qps-ploca,qps-plocm}
 
@@ -22,6 +23,7 @@ setup.option.retry_auth: "Daxil oldum — yenidən qoşulmağa cəhd edin"
 setup.option.retry_connection: "Yenidən qoşulmağa cəhd edin"
 setup.status.installing: "Quraşdırılır..."
 setup.status.installing_copilot_cli: "GitHub Copilot CLI quraşdırılır"
+setup.status.installing_acp: "%{agent} üçün ACP quraşdırılır"  # Busy status while downloading and preparing the separate ACP server; %{agent} is the AI agent display name. {Locked="ACP"}
 setup.status.connecting_agent: "%{agent} ilə bağlantı qurulur"
 setup.status.install_failed: "Quraşdırma uğursuz oldu: "
 setup.status.installing_winget: " winget vasitəsilə quraşdırılır..."
@@ -130,6 +132,7 @@ agent.install.launch_failed: "winget işə salına bilmədi: %{error}"
 agent.install.winget_exited: "winget gözlənilmədən çıxdı: %{error}"
 agent.install.winget_failed_code: "winget install uğursuz oldu (çıxış kodu %{code})"
 agent.install.unsupported: "%{agent} üçün avtomatik quraşdırma dəstəklənmir"
+agent.install.acp_failed: "%{agent} üçün ACP serverini quraşdırmaq mümkün olmadı: %{error}"  # Installation failure; %{agent} is the AI agent display name and %{error} is a diagnostic description. {Locked="ACP"}
 agent.custom.auth_hint: "%{name} quraşdırıldığına və PATH-də olduğuna əmin olun."  # {Locked="PATH"}
 
 # ── Agents view (src/ui/agents_view.rs) ─────────────────────────────────────
