@@ -4488,7 +4488,8 @@ namespace TerminalAppLocalTests
             }
             else if (connection)
             {
-                const auto settings = winrt::make_self<ControlUnitTests::MockControlSettings>();
+                const auto profile = page->_settings.FindProfile(page->_settings.GlobalSettings().DefaultProfile());
+                const auto settings = winrt::Microsoft::Terminal::Settings::TerminalSettings::CreateWithProfile(page->_settings, profile).DefaultSettings();
                 const auto content = _contentManager->CreateCore(*settings, *settings, connection);
                 newTerminalArgs.ContentId(content.Id());
                 VERIFY_SUCCEEDED(page->_OpenNewTab(newTerminalArgs));
@@ -5171,6 +5172,9 @@ namespace TerminalAppLocalTests
             winrt::Microsoft::Terminal::TerminalConnection::ConnectionState::Connected);
         winrt::com_ptr<winrt::TerminalApp::implementation::TerminalPage> page;
         _initializeTerminalPage(page, settings, *connection);
+        const auto uiThreadCleanup = wil::scope_exit([&]() {
+            RunOnUIThread([&]() { page = nullptr; });
+        });
 
         TestOnUIThread([&]() {
             page->_historyRefreshInFlight = true;
@@ -5207,7 +5211,10 @@ namespace TerminalAppLocalTests
         const auto connection = winrt::make_self<TestConnection>(
             winrt::guid{ L"{6239a42c-eeee-49a3-80bd-e8fdd045185c}" },
             winrt::Microsoft::Terminal::TerminalConnection::ConnectionState::Connected);
-        const auto page = _commonSetup(*connection, nullptr, std::nullopt, true);
+        auto page = _commonSetup(*connection, nullptr, std::nullopt, true);
+        const auto uiThreadCleanup = wil::scope_exit([&]() {
+            RunOnUIThread([&]() { page = nullptr; });
+        });
         TestOnUIThread([&]() {
             const auto settingsPath = std::filesystem::path{ std::wstring_view{ CascadiaSettings::SettingsPath() } };
             VERIFY_IS_TRUE(settingsPath.native().find(L"WindowsTerminal.TestHost_") != std::wstring::npos);
