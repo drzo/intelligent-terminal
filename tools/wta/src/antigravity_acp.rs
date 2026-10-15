@@ -331,6 +331,24 @@ async fn verify_windows_signatures(directory: &Path, platform: Platform) -> Resu
     }
     let powershell = crate::agent_check::find_exe("powershell")
         .context("Windows PowerShell is required to verify the ACP publisher")?;
+    let mut command = signature_verification_command(&powershell, directory, platform)?;
+    let result = tokio::time::timeout(Duration::from_secs(30), command.output())
+        .await
+        .context("ACP publisher verification timed out")?
+        .context("start ACP publisher verification")?;
+    ensure!(
+        result.status.success(),
+        "ACP publisher verification failed: {}",
+        String::from_utf8_lossy(&result.stderr).trim()
+    );
+    Ok(())
+}
+
+fn signature_verification_command(
+    powershell: &str,
+    directory: &Path,
+    platform: Platform,
+) -> Result<tokio::process::Command> {
     let script = r#"
 $ErrorActionPreference = 'Stop'
 $paths = $env:WTA_ACP_SIGNATURE_PATHS | ConvertFrom-Json
@@ -345,6 +363,8 @@ foreach ($path in $paths) {
     let paths = platform.files().map(|name| directory.join(name));
     let mut command = tokio::process::Command::new(powershell);
     command
+        // PowerShell 7 module paths can break Windows PowerShell's security module.
+        .env_remove("PSModulePath")
         .args([
             "-NoLogo",
             "-NoProfile",
@@ -357,16 +377,7 @@ foreach ($path in $paths) {
         .kill_on_drop(true);
     #[cfg(windows)]
     command.creation_flags(0x0800_0000);
-    let result = tokio::time::timeout(Duration::from_secs(30), command.output())
-        .await
-        .context("ACP publisher verification timed out")?
-        .context("start ACP publisher verification")?;
-    ensure!(
-        result.status.success(),
-        "ACP publisher verification failed: {}",
-        String::from_utf8_lossy(&result.stderr).trim()
-    );
-    Ok(())
+    Ok(command)
 }
 
 fn check_owned_destination(directory: &Path, platform: Platform) -> Result<()> {
@@ -751,6 +762,19 @@ pub(crate) async fn prepare(
     {
         return Ok(());
     }
+    let parts = crate::coordinator::split_windows_commandline(agent_command);
+    let builtin_server = match source {
+        crate::agent_source::AgentSource::Host => parts
+            .first()
+            .is_some_and(|program| program.eq_ignore_ascii_case("agy_acp_server.exe")),
+        crate::agent_source::AgentSource::Wsl { .. } => parts
+            .first()
+            .is_some_and(|program| program == "agy_acp_server.par"),
+    };
+    // Explicit paths and wrappers retain their existing installation and launch handling.
+    if !builtin_server {
+        return Ok(());
+    }
     if matches!(source, crate::agent_source::AgentSource::Host) {
         ensure_host().await?;
     } else if let crate::agent_source::AgentSource::Wsl { distro } = source {
@@ -844,6 +868,35 @@ mod tests {
         directory
     }
 
+    #[test]
+    fn signature_verifier_clears_foreign_powershell_module_search_path() {
+        let command = signature_verification_command(
+            "powershell.exe",
+            Path::new(r"C:\synthetic ACP directory"),
+            Platform::WindowsX64,
+        )
+        .unwrap();
+        let module_path = command
+            .as_std()
+            .get_envs()
+            .find(|(key, _)| *key == std::ffi::OsStr::new("PSModulePath"));
+        assert!(matches!(module_path, Some((_, None))));
+    }
+
+    #[tokio::test]
+    async fn signature_verifier_still_rejects_unsigned_binaries() {
+        let root = fixture();
+        let directory = owned_pair(&root);
+        let error = verify_windows_signatures(&directory, Platform::WindowsX64)
+            .await
+            .unwrap_err();
+        assert!(
+            format!("{error:#}").contains("does not have a valid Google LLC signature"),
+            "publisher verification did not reach the real signature rejection: {error:#}"
+        );
+        fs::remove_dir_all(root).unwrap();
+    }
+
     #[tokio::test]
     async fn concurrent_repeated_install_preserves_complete_owned_pair_without_download() {
         let root = fixture();
@@ -912,6 +965,39 @@ mod tests {
         fs::remove_dir_all(root).unwrap();
     }
 
+    #[tokio::test]
+    async fn explicit_antigravity_commands_preserve_existing_installation_ownership() {
+        let unselected = crate::agent_source::AgentSource::Wsl {
+            distro: "not a valid selected distro!".into(),
+        };
+        for command in [
+            r"C:\Tools\agy_acp_server.exe",
+            r#""C:\Tools With Spaces\agy_acp_server.exe""#,
+            "/home/user/agents/agy_acp_server.par --uid=",
+            "./agents/agy_acp_server.par --uid=",
+            "agent-wrapper --stdio",
+        ] {
+            prepare(command, Some("antigravity"), &unselected)
+                .await
+                .unwrap();
+        }
+    }
+
+    #[tokio::test]
+    async fn bare_antigravity_preparation_still_validates_the_selected_source() {
+        let unselected = crate::agent_source::AgentSource::Wsl {
+            distro: "not a valid selected distro!".into(),
+        };
+        let error = prepare(
+            "agy_acp_server.par --uid=",
+            Some("antigravity"),
+            &unselected,
+        )
+        .await
+        .unwrap_err();
+        assert!(error.to_string().contains("WSL source is invalid"));
+    }
+
     #[test]
     fn owned_partial_install_does_not_adopt_additional_user_files() {
         let root = fixture();
@@ -936,14 +1022,29 @@ mod tests {
     #[test]
     fn wsl_target_rejects_windows_mounts_and_unsupported_architectures() {
         assert!(parse_wsl_install_target(
-            "__WTA_ACP_TARGET__\nlinux-x86_64\n/mnt/c/agent\nowner\n__WTA_ACP_TARGET_END__"
+            r"__WTA_ACP_TARGET__
+linux-x86_64
+/mnt/c/agent
+owner
+__WTA_ACP_TARGET_END__"
         )
         .is_err());
         assert!(parse_wsl_install_target(
-            "__WTA_ACP_TARGET__\nunsupported\n/home/user/agent\nowner\n__WTA_ACP_TARGET_END__"
+            r"__WTA_ACP_TARGET__
+unsupported
+/home/user/agent
+owner
+__WTA_ACP_TARGET_END__"
         )
         .is_err());
-        let (_, path, _) = parse_wsl_install_target("__WTA_ACP_TARGET__\nlinux-x86_64\n/home/user/agent path\nowner\n__WTA_ACP_TARGET_END__").unwrap();
+        let (_, path, _) = parse_wsl_install_target(
+            r"__WTA_ACP_TARGET__
+linux-x86_64
+/home/user/agent path
+owner
+__WTA_ACP_TARGET_END__",
+        )
+        .unwrap();
         assert_eq!(path, "/home/user/agent path");
     }
 
