@@ -279,13 +279,14 @@ late hooks, resume callbacks, direct bindings, and history enrichment until
 `ResetPaneConnection` installs fresh connection metadata. Failed connections keep
 their existing failure and resume metadata.
 
-Helper-initiated resumes carry the selected qualified identity through pane
-creation completion; they do not infer it from a possibly delayed sidebar
-snapshot. Helper-originated Host resume persistence retains the executable CMD
-wrapper needed by CLI shims, without the one-shot loading banner; native master
-launch commands remain unchanged. Registry-only WSL bindings use
-their confirmed source and distro when constructing the safe fallback command;
-missing or invalid WSL qualification never falls back to Host.
+Helper-initiated resumes carry the selected qualified identity through optimistic
+dispatch and pane creation completion; they do not infer it from a possibly
+delayed sidebar snapshot or publish a second raw-ID dispatch. Helper-originated
+Host resume persistence retains the executable CMD wrapper needed by CLI shims,
+without the one-shot loading banner; native master launch commands remain
+unchanged. Registry-only WSL bindings use their confirmed source and distro when
+constructing the safe fallback command; missing or invalid WSL qualification
+never falls back to Host.
 
 ### User-typed PowerShell resume: binding before the first conversation
 

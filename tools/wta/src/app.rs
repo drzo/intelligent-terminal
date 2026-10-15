@@ -3580,9 +3580,15 @@ impl App {
         // rows). See `agent_sessions::SessionEvent::ResumeDispatched`.
         let resume_event =
             crate::agent_sessions::SessionEvent::ResumeDispatched { key: key.clone() };
-        self.agent_sessions.apply(resume_event.clone());
-        self.publish_session_hook(resume_event);
-        self.dispatch_session_resume_dispatched_rpc(&key);
+        self.handle_event(AppEvent::QualifiedAgentSessionEvent(
+            crate::session_registry::SessionHookUpdate {
+                event: resume_event,
+                scope: crate::session_registry::SessionHookScope {
+                    identity: Some(resume_identity.clone()),
+                    ..Default::default()
+                },
+            },
+        ));
         // for hook-less CLIs (Gemini) so a future `PaneClosed` can
         // transition the row to Ended; harmless duplicate work for
         // Claude/Copilot whose hooks beat us to the same binding.

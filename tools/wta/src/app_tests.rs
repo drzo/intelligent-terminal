@@ -2035,6 +2035,162 @@ fn qualified_resume_completion_preserves_identity_without_new_pane_snapshot() {
     }
 }
 
+#[tokio::test]
+async fn qualified_resume_actual_dispatch_and_completion_isolate_colliding_rows() {
+    use crate::agent_sessions::{AgentStatus, CliSource, SessionEvent, SessionLocation};
+    use crate::session_registry::{
+        InMemoryRegistry, SessionIdentity, SessionInfo, SessionRegistry,
+    };
+    let _capture = crate::shell::wt_channel::capture_test_pane_callbacks();
+    let _events = crate::wt_protocol_events::capture_test_published_events();
+    for selected_location in [
+        SessionLocation::Host,
+        SessionLocation::Wsl {
+            distro: "Ubuntu".into(),
+        },
+    ] {
+        for initial_status in [AgentStatus::Historical, AgentStatus::Ended] {
+            for working_before_completion in [false, true] {
+                let (mut app, mut master_rx) = test_app_with_master_rx();
+                app.window_id = Some("41".into());
+                let (hook_tx, mut hook_rx) = tokio::sync::mpsc::unbounded_channel();
+                app.set_session_hook_tx(hook_tx);
+                let (event_tx, mut event_rx) = tokio::sync::mpsc::unbounded_channel();
+                app.set_agent_event_tx(event_tx);
+                let registry = InMemoryRegistry::new();
+                let mut rows = Vec::new();
+                for location in [
+                    SessionLocation::Host,
+                    SessionLocation::Wsl {
+                        distro: "Ubuntu".into(),
+                    },
+                    SessionLocation::Wsl {
+                        distro: "Debian".into(),
+                    },
+                ] {
+                    let mut row = SessionInfo::new(
+                        agent_client_protocol::schema::v1::SessionId::new("shared-resume"),
+                        std::path::PathBuf::new(),
+                    );
+                    row.provider_id = Some("copilot".into());
+                    row.cli_source = Some(CliSource::Copilot);
+                    row.location = location;
+                    row.status = Some(initial_status.clone());
+                    registry.upsert(row.clone()).await;
+                    rows.push(row);
+                }
+                let mut alternate = rows.last().unwrap().clone();
+                alternate.session_universe = Some("alternate-store".into());
+                registry.upsert(alternate.clone()).await;
+                rows.push(alternate);
+                let selected = rows
+                    .iter()
+                    .find(|row| row.location == selected_location)
+                    .unwrap();
+                let identity = SessionIdentity::from_info(selected);
+                let display_row = session_info_to_agent_session(selected);
+                app.current_tab_mut().agents_view.snapshot = Some(rows.clone());
+                app.agent_sessions
+                    .merge_historical(vec![display_row.clone()]);
+
+                app.dispatch_resume(&display_row);
+                assert!(
+                    master_rx.try_recv().is_err(),
+                    "dispatch must not send a raw-id RPC"
+                );
+                let optimistic = hook_rx.try_recv().expect("actual dispatch must publish");
+                assert!(matches!(
+                    optimistic.event,
+                    SessionEvent::ResumeDispatched { .. }
+                ));
+                assert_eq!(optimistic.scope.identity.as_ref(), Some(&identity));
+                assert!(
+                    registry
+                        .apply_event_identity(&identity, optimistic.event)
+                        .await
+                );
+                assert!(
+                    hook_rx.try_recv().is_err(),
+                    "no duplicate raw-id publication"
+                );
+                assert_eq!(
+                    registry.lookup_identity(&identity).await.unwrap().status,
+                    Some(AgentStatus::Idle)
+                );
+                for row in rows.iter().filter(|row| row.location != selected_location) {
+                    let unchanged = registry
+                        .lookup_identity(&SessionIdentity::from_info(row))
+                        .await
+                        .unwrap();
+                    assert_eq!(unchanged.status, row.status);
+                    assert_eq!(unchanged.pane_session_id, row.pane_session_id);
+                }
+
+                if working_before_completion {
+                    app.handle_event(AppEvent::QualifiedAgentSessionEvent(
+                        crate::session_registry::SessionHookUpdate {
+                            event: SessionEvent::ToolStarting {
+                                key: "shared-resume".into(),
+                                tool_name: "edit".into(),
+                            },
+                            scope: crate::session_registry::SessionHookScope {
+                                identity: Some(identity.clone()),
+                                ..Default::default()
+                            },
+                        },
+                    ));
+                    let working = hook_rx.try_recv().unwrap();
+                    assert_eq!(working.scope.identity.as_ref(), Some(&identity));
+                    assert!(
+                        registry
+                            .apply_event_identity(&identity, working.event)
+                            .await
+                    );
+                }
+                let mut callbacks = crate::shell::wt_channel::take_test_pane_callbacks();
+                assert_eq!(callbacks.len(), 1);
+                callbacks.pop().unwrap()("resumed-pane".into());
+                app.handle_event(
+                    event_rx
+                        .try_recv()
+                        .expect("actual callback must post completion"),
+                );
+                let completion = hook_rx.try_recv().unwrap();
+                assert_eq!(completion.scope.identity.as_ref(), Some(&identity));
+                assert!(matches!(
+                    completion.event,
+                    SessionEvent::ResumePaneAssigned { .. }
+                ));
+                assert!(
+                    registry
+                        .apply_event_identity(&identity, completion.event)
+                        .await
+                );
+                assert!(event_rx.try_recv().is_err());
+                assert!(hook_rx.try_recv().is_err());
+                let resumed = registry.lookup_identity(&identity).await.unwrap();
+                assert_eq!(resumed.pane_session_id.as_deref(), Some("resumed-pane"));
+                assert_eq!(
+                    resumed.status,
+                    Some(if working_before_completion {
+                        AgentStatus::Working
+                    } else {
+                        AgentStatus::Idle
+                    })
+                );
+                for row in rows.iter().filter(|row| row.location != selected_location) {
+                    let unchanged = registry
+                        .lookup_identity(&SessionIdentity::from_info(row))
+                        .await
+                        .unwrap();
+                    assert_eq!(unchanged.status, row.status);
+                    assert_eq!(unchanged.pane_session_id, row.pane_session_id);
+                }
+            }
+        }
+    }
+}
+
 #[test]
 fn qualified_hooks_helper_queue_preserves_identity_for_tool_and_end() {
     use crate::agent_sessions::{CliSource, SessionEvent, SessionLocation};
