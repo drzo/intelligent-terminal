@@ -4993,11 +4993,13 @@ namespace TerminalAppLocalTests
         winrt::Microsoft::Terminal::Control::TermControl agent{ nullptr };
         winrt::TerminalApp::AgentPaneContent agentContent{ nullptr };
         winrt::com_ptr<winrt::TerminalApp::implementation::Tab> tab;
+        uint32_t shellContentId{};
 
         TestOnUIThread([&]() {
             tab = page->_GetFocusedTabImpl();
             tab->SuppressAgentPrewarm();
             shell = page->_GetActiveControl();
+            shellContentId = tab->GetActivePane()->ContentId().value();
             const auto agentPane = page->_WrapInAgentPaneContent(
                 page->_MakePane(nullptr, nullptr, *agentConnection));
             agentContent = agentPane->GetContent().as<winrt::TerminalApp::AgentPaneContent>();
@@ -5133,6 +5135,9 @@ namespace TerminalAppLocalTests
             return !tab->FindAgentPane()->IsHidden() && agent.FocusState() != FocusState::Unfocused;
         });
         TestOnUIThread([&]() {
+            const auto shellPane = tab->GetRootPane()->FindPaneByContentId(shellContentId);
+            VERIFY_IS_NOT_NULL(shellPane);
+            VERIFY_IS_TRUE(tab->FocusPane(shellPane->Id().value()));
             VERIFY_IS_TRUE(shell.Focus(FocusState::Programmatic));
             VERIFY_IS_TRUE(tab->GetActivePane()->GetTerminalControl() == shell);
             tab->EnterZoom();
