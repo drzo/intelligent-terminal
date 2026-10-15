@@ -364,11 +364,13 @@ namespace winrt::TerminalApp::implementation
         std::unordered_map<std::wstring, winrt::hstring> _historyUnresolvedActivations;
         bool _preserveSidebarHistory{ false };
         Windows::UI::Xaml::DispatcherTimer _historyRefreshTimer{ nullptr };
+        Windows::UI::Xaml::DispatcherTimer _historyMasterRecoveryTimer{ nullptr };
         bool _historyRefreshInFlight{ false };
         bool _historyRefreshPending{ false };
         std::shared_ptr<std::atomic<bool>> _historyRefreshCancellation;
         std::chrono::seconds _historyRetryDelay{ 0 };
         std::chrono::steady_clock::time_point _historyNextRefresh{};
+        std::optional<std::chrono::steady_clock::time_point> _historyMasterUnavailableSince;
         bool _tabDragReorderAuthorized{ false };
         Windows::Foundation::IInspectable _tabDragSelectedItem{ nullptr };
         winrt::weak_ref<Tab> _pendingPinTab;
@@ -587,6 +589,7 @@ namespace winrt::TerminalApp::implementation
             bool yoloPolicyBlocked{ false };
             std::string autofixPolicyState{ "unknown" };
             bool sessionsInSidebar{ false };
+            bool renderAgentMarkdown{ true };
         };
         AgentRuntimeConfigSnapshot _lastAgentRuntimeConfig{};
         bool _agentRuntimeConfigInitialized{ false };
@@ -1032,6 +1035,9 @@ namespace winrt::TerminalApp::implementation
                    _tabStrip && _tabStrip.SidebarFilters().RecentAgentSessionsVisible();
         }
         void _UpdateRecentAgentSessionsVisibility();
+        void _ApplySidebarFilterSettings();
+        void _OnSidebarFilterSettingsChanged(const Windows::Foundation::IInspectable& sender,
+                                             const Windows::UI::Xaml::Data::PropertyChangedEventArgs& args);
         bool _IsTabListPositionOperationBlocked() const
         {
             return _IsTabListProjectionActive();
@@ -1042,6 +1048,8 @@ namespace winrt::TerminalApp::implementation
         void _ClearTabSearch();
         void _StartSidebarHistoryRefreshTimer();
         void _StopSidebarHistoryRefreshTimer();
+        void _ResetSidebarHistoryMasterRecovery();
+        bool _ExpireSidebarHistoryMasterRecovery(std::chrono::steady_clock::time_point now);
         Windows::UI::Xaml::Controls::Control _SidebarFocusedControl() const;
         bool _TryFocusSidebarInput(const Microsoft::Terminal::Control::TermControl& control);
         void _FocusSidebarTerminalFallback();
@@ -1067,11 +1075,13 @@ namespace winrt::TerminalApp::implementation
                 Timeout,
                 InvalidResponse,
                 Cancelled,
+                MasterUnavailable,
             };
             State state{ State::Error };
             std::vector<TerminalApp::TabStripHistoryItem> items;
         };
         static _SidebarHistorySnapshot _ParseSidebarHistorySnapshot(const std::string& output, uint64_t currentWindowId = 0);
+        static _SidebarHistorySnapshot _ParseSidebarHistoryFailure(const std::string& output);
         safe_void_coroutine _LoadSidebarHistory(uint64_t generation);
         void _CompleteSidebarHistoryRefresh(uint64_t generation, _SidebarHistorySnapshot snapshot);
         struct _SidebarHistoryActivationRequest

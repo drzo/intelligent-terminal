@@ -376,8 +376,18 @@ zero, or invalid timestamps display Unknown, and future timestamps display just 
 Active uses a theme-aware green success accent, Waiting for input a yellow caution
 accent, and Error a red critical accent, matching the session management view.
 Only the status text is accented; the provider, distro name,
-age, and separators stay muted, and search matches remain highlighted. Host/WSL
-location remains searchable and available for routing; Host has no extra location
+age, and separators stay muted, and search matches remain highlighted.
+Live tab metadata and expanded split-pane metadata use the same status accents
+at full opacity. Only neutral text retains the existing 0.72 opacity, applied
+to its foreground rather than the entire metadata control.
+Only the provider's `agentStatus` field is colored; working-directory and Git
+fields retain their existing appearance, including when they contain the same
+text as a status label. Idle and non-actionable states retain the normal metadata
+color. Status colors follow theme changes without removing search emphasis.
+Live metadata text and its semantic status come from the same accepted provider
+request. While a refresh is queued, both retain the previous snapshot; a failed
+refresh clears that provider's metadata rather than recoloring stale text.
+Host/WSL location remains searchable and available for routing; Host has no extra location
 label. Status-only updates preserve the provider, distro name, and age from the
 latest snapshot.
 The live session bound to the current terminal pane has a selected background.
@@ -439,6 +449,25 @@ retain the previous snapshot and display a warning alongside it. Refresh errors
 and activation errors are independent: a successful refresh clears only the
 refresh warning, not a failed focus/resume result. Existing localized error
 messages are reused.
+
+Provider ACP history queries are separate from these short-lived sidebar list
+commands. Each pooled command/source owns a reusable history-only ACP process;
+chat, Autofix and session restoration keep using the original shared chat agent.
+Only one provider query is outstanding, even after a soft timeout. Its response
+receiver survives the 5/10/20/40/60-second absolute wait checkpoints; after 60
+seconds, checks continue once a minute. Three consecutive responses under five
+seconds reduce the wait budget by one step. Successful queries impose five
+seconds from completion before another send. Completed failures impose
+5/10/20/40/60-second backoff; neither manual refresh nor initialization bypasses
+or resets it.
+
+A query still unresolved after 300 seconds retires the history instance. Its
+Windows launcher and descendants are contained in a private Job Object; WSL
+queries have an identity-checked process group and stdin-EOF cleanup guardian.
+Replacement waits for confirmed exit and failure backoff. Unconfirmed cleanup
+keeps the old instance quarantined across chat-agent replacement. Late retired
+responses cannot mutate the registry, and cached rows remain usable. Hooks only
+schedule the existing worker and never await a slow history response.
 
 Consecutive list failures impose a 5, 10, 20, 40, then 60-second retry delay,
 measured from completion. Both registry notifications and the 60-second timer

@@ -94,6 +94,7 @@ fn agent_command_on_enter(input: &str, selected: Option<&AvailableAgent>) -> Opt
     })
 }
 
+mod agent_markdown;
 mod attachments;
 mod autofix;
 mod input_edit;
@@ -494,6 +495,7 @@ fn open_url_in_browser(url: &str) -> std::io::Result<()> {
 /// outside `USER_INPUT_TOOL_NAMES`.
 pub const CONSUMED_PAYLOAD_KEYS: &[&str] = &[
     "cwd",
+    "title",
     "tool_name",
     "toolName",
     "tool_input",
@@ -620,7 +622,16 @@ pub fn plan_agent_event(
             cli_source: cli_source.clone(),
             pane_session_id: pane_session_id.to_string(),
             cwd,
-            title: synth_title,
+            title: if matches!(cli_source, crate::agent_sessions::CliSource::OpenCode) {
+                payload
+                    .get("title")
+                    .and_then(|value| value.as_str())
+                    .filter(|title| !title.trim().is_empty())
+                    .map(str::to_owned)
+                    .unwrap_or(synth_title)
+            } else {
+                synth_title
+            },
         },
         "agent.tool.starting" => {
             let tool_name = payload
@@ -1315,6 +1326,7 @@ pub struct App {
     pub debug_messages: Vec<DebugMessage>,
     pub show_debug_panel: bool,
     pub debug_scroll: usize,
+    pub(crate) render_agent_markdown: bool,
     pub(crate) text_selection: crate::text_selection::TextSelection,
     pub(crate) completed_turn_hits: Vec<CompletedTurnHitRegion>,
     pub(crate) pressed_completed_turn: Option<PressedCompletedTurn>,
@@ -1668,6 +1680,7 @@ impl App {
             debug_messages: Vec::new(),
             show_debug_panel: false,
             debug_scroll: 0,
+            render_agent_markdown: true,
             text_selection: crate::text_selection::TextSelection::default(),
             completed_turn_hits: Vec::new(),
             pressed_completed_turn: None,
@@ -5253,6 +5266,37 @@ impl App {
         Ok(())
     }
 
+    pub(crate) fn begin_agent_markdown_frame(&mut self) {
+        self.sync_agent_markdown_selection();
+        let current = self.active_tab_key().to_owned();
+        let selecting = self.text_selection.has_selection_or_gesture();
+        for (key, tab) in &mut self.tab_sessions {
+            tab.begin_agent_markdown_frame(
+                self.render_agent_markdown,
+                !selecting || key != &current,
+            );
+        }
+    }
+
+    pub(crate) fn sync_agent_markdown_selection(&mut self) {
+        let current = self.active_tab_key().to_owned();
+        let selecting = self.mode == AppMode::Chat
+            && self
+                .tab_sessions
+                .get(&current)
+                .is_some_and(|tab| tab.current_view == View::Chat)
+            && self.text_selection.has_selection_or_gesture();
+        for (key, tab) in &mut self.tab_sessions {
+            tab.sync_markdown_selection(self.render_agent_markdown, selecting && key == &current);
+        }
+    }
+
+    pub(crate) fn end_agent_markdown_frame(&mut self) {
+        for tab in self.tab_sessions.values_mut() {
+            tab.end_agent_markdown_frame();
+        }
+    }
+
     fn draw_frame(&mut self, terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Result<()> {
         let total_started = std::time::Instant::now();
 
@@ -5776,7 +5820,14 @@ mod app_events;
 impl App {
     fn event_requires_redraw(&self, event: &AppEvent) -> bool {
         match event {
-            AppEvent::Tick => self.has_activity_indicator() || self.show_notification_banner,
+            AppEvent::Tick => {
+                self.has_activity_indicator()
+                    || self.show_notification_banner
+                    || self
+                        .tab_sessions
+                        .values()
+                        .any(|tab| tab.agent_markdown.borrow().has_pending())
+            }
             // The reveal animation only needs a frame while there is still
             // unrevealed pending text on the *visible* tab. When the reveal
             // has caught up (or nothing is streaming) this is a cheap no-op
@@ -7781,6 +7832,10 @@ mod autofix_tests;
 #[cfg(test)]
 #[path = "queue_lifecycle_tests.rs"]
 mod queue_lifecycle_tests;
+
+#[cfg(test)]
+#[path = "agent_markdown_tests.rs"]
+mod agent_markdown_tests;
 
 #[cfg(test)]
 #[path = "app_tests.rs"]

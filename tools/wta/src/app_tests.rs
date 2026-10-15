@@ -1136,6 +1136,55 @@ fn non_terminal_agent_event_for_unknown_session_still_synthesizes_a_start() {
     );
 }
 
+#[test]
+fn opencode_session_hooks_update_title_without_changing_other_providers() {
+    use crate::agent_sessions::AgentSessionRegistry;
+
+    let pane = "AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE";
+    let mut reg = AgentSessionRegistry::new();
+    for (title, expected) in [
+        (json!("Original"), "Original"),
+        (json!("Renamed"), "Renamed"),
+        (json!(""), "Renamed"),
+        (json!("   "), "Renamed"),
+        (json!(null), "Renamed"),
+    ] {
+        route_agent_event_to_registry(
+            &mut reg,
+            pane,
+            &json!({
+                "event": "agent.session.start",
+                "cli_source": "opencode",
+                "agent_session_id": "opencode-session",
+                "payload": { "cwd": r"C:\repo", "title": title }
+            }),
+        );
+        assert_eq!(
+            reg.get(&"opencode-session".to_string()).unwrap().title,
+            expected
+        );
+    }
+
+    for provider in ["copilot", "claude", "codex", "gemini", "antigravity"] {
+        let mut reg = AgentSessionRegistry::new();
+        route_agent_event_to_registry(
+            &mut reg,
+            pane,
+            &json!({
+                "event": "agent.session.start",
+                "cli_source": provider,
+                "agent_session_id": "other-session",
+                "payload": { "cwd": r"C:\repo", "title": "Unrelated hook title" }
+            }),
+        );
+        assert_eq!(
+            reg.get(&"other-session".to_string()).unwrap().title,
+            "repo",
+            "{provider}"
+        );
+    }
+}
+
 /// Both spellings accepted as a real session-start hook must supersede the
 /// pane-keyed placeholder created while the agent session id was unavailable.
 /// Leaving the placeholder behind produces a second local row for one pane and
@@ -10532,7 +10581,7 @@ fn bind_test_session(app: &mut App, session_id: &str) {
     app.session_to_tab.insert(session_id.to_string(), tab_id);
 }
 
-fn submit_test_prompt(app: &mut App, text: &str) {
+pub(super) fn submit_test_prompt(app: &mut App, text: &str) {
     let tab_id = app.active_tab_key().to_string();
     let session_id = app
         .current_tab()
@@ -19008,11 +19057,21 @@ fn chat_scrollbar_appears_only_for_overflow_and_tracks_scroll_position() {
 
 #[test]
 fn completed_turn_toggle_render_is_stable_after_first_frame() {
+    assert_completed_turn_toggle_render_is_stable(false);
+}
+
+#[test]
+fn completed_turn_toggle_markdown_render_is_stable_after_publication() {
+    assert_completed_turn_toggle_render_is_stable(true);
+}
+
+fn assert_completed_turn_toggle_render_is_stable(markdown: bool) {
     let _locale = crate::test_support::lock_locale();
     for height in 6..=16 {
         for selected_index in 0..4 {
             let mut app = test_app();
             app.state = ConnectionState::Connected;
+            app.render_agent_markdown = markdown;
             for index in 0..4 {
                 app.current_tab_mut().completed_turns.push(CompletedTurn {
                     prompt: format!("STABLE_TOGGLE_TURN_{index}"),
@@ -19025,7 +19084,18 @@ fn completed_turn_toggle_render_is_stable_after_first_frame() {
 
             app.current_tab_mut().select_completed_turn(selected_index);
             app.current_tab_mut().toggle_selected_completed_turn();
-            let first_expanded = render_to_text(&mut app, 80, height);
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+            let first_expanded = loop {
+                let text = render_to_text(&mut app, 80, height);
+                if !markdown || !app.current_tab().agent_markdown.borrow().has_pending() {
+                    break text;
+                }
+                assert!(
+                    std::time::Instant::now() < deadline,
+                    "Markdown did not settle"
+                );
+                std::thread::yield_now();
+            };
             let second_expanded = render_to_text(&mut app, 80, height);
             assert_eq!(
                 first_expanded, second_expanded,
