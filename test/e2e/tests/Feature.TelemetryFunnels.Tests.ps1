@@ -233,6 +233,32 @@ Describe 'Feature: telemetry funnels' -Tag 'Feature', 'Telemetry' -Skip:($env:IT
                     tabLayout = 'horizontal'; autoFixEnabled = $false
                 }
             }
+            Invoke-TelemetryPhase -Name startup-not-enrolled -Action {
+                Save-TelemetryOwnedProcesses -App $script:app
+                Stop-TelemetryOwnedTerminal -App $script:app
+                $script:app = $null
+                @(Get-WtProcessesForApp -App $script:target) | Should -HaveCount 0
+                Set-TelemetryPolicy -Transaction $script:policyTransaction -Name AllowedAgents -Value $null
+                Set-TelemetryPolicy -Transaction $script:policyTransaction -Name AllowCustomAgents -Value $null
+                # The original configuration backup still owns this inactive state.
+                # A version-1 record without its GUID is rejected, not auto-enrolled
+                # during settings load as an ordinary fresh version-0 state would be.
+                $state = Get-WtStateObject -App $script:target
+                $state.PSObject.Properties.Remove('featureRolloutId')
+                $state.sidebarRolloutVersion = 1
+                $state.sidebarRolloutAssignment = 'Horizontal'
+                $state | ConvertTo-Json -Depth 64 | Set-Content -LiteralPath $script:target.StatePath -Encoding utf8
+                Invoke-TelemetryStartupCase -Name notEnrolled -Settings @{
+                    acpAgent = ''; acpCustomCommand = ''; acpCustomCommands = @()
+                    delegateAgent = ''; delegateCustomCommand = ''; delegateCustomCommands = @()
+                    tabLayout = 'vertical'; autoFixEnabled = $false
+                }
+                $loaded = Get-WtStateObject -App $script:app
+                $loaded.PSObject.Properties.Name | Should -Not -Contain 'featureRolloutId'
+                $loaded.sidebarRolloutVersion | Should -Be 1
+                $loaded.sidebarRolloutAssignment | Should -Be 'Horizontal'
+                (Get-WtSettingsObject -App $script:app).tabLayout | Should -Be 'vertical'
+            }
         }
         finally { Stop-TestTelemetryTrace -Trace $trace }
         $script:records = @(Read-TestTelemetryTrace -Directory $trace.Directory -ProcessIds @($script:ownedPids) `
@@ -295,6 +321,16 @@ Describe 'Feature: telemetry funnels' -Tag 'Feature', 'Telemetry' -Skip:($env:IT
         $created[0].Fields.SidebarRolloutName | Should -Be 'sidebar-upgrade-v1'
         $created[0].Fields.SidebarRolloutAssignment | Should -Be 'Horizontal'
         $created[0].Types.PartA_PrivTags | Should -Match 'UInt64$'
+        $rejected = @(Get-TelemetryPhaseEvents -Phase startup-not-enrolled -Name AppCreated |
+            Where-Object ProcessId -eq $script:startupCases.notEnrolled)
+        $rejected | Should -HaveCount 1
+        @($rejected[0].Fields.Keys | Where-Object { $_ -ne 'PartA_PrivTags' } | Sort-Object) | Should -Be ($expected.Keys | Sort-Object)
+        foreach ($field in $expected.Keys) {
+            $rejected[0].Types[$field] | Should -Match ($expected[$field] + '$')
+        }
+        $rejected[0].Fields.SidebarRolloutName | Should -Be ''
+        $rejected[0].Fields.SidebarRolloutAssignment | Should -Be 'NotEnrolled'
+        $rejected[0].Fields.SidebarEnabled | Should -BeIn @('true', '1')
         @($script:records | Where-Object Name -in @('AgentProviderConfigured', 'CustomAgentConfigured', 'SidebarStateOnLaunch')) | Should -HaveCount 0
     }
 

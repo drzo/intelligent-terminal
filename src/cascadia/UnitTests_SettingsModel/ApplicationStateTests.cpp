@@ -50,6 +50,7 @@ namespace SettingsModelUnitTests
         TEST_METHOD(SidebarRolloutFailedSaveKeepsIdentity);
         TEST_METHOD(SidebarRolloutIdentityFailureDoesNotChangeLayout);
         TEST_METHOD(FeatureRolloutBucketsAreFeatureScoped);
+        TEST_METHOD(SidebarRolloutNameRequiresValidEnrollment);
 
     private:
         static std::filesystem::path _tempRoot()
@@ -656,6 +657,55 @@ namespace SettingsModelUnitTests
         const auto id = winrt::guid{ L"{00000000-0000-0000-0000-000000000001}" };
         VERIFY_ARE_EQUAL(uint32_t{ 1495 }, State::FeatureRolloutBucket(id, State::CurrentSidebarRolloutName));
         VERIFY_ARE_EQUAL(uint32_t{ 5087 }, State::FeatureRolloutBucket(id, "test-feature-v1"));
+    }
+
+    void ApplicationStateTests::SidebarRolloutNameRequiresValidEnrollment()
+    {
+        struct TestCase
+        {
+            std::string_view json;
+            bool enrolled;
+            bool canPrepare;
+        };
+        for (const auto& test : {
+                 TestCase{ R"({})", false, true },
+                 TestCase{ R"({"featureRolloutId":"{00000000-0000-0000-0000-000000000001}"})", false, true },
+                 TestCase{ R"({"sidebarRolloutVersion":1,"sidebarRolloutAssignment":"Sidebar"})", false, false },
+                 TestCase{ R"({"featureRolloutId":"{00000000-0000-0000-0000-000000000000}","sidebarRolloutVersion":1,"sidebarRolloutAssignment":"Sidebar"})", false, false },
+                 TestCase{ R"({"featureRolloutId":"{00000000-0000-0000-0000-000000000001}","sidebarRolloutVersion":1})", false, false },
+                 TestCase{ R"({"featureRolloutId":"{00000000-0000-0000-0000-000000000001}","sidebarRolloutVersion":1,"sidebarRolloutAssignment":""})", false, false },
+                 TestCase{ R"({"featureRolloutId":"{00000000-0000-0000-0000-000000000001}","sidebarRolloutVersion":1,"sidebarRolloutAssignment":"arbitrary"})", false, false },
+                 TestCase{ R"({"featureRolloutId":"{00000000-0000-0000-0000-000000000001}","sidebarRolloutVersion":1,"sidebarRolloutAssignment":"Horizontal"})", false, false },
+                 TestCase{ R"({"featureRolloutId":"{00000000-0000-0000-0000-000000000002}","sidebarRolloutVersion":1,"sidebarRolloutAssignment":"Sidebar"})", false, false },
+                 TestCase{ R"({"featureRolloutId":"{00000000-0000-0000-0000-000000000001}","sidebarRolloutVersion":2,"sidebarRolloutAssignment":"Sidebar"})", false, false },
+                 TestCase{ R"({"featureRolloutId":"{00000000-0000-0000-0000-000000000001}","sidebarRolloutVersion":1,"sidebarRolloutAssignment":"Sidebar"})", true, true },
+                 TestCase{ R"({"featureRolloutId":"{00000000-0000-0000-0000-000000000002}","sidebarRolloutVersion":1,"sidebarRolloutAssignment":"Horizontal"})", true, true },
+             })
+        {
+            const auto root = _sidebarRoot();
+            const auto cleanup = wil::scope_exit([&]() { std::filesystem::remove_all(root); });
+            const auto path = root / L"state.json";
+            til::io::write_utf8_string_to_file_atomic(path, test.json);
+            auto state = winrt::make_self<implementation::ApplicationState>(root);
+            const auto before = state->ToJson(implementation::FileSource::Shared);
+            const auto expectedName = winrt::hstring{ test.enrolled ? L"sidebar-upgrade-v1" : L"" };
+            VERIFY_ARE_EQUAL(expectedName, state->SidebarRolloutName());
+            VERIFY_IS_TRUE(before == state->ToJson(implementation::FileSource::Shared));
+            VERIFY_ARE_EQUAL(std::string{ test.json }, til::io::read_file_as_utf8_string_if_exists(path));
+            const auto lock = state->LockSidebarState();
+            VERIFY_ARE_EQUAL(test.canPrepare, state->PrepareSidebarRollout());
+            VERIFY_ARE_EQUAL(expectedName, state->SidebarRolloutName());
+            if (!test.canPrepare || test.enrolled)
+            {
+                auto settings = _sidebarSettings("vertical");
+                auto saves = 0;
+                VERIFY_ARE_EQUAL(test.enrolled, settings->MigrateSidebarLayout(*state, [&]() { ++saves; return true; }));
+                VERIFY_ARE_EQUAL(0, saves);
+                VERIFY_ARE_EQUAL(TabLayout::Vertical, settings->GlobalSettings().TabLayout());
+                VERIFY_IS_TRUE(before == state->ToJson(implementation::FileSource::Shared));
+                VERIFY_ARE_EQUAL(std::string{ test.json }, til::io::read_file_as_utf8_string_if_exists(path));
+            }
+        }
     }
 
 }

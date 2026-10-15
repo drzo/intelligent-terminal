@@ -390,7 +390,14 @@ namespace winrt::Microsoft::Terminal::Settings::Model::implementation
 
     winrt::hstring ApplicationState::SidebarRolloutName() const
     {
-        return SidebarRolloutVersion() == CurrentSidebarRolloutVersion ? winrt::to_hstring(CurrentSidebarRolloutName) : winrt::hstring{};
+        return _hasValidSidebarRollout() ? winrt::to_hstring(CurrentSidebarRolloutName) : winrt::hstring{};
+    }
+
+    bool ApplicationState::_hasValidSidebarRollout() const noexcept
+    {
+        return SidebarRolloutVersion() == CurrentSidebarRolloutVersion &&
+               FeatureRolloutId() != winrt::guid{} &&
+               SidebarRolloutAssignment() == (SidebarRolloutLayout() == Model::TabLayout::Vertical ? L"Sidebar" : L"Horizontal");
     }
 
     bool ApplicationState::PrepareSidebarRollout() noexcept
@@ -409,7 +416,7 @@ namespace winrt::Microsoft::Terminal::Settings::Model::implementation
         }
         if (SidebarRolloutVersion() == CurrentSidebarRolloutVersion)
         {
-            THROW_HR_IF(E_UNEXPECTED, SidebarRolloutAssignment() != (SidebarRolloutLayout() == Model::TabLayout::Vertical ? L"Sidebar" : L"Horizontal"));
+            THROW_HR_IF(E_UNEXPECTED, !_hasValidSidebarRollout());
         }
         THROW_HR_IF(E_UNEXPECTED, SidebarRolloutVersion() > CurrentSidebarRolloutVersion);
         return true;

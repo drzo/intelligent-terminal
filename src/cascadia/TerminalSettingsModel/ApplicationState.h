@@ -134,6 +134,7 @@ namespace winrt::Microsoft::Terminal::Settings::Model::implementation
         void _write() noexcept;
         void _read() const noexcept;
         Json::Value _readSharedJson() const;
+        bool _hasValidSidebarRollout() const noexcept;
         void _persistSidebarFlag(std::string_view key) const;
         static void _preserveSidebarFlags(Json::Value& root, const Json::Value& previous);
 
