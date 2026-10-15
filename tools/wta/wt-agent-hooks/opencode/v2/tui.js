@@ -21,7 +21,8 @@ export default {
 
     function synchronize() {
       if (disposed) return
-      const ids = new Set(ctx.ui.tabs.enabled() ? ctx.ui.tabs.list().map((tab) => tab.sessionID) : [])
+      // Native tabs are shared across TUI clients; only this route proves pane ownership.
+      const ids = new Set()
       const route = ctx.ui.router.current()
       if (route.type === "session") ids.add(ctx.data.session.root(route.sessionID))
       const wanted = new Map()

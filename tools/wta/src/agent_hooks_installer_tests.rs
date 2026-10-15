@@ -2252,7 +2252,7 @@ fn native_hook_bundle_versions_match_their_marketplaces() {
         ("copilot", COPILOT_PLUGIN_JSON, "0.1.7"),
         ("gemini", GEMINI_EXTENSION_JSON, "0.1.7"),
         ("codex", CODEX_PLUGIN_JSON, "0.1.7"),
-        ("opencode", OPENCODE_PLUGIN_JSON, "0.1.8"),
+        ("opencode", OPENCODE_PLUGIN_JSON, "0.1.11"),
         (
             "antigravity",
             include_str!("../wt-agent-hooks/antigravity/intelligent-terminal.json"),
@@ -3133,7 +3133,7 @@ fn install_action_upgrades_a_complete_but_outdated_bridge() {
 fn install_action_upgrades_only_the_provider_with_a_newer_bundle() {
     for &cli in CliKind::ALL {
         let bundled = if cli == CliKind::OpenCode {
-            "0.1.8"
+            "0.1.11"
         } else {
             "0.1.7"
         };

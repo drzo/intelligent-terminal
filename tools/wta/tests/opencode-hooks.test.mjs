@@ -1,4 +1,5 @@
 import assert from "node:assert/strict"
+import { randomUUID } from "node:crypto"
 import { readFile } from "node:fs/promises"
 import { test } from "node:test"
 import vm from "node:vm"
@@ -40,14 +41,12 @@ async function load(entry, env = {}) {
   const modules = new Map()
   async function moduleFor(name) {
     if (modules.has(name)) return modules.get(name)
-    if (name === "node:fs" || name === "node:crypto" || name === "solid-js" || name === "@opencode/plugin/rpc") {
+    if (name === "node:fs" || name === "node:crypto" || name === "solid-js") {
       const exports = name === "node:fs"
         ? { mkdirSync() {}, appendFileSync: (...args) => failures.push(args) }
         : name === "node:crypto"
-          ? { randomUUID: () => "44444444-4444-4444-4444-444444444444" }
-          : name === "solid-js"
-            ? { createEffect: (effect) => { effects.push(effect); effect() } }
-            : { Rpc: { define: (definition) => definition } }
+          ? { randomUUID }
+          : { createEffect: (effect) => { effects.push(effect); effect() } }
       const module = new vm.SyntheticModule(Object.keys(exports), function () {
         for (const [key, value] of Object.entries(exports)) this.setExport(key, value)
       }, { context, identifier: name })
@@ -122,6 +121,10 @@ const binding = (pane, ids) => ({
   com_clsid: clsid,
   bridge_path: "C:\\Terminal\\wtcli.exe",
   session_ids: ids,
+})
+
+test("V2 pane binding definition loads without installing the OpenCode SDK", async () => {
+  await assert.doesNotReject(import(new URL("v2/rpc.js", bundle)))
 })
 
 test("V1 loads as a function on older CLIs and preserves child/ACP suppression", async () => {
@@ -230,16 +233,69 @@ test("V2 a delayed session lookup cannot rebind a deleted session", async () => 
   await dispose()
 })
 
-test("V2 client sends only its open root sessions and unbinds on cleanup", async () => {
+test("V2 two panes sharing native tabs retain independent bindings and activity", async () => {
+  const sessions = { a: { id: "a", title: "A", location }, b: { id: "b", title: "B", location } }
+  const fixture = await load("v2/wt-agent-hooks.js")
+  const server = serverContext(sessions)
+  const disposeServer = await fixture.plugin.default.setup(server.ctx)
+  const clients = []
+  const requests = []
+  try {
+    for (const [pane, id] of [[paneA, "a"], [paneB, "b"]]) {
+      const client = await load("v2/tui.js", { WT_SESSION: pane, WT_COM_CLSID: clsid })
+      const dispose = client.plugin.default.setup({
+        client: { rpc: () => ({ sync: async (input) => {
+          requests.push(input)
+          return server.sync(input)
+        } }) },
+        data: { session: { root: (id) => id, get: (id) => sessions[id] } },
+        ui: {
+          tabs: { enabled: () => true, list: () => [{ sessionID: "a" }, { sessionID: "b" }] },
+          router: { current: () => ({ type: "session", sessionID: id }) },
+          slot: (claim) => { claim.render(); return () => {} },
+        },
+      })
+      clients.push({ client, dispose })
+    }
+    await tick()
+    assert.ok(requests.length >= 2)
+    assert.equal(new Set(requests.map((request) => request.client_id)).size, 2)
+    for (const request of requests) {
+      assert.deepEqual(Array.from(request.session_ids), [request.pane_session_id === paneA ? "a" : "b"])
+    }
+    assert.ok(clients.every(({ client }) => client.failures.length === 0))
+    await server.hooks.prompt({ sessionID: "a" })
+    await server.event("question.asked", { sessionID: "b" })
+    await server.event("session.execution.succeeded", { sessionID: "a" })
+    assert.equal(fixture.calls.at(-1).topic, "agent.stop")
+    assert.equal(fixture.calls.at(-1).env.WT_SESSION, paneA)
+    assert.equal(fixture.calls.findLast((call) => call.payload.session_id === "b").topic, "agent.notification")
+    assert.ok(fixture.calls.filter((call) => call.payload.session_id === "a").every((call) => call.env.WT_SESSION === paneA))
+    assert.ok(fixture.calls.filter((call) => call.payload.session_id === "b").every((call) => call.env.WT_SESSION === paneB))
+    await clients[0].dispose()
+    assert.equal(fixture.calls.at(-1).topic, "agent.session.end")
+    assert.equal(fixture.calls.at(-1).payload.session_id, "a")
+    for (const heartbeat of clients[1].client.timers.values()) heartbeat()
+    await tick()
+    await server.event("session.execution.succeeded", { sessionID: "b" })
+    assert.equal(fixture.calls.at(-1).topic, "agent.stop")
+    assert.equal(fixture.calls.at(-1).env.WT_SESSION, paneB)
+  } finally {
+    for (const { dispose } of clients) await dispose()
+    await disposeServer()
+  }
+})
+
+test("V2 client binds only its routed root despite shared tabs, and unbinds on home", async () => {
   const fixture = await load("v2/tui.js", { WT_SESSION: paneA, WT_COM_CLSID: clsid, WTCLI_PATH: "C:\\Terminal\\wtcli.exe" })
   const requests = []
-  let route = { type: "session", sessionID: "a" }
+  let route = { type: "session", sessionID: "child" }
   const sessions = { a: { id: "a", location }, child: { id: "child", parentID: "a", location } }
   const ctx = {
     client: { rpc: () => ({ sync: async (input, options) => { requests.push({ input, options }); return { bound: input.session_ids.length } } }) },
     data: { session: { root: (id) => id === "child" ? "a" : id, get: (id) => sessions[id] } },
     ui: {
-      tabs: { enabled: () => false },
+      tabs: { enabled: () => true, list: () => [{ sessionID: "a" }, { sessionID: "child" }] },
       router: { current: () => route },
       slot: (claim) => { claim.render(); return () => {} },
     },

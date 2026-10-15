@@ -108,6 +108,17 @@ The JSON status's optional `opencode` object distinguishes `cli_version`,
 never reported enabled. Foreign files are preserved; the completion manifest
 is committed last, and partial managed installations remain repairable.
 
+The V2 pane-binding RPC contract is a plain JSON Schema object. Its installed
+local package does not require a separate `@opencode/plugin` SDK installation.
+
+OpenCode session management supports the default host `opencode` executable
+only, whether it is V1 or V2. Version detection, hook installation, ACP history
+and CLI resume follow that default. It does not enumerate another installed
+version or choose a different executable for each session. After changing the
+default version, restart Intelligent Terminal so its resident ACP connection
+and hook adapter are refreshed. Resume is limited to conversations accessible
+to the selected version; another version's history is not merged into it.
+
 Bundle resolution chain (first hit wins, see
 `agent_hooks_installer::bundle::candidate_roots`):
 
@@ -252,8 +263,13 @@ distinguish two panes in the same project either.
 
 The bundled TUI entrypoint therefore explicitly calls the server plugin's
 `wt-agent-hooks.pane.sync` RPC with the client ID, pane `WT_SESSION`, COM CLSID,
-actual `WTCLI_PATH`, log directory, and the root sessions open in that client.
-Requests are scoped to each session's location. Server callbacks emit only for
+actual `WTCLI_PATH`, log directory, and the root session currently displayed by
+that client. OpenCode's native tab list is persisted in shared storage, so it
+does not establish pane ownership: two TUIs in the same directory can list
+each other's sessions. Background native tabs are not bound to the current
+pane; changing its route releases the previous binding and binds the new root,
+and returning home releases it without claiming sessions from shared tabs.
+Requests are scoped to the session's location. Server callbacks emit only for
 these bindings, passing that client's environment to `wtcli`. The shared
 server's `WT_SESSION` is never used. Another client's unexpired
 binding cannot be stolen by a heartbeat.

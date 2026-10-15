@@ -16,11 +16,10 @@ export async function loadPlugin(path) {
   const modules = new Map()
   async function load(name) {
     if (modules.has(name)) return modules.get(name)
-    if (["node:fs", "node:crypto", "solid-js", "@opencode/plugin/rpc"].includes(name)) {
+    if (["node:fs", "node:crypto", "solid-js"].includes(name)) {
       const exports = name === "node:fs" ? fs
         : name === "node:crypto" ? crypto
-          : name === "solid-js" ? { createEffect: (effect) => effect() }
-            : { Rpc: { define: (definition) => definition } }
+          : { createEffect: (effect) => effect() }
       const module = new vm.SyntheticModule(Object.keys(exports), function () {
         for (const [key, value] of Object.entries(exports)) this.setExport(key, value)
       }, { context, identifier: name })

@@ -1,8 +1,7 @@
 // Managed by Intelligent Terminal: wt-agent-hooks
 
-import { Rpc } from "@opencode/plugin/rpc"
-
-export const PaneBinding = Rpc.define({
+// Keep the installed RPC contract independent of SDK package resolution.
+export const PaneBinding = {
   id: "wt-agent-hooks.pane",
   methods: {
     sync: {
@@ -32,4 +31,4 @@ export const PaneBinding = Rpc.define({
     },
   },
   events: {},
-})
+}
