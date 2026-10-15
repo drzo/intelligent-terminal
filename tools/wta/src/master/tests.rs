@@ -212,7 +212,13 @@ async fn native_initialize_is_bounded_at_sixty_seconds() {
             );
             tokio::time::advance(std::time::Duration::from_secs(1)).await;
             tokio::task::yield_now().await;
+            let deadline = tokio::time::Instant::now();
             assert!(task.await.expect("initialize task").is_err());
+            assert_eq!(
+                tokio::time::Instant::now(),
+                deadline,
+                "initialize must finish without advancing past the 60-second deadline"
+            );
             connection.shutdown();
         })
         .await;
