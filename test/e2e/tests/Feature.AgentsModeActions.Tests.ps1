@@ -28,9 +28,7 @@ Describe 'Feature: Agents mode actions' -Tag @('Feature', 'AgentsModeActions') {
         $script:resolverShimOwned = $false
         if ($env:ITE2E_PACKAGE -ne 'Dev') { throw 'Agents mode actions require explicit Dev selection.' }
         $script:target = Resolve-ItApp -Package Dev
-        if (@(Get-WtProcessesForApp -App $script:target -IncludePackageExecutables).Count) {
-            throw 'Refusing to adopt or close existing Dev processes.'
-        }
+        Stop-StaleItInstances -App $script:target
         $head = (& git -C (Join-Path $PSScriptRoot '..\..\..') rev-parse HEAD).Trim()
         if ($LASTEXITCODE -ne 0 -or -not $head -or -not $env:ITE2E_SOURCE_COMMIT -or
             -not $env:ITE2E_SOURCE_COMMIT.StartsWith($head, [StringComparison]::Ordinal)) {
@@ -744,7 +742,8 @@ Describe 'Feature: Agents mode actions' -Tag @('Feature', 'AgentsModeActions') {
         Set-WtPaneFocus -App $script:app -SessionId $tab.session_id | Out-Null
         Open-AgentPane -App $script:app | Out-Null
         Wait-AgentReady -App $script:app -TimeoutSec 30 | Should -BeTrue
-        $helper = Get-AgentPaneSession -App $script:app -OwnerPaneSessionId $tab.session_id
+        $ownerTabId = Resolve-AgentOwnerTabId -App $script:app -OwnerPaneSessionId $tab.session_id
+        $helper = Get-AgentPaneSession -App $script:app -TabId $ownerTabId
         $helper.AcpSessionId | Should -Match '^chat-fixture-'
         $before = @(Get-WtPanes -App $script:app -TabId ([string]$tab.tab_id) -WindowId ([string]$script:app.WindowId)).session_id
         $count = @(Get-CanonicalLaunches).Count + @(Get-ActionLaunches).Count
@@ -757,7 +756,8 @@ Describe 'Feature: Agents mode actions' -Tag @('Feature', 'AgentsModeActions') {
                         $peer = Get-ActionElement $(if ($layout -eq 'vertical') { 'ItemsList' } else { 'TabView' })
                         $peer -and -not $peer.Current.IsOffscreen
                     } | Out-Null
-                    Set-WtPaneFocus -App $script:app -SessionId $helper.PaneSessionId | Out-Null
+                    Set-WtPaneFocus -App $script:app -SessionId $helper.PaneSessionId `
+                        -OwnerPaneSessionId $tab.session_id -OwnerTabId $ownerTabId | Out-Null
                     Send-WtWindowKey -App $script:app -Vk 0xBB -Alt -Shift | Out-Null
                     Start-Sleep -Seconds 1
                     $after = @(Get-WtPanes -App $script:app -TabId ([string]$tab.tab_id) -WindowId ([string]$script:app.WindowId)).session_id

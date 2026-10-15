@@ -1934,6 +1934,52 @@ fn helper_still_publishes_events_it_originates() {
 }
 
 #[test]
+fn qualified_resume_completion_preserves_identity_without_new_pane_snapshot() {
+    use crate::agent_sessions::{SessionEvent, SessionLocation};
+    use crate::session_registry::{
+        HistoryRowKey, SessionHookScope, SessionHookUpdate, SessionIdentity,
+    };
+    for (provider, location, universe) in [
+        ("copilot", SessionLocation::Host, None),
+        (
+            "gemini",
+            SessionLocation::Wsl {
+                distro: "Ubuntu".into(),
+            },
+            None,
+        ),
+        (
+            "claude",
+            SessionLocation::Host,
+            Some("alternate".to_string()),
+        ),
+    ] {
+        let mut app = test_app();
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+        app.set_session_hook_tx(tx);
+        let identity = SessionIdentity {
+            session_id: agent_client_protocol::schema::v1::SessionId::new("shared-id"),
+            history_key: HistoryRowKey::new(provider, location, "shared-id", universe),
+        };
+        let update = SessionHookUpdate {
+            event: SessionEvent::ResumePaneAssigned {
+                key: "shared-id".into(),
+                pane_session_id: "new-pane".into(),
+            },
+            scope: SessionHookScope {
+                identity: Some(identity.clone()),
+                pane_session_id: Some("new-pane".into()),
+                ..Default::default()
+            },
+        };
+        app.handle_event(AppEvent::QualifiedAgentSessionEvent(update));
+        let published = rx.try_recv().unwrap();
+        assert_eq!(published.scope.identity, Some(identity));
+        assert_eq!(published.scope.pane_session_id.as_deref(), Some("new-pane"));
+    }
+}
+
+#[test]
 fn qualified_hooks_helper_queue_preserves_identity_for_tool_and_end() {
     use crate::agent_sessions::{CliSource, SessionEvent, SessionLocation};
     use crate::session_registry::{SessionIdentity, SessionInfo, WtaExtRequest};

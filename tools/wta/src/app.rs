@@ -3359,6 +3359,15 @@ impl App {
             tracing::warn!(target: "agents_view", %error, "refusing CLI resume in an unsupported session universe");
             return;
         }
+        let resume_identity = crate::session_registry::SessionIdentity {
+            session_id: agent_client_protocol::schema::v1::SessionId::new(s.key.clone()),
+            history_key: crate::session_registry::HistoryRowKey::new(
+                cli_id,
+                s.location.clone(),
+                &s.key,
+                resume_universe.clone(),
+            ),
+        };
         if profile.resume_flag.is_empty() {
             tracing::debug!(
                 target: "agents_view",
@@ -3588,10 +3597,17 @@ impl App {
                 }
                 if let Some(tx) = event_tx {
                     if tx
-                        .send(AppEvent::AgentSessionEvent(
-                            crate::agent_sessions::SessionEvent::ResumePaneAssigned {
-                                key: cb_key,
-                                pane_session_id,
+                        .send(AppEvent::QualifiedAgentSessionEvent(
+                            crate::session_registry::SessionHookUpdate {
+                                event: crate::agent_sessions::SessionEvent::ResumePaneAssigned {
+                                    key: cb_key,
+                                    pane_session_id: pane_session_id.clone(),
+                                },
+                                scope: crate::session_registry::SessionHookScope {
+                                    identity: Some(resume_identity),
+                                    pane_session_id: Some(pane_session_id),
+                                    ..Default::default()
+                                },
                             },
                         ))
                         .is_err()
@@ -5500,6 +5516,7 @@ impl App {
                 "agent_reconnect_preflight_complete"
             }
             AppEvent::AgentSessionEvent(_) => "agent_session_event",
+            AppEvent::QualifiedAgentSessionEvent(_) => "qualified_agent_session_event",
             AppEvent::AliveSnapshotLoaded(_) => "alive_snapshot_loaded",
             AppEvent::AliveSessionAdded(_) => "alive_session_added",
             AppEvent::AliveSessionRemoved(_) => "alive_session_removed",

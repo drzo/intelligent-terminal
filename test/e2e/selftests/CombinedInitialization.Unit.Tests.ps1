@@ -91,7 +91,7 @@ namespace CombinedDisplayMock {
             $peer
         }
     }
-    AfterAll { Remove-Module $script:displayModule }
+    AfterAll { if ($script:displayModule) { Remove-Module $script:displayModule } }
     BeforeEach {
         $script:app = @{ Pid = 42; Hwnd = 123; Launched = $true; InstallLocation = (Join-Path $TestDrive 'fixture')
             OwnedProcess = @{ Id = 42; HasExited = $false; StartTime = 123 } }

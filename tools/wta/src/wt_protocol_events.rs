@@ -67,6 +67,9 @@ pub(crate) fn resumed_pane_binding_event(
     resume_commandline: &str,
     cwd: Option<&str>,
 ) -> Option<String> {
+    // Host CLIs may be npm .cmd shims, so persistence must retain the
+    // executable shell wrapper, but not the one-shot loading banner.
+    let resume_commandline = persisted_resume_commandline(location, resume_commandline);
     let (source, distro) = match location {
         crate::agent_sessions::SessionLocation::Host => ("host", ""),
         crate::agent_sessions::SessionLocation::Wsl { distro } => ("wsl", distro.as_str()),
@@ -95,6 +98,84 @@ pub(crate) fn resumed_pane_binding_event(
         })
         .to_string(),
     )
+}
+
+pub(crate) fn persisted_resume_commandline(
+    location: &crate::agent_sessions::SessionLocation,
+    commandline: &str,
+) -> String {
+    if matches!(location, crate::agent_sessions::SessionLocation::Host) {
+        format!("cmd /d /s /c \"{commandline}\"")
+    } else {
+        commandline.to_string()
+    }
+}
+
+#[test]
+fn resumed_pane_callback_output_preserves_host_launch_wrapper() {
+    use crate::agent_sessions::SessionLocation;
+    let command = "copilot --resume \"session-id\"";
+    let output = resumed_pane_binding_event(
+        "copilot",
+        "session-id",
+        "pane-new",
+        &SessionLocation::Host,
+        None,
+        command,
+        None,
+    )
+    .unwrap();
+    let event: serde_json::Value = serde_json::from_str(&output).unwrap();
+    assert_eq!(
+        event["params"]["resume_commandline"],
+        format!("cmd /d /s /c \"{command}\"")
+    );
+    assert!(!output.contains("Resuming"));
+    let wsl = "wsl.exe -d Ubuntu -- bash -lc \"copilot --resume session-id\"";
+    assert_eq!(
+        persisted_resume_commandline(
+            &SessionLocation::Wsl {
+                distro: "Ubuntu".into()
+            },
+            wsl
+        ),
+        wsl
+    );
+}
+
+#[cfg(windows)]
+#[test]
+fn resumed_pane_host_wrapper_executes_quoted_cmd_shim() {
+    use std::os::windows::process::CommandExt;
+
+    let directory = std::env::temp_dir().join(format!("wta resume shim {}", uuid::Uuid::new_v4()));
+    std::fs::create_dir(&directory).unwrap();
+    let shim = directory.join("copilot shim.cmd");
+    std::fs::write(&shim, "@echo off\r\necho resume-args:%~1:%~2\r\n").unwrap();
+    let command = format!("\"{}\" --resume \"session-id\"", shim.display());
+    let output = resumed_pane_binding_event(
+        "copilot",
+        "session-id",
+        "pane-new",
+        &crate::agent_sessions::SessionLocation::Host,
+        None,
+        &command,
+        None,
+    )
+    .unwrap();
+    let event: serde_json::Value = serde_json::from_str(&output).unwrap();
+    let persisted = event["params"]["resume_commandline"].as_str().unwrap();
+    let result = std::process::Command::new("cmd")
+        .raw_arg(persisted.strip_prefix("cmd ").unwrap())
+        .output();
+    std::fs::remove_file(&shim).unwrap();
+    std::fs::remove_dir(&directory).unwrap();
+    let result = result.unwrap();
+    assert!(result.status.success(), "{:?}", result);
+    assert_eq!(
+        String::from_utf8(result.stdout).unwrap().trim(),
+        "resume-args:--resume:session-id"
+    );
 }
 
 pub(crate) fn restart_agent_stack_event() -> String {
@@ -345,7 +426,7 @@ mod tests {
                         "agent_source": "host",
                         "wsl_distro": "",
                         "session_universe": "",
-                        "resume_commandline": "copilot --resume known-session",
+                        "resume_commandline": "cmd /d /s /c \"copilot --resume known-session\"",
                     },
                 })
             );

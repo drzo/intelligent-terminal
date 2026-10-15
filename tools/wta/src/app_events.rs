@@ -2705,6 +2705,14 @@ impl App {
                     self.open_agent_picker(selected);
                 }
             }
+            AppEvent::QualifiedAgentSessionEvent(update) => {
+                self.agent_sessions.apply(update.event.clone());
+                if let Some(tx) = &self.session_hook_tx {
+                    if let Err(error) = tx.send(update) {
+                        tracing::warn!(target: "session_hook", %error, "failed to queue qualified resume binding");
+                    }
+                }
+            }
             AppEvent::AgentSessionEvent(ev) => {
                 tracing::debug!(
                     target: "agent_session_registry",

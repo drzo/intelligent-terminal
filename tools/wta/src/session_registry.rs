@@ -2186,7 +2186,12 @@ fn apply_event_scoped_locked(
             | SessionEvent::SessionStopped { key, .. }
             | SessionEvent::ResumeDispatched { key }
             | SessionEvent::ResumePaneAssigned { key, .. }
-            | SessionEvent::ResumeFailed { key, .. } => Some(key),
+            | SessionEvent::ResumeFailed { key, .. } => Some(key.as_str()),
+            SessionEvent::ConnectionFailed {
+                pane_session_id, ..
+            } if state.active_by_pane.get(&pane_key(pane_session_id)) == Some(identity) => {
+                Some(identity.session_id.0.as_ref())
+            }
             _ => None,
         };
         if key.is_none_or(|key| key != identity.session_id.0.as_ref())
@@ -4297,6 +4302,65 @@ mod tests {
             .unwrap();
         assert_eq!(row.status, Some(crate::agent_sessions::AgentStatus::Ended));
         assert!(row.pane_session_id.is_none());
+    }
+
+    #[tokio::test]
+    async fn qualified_connection_failure_requires_exact_normalized_pane_owner() {
+        let reg = InMemoryRegistry::new();
+        let mut owner = qualified_info("collision", "copilot", SessionLocation::Host, "owner");
+        owner.pane_session_id = Some("pane-a".into());
+        owner.status = Some(AgentStatus::Idle);
+        let mut other = qualified_info("collision", "claude", SessionLocation::Host, "other");
+        other.pane_session_id = Some("pane-b".into());
+        other.status = Some(AgentStatus::Idle);
+        let identity = SessionIdentity::from_info(&owner);
+        let wrong = SessionIdentity::from_info(&other);
+        reg.upsert(owner).await;
+        reg.upsert(other).await;
+        let failure = |pane: &str| SessionEvent::ConnectionFailed {
+            pane_session_id: pane.into(),
+            reason: "failed".into(),
+        };
+        assert!(
+            !reg.apply_event_identity(&identity, failure("missing"))
+                .await
+        );
+        assert!(!reg.apply_event_identity(&wrong, failure("PANE-A")).await);
+        assert!(reg.apply_event_identity(&identity, failure("PANE-A")).await);
+        assert!(!reg.apply_event_identity(&identity, failure("pane-a")).await);
+        assert_eq!(
+            reg.lookup_identity(&identity).await.unwrap().status,
+            Some(AgentStatus::Error)
+        );
+        assert_eq!(
+            reg.lookup_identity(&wrong).await.unwrap().status,
+            Some(AgentStatus::Idle)
+        );
+        // A start hook can bind and update the pane before the asynchronous
+        // resume callback arrives. Repeating the binding must not erase it.
+        assert!(
+            reg.apply_event_identity(
+                &identity,
+                SessionEvent::ToolStarting {
+                    key: "collision".into(),
+                    tool_name: "edit".into(),
+                }
+            )
+            .await
+        );
+        assert!(
+            !reg.apply_event_identity(
+                &identity,
+                SessionEvent::ResumePaneAssigned {
+                    key: "collision".into(),
+                    pane_session_id: "PANE-A".into(),
+                }
+            )
+            .await
+        );
+        let row = reg.lookup_identity(&identity).await.unwrap();
+        assert_eq!(row.status, Some(AgentStatus::Working));
+        assert_eq!(row.current_tool.as_deref(), Some("edit"));
     }
 
     #[tokio::test]

@@ -800,10 +800,19 @@ namespace winrt::TerminalApp::implementation
                       backend, std::wstring{ metadata->session.cwd }, std::wstring{ metadata->universe },
                       std::wstring{ metadata->session.resumeCommandline } }) };
             }
-            else if (metadata->universe.empty())
+            else if (metadata->universe.empty() &&
+                     (!metadata->identityQualified || metadata->source == L"host" || metadata->source == L"wsl"))
             {
+                namespace Model = ::Microsoft::Terminal::Settings::Model;
+                const auto backend = metadata->source == L"wsl" ?
+                                         Model::AgentPaneBackend::Wsl(metadata->wslDistro, metadata->session.agent) :
+                                     metadata->source == L"host" ?
+                                         Model::AgentPaneBackend::Host(metadata->session.agent) :
+                                     metadata->session.backend.empty() ?
+                                         std::wstring{ metadata->session.agent } :
+                                         std::wstring{ metadata->session.backend };
                 resume = winrt::hstring{ Restore::BuildResumeCommandline(
-                    metadata->session.backend.empty() ? metadata->session.agent : metadata->session.backend,
+                    backend,
                     metadata->session.sessionId,
                     metadata->session.cwd) };
             }

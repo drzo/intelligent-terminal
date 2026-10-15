@@ -273,6 +273,19 @@ and allows later session replacement. A delayed duplicate WTA binding cannot
 re-arm a confirmed session, and untrusted terminal output cannot establish this
 resume protection.
 
+Graceful connection closure is distinct from an agent session ending inside a
+live shell. It retires the binding even if only the provider is known, and blocks
+late hooks, resume callbacks, direct bindings, and history enrichment until
+`ResetPaneConnection` installs fresh connection metadata. Failed connections keep
+their existing failure and resume metadata.
+
+Helper-initiated resumes carry the selected qualified identity through pane
+creation completion; they do not infer it from a possibly delayed sidebar
+snapshot. Host resume persistence retains the executable CMD wrapper needed by
+CLI shims, without the one-shot loading banner. Registry-only WSL bindings use
+their confirmed source and distro when constructing the safe fallback command;
+missing or invalid WSL qualification never falls back to Host.
+
 ### User-typed PowerShell resume: binding before the first conversation
 
 When Intelligent Terminal's shell integration is loaded in PowerShell, accepting
@@ -520,6 +533,25 @@ retain the previous snapshot and display a warning alongside it. Refresh errors
 and activation errors are independent: a successful refresh clears only the
 refresh warning, not a failed focus/resume result. Existing localized error
 messages are reused.
+
+Provider ACP history queries are separate from these short-lived sidebar list
+commands. Each pooled command/source owns a reusable history-only ACP process;
+chat, Autofix and session restoration keep using the original shared chat agent.
+Only one provider query is outstanding, even after a soft timeout. Its response
+receiver survives the 5/10/20/40/60-second absolute wait checkpoints; after 60
+seconds, checks continue once a minute. Three consecutive responses under five
+seconds reduce the wait budget by one step. Successful queries impose five
+seconds from completion before another send. Completed failures impose
+5/10/20/40/60-second backoff; neither manual refresh nor initialization bypasses
+or resets it.
+
+A query still unresolved after 300 seconds retires the history instance. Its
+Windows launcher and descendants are contained in a private Job Object; WSL
+queries have an identity-checked process group and stdin-EOF cleanup guardian.
+Replacement waits for confirmed exit and failure backoff. Unconfirmed cleanup
+keeps the old instance quarantined across chat-agent replacement. Late retired
+responses cannot mutate the registry, and cached rows remain usable. Hooks only
+schedule the existing worker and never await a slow history response.
 
 Consecutive list failures impose a 5, 10, 20, 40, then 60-second retry delay,
 measured from completion. Both registry notifications and the 60-second timer

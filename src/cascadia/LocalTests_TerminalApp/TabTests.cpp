@@ -567,6 +567,8 @@ namespace TerminalAppLocalTests
         TEST_METHOD(AgentsViewRejectsAmbiguousPaneIdentity);
         TEST_METHOD(AgentsViewWslResumeBindsQualifiedIdentityImmediately);
         TEST_METHOD(PaneResumeRejectsTerminalCommandline);
+        TEST_METHOD(PaneRegistryOnlyResumePreservesQualifiedBackend);
+        TEST_METHOD(PaneClosedConnectionRejectsLateBindings);
         TEST_METHOD(TrustedResumeEnvelopeRoundTripsQualifiedIdentity);
         TEST_METHOD(PaneResumeSurvivesSessionlessStartup);
         TEST_METHOD(PaneWtaResumeBindingSurvivesSessionlessStartup);
@@ -782,6 +784,7 @@ namespace TerminalAppLocalTests
             bool verticalLayout = false);
         winrt::com_ptr<winrt::TerminalApp::implementation::TerminalPage> _keepRunningSetup(
             winrt::Microsoft::Terminal::TerminalConnection::ITerminalConnection connection);
+        winrt::com_ptr<winrt::TerminalApp::implementation::TerminalPage> _paneMetadataSetup();
         void _splitKeepRunningPane(
             const winrt::com_ptr<winrt::TerminalApp::implementation::TerminalPage>& page,
             winrt::Microsoft::Terminal::TerminalConnection::ITerminalConnection connection,
@@ -1563,6 +1566,20 @@ namespace TerminalAppLocalTests
             VERIFY_IS_TRUE(page->ActualHeight() > 0);
         });
         return page;
+    }
+
+    winrt::com_ptr<winrt::TerminalApp::implementation::TerminalPage> TabTests::_paneMetadataSetup()
+    {
+        const auto connection = winrt::make_self<TestConnection>(
+            ::Microsoft::Console::Utils::CreateGuid(),
+            winrt::Microsoft::Terminal::TerminalConnection::ConnectionState::Connected);
+        Grid host{ nullptr };
+        TestOnUIThread([&]() {
+            host = Grid{};
+            host.Width(1200);
+            host.Height(600);
+        });
+        return _commonSetup(*connection, host, std::nullopt, true);
     }
 
     void TabTests::_splitKeepRunningPane(
@@ -3505,7 +3522,7 @@ namespace TerminalAppLocalTests
 
     void TabTests::PaneAgentSessionEndClearsAgentBinding()
     {
-        auto page = _commonSetup();
+        auto page = _paneMetadataSetup();
         VERIFY_IS_NOT_NULL(page);
 
         TestOnUIThread([&]() {
@@ -3734,7 +3751,7 @@ namespace TerminalAppLocalTests
 
     void TabTests::AgentsViewWslResumeBindsQualifiedIdentityImmediately()
     {
-        const auto page = _commonSetup(nullptr, nullptr, std::nullopt, true);
+        const auto page = _paneMetadataSetup();
         TestOnUIThread([&]() {
             const auto id = page->_GetFocusedTabImpl()->GetActivePane()->GetSessionId();
             const winrt::hstring command{ L"wsl.exe -d Ubuntu -- copilot --resume shared-session" };
@@ -3790,7 +3807,7 @@ namespace TerminalAppLocalTests
 
     void TabTests::PaneResumeRejectsTerminalCommandline()
     {
-        const auto page = _commonSetup(nullptr, nullptr, std::nullopt, true);
+        const auto page = _paneMetadataSetup();
         TestOnUIThread([&]() {
             const auto id = page->_GetFocusedTabImpl()->GetActivePane()->GetSessionId();
             const auto manager = winrt::get_self<winrt::TerminalApp::implementation::ContentManager>(page->_manager);
@@ -3853,11 +3870,107 @@ namespace TerminalAppLocalTests
         });
     }
 
+    void TabTests::PaneRegistryOnlyResumePreservesQualifiedBackend()
+    {
+        using Manager = winrt::TerminalApp::implementation::ContentManager;
+        namespace Restore = ::Microsoft::Terminal::AgentPaneRestore;
+        const auto page = _paneMetadataSetup();
+        TestOnUIThread([&]() {
+            const auto pane = page->_GetFocusedTabImpl()->GetActivePane();
+            const auto id = pane->GetSessionId();
+            const auto manager = winrt::get_self<Manager>(page->_manager);
+            const auto contentId = _paneMetadata(page->_manager, id)->contentId;
+            for (const auto source : { L"host", L"wsl", L"invalid-source" })
+            {
+                for (const auto distro : { L"Ubuntu", L"", L"invalid&distro" })
+                {
+                    for (const auto universe : { L"", L"untrusted-home" })
+                    {
+                        manager->ResetPaneConnection(contentId, id);
+                        manager->UpdatePaneSessionIdentity(id, { L"registry-session", L"copilot", {} }, source, distro, universe);
+                        VERIFY_IS_TRUE(_paneMetadata(page->_manager, id)->session.backend.empty());
+                        NewTerminalArgs args;
+                        args.SessionId(id);
+                        args.Commandline(L"original-shell");
+                        std::vector<ActionAndArgs> actions{ { ShortcutAction::NewTab, NewTabArgs{ args } } };
+                        page->_StampAgentResumeCommandlines(actions);
+                        if (*universe || std::wstring_view{ source } == L"invalid-source" ||
+                            (std::wstring_view{ source } == L"wsl" && std::wstring_view{ distro } != L"Ubuntu"))
+                        {
+                            VERIFY_ARE_EQUAL(winrt::hstring{ L"original-shell" }, args.Commandline());
+                        }
+                        else
+                        {
+                            const auto target = Restore::ParseResumeCommandline(args.Commandline());
+                            VERIFY_ARE_EQUAL(std::wstring{ L"registry-session" }, target.sessionId);
+                            const auto backend = std::wstring_view{ source } == L"wsl" ? L"wsl:Ubuntu:copilot" : L"host:copilot";
+                            VERIFY_ARE_EQUAL(winrt::hstring{ Restore::BuildResumeCommandline(backend, L"registry-session") }, args.Commandline());
+                            if (std::wstring_view{ source } == L"wsl")
+                            {
+                                VERIFY_ARE_EQUAL(std::wstring{ backend }, target.backend);
+                            }
+                        }
+                    }
+                }
+            }
+        });
+    }
+
+    void TabTests::PaneClosedConnectionRejectsLateBindings()
+    {
+        using Manager = winrt::TerminalApp::implementation::ContentManager;
+        const auto page = _paneMetadataSetup();
+        TestOnUIThread([&]() {
+            const auto id = page->_GetFocusedTabImpl()->GetActivePane()->GetSessionId();
+            const auto manager = winrt::get_self<Manager>(page->_manager);
+            const auto contentId = _paneMetadata(page->_manager, id)->contentId;
+            for (const auto providerOnly : { false, true })
+            {
+                manager->ResetPaneConnection(contentId, id);
+                if (providerOnly)
+                {
+                    manager->BindPaneSession(id, { {}, L"copilot", {} });
+                }
+                manager->SetPaneConnectionState(id, false);
+                VERIFY_IS_TRUE(_paneMetadata(page->_manager, id)->connectionClosed);
+                for (const auto name : { "", "agent.session.start", "agent.prompt.submit" })
+                {
+                    Json::Value event;
+                    event["params"]["pane_id"] = _formatPaneId(id);
+                    event["params"]["agent"] = "copilot";
+                    event["params"]["agent_session_id"] = "late-session";
+                    event["params"]["event"] = name;
+                    event["params"]["resume_commandline"] = "copilot --resume late-session";
+                    page->_manager.OnPaneAgentSessionChanged(winrt::to_hstring(Json::writeString(Json::StreamWriterBuilder{}, event)));
+                    VERIFY_ARE_EQUAL(Manager::PaneAgentState::Ended, _paneMetadata(page->_manager, id)->state);
+                    VERIFY_IS_FALSE(_paneHasAgent(page->_manager, id));
+                    VERIFY_IS_TRUE(_paneMetadata(page->_manager, id)->session.resumeCommandline.empty());
+                }
+                manager->BindPaneSession(id, { L"direct-session", L"copilot", L"copilot --resume direct-session" });
+                manager->UpdatePaneSessionIdentity(id, { L"registry-session", L"copilot", {} }, L"host", {}, {});
+                VERIFY_ARE_EQUAL(Manager::PaneAgentState::Ended, _paneMetadata(page->_manager, id)->state);
+                VERIFY_IS_TRUE(_paneMetadata(page->_manager, id)->session.sessionId.empty());
+                manager->ResetPaneConnection(contentId, id);
+                VERIFY_IS_FALSE(_paneMetadata(page->_manager, id)->connectionClosed);
+                page->_manager.OnPaneAgentSessionChanged(_keepRunningHook(id, "agent.session.start", "restarted-session"));
+                VERIFY_IS_TRUE(_paneHasSession(page->_manager, id));
+                manager->EndPaneSession(id);
+                VERIFY_IS_FALSE(_paneMetadata(page->_manager, id)->connectionClosed);
+                page->_manager.OnPaneAgentSessionChanged(_keepRunningHook(id, "agent.session.start", "fresh-session"));
+                VERIFY_IS_TRUE(_paneHasSession(page->_manager, id));
+                manager->SetPaneConnectionState(id, true);
+                manager->BindPaneSession(id, { L"fresh-session", L"copilot", {} });
+                VERIFY_ARE_EQUAL(Manager::PaneAgentState::Failed, _paneMetadata(page->_manager, id)->state);
+                VERIFY_IS_FALSE(_paneMetadata(page->_manager, id)->connectionClosed);
+            }
+        });
+    }
+
     void TabTests::TrustedResumeEnvelopeRoundTripsQualifiedIdentity()
     {
         namespace Restore = ::Microsoft::Terminal::AgentPaneRestore;
         using Manager = winrt::TerminalApp::implementation::ContentManager;
-        const auto page = _commonSetup(nullptr, nullptr, std::nullopt, true);
+        const auto page = _paneMetadataSetup();
         TestOnUIThread([&]() {
             const auto id = page->_GetFocusedTabImpl()->GetActivePane()->GetSessionId();
             const auto manager = winrt::get_self<Manager>(page->_manager);
@@ -3953,7 +4066,7 @@ namespace TerminalAppLocalTests
     void TabTests::PaneResumeSurvivesSessionlessStartup()
     {
         using Manager = winrt::TerminalApp::implementation::ContentManager;
-        const auto page = _commonSetup(nullptr, nullptr, std::nullopt, true);
+        const auto page = _paneMetadataSetup();
         TestOnUIThread([&]() {
             const auto id = page->_GetFocusedTabImpl()->GetActivePane()->GetSessionId();
             const auto manager = winrt::get_self<Manager>(page->_manager);
@@ -4006,7 +4119,7 @@ namespace TerminalAppLocalTests
     void TabTests::_verifyPaneResumeStartup(const bool protocolBinding, const bool bootstrap)
     {
         using Manager = winrt::TerminalApp::implementation::ContentManager;
-        const auto page = _commonSetup(nullptr, nullptr, std::nullopt, true);
+        const auto page = _paneMetadataSetup();
         TestOnUIThread([&]() {
             const auto id = page->_GetFocusedTabImpl()->GetActivePane()->GetSessionId();
             const auto manager = winrt::get_self<Manager>(page->_manager);
@@ -4147,7 +4260,7 @@ namespace TerminalAppLocalTests
     void TabTests::PaneResumeBootstrapProtectionRespectsScope()
     {
         using Manager = winrt::TerminalApp::implementation::ContentManager;
-        const auto page = _commonSetup(nullptr, nullptr, std::nullopt, true);
+        const auto page = _paneMetadataSetup();
         TestOnUIThread([&]() {
             const auto id = page->_GetFocusedTabImpl()->GetActivePane()->GetSessionId();
             const auto manager = winrt::get_self<Manager>(page->_manager);
@@ -4196,7 +4309,7 @@ namespace TerminalAppLocalTests
     void TabTests::PaneUntrustedBindingCannotArmResumeProtection()
     {
         using Manager = winrt::TerminalApp::implementation::ContentManager;
-        const auto page = _commonSetup(nullptr, nullptr, std::nullopt, true);
+        const auto page = _paneMetadataSetup();
         TestOnUIThread([&]() {
             const auto id = page->_GetFocusedTabImpl()->GetActivePane()->GetSessionId();
             const auto manager = winrt::get_self<Manager>(page->_manager);
@@ -4232,7 +4345,7 @@ namespace TerminalAppLocalTests
     void TabTests::PaneHookUniversePresenceUsesConfirmedBinding()
     {
         using Manager = winrt::TerminalApp::implementation::ContentManager;
-        const auto page = _commonSetup(nullptr, nullptr, std::nullopt, true);
+        const auto page = _paneMetadataSetup();
         TestOnUIThread([&]() {
             const auto id = page->_GetFocusedTabImpl()->GetActivePane()->GetSessionId();
             const auto manager = winrt::get_self<Manager>(page->_manager);
@@ -4321,7 +4434,7 @@ namespace TerminalAppLocalTests
     void TabTests::PaneMissingUniverseDoesNotBorrowForeignIdentity()
     {
         using Manager = winrt::TerminalApp::implementation::ContentManager;
-        const auto page = _commonSetup(nullptr, nullptr, std::nullopt, true);
+        const auto page = _paneMetadataSetup();
         TestOnUIThread([&]() {
             const auto id = page->_GetFocusedTabImpl()->GetActivePane()->GetSessionId();
             const auto manager = winrt::get_self<Manager>(page->_manager);
@@ -4381,7 +4494,7 @@ namespace TerminalAppLocalTests
     void TabTests::PaneQualifiedReplacementRetiresCommandAndRejectsOldEnd()
     {
         using Manager = winrt::TerminalApp::implementation::ContentManager;
-        const auto page = _commonSetup(nullptr, nullptr, std::nullopt, true);
+        const auto page = _paneMetadataSetup();
         TestOnUIThread([&]() {
             const auto id = page->_GetFocusedTabImpl()->GetActivePane()->GetSessionId();
             const auto manager = winrt::get_self<Manager>(page->_manager);
@@ -4466,7 +4579,7 @@ namespace TerminalAppLocalTests
     {
         using Manager = winrt::TerminalApp::implementation::ContentManager;
         using Page = winrt::TerminalApp::implementation::TerminalPage;
-        const auto page = _commonSetup(nullptr, nullptr, std::nullopt, true);
+        const auto page = _paneMetadataSetup();
         TestOnUIThread([&]() {
             const auto id = page->_GetFocusedTabImpl()->GetActivePane()->GetSessionId();
             const auto manager = winrt::get_self<Manager>(page->_manager);
@@ -4556,7 +4669,7 @@ namespace TerminalAppLocalTests
     void TabTests::PaneLateBindingPreservesFailure()
     {
         using Manager = winrt::TerminalApp::implementation::ContentManager;
-        const auto page = _commonSetup(nullptr, nullptr, std::nullopt, true);
+        const auto page = _paneMetadataSetup();
         TestOnUIThread([&]() {
             const auto id = page->_GetFocusedTabImpl()->GetActivePane()->GetSessionId();
             const auto manager = winrt::get_self<Manager>(page->_manager);
@@ -4579,7 +4692,7 @@ namespace TerminalAppLocalTests
     void TabTests::PaneBindingPreservesInheritedCommandProvenance()
     {
         using Manager = winrt::TerminalApp::implementation::ContentManager;
-        const auto page = _commonSetup(nullptr, nullptr, std::nullopt, true);
+        const auto page = _paneMetadataSetup();
         TestOnUIThread([&]() {
             const auto id = page->_GetFocusedTabImpl()->GetActivePane()->GetSessionId();
             const auto manager = winrt::get_self<Manager>(page->_manager);
@@ -4613,7 +4726,7 @@ namespace TerminalAppLocalTests
     {
         using Page = winrt::TerminalApp::implementation::TerminalPage;
         using Manager = winrt::TerminalApp::implementation::ContentManager;
-        const auto page = _commonSetup(nullptr, nullptr, std::nullopt, true);
+        const auto page = _paneMetadataSetup();
         TestOnUIThread([&]() {
             const auto tab = page->_GetFocusedTabImpl();
             const auto id = tab->GetActivePane()->GetSessionId();
@@ -4671,7 +4784,7 @@ namespace TerminalAppLocalTests
     void TabTests::PaneRestorePageBeforeManagerReconciles()
     {
         using Page = winrt::TerminalApp::implementation::TerminalPage;
-        const auto page = _commonSetup(nullptr, nullptr, std::nullopt, true);
+        const auto page = _paneMetadataSetup();
         TestOnUIThread([&]() {
             const auto tab = page->_GetFocusedTabImpl();
             const auto id = tab->GetActivePane()->GetSessionId();

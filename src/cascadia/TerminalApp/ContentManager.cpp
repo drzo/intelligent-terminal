@@ -288,6 +288,10 @@ namespace winrt::TerminalApp::implementation
             const auto it = _paneMetadata.find(paneId);
             THROW_HR_IF(E_INVALIDARG, it == _paneMetadata.end());
             auto& metadata = it->second;
+            if (metadata.connectionClosed)
+            {
+                return;
+            }
             auto identity = _PaneSessionIdentity(session, source, distro, universe);
             if (identity.source.empty() && metadata.session.sessionId == session.sessionId &&
                 metadata.session.agent == session.agent)
@@ -375,20 +379,30 @@ namespace winrt::TerminalApp::implementation
 
     void ContentManager::SetPaneConnectionState(const winrt::guid& paneId, const bool failed)
     {
-        if (!failed)
-        {
-            EndPaneSession(paneId);
-            return;
-        }
         {
             std::lock_guard lock{ _mutex };
             const auto it = _paneMetadata.find(paneId);
-            if (it == _paneMetadata.end() || !it->second.HasAgent())
+            if (it == _paneMetadata.end() || it->second.connectionClosed)
             {
                 return;
             }
-            it->second.state = PaneAgentState::Failed;
-            it->second.activity = L"Error";
+            auto& metadata = it->second;
+            if (!failed)
+            {
+                metadata.connectionClosed = true;
+                _RetirePaneSession(metadata);
+                metadata.state = PaneAgentState::Ended;
+                metadata.activity.clear();
+            }
+            else
+            {
+                if (!metadata.HasAgent())
+                {
+                    return;
+                }
+                metadata.state = PaneAgentState::Failed;
+                metadata.activity = L"Error";
+            }
         }
         PaneMetadataChanged.raise(*this, paneId);
     }
@@ -404,7 +418,8 @@ namespace winrt::TerminalApp::implementation
             }
             auto& metadata = it->second;
             const auto identity = _PaneSessionIdentity(session, source, distro, universe);
-            if ((!metadata.HasAgent() && metadata.state != PaneAgentState::Unknown) ||
+            if (metadata.connectionClosed ||
+                (!metadata.HasAgent() && metadata.state != PaneAgentState::Unknown) ||
                 metadata.IsSuperseded(identity) ||
                 (!metadata.session.sessionId.empty() && metadata.session.sessionId != session.sessionId) ||
                 (!metadata.session.agent.empty() && metadata.session.agent != session.agent) ||
@@ -558,6 +573,10 @@ namespace winrt::TerminalApp::implementation
                 return;
             }
             auto& metadata = it->second;
+            if (metadata.connectionClosed)
+            {
+                return;
+            }
             _ResolvePaneHookScope(metadata, identity, params.isMember("session_universe"), started);
             if (!started &&
                 ((!agentSessionId.empty() &&
