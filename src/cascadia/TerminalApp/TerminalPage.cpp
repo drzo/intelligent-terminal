@@ -11004,7 +11004,13 @@ namespace winrt::TerminalApp::implementation
         _interactiveResumeSessions.insert_or_assign(*paneSessionId, binding);
         _explicitNativeAgentSessions.insert(*paneSessionId);
         winrt::get_self<ContentManager>(_manager)->SetExplicitNativeAgentProvider(control.ContentId(), binding.agent);
-        _PublishNativeAgentObservation(control, "reset", true);
+        const auto nativeFallback = !_settings.GlobalSettings().EffectiveAgentSessionManagementEnabled();
+        _PublishNativeAgentObservation(control, "reset", true, std::nullopt, nativeFallback);
+        if (nativeFallback)
+        {
+            _ApplyTabListProjection();
+            return;
+        }
 
         Json::Value params;
         params["pane_id"] = std::string{ paneId };
@@ -11891,11 +11897,11 @@ namespace winrt::TerminalApp::implementation
 
     void TerminalPage::_ReplayNativeAgentObservationsForReceiver(const uint64_t receiverGeneration)
     {
-        if (receiverGeneration == 0 || receiverGeneration != SharedWta::Instance().MasterGeneration() ||
-            _lastReadyNativeAgentReceiverGeneration == receiverGeneration)
+        if (receiverGeneration == 0 || receiverGeneration != SharedWta::Instance().MasterGeneration())
         {
             return;
         }
+        const auto replacement = _lastReadyNativeAgentReceiverGeneration != receiverGeneration;
         _lastReadyNativeAgentReceiverGeneration = receiverGeneration;
         if (_settings.GlobalSettings().EffectiveAgentSessionManagementEnabled())
         {
@@ -11908,7 +11914,33 @@ namespace winrt::TerminalApp::implementation
                 tab->GetRootPane()->WalkTree([&](const auto& pane) {
                     if (const auto control = pane->GetTerminalControl())
                     {
-                        _PublishNativeAgentObservation(control, "progress", true, control.TaskbarState(), true);
+                        const auto manager = winrt::get_self<ContentManager>(_manager);
+                        const auto identity = manager->NativeAgentObservationForContent(control.ContentId());
+                        const auto paneId = _TryParsePaneSessionId(_FindSessionIdForControl(control));
+                        if (!replacement && identity && paneId)
+                        {
+                            const auto row = _richTabAgentStatusByPaneId.find(*paneId);
+                            if (row != _richTabAgentStatusByPaneId.end() &&
+                                identity->receiverGeneration == receiverGeneration &&
+                                row->second.modeEpoch == identity->modeEpoch &&
+                                row->second.windowId == identity->windowId && row->second.tabId == identity->tabId &&
+                                ::Microsoft::Terminal::Settings::Model::AgentRegistry::AgentIdEquals(
+                                    winrt::to_hstring(row->second.providerId), identity->providerId) &&
+                                (identity->agentSessionId.empty() || row->second.sessionId == identity->agentSessionId) &&
+                                (identity->location.empty() || row->second.location == _NativeAgentObservationLocation(identity->location)))
+                            {
+                                return false;
+                            }
+                        }
+                        if (replacement)
+                        {
+                            _PublishNativeAgentObservation(control, "progress", true, control.TaskbarState(), true);
+                        }
+                        else
+                        {
+                            // Retry an unacknowledged admission without replaying old activity.
+                            _PublishNativeAgentObservation(control, "reset", false, std::nullopt, true);
+                        }
                     }
                     return false;
                 });
@@ -11987,7 +12019,7 @@ namespace winrt::TerminalApp::implementation
             }
         }
         const auto enabled = _settings.GlobalSettings().EffectiveAgentSessionManagementEnabled();
-        if (!previous || previous->modeEpoch != identity.modeEpoch)
+        if (!previous || previous->modeEpoch != identity.modeEpoch || birthBeforeReset)
         {
             if (birthBeforeReset && !enabled && !identity.agentSessionId.empty() &&
                 (explicitBinding || !identity.qualifiedLocation.empty()))
@@ -12642,8 +12674,19 @@ namespace winrt::TerminalApp::implementation
                         });
                 }
             };
-            term.WarningBell([observe](auto&&, auto&&) { observe(true); });
-            term.SetTaskbarProgress([observe](auto&&, auto&&) { observe(false); });
+            std::shared_ptr<winrt::Microsoft::Terminal::Control::ControlCore::WarningBell_revoker> parsedBell;
+            if (const auto content = winrt::get_self<ContentManager>(_manager)->TryLookupCore(term.ContentId()))
+            {
+                parsedBell = std::make_shared<winrt::Microsoft::Terminal::Control::ControlCore::WarningBell_revoker>(
+                    content.Core().WarningBell(winrt::auto_revoke, [observe](auto&&, auto&&) { observe(true); }));
+            }
+            else
+            {
+                LOG_HR_MSG(E_UNEXPECTED, "Native observation source has no terminal core");
+            }
+            // The control's observation handler owns the raw subscription across stashing,
+            // and revokes it when this control is retired rather than retaining it on the core.
+            term.SetTaskbarProgress([observe, parsedBell](auto&&, auto&&) { observe(false); });
 
             term.VtSequenceReceived(
                 [weakThis = get_weak(), weakTerm, paneIdStr, publication](auto&&, const winrt::hstring& seq) {

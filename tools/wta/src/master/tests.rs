@@ -1912,9 +1912,17 @@ async fn native_receiver_ordered_birth_reset_preserves_late_rpc_activity() {
         serde_json::json!({"method":"session_born_bound","params":birth.clone()}),
     )
     .await;
+    assert!(
+        state
+            .registry
+            .lookup(&acp::schema::v1::SessionId::new("restored-real"))
+            .await
+            .unwrap()
+            .born_bound_pane
+    );
     let mut observation = serde_json::json!({
         "pane_id":"00112233-4455-6677-8899-aabbccddeeff", "provider_id":"copilot",
-        "agent_session_id":"restored-real", "location":"Host", "window_id":0,
+        "agent_session_id":"restored-real", "window_id":0,
         "tab_id":"tab", "mode_epoch":1, "kind":"reset","tracking_enabled":false,
         "receiver_generation":7
     });
@@ -1968,6 +1976,106 @@ async fn native_receiver_ordered_birth_reset_preserves_late_rpc_activity() {
     assert_eq!(row.status, Some(AgentStatus::Attention));
     assert_eq!(row.attention_reason.as_deref(), Some("ask_user"));
     assert_eq!(state.registry.snapshot().await.len(), 1);
+}
+
+#[tokio::test]
+async fn native_receiver_birth_preserves_other_backend_with_the_same_session_id() {
+    use crate::agent_sessions::{AgentStatus, CliSource, SessionLocation};
+    use crate::session_registry::{SessionIdentity, SessionInfo};
+    let _capture = crate::wt_protocol_events::capture_test_published_events();
+    let mut state = make_state();
+    Arc::get_mut(&mut state)
+        .unwrap()
+        .native_observation_receiver_generation = Some(7);
+    handle_master_wt_event(
+        &state,
+        serde_json::json!({"method":"wt_listener_ready","params":{}}),
+    )
+    .await;
+    let sid = acp::schema::v1::SessionId::new("backend-collision");
+    let mut host = SessionInfo::new(sid.clone(), std::path::PathBuf::from("C:\\host"));
+    host.location = SessionLocation::Host;
+    host.provider_id = Some("copilot".into());
+    host.cli_source = Some(CliSource::Copilot);
+    host.pane_session_id = Some("00112233-4455-6677-8899-aabbccddeeff".into());
+    host.status = Some(AgentStatus::Working);
+    host.born_bound_pane = true;
+    let host_identity = SessionIdentity::from_info(&host);
+    state.registry.upsert(host).await;
+    let mut wsl = SessionInfo::new(sid, std::path::PathBuf::from("/repo"));
+    wsl.provider_id = Some("copilot".into());
+    wsl.cli_source = Some(CliSource::Copilot);
+    wsl.location = SessionLocation::Wsl {
+        distro: "Ubuntu".into(),
+    };
+    wsl.status = Some(AgentStatus::Historical);
+    let wsl_identity = SessionIdentity::from_info(&wsl);
+    state.registry.upsert(wsl).await;
+    let before_host = state
+        .registry
+        .lookup_identity(&host_identity)
+        .await
+        .unwrap();
+    handle_master_wt_event(
+        &state,
+        serde_json::json!({
+            "method":"session_born_bound", "params":{
+                "pane_id":"11112233-4455-6677-8899-aabbccddeeff",
+                "agent_session_id":"backend-collision", "agent":"copilot",
+                "wsl_distro":"Ubuntu", "cwd":"/repo", "tab_id":"wsl-tab",
+                "window_id":0, "receiver_generation":7
+            }
+        }),
+    )
+    .await;
+    assert_eq!(
+        state
+            .registry
+            .lookup_identity(&host_identity)
+            .await
+            .unwrap(),
+        before_host
+    );
+    let bound = state.registry.lookup_identity(&wsl_identity).await.unwrap();
+    assert_eq!(
+        bound.pane_session_id.as_deref(),
+        Some("11112233-4455-6677-8899-aabbccddeeff")
+    );
+    assert!(bound.born_bound_pane);
+    let mut observation = serde_json::json!({
+        "pane_id":"11112233-4455-6677-8899-aabbccddeeff", "provider_id":"copilot",
+        "agent_session_id":"backend-collision", "window_id":0, "tab_id":"wsl-tab",
+        "mode_epoch":1, "kind":"reset", "tracking_enabled":false, "receiver_generation":7
+    });
+    handle_master_wt_event(
+        &state,
+        serde_json::json!({"method":"native_agent_observation","params":observation.clone()}),
+    )
+    .await;
+    observation["kind"] = serde_json::json!("progress");
+    observation["progress_state"] = serde_json::json!(1);
+    handle_master_wt_event(
+        &state,
+        serde_json::json!({"method":"native_agent_observation","params":observation}),
+    )
+    .await;
+    assert_eq!(
+        state
+            .registry
+            .lookup_identity(&wsl_identity)
+            .await
+            .unwrap()
+            .status,
+        Some(AgentStatus::Working)
+    );
+    assert_eq!(
+        state
+            .registry
+            .lookup_identity(&host_identity)
+            .await
+            .unwrap(),
+        before_host
+    );
 }
 
 fn make_state_with_retirement_pending_timeout(

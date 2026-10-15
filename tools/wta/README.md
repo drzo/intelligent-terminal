@@ -876,10 +876,16 @@ downgrading to unmanaged behavior.
 Restored births use the existing `session_born_bound` COM topic and existing
 `pane_id`, exact `agent_session_id`, `agent`, `cwd`, tab/window identity and
 optional `wsl_distro` fields. Master handles birth before the following native
-reset on its ordered event reader, reusing the existing born-bound reducer;
+reset on its ordered event reader, reusing the existing qualified resume/binding helpers;
 late duplicate helper RPCs do not overwrite live activity. Only Terminal-created
 or previously qualified actual identities may be replayed. Unknown panes get
 no synthetic conversation ID or history matching; no activity is copied.
+Interactive known-session resumes use the same generation-qualified ordered
+birth path before OFF reset. The master confirms the exact active qualified
+pane binding without changing its current activity; a subsequent reset may omit
+location only when that authoritative binding already supplies it. Registration
+uses the exact provider/backend identity even when another backend has the same
+raw session ID; generic hook and helper-RPC reducers remain unchanged.
 
 Terminal publishes `method: "native_agent_observation"` through the existing
 COM event subscription. Its `params` object contains:
@@ -905,6 +911,9 @@ clears OFF ownership. Other events must match the admitted epoch and identity:
 means Attention (including completion ready for the next request), and `removed`
 means actual pane removal. Connection Closed/Failed and shell prompt markers
 are not removal while OFF. An old or unadmitted observation is ignored.
+After same-master subscription recovery, Terminal retries only admissions
+missing from the ready snapshot, reusing their epochs without replaying progress
+or bells. Duplicate admitted resets remain no-ops.
 
 An optional `agent_session_id` must be the exact explicitly selected real
 session ID, never a pane-derived ID. To bind an unowned history row on OFF

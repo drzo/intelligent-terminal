@@ -10703,6 +10703,51 @@ async fn handle_master_wt_event(state: &Arc<MasterStateInner>, event_json: serde
             tracing::warn!(target: "master_wt_event", "ignoring incomplete restored born-bound identity");
             return;
         }
+        let distro = params
+            .get("wsl_distro")
+            .and_then(serde_json::Value::as_str)
+            .filter(|value| !value.is_empty())
+            .map(str::to_owned);
+        if state.native_observation_receiver_generation.is_some() {
+            let location =
+                distro
+                    .as_ref()
+                    .map_or(crate::agent_sessions::SessionLocation::Host, |distro| {
+                        crate::agent_sessions::SessionLocation::Wsl {
+                            distro: distro.clone(),
+                        }
+                    });
+            let sid = acp::schema::v1::SessionId::new(key.to_string());
+            let identity = crate::session_registry::SessionIdentity {
+                session_id: sid.clone(),
+                history_key: crate::session_registry::HistoryRowKey::new(
+                    agent, location, key, None,
+                ),
+            };
+            let applied = {
+                let gate = session_lifecycle_gate(state, &sid).await;
+                let _guard = gate.lock().await;
+                let applied = state
+                    .registry
+                    .register_native_born_binding(
+                        &identity,
+                        pane,
+                        std::path::Path::new(field("cwd")),
+                    )
+                    .await;
+                if applied {
+                    let hook_owned = state.hook_owned.lock().await.contains(&sid);
+                    if !hook_owned {
+                        state.born_bound.lock().await.insert(sid);
+                    }
+                }
+                applied
+            };
+            if applied {
+                broadcast_session_status_change(state, None).await;
+            }
+            return;
+        }
         let event = crate::agent_sessions::SessionEvent::SessionStarted {
             key: key.to_string(),
             cli_source: crate::session_registry::SessionHookCliSource::Known(agent.to_string())
@@ -10711,13 +10756,9 @@ async fn handle_master_wt_event(state: &Arc<MasterStateInner>, event_json: serde
             cwd: std::path::PathBuf::from(field("cwd")),
             title: String::new(),
         };
-        let distro = params
-            .get("wsl_distro")
-            .and_then(serde_json::Value::as_str)
-            .filter(|value| !value.is_empty())
-            .map(str::to_owned);
         if let Err(error) = handle_session_born_bound(state, event, distro).await {
             tracing::warn!(target: "master_wt_event", %error, "ordered restored born-bound event failed");
+            return;
         }
         return;
     }
