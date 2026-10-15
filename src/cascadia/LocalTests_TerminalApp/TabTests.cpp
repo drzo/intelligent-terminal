@@ -5125,6 +5125,34 @@ namespace TerminalAppLocalTests
         _waitForContentTransferReviewUI([&]() {
             return tab->FindAgentPane()->IsHidden() && shell.FocusState() != FocusState::Unfocused;
         });
+
+        TestOnUIThread([&]() {
+            invoke();
+        });
+        _waitForContentTransferReviewUI([&]() {
+            return !tab->FindAgentPane()->IsHidden() && agent.FocusState() != FocusState::Unfocused;
+        });
+        TestOnUIThread([&]() {
+            VERIFY_IS_TRUE(shell.Focus(FocusState::Programmatic));
+            VERIFY_IS_TRUE(tab->GetActivePane()->GetTerminalControl() == shell);
+            tab->EnterZoom();
+            VERIFY_IS_TRUE(tab->IsZoomed());
+            VERIFY_IS_FALSE(tab->FindAgentPane()->IsHidden());
+            page->UpdateLayout();
+        });
+        _waitForContentTransferReviewUI([&]() {
+            return shell.IsLoaded() && !agent.IsLoaded();
+        });
+        TestOnUIThread([&]() {
+            invoke();
+            VERIFY_IS_TRUE(tab->FindAgentPane()->IsHidden());
+            VERIFY_IS_TRUE(tab->FindAgentPaneContent() == agentContent);
+            tab->ExitZoom();
+        });
+        _waitForContentTransferReviewUI([&]() {
+            return !tab->IsZoomed() && tab->FindAgentPane()->IsHidden() &&
+                   shell.FocusState() != FocusState::Unfocused;
+        });
     }
 
     void TabTests::SidebarRecentPreferencePreservesSearchAndInputFocus()
