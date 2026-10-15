@@ -6867,6 +6867,7 @@ fn session_event_is_activity_only(event: &crate::agent_sessions::SessionEvent) -
         SessionEvent::ToolStarting { .. }
             | SessionEvent::ToolCompleted { .. }
             | SessionEvent::Notification { .. }
+            | SessionEvent::Permission { .. }
     )
 }
 
@@ -8750,6 +8751,41 @@ async fn apply_watcher_event(
     emitted: crate::session_watcher::Emitted,
 ) {
     let sid = acp::schema::v1::SessionId::new(emitted.key.clone());
+
+    // Copilot has a permission-prompt hook but no matching completion hook.
+    // Admit only correlated permission facts for a uniquely bound native host
+    // session; ordinary watcher activity must still defer to the hooks.
+    if emitted.cli == crate::agent_sessions::CliSource::Copilot
+        && matches!(
+            &emitted.event,
+            crate::agent_sessions::SessionEvent::Permission {
+                update: crate::session_permissions::PermissionUpdate::Requested { .. }
+                    | crate::session_permissions::PermissionUpdate::Completed { .. },
+                ..
+            }
+        )
+    {
+        let gate = session_lifecycle_gate(state, &sid).await;
+        let _guard = gate.lock().await;
+        let owned = state.hook_owned.lock().await.contains(&sid)
+            || state.born_bound.lock().await.contains(&sid);
+        let native = state.registry.lookup(&sid).await.is_some_and(|row| {
+            row.cli_source == Some(crate::agent_sessions::CliSource::Copilot)
+                && row.location == crate::agent_sessions::SessionLocation::Host
+                && row.session_universe.is_none()
+                && row.origin != Some(crate::agent_sessions::SessionOrigin::AgentPane)
+                && row
+                    .pane_session_id
+                    .as_deref()
+                    .is_some_and(|pane| !pane.trim().is_empty())
+        });
+        let changed = owned && native && state.registry.apply_event(emitted.event).await;
+        drop(_guard);
+        if changed {
+            broadcast_session_status_change(state, Some(&emitted.key)).await;
+        }
+        return;
+    }
 
     // Hybrid dedup — the watcher is a *fallback*. Coordinate with authoritative
     // producers:
@@ -10870,6 +10906,7 @@ fn session_event_key(event: &crate::agent_sessions::SessionEvent) -> Option<&str
         | SessionEvent::ToolStarting { key, .. }
         | SessionEvent::ToolCompleted { key }
         | SessionEvent::Notification { key, .. }
+        | SessionEvent::Permission { key, .. }
         | SessionEvent::SessionStopped { key, .. }
         | SessionEvent::ResumeDispatched { key }
         | SessionEvent::ResumeFailed { key, .. }

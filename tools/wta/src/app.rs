@@ -501,6 +501,7 @@ pub const CONSUMED_PAYLOAD_KEYS: &[&str] = &[
     "message",
     "notification_type",
     "notificationType",
+    "timestamp",
     "reason",
     "error",
 ];
@@ -701,6 +702,24 @@ pub fn plan_agent_event(
                     ))
             {
                 plan.events.clear();
+                return plan;
+            }
+            if matches!(cli_source, crate::agent_sessions::CliSource::Copilot)
+                && notification_type == "permission_prompt"
+            {
+                plan.events.push(SessionEvent::Permission {
+                    key,
+                    update: crate::session_permissions::PermissionUpdate::Prompt {
+                        message: payload
+                            .get("message")
+                            .and_then(|value| value.as_str())
+                            .unwrap_or("")
+                            .to_string(),
+                        at_ms: payload
+                            .get("timestamp")
+                            .and_then(crate::session_permissions::timestamp_ms),
+                    },
+                });
                 return plan;
             }
             SessionEvent::Notification {

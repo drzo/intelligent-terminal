@@ -17140,6 +17140,176 @@ async fn born_bound_delegate_clears_a_stale_hook_ownership_claim() {
 }
 
 #[tokio::test]
+async fn hook_owned_copilot_permission_completion_resumes_activity() {
+    use crate::agent_sessions::AgentStatus;
+
+    let state = make_state();
+    let _capture = crate::wt_protocol_events::capture_test_published_events();
+    let sid = SessionId::new("copilot-permission");
+    for (event, payload) in [
+        ("agent.prompt.submit", serde_json::json!({})),
+        (
+            "agent.notification",
+            serde_json::json!({
+                "notificationType": "permission_prompt",
+                "timestamp": 1792043537256u64,
+                "message": "Run command: Start-Sleep -Seconds 60",
+            }),
+        ),
+    ] {
+        handle_master_wt_event(
+            &state,
+            serde_json::json!({
+                "method": "agent_event",
+                "params": {
+                    "event": event,
+                    "cli_source": "copilot",
+                    "agent_session_id": "copilot-permission",
+                    "pane_id": "owner",
+                    "payload": payload,
+                },
+            }),
+        )
+        .await;
+    }
+    assert_eq!(
+        state.registry.lookup(&sid).await.unwrap().status,
+        Some(AgentStatus::Attention)
+    );
+    crate::wt_protocol_events::take_test_published_events();
+    for record in [
+        serde_json::json!({
+            "type": "permission.requested",
+            "timestamp": "2026-10-15T05:52:17.256Z",
+            "data": {
+                "requestId": "approval",
+                "permissionRequest": { "intention": "Run sleep" },
+            },
+        }),
+        serde_json::json!({
+            "type": "permission.completed",
+            "timestamp": "2026-10-15T05:52:21.426Z",
+            "data": { "requestId": "approval", "result": { "kind": "approved" } },
+        }),
+    ] {
+        for event in crate::session_watcher::classify_copilot::classify(
+            &record,
+            &"copilot-permission".to_string(),
+        ) {
+            apply_watcher_event(
+                &state,
+                crate::session_watcher::Emitted {
+                    cli: crate::agent_sessions::CliSource::Copilot,
+                    key: "copilot-permission".into(),
+                    event,
+                },
+            )
+            .await;
+        }
+    }
+    let row = state.registry.lookup(&sid).await.unwrap();
+    assert_eq!(row.status, Some(AgentStatus::Working));
+    assert!(row.attention_reason.is_none());
+    assert_eq!(row.current_tool.as_deref(), Some("prompt"));
+    assert_eq!(row.pane_session_id.as_deref(), Some("owner"));
+    assert!(state.hook_owned.lock().await.contains(&sid));
+    assert!(crate::wt_protocol_events::take_test_published_events()
+        .iter()
+        .any(|raw| {
+            let event: serde_json::Value = serde_json::from_str(raw).unwrap();
+            event["method"] == "session_registry_changed"
+                && event["params"]["session_id"] == "copilot-permission"
+                && event["params"]["status"] == "Working"
+        }));
+}
+
+#[tokio::test]
+async fn permission_watcher_cannot_update_non_native_or_unbound_sessions() {
+    use crate::agent_sessions::{AgentStatus, CliSource, SessionLocation, SessionOrigin};
+    use crate::session_permissions::PermissionUpdate;
+    use crate::session_registry::SessionInfo;
+
+    for (location, origin, owned, pane, universe) in [
+        (
+            SessionLocation::Host,
+            SessionOrigin::AgentPane,
+            true,
+            Some("pane"),
+            None,
+        ),
+        (
+            SessionLocation::Wsl {
+                distro: "Ubuntu".into(),
+            },
+            SessionOrigin::Unknown,
+            true,
+            Some("pane"),
+            None,
+        ),
+        (
+            SessionLocation::Host,
+            SessionOrigin::Unknown,
+            false,
+            Some("pane"),
+            None,
+        ),
+        (
+            SessionLocation::Host,
+            SessionOrigin::Unknown,
+            true,
+            None,
+            None,
+        ),
+        (
+            SessionLocation::Host,
+            SessionOrigin::Unknown,
+            true,
+            Some(""),
+            None,
+        ),
+        (
+            SessionLocation::Host,
+            SessionOrigin::Unknown,
+            true,
+            Some("pane"),
+            Some("other".to_string()),
+        ),
+    ] {
+        let state = make_state();
+        let sid = SessionId::new("excluded-permission");
+        let mut row = SessionInfo::new(sid.clone(), PathBuf::from("C:\\repo"));
+        row.cli_source = Some(CliSource::Copilot);
+        row.location = location;
+        row.origin = Some(origin);
+        row.session_universe = universe;
+        row.status = Some(AgentStatus::Working);
+        row.pane_session_id = pane.map(str::to_string);
+        state.registry.upsert(row).await;
+        if owned {
+            state.hook_owned.lock().await.insert(sid.clone());
+        }
+        let before = state.registry.snapshot().await;
+        apply_watcher_event(
+            &state,
+            crate::session_watcher::Emitted {
+                cli: CliSource::Copilot,
+                key: "excluded-permission".into(),
+                event: crate::agent_sessions::SessionEvent::Permission {
+                    key: "excluded-permission".into(),
+                    update: PermissionUpdate::Requested {
+                        request_id: "approval".into(),
+                        message: "should not appear".into(),
+                        at_ms: 10,
+                    },
+                },
+            },
+        )
+        .await;
+        assert_eq!(state.registry.snapshot().await, before);
+    }
+}
+
+#[tokio::test]
 async fn copilot_background_notifications_do_not_mutate_master_registry() {
     use crate::agent_sessions::{AgentStatus, CliSource, SessionLocation};
     use crate::session_registry::SessionInfo;

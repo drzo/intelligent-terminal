@@ -196,6 +196,15 @@ also ignored. `permission_prompt` and Copilot's `elicitation_dialog` still
 produce Attention (Waiting for input). Missing or unknown types retain that
 Attention fallback so an unrecognised approval request remains visible.
 
+For native Windows Copilot sessions, `permission.requested` and
+`permission.completed` transcript records supplement the prompt hook, which has
+no completion counterpart. WTA correlates these records by request ID and resumes
+Active only after the last pending approval ends. A separate elicitation or
+unknown notification remains waiting; late prompt hooks cannot reopen an approval
+that already completed. These records never change pane or hook ownership, and
+ordinary transcript activity remains suppressed for hook-owned sessions. Missing
+correlation metadata keeps the conservative waiting behavior.
+
 Two topics keep a routing arm in `app.rs` that outlives their subscription in
 the Claude and Copilot bundles: `agent.subagent.stop`, which no shipped manifest
 claims at all, and `agent.tool.starting`, which Gemini still sends as

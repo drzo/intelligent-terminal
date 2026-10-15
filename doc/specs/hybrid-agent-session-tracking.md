@@ -20,10 +20,11 @@ that hole, for all four CLIs, **without changing anything about the hook path**.
 The design principle is one sentence:
 
 > **A real hook owns a session outright; born-bound owns only its binding; the
-> watcher supplies status when hooks are absent; and the paths never
-> double-track.**
+> watcher supplies status when hooks are absent, plus correlated native Copilot
+> permission completion when hooks cannot report it; and the paths never double-bind.**
 
-The C++ side is unchanged — this is entirely a `wta` (Rust) addition.
+The Terminal UI and pane-binding code are unchanged. The native hook bridge
+retains permission notification timestamps when reducing oversized payloads.
 
 ## Background: Class A / Class B
 
@@ -41,14 +42,14 @@ IT classifies every session by `SessionOrigin` (`agent_sessions.rs`):
 ## Goals
 
 - Never produce a duplicate, a ghost, or a wrong-pane row when hooks **are**
-  present — the watcher must be a no-op for any session a hook owns.
+  present — ordinary watcher activity is a no-op for a hook-owned session.
 - Never surface a session that is not actually running in **this** IT window
   (the four CLIs write their session state to per-user roots shared by VS Code,
   language servers, other terminals, and other IT windows).
 
 ## Non-goals
 
-- Replacing or modifying the hook path, the born-bound path, or any C++ code.
+- Replacing hook subscriptions, the born-bound path, or Terminal UI code.
 - Tracking Class-A agent panes (ACP already does).
 - Perfect, instant fidelity. The watcher is a *fallback*; a few seconds of lag
   or a missed transient state is acceptable. We deliberately avoid adding
@@ -57,7 +58,7 @@ IT classifies every session by `SessionOrigin` (`agent_sessions.rs`):
 ## Principle: hooks own, born-bound binds, the watcher fills the gap
 
 ```
-   real hook / ACP event   ──►  `hook_owned`  ──► watcher fully suppressed
+   real hook / ACP event   ──►  `hook_owned`  ──► ordinary watcher activity suppressed
    #266 born-bound              `born_bound`   ──► watcher supplies STATUS only
    (delegate / resume)     ──►                     (never re-binds)
                     wta-master registry (one row per session)
@@ -131,6 +132,16 @@ Watcher processing then, in order:
 1. `hook_owned.contains(sid)` → **drop** (the hook owns binding and activity);
 2. `born_bound` → **apply status only**, never re-bind;
 3. anything else → drop rather than guess.
+
+The narrow exception is native Windows Copilot permission lifecycle records.
+`permission.requested` and `permission.completed` may update an already bound,
+uniquely identified host Copilot row in either ownership set, but never an ACP
+agent-pane, WSL, external, or ambiguous row. Requests are matched by `requestId`;
+the final completion resumes Working only if the current wait still belongs to
+those approvals. Other questions and unknown notifications remain Attention.
+Transcript and hook timestamps reject late prompts and completed-turn records.
+The exception does not transfer ownership or admit ordinary watcher activity,
+and avoids restoring costly per-tool command hooks.
 
 There is no ordering requirement and the row identity is the same session id
 throughout, so no duplicate is ever produced.
@@ -543,7 +554,8 @@ History is not required to establish these connections or load the initial histo
   Attention for a user-input tool); the tool-completion record is ignored
   because Idle is owned by the turn end. An explicit permission/escalation
   record (`permission.requested` for Copilot, sandbox `require_escalated` for
-  Codex) → Attention.
+  Codex) → Attention. Copilot `permission.completed` resolves only its matching
+  approval; concurrent pending approvals or a separate question keep Attention.
 - **Gemini** (`classify_gemini.rs`) — **Working-only; turn-based Idle deferred.**
   Gemini's `session-*.jsonl` is an **append log** (re-verified 2026-06-14): every
   line is a standalone `{"id","type":"user"|"gemini",…}` record or a `$set` op,

@@ -1027,6 +1027,10 @@ pub enum SessionHookParams {
         key: crate::agent_sessions::AgentKey,
         message: String,
     },
+    Permission {
+        key: crate::agent_sessions::AgentKey,
+        update: crate::session_permissions::PermissionUpdate,
+    },
     SessionStopped {
         key: crate::agent_sessions::AgentKey,
         reason: String,
@@ -1076,6 +1080,10 @@ impl From<&crate::agent_sessions::SessionEvent> for SessionHookParams {
             SessionEvent::Notification { key, message } => Self::Notification {
                 key: key.clone(),
                 message: message.clone(),
+            },
+            SessionEvent::Permission { key, update } => Self::Permission {
+                key: key.clone(),
+                update: update.clone(),
             },
             SessionEvent::SessionStopped { key, reason } => Self::SessionStopped {
                 key: key.clone(),
@@ -1128,6 +1136,7 @@ impl From<SessionHookParams> for crate::agent_sessions::SessionEvent {
             }
             SessionHookParams::ToolCompleted { key } => Self::ToolCompleted { key },
             SessionHookParams::Notification { key, message } => Self::Notification { key, message },
+            SessionHookParams::Permission { key, update } => Self::Permission { key, update },
             SessionHookParams::SessionStopped { key, reason } => {
                 Self::SessionStopped { key, reason }
             }
@@ -1594,6 +1603,7 @@ pub trait SessionRegistry: Send + Sync {
 #[derive(Default)]
 struct RegistryState {
     sessions: HashMap<SessionIdentity, SessionInfo>,
+    permissions: HashMap<SessionIdentity, crate::session_permissions::PermissionWaits>,
     identities_by_raw: HashMap<acp::schema::v1::SessionId, HashSet<SessionIdentity>>,
     active_by_pane: HashMap<String, SessionIdentity>,
 }
@@ -1906,7 +1916,7 @@ impl SessionRegistry for InMemoryRegistry {
 }
 
 #[allow(dead_code)] // Used through apply_event once Task B forwards hook events.
-fn now_ms() -> u64 {
+pub(crate) fn now_ms() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .unwrap_or_default()
@@ -1965,6 +1975,7 @@ fn remove_identity_locked(
     state: &mut RegistryState,
     identity: &SessionIdentity,
 ) -> Option<SessionInfo> {
+    state.permissions.remove(identity);
     let removed = state.sessions.remove(identity);
     if let Some(info) = &removed {
         if let Some(pane) = info.pane_session_id.as_deref() {
@@ -2062,6 +2073,7 @@ fn unique_matching_identity_for_raw(
 
 #[allow(dead_code)] // Used through apply_event once Task B forwards hook events.
 fn end_entry(state: &mut RegistryState, identity: &SessionIdentity, now: u64) -> bool {
+    state.permissions.remove(identity);
     let Some(entry) = state.sessions.get_mut(identity) else {
         return false;
     };
@@ -2216,6 +2228,9 @@ fn apply_event_locked(state: &mut RegistryState, ev: SessionEvent) -> bool {
             }
 
             let is_new_entry = existing_identity.is_none();
+            let permissions = existing_identity
+                .as_ref()
+                .and_then(|identity| state.permissions.remove(identity));
             let mut entry = existing_identity
                 .as_ref()
                 .and_then(|identity| remove_identity_locked(state, identity))
@@ -2242,12 +2257,12 @@ fn apply_event_locked(state: &mut RegistryState, ev: SessionEvent) -> bool {
             // reconnect); Working/Attention/Idle are preserved. Mirrors the
             // resurrection guards on ToolStarting/ToolCompleted below and the
             // helper-side reducer in `agent_sessions.rs`.
-            if is_new_entry
+            let reset_activity = is_new_entry
                 || matches!(
                     entry.status,
                     Some(AgentStatus::Ended | AgentStatus::Error | AgentStatus::Historical)
-                )
-            {
+                );
+            if reset_activity {
                 entry.status = Some(AgentStatus::Idle);
                 entry.last_error = None;
                 entry.attention_reason = None;
@@ -2263,6 +2278,13 @@ fn apply_event_locked(state: &mut RegistryState, ev: SessionEvent) -> bool {
             // the WTA-owned resume binding no longer needs protecting: a later
             // session started in the same pane may take over normally.
             entry.born_bound_pane = false;
+            if !reset_activity {
+                if let Some(permissions) = permissions {
+                    state
+                        .permissions
+                        .insert(SessionIdentity::from_info(&entry), permissions);
+                }
+            }
             upsert_locked(state, entry);
             true
         }
@@ -2290,7 +2312,16 @@ fn apply_event_locked(state: &mut RegistryState, ev: SessionEvent) -> bool {
             ) {
                 return false;
             }
-            entry.status = Some(AgentStatus::Working);
+            let pending = state
+                .permissions
+                .get_mut(&identity)
+                .and_then(|waits| waits.working());
+            entry.status = Some(if pending.is_some() {
+                AgentStatus::Attention
+            } else {
+                AgentStatus::Working
+            });
+            entry.attention_reason = pending;
             entry.current_tool = Some(tool_name);
             entry.last_activity_at_ms = Some(now);
             true
@@ -2312,6 +2343,9 @@ fn apply_event_locked(state: &mut RegistryState, ev: SessionEvent) -> bool {
                 Some(AgentStatus::Ended | AgentStatus::Historical)
             ) {
                 return false;
+            }
+            if entry.cli_source == Some(CliSource::Copilot) {
+                state.permissions.entry(identity).or_default().stop(now);
             }
             if matches!(
                 entry.status,
@@ -2342,8 +2376,41 @@ fn apply_event_locked(state: &mut RegistryState, ev: SessionEvent) -> bool {
             ) {
                 return false;
             }
+            if let Some(waits) = state.permissions.get_mut(&identity) {
+                waits.other_attention();
+            }
             entry.status = Some(AgentStatus::Attention);
             entry.attention_reason = Some(message);
+            entry.last_activity_at_ms = Some(now);
+            true
+        }
+        SessionEvent::Permission { key, update } => {
+            let sid = acp::schema::v1::SessionId::new(key);
+            let Some(identity) = unique_identity_for_raw(state, &sid) else {
+                return false;
+            };
+            let Some(entry) = state.sessions.get_mut(&identity) else {
+                return false;
+            };
+            let Some(status) = entry.status.as_ref() else {
+                return false;
+            };
+            match state
+                .permissions
+                .entry(identity)
+                .or_default()
+                .apply(update, status)
+            {
+                Some(crate::session_permissions::PermissionActivity::Waiting(message)) => {
+                    entry.status = Some(AgentStatus::Attention);
+                    entry.attention_reason = Some(message);
+                }
+                Some(crate::session_permissions::PermissionActivity::Working) => {
+                    entry.status = Some(AgentStatus::Working);
+                    entry.attention_reason = None;
+                }
+                None => return false,
+            }
             entry.last_activity_at_ms = Some(now);
             true
         }
@@ -2367,6 +2434,9 @@ fn apply_event_locked(state: &mut RegistryState, ev: SessionEvent) -> bool {
             let Some(entry) = state.sessions.get_mut(&identity) else {
                 return false;
             };
+            if let Some(waits) = state.permissions.get_mut(&identity) {
+                waits.stop(now);
+            }
             if is_agent_pane_session && pane_still_live && reason_keeps_session_alive {
                 entry.status = Some(AgentStatus::Idle);
             } else {
@@ -2388,6 +2458,7 @@ fn apply_event_locked(state: &mut RegistryState, ev: SessionEvent) -> bool {
             let Some(sid) = state.active_by_pane.remove(&pane_session_id) else {
                 return false;
             };
+            state.permissions.remove(&sid);
             let Some(entry) = state.sessions.get_mut(&sid) else {
                 return false;
             };
@@ -2419,6 +2490,9 @@ fn apply_event_locked(state: &mut RegistryState, ev: SessionEvent) -> bool {
                 && entry.last_error.as_deref() == Some(reason.as_str())
             {
                 return false;
+            }
+            if let Some(waits) = state.permissions.get_mut(&sid) {
+                waits.stop(now);
             }
             entry.status = Some(AgentStatus::Error);
             entry.last_error = Some(reason);
@@ -3931,6 +4005,102 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn permission_recovery_matches_helper_and_master_reducers() {
+        use crate::agent_sessions::AgentSessionRegistry;
+        use crate::session_permissions::PermissionUpdate;
+
+        let reg = InMemoryRegistry::new();
+        let mut helper = AgentSessionRegistry::new();
+        let key = "permission-parity".to_string();
+        let sid = acp::schema::v1::SessionId::new(key.clone());
+        for (event, expected) in [
+            (
+                SessionEvent::SessionStarted {
+                    key: key.clone(),
+                    cli_source: CliSource::Copilot,
+                    pane_session_id: "owner".into(),
+                    cwd: PathBuf::from("C:\\repo"),
+                    title: "test".into(),
+                },
+                AgentStatus::Idle,
+            ),
+            (
+                SessionEvent::ToolStarting {
+                    key: key.clone(),
+                    tool_name: "prompt".into(),
+                },
+                AgentStatus::Working,
+            ),
+            (
+                SessionEvent::Permission {
+                    key: key.clone(),
+                    update: PermissionUpdate::Prompt {
+                        message: "approval".into(),
+                        at_ms: Some(10),
+                    },
+                },
+                AgentStatus::Attention,
+            ),
+            (
+                SessionEvent::Permission {
+                    key: key.clone(),
+                    update: PermissionUpdate::Requested {
+                        request_id: "approval".into(),
+                        message: "approval".into(),
+                        at_ms: 10,
+                    },
+                },
+                AgentStatus::Attention,
+            ),
+            (
+                SessionEvent::Permission {
+                    key: key.clone(),
+                    update: PermissionUpdate::Completed {
+                        request_id: "approval".into(),
+                        at_ms: 20,
+                    },
+                },
+                AgentStatus::Working,
+            ),
+            (
+                SessionEvent::Permission {
+                    key: key.clone(),
+                    update: PermissionUpdate::Prompt {
+                        message: "late approval".into(),
+                        at_ms: Some(10),
+                    },
+                },
+                AgentStatus::Working,
+            ),
+            (
+                SessionEvent::ToolCompleted { key: key.clone() },
+                AgentStatus::Idle,
+            ),
+            (
+                SessionEvent::Permission {
+                    key: key.clone(),
+                    update: PermissionUpdate::Requested {
+                        request_id: "late".into(),
+                        message: "late".into(),
+                        at_ms: 30,
+                    },
+                },
+                AgentStatus::Idle,
+            ),
+        ] {
+            helper.apply(event.clone());
+            reg.apply_event(event).await;
+            let local = helper.get(&key).unwrap();
+            let master = reg.lookup(&sid).await.unwrap();
+            assert_eq!(local.status, expected);
+            assert_eq!(master.status, Some(expected));
+            assert_eq!(master.attention_reason, local.attention_reason);
+            assert_eq!(master.current_tool, local.current_tool);
+            assert_eq!(master.pane_session_id, local.pane_session_id);
+        }
+    }
+
+    #[tokio::test]
     async fn master_reducer_tool_lifecycle_and_notification_update_activity_fields() {
         let reg = InMemoryRegistry::new();
         reg.apply_event(crate::agent_sessions::SessionEvent::SessionStarted {
@@ -5123,6 +5293,28 @@ mod tests {
             SessionEvent::Notification {
                 key: "notification".to_string(),
                 message: "waiting for input".to_string(),
+            },
+            SessionEvent::Permission {
+                key: "permission".into(),
+                update: crate::session_permissions::PermissionUpdate::Prompt {
+                    message: "approval".into(),
+                    at_ms: Some(10),
+                },
+            },
+            SessionEvent::Permission {
+                key: "permission".into(),
+                update: crate::session_permissions::PermissionUpdate::Requested {
+                    request_id: "approval".into(),
+                    message: "approval".into(),
+                    at_ms: 10,
+                },
+            },
+            SessionEvent::Permission {
+                key: "permission".into(),
+                update: crate::session_permissions::PermissionUpdate::Completed {
+                    request_id: "approval".into(),
+                    at_ms: 20,
+                },
             },
             SessionEvent::SessionStopped {
                 key: "session-stopped".to_string(),
