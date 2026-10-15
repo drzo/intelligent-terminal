@@ -4967,24 +4967,28 @@ namespace TerminalAppLocalTests
             VERIFY_IS_NOT_NULL(agent);
             VERIFY_IS_FALSE(page->_DetectWtaPath().empty());
             const auto chord = KeyChordSerialization::FromString(L"ctrl+shift+period");
-            const auto invoke = [&](const winrt::Windows::Foundation::IInspectable& sender) {
-                ActionEventArgs args{};
-                page->_HandleOpenAgentPane(sender, args);
-                VERIFY_IS_TRUE(args.Handled());
+            const ActionAndArgs action{ ShortcutAction::OpenAgentPane, nullptr };
+            const auto map = page->_settings.ActionMap();
+            map.RegisterKeyBinding(chord, action);
+            const auto keys = winrt::make_self<winrt::TerminalApp::implementation::AppKeyBindings>();
+            keys->SetActionMap(map);
+            keys->SetDispatch(*page->_actionDispatch);
+            const auto invoke = [&]() {
+                VERIFY_IS_TRUE(keys->TryKeyChord(chord));
             };
 
             VERIFY_IS_TRUE(shell.Focus(FocusState::Programmatic));
             VERIFY_IS_FALSE(tab->FindAgentPane()->IsHidden());
-            invoke(chord);
+            invoke();
             VERIFY_IS_FALSE(tab->FindAgentPane()->IsHidden());
             VERIFY_IS_TRUE(agent.FocusState() != FocusState::Unfocused);
             VERIFY_IS_TRUE(tab->FindAgentPaneContent() == agentContent);
 
-            invoke(chord);
+            invoke();
             VERIFY_IS_TRUE(tab->FindAgentPane()->IsHidden());
             VERIFY_IS_TRUE(shell.FocusState() != FocusState::Unfocused);
 
-            invoke(chord);
+            invoke();
             VERIFY_IS_FALSE(tab->FindAgentPane()->IsHidden());
             VERIFY_IS_TRUE(agent.FocusState() != FocusState::Unfocused);
             VERIFY_IS_TRUE(tab->FindAgentPaneContent() == agentContent);
@@ -4995,7 +4999,7 @@ namespace TerminalAppLocalTests
             VERIFY_IS_TRUE(strip->SearchTextBox().Focus(FocusState::Programmatic));
             VERIFY_IS_TRUE(tab->GetActivePane()->GetTerminalControl() == agent);
             VERIFY_ARE_EQUAL(FocusState::Unfocused, agent.FocusState());
-            invoke(chord);
+            invoke();
             VERIFY_IS_FALSE(tab->FindAgentPane()->IsHidden());
             VERIFY_IS_TRUE(agent.FocusState() != FocusState::Unfocused);
 
@@ -5010,13 +5014,13 @@ namespace TerminalAppLocalTests
 
             agentContent.SetSessionsView(true);
             VERIFY_IS_TRUE(shell.Focus(FocusState::Programmatic));
-            invoke(chord);
+            invoke();
             VERIFY_IS_FALSE(tab->FindAgentPane()->IsHidden());
             VERIFY_IS_TRUE(agent.FocusState() != FocusState::Unfocused);
             agentContent.SetSessionsView(false);
 
             VERIFY_IS_TRUE(shell.Focus(FocusState::Programmatic));
-            invoke(nullptr);
+            VERIFY_IS_TRUE(page->_actionDispatch->DoAction(action));
             VERIFY_IS_TRUE(tab->FindAgentPane()->IsHidden());
             VERIFY_IS_TRUE(tab->FindAgentPaneContent() == agentContent);
         });

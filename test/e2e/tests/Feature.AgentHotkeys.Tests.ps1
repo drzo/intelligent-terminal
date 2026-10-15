@@ -203,7 +203,10 @@ Describe 'Feature: layout-aware agent history and sidebar hotkeys' -Tag @('Featu
             $search -and -not $search.Current.IsOffscreen -and $search.Current.HasKeyboardFocus
         }
         $script:StartLayoutApp = {
-            param([ValidateSet('horizontal', 'vertical')][string]$Layout)
+            param(
+                [ValidateSet('horizontal', 'vertical')][string]$Layout,
+                [object[]]$Keybindings = @()
+            )
             $target = Resolve-ItApp -Package (Get-ItTestPackage)
             if (@(Get-WtProcessesForApp -App $target -IncludePackageExecutables).Count) {
                 throw 'Refusing to replace an existing selected-package window for layout hotkey tests.'
@@ -214,7 +217,7 @@ Describe 'Feature: layout-aware agent history and sidebar hotkeys' -Tag @('Featu
                 language = 'en-US'
                 tabLayout = $Layout
                 actions = @()
-                keybindings = @()
+                keybindings = $Keybindings
                 'warning.confirmOnClose' = 'never'
                 acpAgent = 'custom:layout-hotkey-fixture'
                 acpCustomCommand = $script:fixtureCommand
@@ -227,7 +230,9 @@ Describe 'Feature: layout-aware agent history and sidebar hotkeys' -Tag @('Featu
         $app = $null
         $layout = $null
         try {
-            $app = & $script:StartLayoutApp 'vertical'
+            $app = & $script:StartLayoutApp 'vertical' @(@{
+                keys = 'alt+space'; id = 'Terminal.OpenAgentPane'
+            })
             if (-not (Test-WtWindowKeyFocusable -App $app)) {
                 Set-ItResult -Skipped -Because 'physical input requires foreground before the shortcut'
                 return
@@ -301,6 +306,14 @@ Describe 'Feature: layout-aware agent history and sidebar hotkeys' -Tag @('Featu
             Test-AgentPaneOpen -App $app | Should -BeTrue
             Send-WtWindowKey -App $app -Vk 0x49 -Ctrl -Shift -RequireForeground | Out-Null
             Wait-Until -TimeoutSec 5 -Because 'the separate focus shortcut to return to chat without hiding it' -Condition {
+                [Windows.Automation.Automation]::Compare(
+                    $agentFocus, [Windows.Automation.AutomationElement]::FocusedElement)
+            } | Out-Null
+            Test-AgentPaneOpen -App $app | Should -BeTrue
+
+            Set-WtPaneFocus -App $app -SessionId $shell.session_id
+            Send-WtWindowKey -App $app -Vk 0x20 -Alt -RequireForeground | Out-Null
+            Wait-Until -TimeoutSec 5 -Because 'a custom Alt+Space binding to focus chat through the direct-key route' -Condition {
                 [Windows.Automation.Automation]::Compare(
                     $agentFocus, [Windows.Automation.AutomationElement]::FocusedElement)
             } | Out-Null

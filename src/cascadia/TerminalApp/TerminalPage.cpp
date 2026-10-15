@@ -11118,7 +11118,8 @@ namespace winrt::TerminalApp::implementation
 
         const auto action = cmd.ActionAndArgs();
         const auto handled = (action.Action() == ShortcutAction::ToggleSidebar ||
-                              action.Action() == ShortcutAction::SwitchToTab) ?
+                              action.Action() == ShortcutAction::SwitchToTab ||
+                              action.Action() == ShortcutAction::OpenAgentPane) ?
                                  _actionDispatch->DoAction(chord, action) :
                                  _actionDispatch->DoAction(action);
         if (!handled)
@@ -11162,7 +11163,8 @@ namespace winrt::TerminalApp::implementation
                 if (const auto cmd = actionMap.GetActionByKeyChord(chord))
                 {
                     const auto action = cmd.ActionAndArgs();
-                    return action.Action() == ShortcutAction::ToggleSidebar ?
+                    return (action.Action() == ShortcutAction::ToggleSidebar ||
+                            action.Action() == ShortcutAction::OpenAgentPane) ?
                                _actionDispatch->DoAction(chord, action) :
                                _actionDispatch->DoAction(action);
                 }
