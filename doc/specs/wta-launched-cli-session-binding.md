@@ -94,6 +94,9 @@ Before a resumed CLI reports one, the host supplies the active session's saved
 `sessionWorkingDirectory` field. Status-only deltas preserve that directory for
 the same session binding; a new binding without a directory requests a full
 snapshot. Ended and historical sessions do not supply this fallback.
+Successful snapshots also record an empty cwd as a completed lookup for that
+session/pane binding. Later status deltas do not repeatedly reload the registry
+for directory-less sessions; a new binding can fetch its own cwd.
 When agent-status metadata is hidden, status-only transitions refresh providers
 only when the effective saved-directory fallback changes, avoiding repeated Git
 queries for unchanged directory metadata.

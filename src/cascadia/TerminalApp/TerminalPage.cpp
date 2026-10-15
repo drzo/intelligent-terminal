@@ -3551,6 +3551,7 @@ namespace winrt::TerminalApp::implementation
                     info != _richTabAgentStatusBySessionId.end() &&
                     info->second.paneSessionId &&
                     info->second.workingDirectory.empty() &&
+                    !info->second.workingDirectoryLookupCompleted &&
                     info->second.status != "Ended" &&
                     info->second.status != "Historical")
                 {
@@ -3631,10 +3632,11 @@ namespace winrt::TerminalApp::implementation
                 info.providerId = report.providerId;
             }
             info.lastActivityAtMs = report.lastActivityAtMs;
-            if (!report.workingDirectory.empty())
+            if (report.workingDirectoryLookupCompleted || !report.workingDirectory.empty())
             {
                 info.workingDirectory = report.workingDirectory;
             }
+            info.workingDirectoryLookupCompleted = info.workingDirectoryLookupCompleted || report.workingDirectoryLookupCompleted;
         };
         ++_richTabAgentStatusRequestGeneration;
         if (_richTabAgentStatusRefreshInFlight)
@@ -11936,7 +11938,7 @@ namespace winrt::TerminalApp::implementation
                 if (const auto sessionId = row.get("session_id", "").asString(); !sessionId.empty())
                 {
                     const auto workingDirectory = row["cwd"].isString() ? row["cwd"].asString() : std::string{};
-                    rows.push_back(_RichTabAgentInfo{ sessionId, status, providerId, lastActivityAtMs, paneId, workingDirectory });
+                    rows.push_back(_RichTabAgentInfo{ sessionId, status, providerId, lastActivityAtMs, paneId, workingDirectory, true });
                 }
             }
         }
