@@ -188,10 +188,16 @@ sessions already registered by other paths are not filtered out of the sidebar.
 Discovery never automatically installs a native agent CLI. The pinned Claude and
 Codex ACP adapters are separate: their cache presence is not checked, and the
 existing `npx -y` launch behavior may download and bootstrap an uncached adapter
-during initial startup or a later refresh that starts a provider. This is allowed
-and may require network access; discovery is not an offline-only operation. See
+during initial startup or a later refresh that starts a provider. Similarly,
+when Antigravity's ordinary `agy` CLI is detected, starting its ACP connection can
+prepare the pinned standalone ACP server and companion. Complete existing ACP
+installations are preserved. These dependency preparations may require network
+access; background startup is not an offline-only operation. See
 [Installing dependencies](../../doc/installing-dependencies.md) for the native CLI
 and ACP wrapper prerequisites.
+
+The read-only `probe-host-agents` and `probe-agent-sources` availability commands
+only report readiness or bootstrap eligibility; they do not install dependencies.
 
 Sidebar Agent sessions runs
 `wta sessions list --origin shell --json --include-status`.
