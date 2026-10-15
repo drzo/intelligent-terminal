@@ -241,7 +241,7 @@ rollout when calling `Start-Terminal`:
 
 ```powershell
 Start-Terminal -Package Dev -State @{
-    rolloutInstallationId = '{00000000-0000-0000-0000-000000000001}'
+    featureRolloutId = '{00000000-0000-0000-0000-000000000001}'
     sidebarRolloutVersion = 1
     sidebarRolloutAssignment = 'Sidebar'
     sidebarLayoutMigrationCompleted = $true
@@ -254,6 +254,9 @@ For the Horizontal cohort, use installation ID
 The rollout version suppresses re-enrollment; the legacy
 `sidebarLayoutMigrationCompleted` flag alone does not. Completed fixtures
 preserve their configured layout independently of the fixed assignment.
+`featureRolloutId` is the shared local GUID source for feature rollouts, not the
+`SidebarRolloutName` telemetry label. Existing `rolloutInstallationId` and
+`experimentInstallationId` state is converted without assigning a new GUID.
 This is opt-in, applied only after the existing owned
 settings/state backup, and self-verifies persistence; default harness startup
 and fresh FRE behavior are unchanged. Upgrade tests intentionally supply

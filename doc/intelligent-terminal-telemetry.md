@@ -491,7 +491,7 @@ the same process and windows that never connect an agent session.
 | `AllowedAgentsPolicy` | String | `not_configured`, `empty`, or `allowlist`; never the allowlist entries |
 | `AllowCustomAgentsPolicy` | String | `not_configured`, `allowed`, or `blocked` |
 | `SidebarEnabled` | Bool | Whether the configured tab layout is vertical |
-| `SidebarRolloutId` | WideString | `sidebar-upgrade-v1` after successful rollout migration; empty if not enrolled |
+| `SidebarRolloutName` | WideString | `sidebar-upgrade-v1` after successful rollout migration; empty if not enrolled |
 | `SidebarRolloutAssignment` | WideString | Fixed initial assignment: `Sidebar`, `Horizontal`, or `NotEnrolled` if migration has not completed |
 | `DefaultsFallback` | Bool | Whether the currently accepted settings came from initial load-failure fallback |
 
@@ -507,11 +507,17 @@ completed the older all-Sidebar migration. A random GUID is persisted locally
 in shared application state; FNV-1a over `sidebar-upgrade-v1` followed by the
 GUID's canonical 16 bytes selects one of 10,000 buckets (0-7,999 Sidebar,
 8,000-9,999 Horizontal). This is a statistical allocation, not an exact quota.
-The GUID is not included in telemetry. Its scope is the current settings/state
+The GUID is stored under `featureRolloutId` and exposed locally through the
+read-only `ApplicationState.FeatureRolloutId` property. Other features can reuse
+it with their own versioned rollout name through `FeatureRolloutBucket`.
+It is not included in telemetry: `SidebarRolloutName` is the fixed
+`sidebar-upgrade-v1` label, not the GUID. Its scope is the current settings/state
 directory, shared across elevation levels, not the entire physical device.
 Deleting state starts a new identity and assignment.
-Pre-rename Dev state keys are read as aliases and converted to rollout keys
-on the next state write, preserving identity, assignment, and migration completion.
+Both `rolloutInstallationId` and `experimentInstallationId` are read as legacy
+aliases for `featureRolloutId`; the current key wins, followed by
+`rolloutInstallationId`. Legacy keys are removed on the next shared state write,
+preserving identity, assignment, and migration completion.
 
 The assigned layout is applied once, only recording completion after both
 settings and state are saved. Subsequent user layout changes are preserved.

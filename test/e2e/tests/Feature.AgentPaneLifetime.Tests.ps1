@@ -101,7 +101,7 @@ Describe 'Feature: agent pane lifetime ownership' -Tag 'Feature', 'AgentPaneLife
         Assert-WtPackageInactive -App $target
         try {
             $script:app = Start-Terminal -Package (Get-ItTestPackage) -PassFre $true -State @{
-                rolloutInstallationId = '{00000000-0000-0000-0000-000000000001}'; sidebarRolloutVersion = 1; sidebarRolloutAssignment = 'Sidebar'; sidebarLayoutMigrationCompleted = $true; sidebarIntroductionShown = $true
+                featureRolloutId = '{00000000-0000-0000-0000-000000000001}'; sidebarRolloutVersion = 1; sidebarRolloutAssignment = 'Sidebar'; sidebarLayoutMigrationCompleted = $true; sidebarIntroductionShown = $true
             } -Settings @{
                 acpAgent = 'custom:lifetime-fixture'
                 acpCustomCommand = $command

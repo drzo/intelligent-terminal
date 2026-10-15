@@ -21,15 +21,16 @@ static constexpr std::string_view InitialPositionKey{ "initialPosition" };
 static constexpr std::string_view InitialSizeKey{ "initialSize" };
 static constexpr std::string_view LaunchModeKey{ "launchMode" };
 
-static constexpr std::array<std::pair<const char*, const char*>, 3> sidebarRolloutStateKeys{
-    std::pair{ "rolloutInstallationId", "experimentInstallationId" },
+static constexpr std::array<std::pair<const char*, const char*>, 4> rolloutStateKeys{
+    std::pair{ "featureRolloutId", "rolloutInstallationId" },
+    std::pair{ "featureRolloutId", "experimentInstallationId" },
     std::pair{ "sidebarRolloutVersion", "sidebarExperimentVersion" },
     std::pair{ "sidebarRolloutAssignment", "sidebarExperimentAssignment" },
 };
 
-static void migrateSidebarRolloutStateKeys(Json::Value& root)
+static void migrateRolloutStateKeys(Json::Value& root)
 {
-    for (const auto& [current, previous] : sidebarRolloutStateKeys)
+    for (const auto& [current, previous] : rolloutStateKeys)
     {
         if (!root.isMember(current) && root.isMember(previous))
         {
@@ -336,7 +337,7 @@ namespace winrt::Microsoft::Terminal::Settings::Model::implementation
             const std::unique_ptr<Json::CharReader> reader{ Json::CharReaderBuilder{}.newCharReader() };
             THROW_HR_IF(WEB_E_INVALID_JSON_STRING, !reader->parse(contents.data(), contents.data() + contents.size(), &root, &errors) || !root.isObject());
         }
-        migrateSidebarRolloutStateKeys(root);
+        migrateRolloutStateKeys(root);
         return root;
     }
 
@@ -351,7 +352,7 @@ namespace winrt::Microsoft::Terminal::Settings::Model::implementation
                 root[key] = true;
             }
         }
-        for (const auto key : { "rolloutInstallationId", "sidebarRolloutVersion", "sidebarRolloutAssignment" })
+        for (const auto key : { "featureRolloutId", "sidebarRolloutVersion", "sidebarRolloutAssignment" })
         {
             if (previous.isMember(key))
             {
@@ -366,36 +367,36 @@ namespace winrt::Microsoft::Terminal::Settings::Model::implementation
         const auto state = _state.lock();
         state->SidebarLayoutMigrationCompleted = JsonUtils::GetValueForKey<std::optional<bool>>(root, "sidebarLayoutMigrationCompleted");
         state->SidebarIntroductionShown = JsonUtils::GetValueForKey<std::optional<bool>>(root, "sidebarIntroductionShown");
-        state->RolloutInstallationId = JsonUtils::GetValueForKey<std::optional<winrt::guid>>(root, "rolloutInstallationId");
+        state->FeatureRolloutId = JsonUtils::GetValueForKey<std::optional<winrt::guid>>(root, "featureRolloutId");
         state->SidebarRolloutVersion = JsonUtils::GetValueForKey<std::optional<uint32_t>>(root, "sidebarRolloutVersion");
         state->SidebarRolloutAssignment = JsonUtils::GetValueForKey<std::optional<winrt::hstring>>(root, "sidebarRolloutAssignment");
     }
 
-    uint32_t ApplicationState::SidebarRolloutBucket(const winrt::guid& installationId) noexcept
+    uint32_t ApplicationState::FeatureRolloutBucket(const winrt::guid& featureRolloutId, const std::string_view rolloutName) noexcept
     {
-        // FNV-1a over the rollout ID and canonical GUID bytes, independent
+        // FNV-1a over the feature's rollout name and shared canonical GUID bytes, independent
         // of std::hash implementation and native GUID memory layout.
         uint32_t hash = 2166136261u;
         const auto add = [&](uint8_t byte) {
             hash = (hash ^ byte) * 16777619u;
         };
-        for (const auto byte : CurrentSidebarRolloutId)
+        for (const auto byte : rolloutName)
         {
             add(static_cast<uint8_t>(byte));
         }
         for (auto shift = 24; shift >= 0; shift -= 8)
         {
-            add(static_cast<uint8_t>(installationId.Data1 >> shift));
+            add(static_cast<uint8_t>(featureRolloutId.Data1 >> shift));
         }
         for (auto shift = 8; shift >= 0; shift -= 8)
         {
-            add(static_cast<uint8_t>(installationId.Data2 >> shift));
+            add(static_cast<uint8_t>(featureRolloutId.Data2 >> shift));
         }
         for (auto shift = 8; shift >= 0; shift -= 8)
         {
-            add(static_cast<uint8_t>(installationId.Data3 >> shift));
+            add(static_cast<uint8_t>(featureRolloutId.Data3 >> shift));
         }
-        for (const auto byte : installationId.Data4)
+        for (const auto byte : featureRolloutId.Data4)
         {
             add(byte);
         }
@@ -404,12 +405,12 @@ namespace winrt::Microsoft::Terminal::Settings::Model::implementation
 
     Model::TabLayout ApplicationState::SidebarRolloutLayout() const noexcept
     {
-        return SidebarRolloutBucket(RolloutInstallationId()) < 8000 ? Model::TabLayout::Vertical : Model::TabLayout::Horizontal;
+        return FeatureRolloutBucket(FeatureRolloutId(), CurrentSidebarRolloutName) < 8000 ? Model::TabLayout::Vertical : Model::TabLayout::Horizontal;
     }
 
-    winrt::hstring ApplicationState::SidebarRolloutId() const
+    winrt::hstring ApplicationState::SidebarRolloutName() const
     {
-        return SidebarRolloutVersion() == CurrentSidebarRolloutVersion ? winrt::to_hstring(CurrentSidebarRolloutId) : winrt::hstring{};
+        return SidebarRolloutVersion() == CurrentSidebarRolloutVersion ? winrt::to_hstring(CurrentSidebarRolloutName) : winrt::hstring{};
     }
 
     bool ApplicationState::PrepareSidebarRollout() noexcept
@@ -417,14 +418,14 @@ namespace winrt::Microsoft::Terminal::Settings::Model::implementation
     {
         // The caller holds the cross-process lock. Persist identity before
         // changing settings so a failed migration retries the same assignment.
-        if (RolloutInstallationId() == winrt::guid{})
+        if (FeatureRolloutId() == winrt::guid{})
         {
             THROW_HR_IF(E_UNEXPECTED, SidebarRolloutVersion() != 0);
             auto root = _readSharedJson();
             const winrt::guid id{ ::Microsoft::Console::Utils::CreateGuid() };
-            JsonUtils::SetValueForKey(root, "rolloutInstallationId", id);
+            JsonUtils::SetValueForKey(root, "featureRolloutId", id);
             _writeSharedContents(Json::writeString(Json::StreamWriterBuilder{}, root));
-            _state.lock()->RolloutInstallationId = id;
+            _state.lock()->FeatureRolloutId = id;
         }
         if (SidebarRolloutVersion() == CurrentSidebarRolloutVersion)
         {
@@ -537,9 +538,9 @@ namespace winrt::Microsoft::Terminal::Settings::Model::implementation
         auto state = _state.lock();
         // Preserve assignments from the pre-rename Dev build without rerolling.
         const auto readKey = [&](const char* key) {
-            for (const auto& [current, previous] : sidebarRolloutStateKeys)
+            for (const auto& [current, previous] : rolloutStateKeys)
             {
-                if (std::string_view{ key } == current && !root.isMember(current))
+                if (std::string_view{ key } == current && !root.isMember(current) && root.isMember(previous))
                 {
                     return previous;
                 }
@@ -573,7 +574,7 @@ namespace winrt::Microsoft::Terminal::Settings::Model::implementation
     {
         if (WI_IsFlagSet(parseSource, FileSource::Shared))
         {
-            migrateSidebarRolloutStateKeys(root);
+            migrateRolloutStateKeys(root);
         }
         {
             const auto state = _state.lock_shared();

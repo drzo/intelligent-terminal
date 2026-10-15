@@ -211,7 +211,7 @@ Describe 'Feature: ACP first-login authentication' -Tag 'Feature', 'AcpAuthentic
         $profileId = "{$([guid]::NewGuid())}"
         Assert-WtPackageInactive -App $script:target
         $script:app = Start-Terminal -Package Dev -PassFre $true -State @{
-            rolloutInstallationId = '{00000000-0000-0000-0000-000000000001}'; sidebarRolloutVersion = 1; sidebarRolloutAssignment = 'Sidebar'; sidebarLayoutMigrationCompleted = $true; sidebarIntroductionShown = $true
+            featureRolloutId = '{00000000-0000-0000-0000-000000000001}'; sidebarRolloutVersion = 1; sidebarRolloutAssignment = 'Sidebar'; sidebarLayoutMigrationCompleted = $true; sidebarIntroductionShown = $true
         } -Settings @{
             acpAgent = 'custom:pwsh'; acpCustomCommand = $command; acpCustomCommands = @(); acpModel = ''
             delegateAgent = ''; delegateCustomCommand = ''; delegateCustomCommands = @()

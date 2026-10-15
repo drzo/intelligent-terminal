@@ -204,8 +204,8 @@ namespace winrt::TerminalApp::implementation
         const auto delegate = Telemetry::GetProviderSnapshot(globals, false);
         const auto policy = Telemetry::SummarizePolicy(*::Microsoft::Terminal::Settings::Model::AgentPolicy::GetSnapshot());
         const auto state = ApplicationState::SharedInstance();
-        const auto rolloutId = state.SidebarRolloutId();
-        const auto rolloutAssignment = rolloutId.empty() ? winrt::hstring{ L"NotEnrolled" } : state.SidebarRolloutAssignment();
+        const auto rolloutName = state.SidebarRolloutName();
+        const auto rolloutAssignment = rolloutName.empty() ? winrt::hstring{ L"NotEnrolled" } : state.SidebarRolloutAssignment();
 
         TraceLoggingWrite(
             g_hTerminalAppProvider,
@@ -223,7 +223,7 @@ namespace winrt::TerminalApp::implementation
             TraceLoggingString(policy.allowedAgentsCategory, "AllowedAgentsPolicy"),
             TraceLoggingString(policy.allowCustomAgentsCategory, "AllowCustomAgentsPolicy"),
             TraceLoggingBool(globals.TabLayout() == TabLayout::Vertical, "SidebarEnabled"),
-            TraceLoggingWideString(rolloutId.c_str(), "SidebarRolloutId"),
+            TraceLoggingWideString(rolloutName.c_str(), "SidebarRolloutName"),
             TraceLoggingWideString(rolloutAssignment.c_str(), "SidebarRolloutAssignment"),
             TraceLoggingBool(_usingDefaultSettings, "DefaultsFallback"),
             TraceLoggingKeyword(MICROSOFT_KEYWORD_MEASURES),

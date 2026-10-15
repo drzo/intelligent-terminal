@@ -50,7 +50,7 @@ namespace winrt::Microsoft::Terminal::Settings::Model::implementation
     X(FileSource::Shared, bool, AgentWelcomeShown, "agentWelcomeShown", false)                                                                                            \
     X(FileSource::Shared, bool, SidebarLayoutMigrationCompleted, "sidebarLayoutMigrationCompleted", false)                                                                \
     X(FileSource::Shared, bool, SidebarIntroductionShown, "sidebarIntroductionShown", false)                                                                              \
-    X(FileSource::Shared, winrt::guid, RolloutInstallationId, "rolloutInstallationId")                                                                                    \
+    X(FileSource::Shared, winrt::guid, FeatureRolloutId, "featureRolloutId")                                                                                              \
     X(FileSource::Shared, uint32_t, SidebarRolloutVersion, "sidebarRolloutVersion", 0)                                                                                    \
     X(FileSource::Shared, winrt::hstring, SidebarRolloutAssignment, "sidebarRolloutAssignment")
 
@@ -101,12 +101,12 @@ namespace winrt::Microsoft::Terminal::Settings::Model::implementation
         void RefreshSidebarState() const;
         bool PrepareSidebarRollout() noexcept;
         bool CompleteSidebarLayoutMigration() noexcept;
-        static uint32_t SidebarRolloutBucket(const winrt::guid& installationId) noexcept;
+        static uint32_t FeatureRolloutBucket(const winrt::guid& featureRolloutId, std::string_view rolloutName) noexcept;
         Model::TabLayout SidebarRolloutLayout() const noexcept;
-        winrt::hstring SidebarRolloutId() const;
+        winrt::hstring SidebarRolloutName() const;
 
         static constexpr uint32_t CurrentSidebarRolloutVersion = 1;
-        static constexpr std::string_view CurrentSidebarRolloutId{ "sidebar-upgrade-v1" };
+        static constexpr std::string_view CurrentSidebarRolloutName{ "sidebar-upgrade-v1" };
 
         // State getters/setters
 #define MTSM_APPLICATION_STATE_GEN(source, type, name, key, ...) \
