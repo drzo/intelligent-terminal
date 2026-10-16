@@ -145,6 +145,8 @@ batched delivery cannot discard the next turn's newer approval. Legacy untimed
 stops still clear current waits without creating a timestamp cutoff.
 Transcript turn boundaries remain suppressed for hook-owned sessions: those
 model turns must not end a full prompt before its real `agent.stop` hook.
+An older boundary cannot claim a separate question's wait or idle activity
+whose matching approval already completed after that boundary.
 Requests missing an ID or timestamp remain explicit, uncorrelated permission
 waits under the same admission guards. Another request's completion or a tool
 start cannot resolve them; an authoritative turn boundary clears them.

@@ -4583,6 +4583,48 @@ mod tests {
                 },
                 AgentStatus::Working,
             ),
+            (
+                SessionEvent::Permission {
+                    key: key.clone(),
+                    update: PermissionUpdate::TurnEnded { at_ms: 1000 },
+                },
+                AgentStatus::Working,
+            ),
+            (
+                SessionEvent::Permission {
+                    key: key.clone(),
+                    update: PermissionUpdate::Requested {
+                        request_id: "approval-during-question".into(),
+                        message: "approval".into(),
+                        at_ms: 1500,
+                    },
+                },
+                AgentStatus::Attention,
+            ),
+            (
+                SessionEvent::Notification {
+                    key: key.clone(),
+                    message: "unanswered question".into(),
+                },
+                AgentStatus::Attention,
+            ),
+            (
+                SessionEvent::Permission {
+                    key: key.clone(),
+                    update: PermissionUpdate::TurnEnded { at_ms: 1000 },
+                },
+                AgentStatus::Attention,
+            ),
+            (
+                SessionEvent::Permission {
+                    key: key.clone(),
+                    update: PermissionUpdate::Completed {
+                        request_id: "approval-during-question".into(),
+                        at_ms: 1600,
+                    },
+                },
+                AgentStatus::Attention,
+            ),
         ] {
             helper.apply(event.clone());
             let wire = serde_json::to_value(SessionHookParams::from(&event)).unwrap();
@@ -4597,6 +4639,10 @@ mod tests {
             assert_eq!(master.pane_session_id, local.pane_session_id);
             assert_eq!(master.cwd, local.cwd);
         }
+        assert_eq!(
+            reg.lookup(&sid).await.unwrap().attention_reason.as_deref(),
+            Some("unanswered question")
+        );
     }
 
     #[tokio::test]

@@ -56,10 +56,22 @@ impl PermissionWaits {
             return None;
         }
         match update {
-            PermissionUpdate::TurnEnded { at_ms } => Some(match self.stop(Some(at_ms)) {
-                Some(message) => PermissionActivity::Waiting(message),
-                None => PermissionActivity::Idle,
-            }),
+            PermissionUpdate::TurnEnded { at_ms } => {
+                let unrelated_attention = *status == AgentStatus::Attention && !self.owns_attention;
+                let newer_completion = self
+                    .completed_at_ms
+                    .is_some_and(|completed| completed > at_ms);
+                let remaining = self.stop(Some(at_ms));
+                if unrelated_attention && (remaining.is_some() || newer_completion) {
+                    self.other_attention();
+                    return None;
+                }
+                match remaining {
+                    Some(message) => Some(PermissionActivity::Waiting(message)),
+                    None if newer_completion => None,
+                    None => Some(PermissionActivity::Idle),
+                }
+            }
             PermissionUpdate::Uncorrelated { message, at_ms } => {
                 if at_ms.is_some_and(|at| self.stopped_at_ms.is_some_and(|stop| at <= stop)) {
                     return None;
@@ -182,7 +194,12 @@ impl PermissionWaits {
         // source-time cutoff from the receiver's wall clock.
         self.pending
             .retain(|_, (at, _)| at_ms.is_some_and(|stop| *at > stop));
-        self.completed.clear();
+        if at_ms.is_none_or(|stop| {
+            self.completed_at_ms
+                .is_none_or(|completed| completed <= stop)
+        }) {
+            self.completed.clear();
+        }
         if !self
             .prompt_at_ms
             .is_some_and(|at| at_ms.is_some_and(|stop| at > stop))
@@ -256,6 +273,45 @@ mod tests {
         assert!(matches!(
             waits.apply(complete("second", 40), &AgentStatus::Attention),
             Some(PermissionActivity::Working)
+        ));
+    }
+
+    #[test]
+    fn delayed_turn_end_preserves_unrelated_attention() {
+        let mut waits = PermissionWaits::default();
+        waits.apply(request("approval", 1200), &AgentStatus::Working);
+        waits.other_attention();
+        assert!(waits
+            .apply(
+                PermissionUpdate::TurnEnded { at_ms: 1000 },
+                &AgentStatus::Attention,
+            )
+            .is_none());
+        assert!(waits
+            .apply(complete("approval", 1400), &AgentStatus::Attention)
+            .is_none());
+    }
+
+    #[test]
+    fn delayed_turn_end_preserves_completed_approval_activity() {
+        let mut waits = PermissionWaits::default();
+        waits.apply(request("approval", 1200), &AgentStatus::Working);
+        waits.apply(complete("approval", 1400), &AgentStatus::Attention);
+        assert!(waits
+            .apply(
+                PermissionUpdate::TurnEnded { at_ms: 1000 },
+                &AgentStatus::Working,
+            )
+            .is_none());
+        assert!(waits
+            .apply(request("approval", 1200), &AgentStatus::Working)
+            .is_none());
+        assert!(matches!(
+            waits.apply(
+                PermissionUpdate::TurnEnded { at_ms: 1500 },
+                &AgentStatus::Working,
+            ),
+            Some(PermissionActivity::Idle)
         ));
     }
 
