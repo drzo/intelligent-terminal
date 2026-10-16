@@ -13976,6 +13976,7 @@ namespace TerminalAppLocalTests
     void TabTests::VerticalTabHistoryRefreshAfterReopen()
     {
         auto page = _commonSetup(nullptr, nullptr, std::nullopt, true);
+        uint64_t generation{};
         TestOnUIThread([&]() {
             page->_historyRefreshInFlight = true;
             page->_tabStrip.HistoryActive(true);
@@ -13990,7 +13991,7 @@ namespace TerminalAppLocalTests
             const auto impl = winrt::get_self<winrt::TerminalApp::implementation::TabStrip>(strip);
             using State = winrt::TerminalApp::implementation::TerminalPage::_SidebarHistorySnapshot::State;
             strip.HistoryActive(true);
-            const auto generation = page->_historyRequestGeneration;
+            generation = page->_historyRequestGeneration;
             page->_CompleteSidebarHistoryRefresh(generation, {});
             const auto retryDelay = page->_historyRetryDelay;
             page->_historyRefreshInFlight = true;
@@ -14007,6 +14008,16 @@ namespace TerminalAppLocalTests
             VERIFY_ARE_EQUAL(int64_t{ 0 }, page->_historyRetryDelay.count());
             VERIFY_IS_TRUE(strip.HistoryLoading());
             VERIFY_IS_TRUE(page->_historyRefreshPending);
+            page->UpdateLayout();
+        });
+        _waitForContentTransferReviewUI([&]() {
+            page->UpdateLayout();
+            return winrt::get_self<winrt::TerminalApp::implementation::TabStrip>(page->_tabStrip)->HistoryMessage() != nullptr;
+        });
+        TestOnUIThread([&]() {
+            const auto strip = page->_tabStrip;
+            const auto impl = winrt::get_self<winrt::TerminalApp::implementation::TabStrip>(strip);
+            using State = winrt::TerminalApp::implementation::TerminalPage::_SidebarHistorySnapshot::State;
             VERIFY_ARE_EQUAL(Visibility::Collapsed, impl->HistoryMessage().Visibility());
             strip.HistoryActivating(true);
             page->_CompleteSidebarHistoryRefresh(generation, { State::Cancelled, {} });
