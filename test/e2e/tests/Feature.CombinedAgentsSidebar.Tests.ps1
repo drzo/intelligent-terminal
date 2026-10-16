@@ -1720,6 +1720,11 @@ Describe 'Feature: combined Agents sidebar' -Tag @('Feature', 'CombinedAgentsSid
                 Invoke-CombinedTabContext "$script:marker-open-$('{0:D2}' -f $index)"
                 Invoke-UiElement -App $script:app -Selector 'Close tab' | Out-Null
                 Wait-Until -TimeoutSec 10 -Condition { (Get-CombinedAttachedTabCount) -eq $count - 1 } | Out-Null
+                $keptIds = @($identities | ForEach-Object { [guid]$_.sid })
+                $keptPanes = @((Invoke-WtCli -App $script:app -Arguments @('list-panes', '--all')).panes |
+                    Where-Object { [guid]$_.session_id -in $keptIds })
+                $keptPanes.Count | Should -Be 2
+                @($keptPanes | Where-Object { $_.is_background_tab -ne $true }).Count | Should -Be 0
                 Set-CombinedView $true
                 Set-CombinedQuery $title
                 Wait-Until -TimeoutSec 15 -Condition { @(Get-CombinedRows Recent).Count -eq 1 } | Out-Null

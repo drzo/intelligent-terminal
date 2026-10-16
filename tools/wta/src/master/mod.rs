@@ -8030,7 +8030,7 @@ where
                     .context("pane ownership snapshot has no panes array")
             };
             let started = std::time::Instant::now();
-            match tokio::time::timeout(std::time::Duration::from_secs(5), request).await {
+            match tokio::time::timeout(std::time::Duration::from_secs(2), request).await {
                 Ok(Ok(metadata)) => {
                     tracing::debug!(target: "master_history", elapsed_ms = started.elapsed().as_millis(), pane_count = metadata.len(), "pane ownership snapshot completed");
                     for metadata in metadata {

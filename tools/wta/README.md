@@ -272,11 +272,10 @@ unowned pane retains its normal discovery behavior.
 
 Live rows may also include response-only `owner_window_id` and `background_tab`
 fields from one metadata-only `wtcli list-panes --all` snapshot across all windows,
-matched to the exact bound pane. The five-second ownership budget covers one
-query rather than launching a process per live session, leaving headroom within
-the Sidebar's 15-second capture deadline for other snapshot work. Cross-window
-UI dispatcher work can exceed two seconds even with a single query.
-`background_tab: true` means the
+matched to the exact bound pane. The two-second ownership budget covers one
+query rather than launching a process per live session. Native pane metadata
+includes background membership in the same UI dispatch, without a separate
+foreground dispatch for each pane. `background_tab: true` means the
 pane belongs to a kept-running whole tab; activating it restores that entire
 tab. Only an explicit `false` with a different owning window enables the
 other-window action. Missing or malformed membership is unknown, not evidence

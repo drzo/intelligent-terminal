@@ -10762,11 +10762,11 @@ async fn sessions_list_batches_ownership_without_losing_foreign_or_background_pa
 }
 
 #[tokio::test(flavor = "current_thread")]
-async fn sessions_list_ownership_accepts_slow_snapshots_but_remains_bounded() {
+async fn sessions_list_ownership_timeout_preserves_live_status() {
     use crate::agent_sessions::{AgentStatus, SessionLocation};
     use crate::session_registry::{self, SessionInfo};
 
-    for (seconds, expected_owner) in [(3, Some(2)), (6, None)] {
+    for (seconds, expected_owner) in [(0, Some(2)), (3, None)] {
         let pane = uuid::Uuid::new_v4();
         let mock = Arc::new(MockWtChannel {
             response_delay: std::time::Duration::from_secs(seconds),

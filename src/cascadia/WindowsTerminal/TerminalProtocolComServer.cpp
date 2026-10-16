@@ -311,6 +311,7 @@ static Json::Value _toJson(const Protocol::PaneInfo& p)
     v["profile"] = winrt::to_string(p.Profile);
     v["is_active"] = static_cast<bool>(p.IsActive);
     v["is_agent_pane"] = static_cast<bool>(p.IsAgentPane);
+    v["is_background_tab"] = static_cast<bool>(p.IsBackgroundTab);
     v["native_agent_provider_id"] = winrt::to_string(p.NativeAgentProviderId);
     v["pid"] = static_cast<Json::UInt>(p.Pid);
     v["size"]["rows"] = p.Rows;
@@ -729,9 +730,7 @@ try
         {
             auto p = panes.GetAt(i);
             p.WindowId = windowId;
-            auto value = _toJson(p);
-            value["is_background_tab"] = page.GetProtocolPaneIsBackground(p.SessionId).get();
-            arr.append(std::move(value));
+            arr.append(_toJson(p));
         }
     }
 
