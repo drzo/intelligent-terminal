@@ -695,6 +695,7 @@ namespace TerminalAppLocalTests
         TEST_METHOD(SplitDirectoryPreservesExplicitAndRestoreArguments);
         TEST_METHOD(SplitDirectoryDuplicatePreservesElevation);
         TEST_METHOD(SplitDirectoryUsesAssistantSourceInsteadOfHelper);
+        TEST_METHOD(BackgroundSplitPreservesAssistantSource);
         TEST_METHOD(SplitDirectoryUsesConnectionLaunchMetadata);
         TEST_METHOD(SplitDirectoryDropdownOnlyInheritsForSplit);
 
@@ -20001,6 +20002,45 @@ namespace TerminalAppLocalTests
             VERIFY_IS_TRUE(tab->FindAgentPaneContent() == assistant);
             VERIFY_ARE_EQUAL(winrt::hstring{ expected }, tab->GetActiveTerminalControl().Settings().StartingDirectory());
             VERIFY_IS_FALSE(page->_paneAgentSessions.contains(tab->GetActiveTerminalControl().Connection().SessionId()));
+        });
+    }
+
+    void TabTests::BackgroundSplitPreservesAssistantSource()
+    {
+        using State = winrt::Microsoft::Terminal::TerminalConnection::ConnectionState;
+        const auto connection = winrt::make_self<TestConnection>(Utils::CreateGuid(), State::Connected);
+        auto page = _commonSetup(*connection);
+        winrt::guid assistantSession;
+        winrt::TerminalApp::AgentPaneContent assistant{ nullptr };
+        winrt::Windows::Foundation::IAsyncOperation<winrt::Microsoft::Terminal::Protocol::TabCreationResult> split{ nullptr };
+        TestOnUIThread([&]() {
+            const auto tab = page->_GetFocusedTabImpl();
+            const auto helperConnection = winrt::make_self<TestConnection>(Utils::CreateGuid(), State::Connected);
+            const auto helper = page->_WrapInAgentPaneContent(page->_MakePane(nullptr, nullptr, *helperConnection));
+            helper->IsAgentPane(true);
+            VERIFY_IS_TRUE(page->_SplitPane(tab, SplitDirection::Right, .5f, helper));
+            assistantSession = tab->GetActivePane()->GetSessionId();
+            assistant = tab->FindAgentPaneContent();
+            VERIFY_ARE_EQUAL(connection->SessionId(), page->_SourceTerminalPaneForTab(tab)->GetSessionId());
+            NewTerminalArgs args;
+            args.Commandline(L"cmd.exe /d /k");
+            split = page->SplitProtocolPane(assistantSession, SplitDirection::Down, .5f, args, true);
+        });
+        const auto result = split.get();
+        TestOnUIThread([&]() {
+            const auto tab = page->_GetFocusedTabImpl();
+            VERIFY_ARE_EQUAL(3, tab->GetLeafPaneCount());
+            VERIFY_ARE_EQUAL(assistantSession, tab->GetActivePane()->GetSessionId());
+            VERIFY_IS_TRUE(tab->GetActivePane()->IsAgentPane());
+            VERIFY_IS_TRUE(tab->FindAgentPaneContent() == assistant);
+            const auto source = page->_SourceTerminalPaneForTab(tab);
+            VERIFY_ARE_EQUAL(connection->SessionId(), source->GetSessionId());
+            VERIFY_IS_TRUE(source->IsSourceOfAgentPane());
+            const auto created = tab->GetRootPane()->FindPaneBySessionId(result.SessionId);
+            VERIFY_IS_NOT_NULL(created);
+            VERIFY_IS_FALSE(created->IsAgentPane());
+            VERIFY_IS_FALSE(created->IsSourceOfAgentPane());
+            VERIFY_ARE_NOT_EQUAL(connection->SessionId(), created->GetSessionId());
         });
     }
 

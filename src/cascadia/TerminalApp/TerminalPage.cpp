@@ -14581,6 +14581,12 @@ namespace winrt::TerminalApp::implementation
         {
             restoreFocus.release();
         }
+        else if (previousFocus && original->Id())
+        {
+            // Splitting replaces the source leaf and selects the new pane.
+            // Restore the original source before refocusing its assistant.
+            activeTab->PreparePaneFocus(*original->Id());
+        }
         closeUnattached.release();
         _NotifyRestoredSessionBindings(activeTab);
         if (const auto content = activeTab->FindAgentPaneContent())
