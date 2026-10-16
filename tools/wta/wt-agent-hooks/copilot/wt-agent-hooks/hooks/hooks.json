@@ -44,6 +44,17 @@
         }]
       }
     ],
+    "PostToolUse": [
+      {
+        "matcher": ".*",
+        "hooks": [{
+          "type": "command",
+          "exec": "wtcli.exe",
+          "args": ["agent-hook", "--cli-source", "copilot", "--event", "agent.tool.finished"],
+          "timeoutSec": 5
+        }]
+      }
+    ],
     "StopFailure": [
       {
         "matcher": ".*",
