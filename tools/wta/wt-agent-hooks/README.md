@@ -262,27 +262,26 @@ identify the pane that submitted a later prompt; matching a directory cannot
 distinguish two panes in the same project either.
 
 The bundled TUI entrypoint therefore explicitly calls the server plugin's
-`wt-agent-hooks.pane.sync` RPC with the client ID, pane `WT_SESSION`, COM CLSID,
-actual `WTCLI_PATH`, log directory, and the root session currently displayed by
-that client. OpenCode's native tab list is persisted in shared storage, so it
+`wt-agent-hooks` binding RPC with the client ID, pane `WT_SESSION`, COM CLSID,
+binding generation, and the root session currently displayed by that client.
+OpenCode's native tab list is persisted in shared storage, so it
 does not establish pane ownership: two TUIs in the same directory can list
 each other's sessions. Background native tabs are not bound to the current
 pane; changing its route releases the previous binding and binds the new root,
 and returning home releases it without claiming sessions from shared tabs.
-Requests are scoped to the session's location. Server callbacks emit only for
-these bindings, passing that client's environment to `wtcli`. The shared
-server's `WT_SESSION` is never used. Another client's unexpired
-binding cannot be stolen by a heartbeat.
+Requests are scoped to the session's location. Server callbacks publish
+revisioned RPC signals only to the owning clients. Each TUI invokes its own
+`WTCLI_PATH` bridge with its pane environment; the shared server's `WT_SESSION`
+is never used. Viewing the same session in another pane explicitly transfers
+ownership. An evicted client cannot reclaim it merely by polling.
 
-The client refreshes its bindings every ten seconds and releases them on
-cleanup. A missing client's lease expires after 45 seconds and suppresses further
-forwarding; it does not falsely declare that the CLI exited. Actual pane lifecycle
-retains responsibility for exit detection. Explicit unbinding ends only that
-client's tracked rows; it does not cancel execution. Server plugin reload or
-shutdown does not pretend that every connected CLI exited. RPC requests have a
-five-second deadline. Neither RPC nor bridge failure interrupts normal chat or
-ACP history discovery. A bounded cache replays already-observed activity when
-the first prompt precedes client binding or a client reconnects.
+The client reconciles snapshots every 30 seconds and on reconnect, preserving
+busy, idle, attention, error, cwd, title and deletion changes even when a signal
+was missed. Route changes and cleanup unbind the pane without deleting the
+server session or cancelling execution. Detached observers still report real
+deletions, including after server restart. Server unload does not pretend that
+every client exited, and generations fence stale bind/unbind responses.
+Neither RPC nor bridge failure interrupts normal chat or ACP history discovery.
 
 The sidecar is invisible and uses OpenCode's automatic `./tui` loading; no
 `cli.json` or user configuration is rewritten. It covers the full interactive
@@ -335,10 +334,41 @@ always exits successfully. The shared ACP process has no `WT_SESSION`, so its
 redundant hooks are dropped and cannot be incorrectly attributed to the active
 shell pane.
 
-**The `command` field must stay shell-agnostic.** Each CLI decides for itself
-which shell interprets that string. That choice is undocumented, differs per
-CLI, and we guessed it wrong twice — so the bundle assumes nothing and ships one
-spelling that survives all of them:
+### Known limitation: Codex managed daemon pane identity
+
+Codex's shared managed app-server can execute hooks for a new CLI session using
+the environment inherited when the daemon first started. If that was another
+tab, `wtcli agent-hook` receives the old tab's `WT_SESSION` even though the
+hook payload contains the new session ID and correct cwd. Terminal cannot bind
+the event to the new pane; if the old pane is closed, explicit pane lookup fails
+with `0x80070490`. This is distinct from the shared WTA ACP process, which has
+no pane identity and whose redundant hooks are dropped.
+
+Reproduced with Codex 0.162.1 on Windows: a new tab's hooks kept reporting the
+previous pane. Starting the CLI in that same tab with `codex --no-daemon`
+reported its actual pane, bound the session, and updated Rich Tab. This is a
+per-invocation workaround, not a change to the user's default Codex command.
+Do not substitute the focused pane or relax pane ownership checks: a durable
+fix needs authoritative per-client pane identity from Codex. Track the
+upstream issue at <https://github.com/openai/codex/issues/48500>. Copilot and
+Claude bound their tested sessions correctly; Gemini has not had the same
+cross-tab test.
+
+### Gemini CLI cwd semantics
+
+Gemini CLI has no built-in command to switch the current process cwd within
+an interactive session. `/directory add` only adds workspace directories; it
+does not change cwd and must not be treated as an agent cwd update. To run
+Gemini from another cwd, exit, change the shell directory, and start Gemini
+again; that tests a new session rather than an in-session cwd transition.
+Gemini's existing `BeforeAgent` hook includes `cwd` and already serves prompt
+activity; WTA reuses that field to correct a known session's recorded cwd on
+the next prompt. No separate cwd-change hook or extra hook invocation is
+needed. Cross-tab Gemini pane attribution has not yet been verified.
+
+**A shared `command` field must stay shell-agnostic.** Each CLI decides for
+itself which shell interprets that string. For hooks with a documented
+platform-specific override, use that override instead:
 
 ```
 wtcli.exe agent-hook --cli-source <cli> --event <topic>
@@ -350,7 +380,7 @@ an expression, no `cmd.exe` metacharacters, and nothing bash rewrites.
 | CLI | Hook shell | How we know |
 | --- | --- | --- |
 | Copilot | PowerShell 7+ | GitHub hooks documentation |
-| Codex | PowerShell | sandbox log dispatches every command as `pwsh.exe -NoProfile -Command` |
+| Codex | Session-selected shell | `commandWindows` selects the text, not the shell; Windows sessions may run hooks through PowerShell or cmd.exe |
 | Gemini | PowerShell | `hookRunner.ts` → `getShellConfiguration()` resolves ComSpec-powershell → `pwsh.exe` → `powershell.exe`, with no `cmd.exe` branch |
 | Claude | **bash** (`/usr/bin/bash`) | its own debug log reports `/usr/bin/bash: line 1: …` |
 
@@ -498,7 +528,7 @@ Current state with the bridge missing:
 | Copilot | `powershell` / `bash` fields, no bare `command` | exit 0, silent |
 | Claude | `shell: "bash"` + `command -v` guard | exit 0, silent |
 | Gemini | PowerShell guard in `command` | exit 0, silent |
-| Codex | PowerShell guard in `command` | exit 0, silent |
+| Codex | POSIX guard in `command`, cmd.exe wrapper in `commandWindows` | exit 0, silent in both Windows shells |
 | OpenCode | JS `try`/`catch`, output ignored | exit 0, silent |
 
 OpenCode needs none of this: its plugin spawns `wtcli.exe` through an argv array

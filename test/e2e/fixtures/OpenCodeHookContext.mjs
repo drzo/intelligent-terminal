@@ -4,44 +4,39 @@
 import { readFile } from "node:fs/promises"
 import { spawn } from "node:child_process"
 import { dirname, resolve } from "node:path"
-import vm from "node:vm"
-import * as fs from "node:fs"
-import * as crypto from "node:crypto"
+import { existsSync } from "node:fs"
 
 export async function loadPlugin(path) {
-  const context = vm.createContext({
-    process, TextEncoder, AbortController, AbortSignal, console, setInterval, clearInterval,
-    get Bun() { return globalThis.Bun },
-  })
   const modules = new Map()
-  async function load(name) {
-    if (modules.has(name)) return modules.get(name)
-    if (["node:fs", "node:crypto", "solid-js"].includes(name)) {
-      const exports = name === "node:fs" ? fs
-        : name === "node:crypto" ? crypto
-          : { createEffect: (effect) => effect() }
-      const module = new vm.SyntheticModule(Object.keys(exports), function () {
-        for (const [key, value] of Object.entries(exports)) this.setExport(key, value)
-      }, { context, identifier: name })
-      modules.set(name, module)
-      return module
-    }
-    const module = new vm.SourceTextModule(await readFile(name, "utf8"), { context, identifier: name })
-    modules.set(name, module)
-    await module.link((specifier, parent) => {
-      if (!specifier.startsWith(".")) return load(specifier)
-      let target = resolve(dirname(parent.identifier), specifier)
-      // Installed adapters carry their bridge locally; source adapters share it.
-      if (!fs.existsSync(target) && specifier.endsWith("bridge.js")) {
-        target = resolve(dirname(parent.identifier), "..", "shared", "bridge.js")
+  async function load(file) {
+    if (modules.has(file)) return modules.get(file)
+    let source = await readFile(file, "utf8")
+    for (const match of [...source.matchAll(/\bfrom "(\.[^"]+)"/g)]) {
+      let target = resolve(dirname(file), match[1])
+      if (!existsSync(target) && match[1].endsWith("bridge.js")) {
+        target = resolve(dirname(file), "..", "shared", "bridge.js")
       }
-      return load(target)
-    })
-    return module
+      source = source.replaceAll(`from "${match[1]}"`, `from "${await load(target)}"`)
+    }
+    if (source.includes('from "solid-js"')) {
+      const shim = [
+        "let root;",
+        "export function createRoot(callback) { const effects = new Set(); root = effects;",
+        "  try { return callback(() => { for (const effect of effects) globalThis.__openCodeHookEffects.delete(effect); }); }",
+        "  finally { root = undefined; } }",
+        "export function createEffect(effect) { root.add(effect);",
+        "  globalThis.__openCodeHookEffects ??= new Set(); globalThis.__openCodeHookEffects.add(effect);",
+        "  queueMicrotask(effect); }",
+      ].join("\n")
+      const shimURL = `data:text/javascript;base64,${Buffer.from(shim).toString("base64")}`
+      source = source.replace('from "solid-js"', `from "${shimURL}"`)
+    }
+    const url = `data:text/javascript;base64,${Buffer.from(source).toString("base64")}`
+    modules.set(file, url)
+    return url
   }
-  const module = await load(resolve(path))
-  await module.evaluate()
-  return module.namespace.default ?? module.namespace.WtAgentHooks
+  const module = await import(await load(resolve(path)))
+  return module.default ?? module.WtAgentHooks
 }
 
 export function deferred() {
@@ -54,10 +49,88 @@ export function deferred() {
   return { promise, resolve, reject }
 }
 
+export function createRpcLink(location = { directory: "C:\\ite2e\\opencode", workspaceID: "fixture-workspace" }) {
+  let handlers
+  let definition
+  const listeners = new Set()
+  const emitted = []
+  let signalDelivery = true
+  const publish = (event) => {
+    for (const listener of listeners) listener(event)
+  }
+  const server = {
+    async register(rpc, methods) {
+      definition = rpc
+      handlers = methods
+      return {
+        events: {
+          async emit(name, data) {
+            const event = { type: `rpc.${rpc.id}.${name}`, data, location }
+            emitted.push(event)
+            if (signalDelivery) publish(event)
+          },
+        },
+        async dispose() {
+          handlers = undefined
+        },
+      }
+    },
+  }
+  const client = {
+    rpc(rpc) {
+      return Object.fromEntries(Object.keys(rpc.methods).map((name) => [
+        name,
+        async (input) => {
+          if (!handlers) throw new Error(`RPC ${name} is not registered`)
+          const schema = rpc.methods[name].input
+          const missing = schema.required.filter((key) => !(key in input))
+          const unexpected = Object.keys(input).filter((key) => !(key in schema.properties))
+          if (missing.length || (schema.additionalProperties === false && unexpected.length)) {
+            throw new Error(`Invalid RPC ${name} input: missing ${missing.join(",")}, unexpected ${unexpected.join(",")}`)
+          }
+          return handlers[name](input)
+        },
+      ]))
+    },
+    event: {
+      subscribe({ signal } = {}) {
+        return {
+          async *[Symbol.asyncIterator]() {
+            const queue = [{ type: "server.connected", data: {} }]
+            let wake
+            const listen = (event) => { queue.push(event); wake?.() }
+            const abort = () => wake?.()
+            listeners.add(listen)
+            signal?.addEventListener("abort", abort)
+            try {
+              while (!signal?.aborted) {
+                if (!queue.length) await new Promise((resolve) => { wake = resolve })
+                if (signal?.aborted) return
+                const event = queue.shift()
+                if (event) yield event
+              }
+            } finally {
+              listeners.delete(listen)
+              signal?.removeEventListener("abort", abort)
+            }
+          },
+        }
+      },
+    },
+  }
+  return {
+    server, client, emitted, publish,
+    setSignalDelivery(enabled) { signalDelivery = enabled },
+    get definition() { return definition },
+    get listeners() { return listeners.size },
+  }
+}
+
 export function createContext({
   directory = "C:\\ite2e\\opencode",
   workspaceID = "fixture-workspace",
   getSession,
+  rpc = createRpcLink({ directory, workspaceID }),
 } = {}) {
   const promptHooks = new Map()
   const toolHooks = new Map()
@@ -65,17 +138,11 @@ export function createContext({
   let wake
   let signal
   let lookupCount = 0
-  let binding
   const location = { directory, workspaceID }
 
   const context = {
     location,
-    rpc: {
-      async register(definition, handlers) {
-        if (definition.id !== "wt-agent-hooks.pane") throw new Error("Unexpected pane binding RPC")
-        binding = handlers
-      },
-    },
+    rpc: rpc.server,
     session: {
       async get({ sessionID }) {
         lookupCount++
@@ -110,16 +177,6 @@ export function createContext({
   return {
     context,
     location,
-    sync: (input) => binding.sync(input),
-    bind: (ids, overrides = {}) => binding.sync({
-      client_id: process.env.WT_SESSION,
-      pane_session_id: process.env.WT_SESSION,
-      com_clsid: process.env.WT_COM_CLSID,
-      bridge_path: process.env.WTCLI_PATH,
-      log_dir: process.env.WTA_HOOK_LOG_DIR,
-      session_ids: ids,
-      ...overrides,
-    }),
     prompt: (sessionID) => promptHooks.get("prompt")({ sessionID }),
     tool: (sessionID, tool, input) => toolHooks.get("execute.before")({ sessionID, tool, input }),
     async event(type, data, eventLocation = location) {
@@ -131,6 +188,8 @@ export function createContext({
     get lookupCount() { return lookupCount },
     get aborted() { return signal?.aborted },
     get registered() { return promptHooks.size + toolHooks.size },
+    client: rpc.client,
+    rpc,
   }
 }
 

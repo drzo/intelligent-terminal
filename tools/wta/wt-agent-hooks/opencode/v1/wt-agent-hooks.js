@@ -26,6 +26,9 @@ export const WtAgentHooks = async ({ directory }) => {
       title: info.title || previous?.title || "",
     }
     roots.set(info.id, session)
+    if (previous && session.cwd !== previous.cwd) {
+      publish("agent.cwd.changed", info.id, { cwd: session.cwd })
+    }
     if (!previous || (info.title && info.title !== previous.title)) {
       publish("agent.session.start", info.id, session)
     }

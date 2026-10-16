@@ -117,9 +117,9 @@ Describe 'Feature: default OpenCode session management' -Tag 'Feature', 'OpenCod
             $row.pane_session_id.Trim('{}').ToLowerInvariant() | Should -Be $pane.session_id.Trim('{}').ToLowerInvariant()
             Close-WtPane -App $script:app -SessionId $pane.session_id
             $script:ownedPanes.Remove($pane.session_id) | Out-Null
-            Wait-Until -TimeoutSec 20 -Because 'closing only the test pane ends only its registered session' -Condition {
+            Wait-Until -TimeoutSec 20 -Because 'closing only the test pane clears only its live registration' -Condition {
                 Read-DefaultSessions | Where-Object {
-                    $_.session_id -eq $history.session_id -and $_.status -eq 'Ended' -and -not $_.pane_session_id
+                    $_.session_id -eq $history.session_id -and $_.status -in @('Ended', 'Historical') -and -not $_.pane_session_id
                 }
             } | Should -Not -BeNullOrEmpty
             $base = @(Get-WtTabs -App $script:app | ForEach-Object {

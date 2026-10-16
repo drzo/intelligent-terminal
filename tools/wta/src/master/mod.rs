@@ -71,6 +71,7 @@ use crate::protocol::acp::spawn::{
 };
 
 pub(crate) mod config;
+mod history;
 mod session_mcp;
 
 use config::MasterConfig;
@@ -629,6 +630,7 @@ struct MasterStateInner {
     history_discovery_state: std::sync::atomic::AtomicU8,
     history_discovery_errors: Mutex<HashMap<AgentCmdKey, HistoryRefreshFailure>>,
     history_discovery_retries: Mutex<HashMap<AgentCmdKey, HistoryRefreshState>>,
+    history_queries: Mutex<HashMap<AgentCmdKey, Arc<Mutex<HistoryRefreshState>>>>,
     history_status: watch::Sender<HistorySyncStatus>,
     history_status_gate: Mutex<()>,
     helper_roles: Mutex<HashMap<HelperId, HelperRole>>,
@@ -1868,11 +1870,14 @@ fn agent_cmd_key_with_provider(
 
 #[derive(Default)]
 struct AgentHistoryRefresh {
-    gate: Mutex<HistoryRefreshState>,
+    gate: Arc<Mutex<HistoryRefreshState>>,
     mutation_gate: Mutex<()>,
     generation: std::sync::atomic::AtomicU64,
     retired: std::sync::atomic::AtomicBool,
     failure: Mutex<Option<HistoryRefreshFailure>>,
+    target: OnceLock<history::HistoryTarget>,
+    cancelled: tokio_util::sync::CancellationToken,
+    worker_started: std::sync::atomic::AtomicBool,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -1901,6 +1906,9 @@ struct HistoryRefreshState {
     next_refresh_at: Option<tokio::time::Instant>,
     failures: u32,
     last_count: Option<usize>,
+    query: history::HistoryQuery,
+    owner: Option<AgentInstanceId>,
+    cwd_baseline: Option<HashMap<crate::session_registry::SessionIdentity, (u64, Option<String>)>>,
 }
 
 impl HistoryRefreshState {
@@ -4641,7 +4649,7 @@ impl HelperHandler {
                 // without binding an agent, and that is a valid read-only
                 // caller — not a protocol violation worth erroring on.
                 let agent = self.agent.get().cloned();
-                handle_sessions_list(&self.state, agent.as_deref(), &p).await
+                handle_sessions_list(&self.state, agent.as_ref(), &p).await
             }
             Req::SessionActivate(p) => handle_session_activate(&self.state, &p).await,
             Req::SessionActivationStatus(p) => {
@@ -5084,6 +5092,7 @@ async fn run_master_loop(config: MasterConfig, pipe_name: String) -> Result<()> 
         history_discovery_state: std::sync::atomic::AtomicU8::new(0),
         history_discovery_errors: Mutex::new(HashMap::new()),
         history_discovery_retries: Mutex::new(HashMap::new()),
+        history_queries: Mutex::new(HashMap::new()),
         history_status: watch::channel(crate::session_registry::HistoryLoadStatus::Loading.into())
             .0,
         history_status_gate: Mutex::new(()),
@@ -5675,7 +5684,7 @@ async fn remove_agent_cell_if_current(
 }
 
 async fn acquire_agent_from_pool<F, Fut>(
-    state: &MasterStateInner,
+    state: &Arc<MasterStateInner>,
     key: &AgentCmdKey,
     mut initialize: F,
 ) -> Result<Arc<AgentCli>>
@@ -5725,13 +5734,25 @@ where
             .await;
 
         match initialized {
-            Ok(agent) if agent_cell_is_current(state, key, &cell).await => {
-                return Ok(Arc::clone(agent));
-            }
             Ok(agent) => {
+                {
+                    let agents = state.agents.lock().await;
+                    if !agent_cell_is_retired(state, &cell)
+                        && agents
+                            .get(key)
+                            .is_some_and(|current| Arc::ptr_eq(current, &cell))
+                    {
+                        // OnceCell has published the agent, so every subsequent
+                        // reaper can retire it. Start history while pool ownership
+                        // is still confirmed, including for warmed/switched agents.
+                        start_agent_history_worker(state, agent);
+                        return Ok(Arc::clone(agent));
+                    }
+                }
                 // The process initialized after its generation was retired.
                 // Do not leave an untracked provider running outside the pool.
                 agent.conn.shutdown();
+                retire_agent_history(agent).await;
             }
             Err(error) if error.is::<RetiredAgentCell>() => {}
             Err(error) => return Err(error),
@@ -6143,6 +6164,13 @@ async fn spawn_one_agent(
         provider_binding,
         supplied_cloud_models,
     );
+    let history_gate = state
+        .history_queries
+        .lock()
+        .await
+        .entry(key.clone())
+        .or_default()
+        .clone();
     let agent = Arc::new(AgentCli {
         instance_id,
         resolved_agent_id: resolved_agent_id.clone(),
@@ -6153,9 +6181,22 @@ async fn spawn_one_agent(
         cmd_key: key.clone(),
         cloud_catalog: Mutex::new(cloud_catalog),
         bound_helpers: Mutex::new(HashSet::new()),
-        history_refresh: AgentHistoryRefresh::default(),
+        history_refresh: AgentHistoryRefresh {
+            gate: history_gate,
+            ..Default::default()
+        },
         listed_ever: Mutex::new(HashSet::new()),
     });
+    agent
+        .history_refresh
+        .target
+        .set(history::HistoryTarget {
+            command: agent_cmd.to_string(),
+            agent_id: resolved_agent_id.clone(),
+            source: source.clone(),
+            provider: provider_binding.clone(),
+        })
+        .map_err(|_| anyhow!("history target already configured"))?;
     state.agent_authentication.lock().await.insert(
         instance_id,
         Arc::new(AgentAuthenticationBridge {
@@ -6163,34 +6204,6 @@ async fn spawn_one_agent(
             stderr: stderr_log,
         }),
     );
-
-    // Seed THIS CLI's history. Every agent entering the pool seeds, not just
-    // the first: master outlives a Settings agent switch (the helper
-    // reconnects and the pool spawns the new CLI without a master restart), so
-    // gating this on "first agent wins" left the registry holding only the
-    // launch agent's rows. The session view filters by the helper's current
-    // CLI, so every switched-to agent then rendered an empty list until the
-    // user restarted Terminal.
-    {
-        let state = Arc::clone(state);
-        let agent = Arc::clone(&agent);
-        tokio::task::spawn_local(async move {
-            let count = seed_host_and_broadcast(&state, &agent).await;
-            if update_history_sync_status(&state).await {
-                broadcast_ext_to_helpers(
-                    &state,
-                    crate::session_registry::build_sessions_changed_notification(),
-                )
-                .await;
-            }
-            tracing::info!(
-                target: "master_history",
-                cli = ?agent.cli_source,
-                ?count,
-                "agent ACP history seed complete"
-            );
-        });
-    }
 
     if start_clean_probe {
         let command = agent_cmd.to_string();
@@ -6216,15 +6229,18 @@ async fn reap_agent(
     cell: &AgentCell,
     instance_id: AgentInstanceId,
 ) {
+    // Record retirement before any await, even when initialize has not yet
+    // published into the cell. Admission rechecks this marker under the pool
+    // lock; an empty-cell reaper therefore cannot lose its generation.
+    if cell
+        .get()
+        .is_none_or(|agent| agent.instance_id == instance_id)
+    {
+        retire_agent_cell(state, cell);
+    }
     state.agent_authentication.lock().await.remove(&instance_id);
     if let Some(agent) = cell.get().filter(|agent| agent.instance_id == instance_id) {
-        // Retirement and registry publication share a boundary, without holding
-        // the pool lock or waiting for an ACP network request.
-        let _mutation = agent.history_refresh.mutation_gate.lock().await;
-        agent
-            .history_refresh
-            .retired
-            .store(true, std::sync::atomic::Ordering::Release);
+        retire_agent_history(agent).await;
     }
     #[cfg(test)]
     let cleanup_pause = state.reap_agent_orphan_cleanup_pause.lock().await.clone();
@@ -6268,6 +6284,26 @@ async fn reap_agent(
         capabilities_removed,
         "dead agent reaped; replacement pool entry preserved when present"
     );
+}
+
+async fn retire_agent_history(agent: &AgentCli) {
+    // Retirement and registry publication share a boundary, without holding
+    // the pool lock or waiting for an ACP network request.
+    let mutation = agent.history_refresh.mutation_gate.lock().await;
+    let first_retirement = !agent
+        .history_refresh
+        .retired
+        .swap(true, std::sync::atomic::Ordering::AcqRel);
+    agent.history_refresh.cancelled.cancel();
+    drop(mutation);
+    if first_retirement {
+        let mut refresh = agent.history_refresh.gate.lock().await;
+        if refresh.owner == Some(agent.instance_id) {
+            if let Err(error) = refresh.query.stop().await {
+                tracing::error!(target: "master_history", %error, "retired history process cleanup failed; replacement remains gated");
+            }
+        }
+    }
 }
 
 /// Per-helper-connection task. Wraps the named pipe in an
@@ -6832,6 +6868,7 @@ fn session_event_is_activity_only(event: &crate::agent_sessions::SessionEvent) -
         SessionEvent::ToolStarting { .. }
             | SessionEvent::ToolCompleted { .. }
             | SessionEvent::Notification { .. }
+            | SessionEvent::WorkingDirectoryChanged { .. }
     )
 }
 
@@ -6868,6 +6905,8 @@ async fn publish_session_status_delta(state: &MasterStateInner, session_id: &str
         row.provider_id.as_deref(),
         row.last_activity_at_ms,
         status,
+        row.cwd.to_str().filter(|cwd| !cwd.is_empty()),
+        row.origin.as_ref(),
     ));
     true
 }
@@ -6875,7 +6914,8 @@ async fn publish_session_status_delta(state: &MasterStateInner, session_id: &str
 /// Called only under the per-connection refresh gate. Failure is not an empty list.
 async fn host_session_list_raw(
     agent: &AgentCli,
-) -> Result<Vec<acp::schema::v1::SessionInfo>, HistoryRefreshFailure> {
+    refresh: &mut HistoryRefreshState,
+) -> Result<acp::schema::v1::ListSessionsResponse, HistoryRefreshFailure> {
     if agent
         .cached_init_resp
         .agent_capabilities
@@ -6886,32 +6926,68 @@ async fn host_session_list_raw(
         return Err(HistoryRefreshFailure::Other);
     }
 
-    match tokio::time::timeout(
-        std::time::Duration::from_secs(5),
-        agent
-            .conn
-            .list_sessions(acp::schema::v1::ListSessionsRequest::new()),
-    )
-    .await
+    if refresh
+        .owner
+        .is_some_and(|owner| owner != agent.instance_id)
     {
-        Ok(Ok(resp)) => Ok(resp.sessions),
-        Ok(Err(e)) => {
-            tracing::warn!(
-                target: "master_history",
-                cli = ?agent.cli_source,
-                "host session/list error: {e}"
-            );
-            Err(HistoryRefreshFailure::Other)
-        }
-        Err(_) => {
-            tracing::warn!(
-                target: "master_history",
-                cli = ?agent.cli_source,
-                "host session/list timed out"
-            );
-            Err(HistoryRefreshFailure::Timeout)
+        if let Err(error) = refresh.query.stop().await {
+            tracing::error!(target: "master_history", %error, "previous history generation remains quarantined");
+            return Err(HistoryRefreshFailure::Other);
         }
     }
+    refresh.owner = Some(agent.instance_id);
+    refresh
+        .query
+        .poll(
+            agent.history_refresh.target.get(),
+            &agent.history_refresh.cancelled,
+        )
+        .await
+}
+
+/// Additional pages are cwd evidence only: never add them to history or
+/// `listed_ever`. A failed page walk discards all of its candidates.
+async fn host_acp_cwd_from_later_pages(
+    agent: &AgentCli,
+    refresh: &mut HistoryRefreshState,
+    mut cursor: String,
+    mut wanted: HashSet<String>,
+) -> (Vec<acp::schema::v1::SessionInfo>, bool) {
+    let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(2);
+    let mut cursors = HashSet::new();
+    let mut found = Vec::new();
+    for _ in 0..8 {
+        if cursor.is_empty() || !cursors.insert(cursor.clone()) {
+            tracing::warn!(target: "master_history", "host ACP cwd pagination cursor repeated");
+            return (Vec::new(), false);
+        }
+        let Some(response) = refresh
+            .query
+            .list_cwd_page(cursor, deadline, &agent.history_refresh.cancelled)
+            .await
+        else {
+            return (Vec::new(), false);
+        };
+        let next_cursor = response.next_cursor;
+        for session in response.sessions {
+            if wanted.remove(session.session_id.0.as_ref()) {
+                found.push(session);
+            }
+        }
+        let Some(next_cursor) = next_cursor else {
+            return (found, true);
+        };
+        if wanted.is_empty() {
+            return (found, false);
+        }
+        cursor = next_cursor;
+    }
+    tracing::debug!(
+        target: "master_history",
+        remaining = wanted.len(),
+        "host ACP cwd pagination budget exhausted; retaining existing evidence"
+    );
+    (found, false)
 }
 
 /// Legacy fallback for rows without a qualified provider identity.
@@ -7029,6 +7105,32 @@ fn titles_from_listing(
         .collect()
 }
 
+fn host_acp_cwd_enabled(agent: &AgentCli) -> bool {
+    if agent.source.session_location() != crate::agent_sessions::SessionLocation::Host {
+        return false;
+    }
+    match agent.resolved_agent_id.as_str() {
+        "copilot" | "claude" => true,
+        "opencode" => agent
+            .cached_init_resp
+            .agent_info
+            .as_ref()
+            .is_some_and(|info| {
+                if info.name != "OpenCode" {
+                    return false;
+                }
+                let version = info.version.strip_prefix('v').unwrap_or(&info.version);
+                let Some((minor, patch)) =
+                    version.strip_prefix("2.").and_then(|v| v.split_once('.'))
+                else {
+                    return false;
+                };
+                minor.parse::<u32>().is_ok() && patch.parse::<u32>().is_ok()
+            }),
+        _ => false,
+    }
+}
+
 /// Sync master's history rows for `agent` to its `session/list` (the
 /// single source of truth for THAT CLI): add newly-listed sessions and drop
 /// terminal Class-B rows it no longer lists (phantoms, CLI-side deletes).
@@ -7038,8 +7140,50 @@ fn titles_from_listing(
 async fn sync_host_history(
     state: &MasterStateInner,
     agent: &AgentCli,
+    refresh: &mut HistoryRefreshState,
+    search_later_pages: bool,
 ) -> Result<(bool, usize), HistoryRefreshFailure> {
-    let sessions = host_session_list_raw(agent).await?;
+    let host_acp_cwd = host_acp_cwd_enabled(agent);
+    if host_acp_cwd
+        && (!refresh.query.in_flight()
+            || refresh.owner != Some(agent.instance_id)
+            || refresh.cwd_baseline.is_none())
+    {
+        refresh.cwd_baseline = Some(
+            state
+                .registry
+                .snapshot()
+                .await
+                .into_iter()
+                .filter(|row| row_belongs_to_agent(row, agent))
+                .map(|row| {
+                    (
+                        crate::session_registry::SessionIdentity::from_info(&row),
+                        (row.cwd_revision(), row.pane_session_id),
+                    )
+                })
+                .collect(),
+        );
+    }
+    let listing = match host_session_list_raw(agent, refresh).await {
+        Ok(listing) => listing,
+        Err(error) => {
+            if !refresh.query.in_flight() {
+                refresh.cwd_baseline = None;
+            }
+            return Err(error);
+        }
+    };
+    let prior_rows = if host_acp_cwd {
+        refresh
+            .cwd_baseline
+            .take()
+            .expect("host ACP cwd baseline captured before session/list")
+    } else {
+        HashMap::new()
+    };
+    let mut listing_complete = listing.next_cursor.is_none();
+    let sessions = listing.sessions;
     if agent
         .history_refresh
         .retired
@@ -7047,6 +7191,29 @@ async fn sync_host_history(
     {
         return Err(HistoryRefreshFailure::Other);
     }
+    let first_page_ids: HashSet<_> = sessions
+        .iter()
+        .map(|row| row.session_id.to_string())
+        .collect();
+    let wanted: HashSet<_> = prior_rows
+        .iter()
+        .filter(|(identity, (_, pane))| {
+            pane.is_some() && !first_page_ids.contains(identity.session_id.0.as_ref())
+        })
+        .map(|(identity, _)| identity.session_id.to_string())
+        .collect();
+    let additional_cwd = if search_later_pages && host_acp_cwd && !wanted.is_empty() {
+        if let Some(cursor) = listing.next_cursor {
+            let (found, complete) =
+                host_acp_cwd_from_later_pages(agent, refresh, cursor, wanted).await;
+            listing_complete = complete;
+            found
+        } else {
+            Vec::new()
+        }
+    } else {
+        Vec::new()
+    };
     let rows = host_history_via_acp(state, agent, &sessions)
         .await
         .ok_or(HistoryRefreshFailure::Other)?;
@@ -7136,6 +7303,59 @@ async fn sync_host_history(
     .await
     {
         changed = true;
+    }
+
+    if host_acp_cwd {
+        for session in sessions.iter().chain(&additional_cwd) {
+            let Some(key) = crate::session_registry::HistoryRowKey::new(
+                &agent.resolved_agent_id,
+                crate::agent_sessions::SessionLocation::Host,
+                session.session_id.to_string(),
+                None,
+            ) else {
+                continue;
+            };
+            let identity = crate::session_registry::SessionIdentity {
+                session_id: session.session_id.clone(),
+                history_key: Some(key),
+            };
+            let Some((revision, _)) = prior_rows.get(&identity) else {
+                continue;
+            };
+            if state
+                .registry
+                .adopt_acp_cwd_identity(
+                    &identity,
+                    *revision,
+                    agent.instance_id,
+                    session.cwd.clone(),
+                )
+                .await
+            {
+                changed = true;
+            }
+        }
+        if listing_complete {
+            let listed_cwd_ids: HashSet<_> = first_page_ids
+                .iter()
+                .cloned()
+                .chain(
+                    additional_cwd
+                        .iter()
+                        .map(|session| session.session_id.to_string()),
+                )
+                .collect();
+            for (identity, (revision, _)) in &prior_rows {
+                if !listed_cwd_ids.contains(identity.session_id.0.as_ref())
+                    && state
+                        .registry
+                        .clear_acp_cwd_identity(identity, *revision)
+                        .await
+                {
+                    changed = true;
+                }
+            }
+        }
     }
 
     Ok((changed, rows.len()))
@@ -7249,14 +7469,17 @@ fn is_stale_host_history_row(
 
 /// Seed + reconcile `agent`'s history against its own `session/list`,
 /// broadcasting when anything changed. Returns the listed count.
+#[cfg(test)]
 async fn seed_host_and_broadcast(state: &MasterStateInner, agent: &AgentCli) -> Option<usize> {
     refresh_agent_history(state, agent, HistoryRefreshTrigger::Immediate).await
 }
 
 #[derive(Clone, Copy)]
 enum HistoryRefreshTrigger {
+    // Explicit requests still honor query pacing and failure backoff.
     Immediate,
     Periodic,
+    #[cfg(test)]
     Event,
 }
 
@@ -7290,35 +7513,33 @@ async fn refresh_agent_history(
     if agent.history_refresh.retired.load(Ordering::Acquire) {
         return None;
     }
-    // The interval already paces periodic work. Applying the success delay
-    // again would skip ticks whenever the previous dispatch started slightly late.
-    let honor_delay = match trigger {
-        HistoryRefreshTrigger::Immediate => false,
-        HistoryRefreshTrigger::Periodic => refresh.failures != 0,
-        HistoryRefreshTrigger::Event => true,
-    };
+    // Manual, event and timer requests share the same in-flight operation.
+    // Only an actual response or confirmed process exit releases its slot.
     // Waiters share the completed refresh rather than queueing another ACP call.
     if agent.history_refresh.generation.load(Ordering::Acquire) != generation
-        || (honor_delay
+        || (!refresh.query.in_flight()
             && refresh
                 .next_refresh_at
                 .is_some_and(|at| at > tokio::time::Instant::now()))
     {
         return refresh.last_count;
     }
-    let started_at = tokio::time::Instant::now();
-    let result = sync_host_history(state, agent).await;
+    let result = sync_host_history(
+        state,
+        agent,
+        &mut refresh,
+        matches!(trigger, HistoryRefreshTrigger::Periodic),
+    )
+    .await;
     let delay = if result.is_ok() {
         refresh.failures = 0;
         HISTORY_REFRESH_INTERVAL
+    } else if refresh.query.in_flight() {
+        std::time::Duration::ZERO
     } else {
         refresh.record_failure()
     };
-    refresh.next_refresh_at = Some(if result.is_ok() {
-        started_at + delay
-    } else {
-        tokio::time::Instant::now() + delay
-    });
+    refresh.next_refresh_at = Some(tokio::time::Instant::now() + delay);
     refresh.last_count = result.ok().map(|(_, count)| count);
     {
         let mut discovery_errors = state.history_discovery_errors.lock().await;
@@ -7415,16 +7636,63 @@ fn start_history_refresh_loop(state: &Arc<MasterStateInner>) {
                 .lock()
                 .await
                 .values()
+                .filter(|cell| !agent_cell_is_retired(&state, cell))
                 .filter_map(|cell| cell.get().cloned())
                 .collect();
             for agent in agents {
-                if agent.history_refresh.gate.try_lock().is_err() {
-                    continue;
-                }
-                let state = Arc::clone(&state);
-                tokio::task::spawn_local(async move {
-                    refresh_agent_history(&state, &agent, HistoryRefreshTrigger::Periodic).await;
-                });
+                start_agent_history_worker(&state, &agent);
+            }
+        }
+    });
+}
+
+fn start_agent_history_worker(state: &Arc<MasterStateInner>, agent: &Arc<AgentCli>) {
+    use std::sync::atomic::Ordering;
+    if agent
+        .cached_init_resp
+        .agent_capabilities
+        .session_capabilities
+        .list
+        .is_none()
+        || agent.history_refresh.retired.load(Ordering::Acquire)
+        || agent
+            .history_refresh
+            .worker_started
+            .swap(true, Ordering::AcqRel)
+    {
+        return;
+    }
+    let state = Arc::downgrade(state);
+    let agent = Arc::clone(agent);
+    struct WorkerOwnership(Arc<AgentCli>);
+    impl Drop for WorkerOwnership {
+        fn drop(&mut self) {
+            self.0
+                .history_refresh
+                .worker_started
+                .store(false, Ordering::Release);
+        }
+    }
+    let ownership = WorkerOwnership(Arc::clone(&agent));
+    tokio::spawn(async move {
+        let _ownership = ownership;
+        loop {
+            let Some(state) = state.upgrade() else { break };
+            if agent.history_refresh.retired.load(Ordering::Acquire) {
+                break;
+            }
+            refresh_agent_history(&state, &agent, HistoryRefreshTrigger::Periodic).await;
+            drop(state);
+            let next = agent
+                .history_refresh
+                .gate
+                .lock()
+                .await
+                .next_refresh_at
+                .unwrap_or_else(tokio::time::Instant::now);
+            tokio::select! {
+                _ = agent.history_refresh.cancelled.cancelled() => break,
+                _ = tokio::time::sleep_until(next) => {}
             }
         }
     });
@@ -7489,8 +7757,7 @@ where
             Some(agent_id),
             &crate::agent_source::AgentSource::Host,
         );
-        if !matches!(trigger, HistoryRefreshTrigger::Immediate)
-            && state
+        if state
                 .history_discovery_retries
                 .lock()
                 .await
@@ -7541,7 +7808,7 @@ where
 }
 
 fn request_host_history_refresh(state: &Arc<MasterStateInner>) {
-    request_host_history_discovery(state, true);
+    request_host_history_discovery(state);
 }
 
 async fn retry_failed_host_history_discovery(state: &Arc<MasterStateInner>) {
@@ -7554,21 +7821,16 @@ async fn retry_failed_host_history_discovery(state: &Arc<MasterStateInner>) {
             .values()
             .any(HistoryRefreshState::retry_due)
     {
-        request_host_history_discovery(state, false);
+        request_host_history_discovery(state);
     }
 }
 
-fn request_host_history_discovery(state: &Arc<MasterStateInner>, immediate: bool) {
+fn request_host_history_discovery(state: &Arc<MasterStateInner>) {
     use std::sync::atomic::Ordering;
-    // Bit 0 owns the single worker; bit 1 requests another pass; bit 2 makes
-    // an explicit refresh bypass startup-failure backoff. The worker's
-    // idle transition is atomic with respect to requests, even on COM threads.
-    if state
-        .history_discovery_state
-        .fetch_or(if immediate { 7 } else { 3 }, Ordering::AcqRel)
-        & 1
-        != 0
-    {
+    // Bit 0 owns the single worker; bit 1 requests another pass. Every
+    // trigger honors startup-failure backoff. The worker's idle transition
+    // is atomic with respect to requests, even on COM threads.
+    if state.history_discovery_state.fetch_or(3, Ordering::AcqRel) & 1 != 0 {
         return;
     }
     let guard = Arc::clone(&state.history_refresh).try_lock_owned().ok();
@@ -7580,10 +7842,9 @@ fn request_host_history_discovery(state: &Arc<MasterStateInner>, immediate: bool
             None => Arc::clone(&state.history_refresh).lock_owned().await,
         };
         loop {
-            let pending = state
+            state
                 .history_discovery_state
-                .fetch_and(!6, Ordering::AcqRel);
-            let immediate = pending & 4 != 0;
+                .fetch_and(!2, Ordering::AcqRel);
             state.history_discovery_errors.lock().await.clear();
             let allowed_ids = state.allowed_agent_ids.clone();
             let discovery = tokio::task::spawn_blocking(move || {
@@ -7611,16 +7872,7 @@ fn request_host_history_discovery(state: &Arc<MasterStateInner>, immediate: bool
                         .lock()
                         .await
                         .retain(|key, _| eligible_keys.contains(key));
-                    if immediate {
-                        refresh_host_history_agents(&state, &agent_ids).await;
-                    } else {
-                        refresh_host_history_agents_for_trigger(
-                            &state,
-                            &agent_ids,
-                            HistoryRefreshTrigger::Periodic,
-                        )
-                        .await;
-                    }
+                    refresh_host_history_agents(&state, &agent_ids).await;
                 }
                 Err(error) => {
                     state
@@ -7664,7 +7916,7 @@ fn request_host_history_discovery(state: &Arc<MasterStateInner>, immediate: bool
 /// Ordinary reads never contact agents. Only an explicit rescan may refresh.
 async fn handle_sessions_list(
     state: &std::sync::Arc<MasterStateInner>,
-    agent: Option<&AgentCli>,
+    agent: Option<&Arc<AgentCli>>,
     parsed: &crate::session_registry::SessionsListParams,
 ) -> acp::Result<acp::schema::v1::ExtResponse> {
     handle_sessions_list_with_probe(state, agent, parsed, |mut sessions| async move {
@@ -7676,7 +7928,7 @@ async fn handle_sessions_list(
 
 async fn handle_sessions_list_with_probe<F, Fut>(
     state: &std::sync::Arc<MasterStateInner>,
-    agent: Option<&AgentCli>,
+    agent: Option<&Arc<AgentCli>>,
     parsed: &crate::session_registry::SessionsListParams,
     probe: F,
 ) -> acp::Result<acp::schema::v1::ExtResponse>
@@ -7686,27 +7938,9 @@ where
 {
     if parsed.rescan {
         if let Some(agent) = agent {
-            // Re-pull this agent's own `session/list` and broadcast. Each pooled
-            // agent — host or in-distro — enumerates its own sessions, so an
-            // F5 in a WSL pane refreshes that distro through its own CLI.
-            let count = seed_host_and_broadcast(state, agent).await;
-            if count.is_none()
-                && agent
-                    .cached_init_resp
-                    .agent_capabilities
-                    .session_capabilities
-                    .list
-                    .is_some()
-            {
-                return Err(acp::Error::internal_error()
-                    .data("session history refresh failed; previous snapshot retained"));
-            }
-            tracing::info!(
-                target: "master_history",
-                cli = ?agent.cli_source,
-                ?count,
-                "sessions/list rescan: reloaded history via ACP"
-            );
+            // F5 shares the bound source's worker, but the helper's ACP
+            // dispatch must never wait behind a slow history request.
+            start_agent_history_worker(state, agent);
         } else {
             request_host_history_refresh(state);
         }
@@ -8451,7 +8685,7 @@ where
 /// master's snapshot, so the upgrade must happen here.
 ///
 async fn handle_session_hook(
-    state: &MasterStateInner,
+    state: &Arc<MasterStateInner>,
     event: crate::agent_sessions::SessionEvent,
     is_born_bound: bool,
 ) -> acp::Result<acp::schema::v1::ExtResponse> {
@@ -8469,6 +8703,8 @@ async fn handle_session_hook(
             &event,
             SessionEvent::SessionStarted { .. }
                 | SessionEvent::SessionStopped { .. }
+                | SessionEvent::SessionStoppedIfOwner { .. }
+                | SessionEvent::SessionUnbound { .. }
                 | SessionEvent::ConnectionFailed { .. }
                 | SessionEvent::PaneClosed { .. }
         );
@@ -8510,6 +8746,12 @@ async fn apply_master_session_event(
     event: crate::agent_sessions::SessionEvent,
     is_born_bound: bool,
 ) -> (bool, Option<String>) {
+    if matches!(
+        &event,
+        crate::agent_sessions::SessionEvent::SessionRenamed { .. }
+    ) {
+        return (state.registry.apply_event(event).await, None);
+    }
     // Capture the session key BEFORE moving `event` into the reducer so
     // we can dispatch the post-apply title refresh against the right
     // row. Pane-keyed variants (PaneClosed, ConnectionFailed) don't
@@ -8619,6 +8861,8 @@ async fn apply_master_session_event(
             let unseen_terminal = matches!(
                 &event,
                 crate::agent_sessions::SessionEvent::SessionStopped { .. }
+                    | crate::agent_sessions::SessionEvent::SessionStoppedIfOwner { .. }
+                    | crate::agent_sessions::SessionEvent::SessionUnbound { .. }
             ) && state.registry.lookup(&sid).await.is_none();
             if !unseen_terminal {
                 state.hook_owned.lock().await.insert(sid.clone());
@@ -8672,7 +8916,7 @@ async fn session_event_status_key(
 /// Re-broadcasts `sessions/changed` only when the location actually changed, so
 /// the host path (no distro) adds no extra push.
 async fn handle_session_born_bound(
-    state: &MasterStateInner,
+    state: &Arc<MasterStateInner>,
     event: crate::agent_sessions::SessionEvent,
     wsl_distro: Option<String>,
 ) -> acp::Result<acp::schema::v1::ExtResponse> {
@@ -8708,7 +8952,10 @@ async fn handle_session_born_bound(
 ///      touching the pane binding; or
 ///   3. anything else (a user-typed CLI, or a machine-wide copilot/claude in
 ///      VS Code / another terminal) → drop — we can't bind it to an IT pane.
-async fn apply_watcher_event(state: &MasterStateInner, emitted: crate::session_watcher::Emitted) {
+async fn apply_watcher_event(
+    state: &Arc<MasterStateInner>,
+    emitted: crate::session_watcher::Emitted,
+) {
     let sid = acp::schema::v1::SessionId::new(emitted.key.clone());
 
     // Hybrid dedup — the watcher is a *fallback*. Coordinate with authoritative
@@ -10364,8 +10611,73 @@ async fn handle_master_agent_event(state: &Arc<MasterStateInner>, params: &serde
         return;
     };
 
+    let payload = params
+        .get("payload")
+        .cloned()
+        .unwrap_or(serde_json::Value::Null);
+    let rows = state.registry.snapshot().await;
+    let non_binding_opencode = cli_source == CliSource::OpenCode
+        && payload
+            .get("pane_owner")
+            .and_then(serde_json::Value::as_bool)
+            == Some(false);
+    let owner_pane = if non_binding_opencode {
+        if asid.is_empty()
+            || !matches!(
+                event,
+                "agent.prompt.submit"
+                    | "agent.tool.starting"
+                    | "agent.stop"
+                    | "agent.notification"
+                    | "agent.error"
+                    | "agent.session.renamed"
+                    | "agent.cwd.changed"
+                    | "agent.session.end"
+            )
+        {
+            return;
+        }
+        let mut matches = rows.iter().filter(|row| row.session_id.0.as_ref() == key);
+        let Some(row) = matches.next() else {
+            tracing::debug!(target: "master_wt_event", key, event, "ignored unknown OpenCode server activity");
+            return;
+        };
+        if matches.next().is_some()
+            || row.cli_source.as_ref() != Some(&cli_source)
+            || !matches!(
+                row.status,
+                Some(
+                    crate::agent_sessions::AgentStatus::Idle
+                        | crate::agent_sessions::AgentStatus::Working
+                        | crate::agent_sessions::AgentStatus::Attention
+                        | crate::agent_sessions::AgentStatus::Error
+                )
+            )
+        {
+            return;
+        }
+        match row
+            .pane_session_id
+            .as_deref()
+            .filter(|pane| !pane.is_empty())
+        {
+            Some(pane) => pane.to_string(),
+            None if event == "agent.session.end"
+                && state
+                    .hook_owned
+                    .lock()
+                    .await
+                    .contains(&acp::schema::v1::SessionId::new(key.clone())) =>
+            {
+                String::new()
+            }
+            None => return,
+        }
+    } else {
+        pane_id.to_string()
+    };
     let location =
-        match validate_master_hook_source(state, params, &key, pane_id, &cli_source).await {
+        match validate_master_hook_source(state, params, &key, &owner_pane, &cli_source).await {
             Ok(location) => location,
             Err(reason) => {
                 tracing::warn!(target: "master_wt_event", reason, "rejected agent hook source");
@@ -10373,13 +10685,39 @@ async fn handle_master_agent_event(state: &Arc<MasterStateInner>, params: &serde
             }
         };
 
-    let payload = params
-        .get("payload")
-        .cloned()
-        .unwrap_or(serde_json::Value::Null);
-    let pane_key = crate::agent_sessions::pane_key(pane_id);
+    let pane_key = crate::agent_sessions::pane_key(&owner_pane);
+    if !non_binding_opencode
+        && crate::app::opencode_end_from_another_pane(
+            &cli_source,
+            event,
+            rows.iter()
+                .find(|row| {
+                    row.session_id.0.as_ref() == key && row.cli_source.as_ref() == Some(&cli_source)
+                })
+                .and_then(|row| row.pane_session_id.as_deref()),
+            pane_id,
+        )
+    {
+        tracing::debug!(target: "master_wt_event", key, pane_id, "ignored stale OpenCode end from another pane");
+        return;
+    }
+    if cli_source == CliSource::OpenCode
+        && event == "agent.session.end"
+        && !non_binding_opencode
+        && !rows.iter().any(|row| {
+            row.session_id.0.as_ref() == key
+                && row.cli_source.as_ref() == Some(&cli_source)
+                && row.pane_session_id.as_deref().is_some_and(|pane| {
+                    !pane_id.is_empty()
+                        && crate::agent_sessions::pane_key(pane)
+                            == crate::agent_sessions::pane_key(pane_id)
+                })
+        })
+    {
+        return;
+    }
     let pane_owned_by_other = !pane_key.is_empty()
-        && state.registry.snapshot().await.iter().any(|row| {
+        && rows.iter().any(|row| {
             (row.session_id.0.as_ref() != key || row.cli_source.as_ref() != Some(&cli_source))
                 && matches!(
                     row.status,
@@ -10396,12 +10734,18 @@ async fn handle_master_agent_event(state: &Arc<MasterStateInner>, params: &serde
                     .is_some_and(|pane| crate::agent_sessions::pane_key(pane) == pane_key)
         });
     let facts = crate::app::AgentEventFacts {
+        session_status: rows
+            .iter()
+            .find(|row| {
+                row.session_id.0.as_ref() == key && row.cli_source.as_ref() == Some(&cli_source)
+            })
+            .and_then(|row| row.status.clone()),
         key,
-        session_known,
+        session_known: session_known || non_binding_opencode,
         pane_owned_by_other,
     };
     let session_key = facts.key.clone();
-    let plan = crate::app::plan_agent_event(event, &payload, pane_id, &cli_source, &facts);
+    let plan = crate::app::plan_agent_event(event, &payload, &owner_pane, &cli_source, &facts);
     if plan.events.is_empty() {
         return;
     }
@@ -10411,6 +10755,20 @@ async fn handle_master_agent_event(state: &Arc<MasterStateInner>, params: &serde
     let mut refresh_keys = HashSet::new();
     let transition_count = plan.events.len();
     for ev in plan.events {
+        let ev = if cli_source == CliSource::OpenCode && event == "agent.session.end" {
+            match ev {
+                crate::agent_sessions::SessionEvent::SessionStopped { key, reason } => {
+                    crate::agent_sessions::SessionEvent::SessionStoppedIfOwner {
+                        key,
+                        pane_session_id: (!owner_pane.is_empty()).then(|| pane_key.clone()),
+                        reason,
+                    }
+                }
+                other => other,
+            }
+        } else {
+            ev
+        };
         tracing::debug!(
             target: "master_wt_event",
             event = ?ev,
@@ -10827,10 +11185,14 @@ fn session_event_key(event: &crate::agent_sessions::SessionEvent) -> Option<&str
     use crate::agent_sessions::SessionEvent;
     match event {
         SessionEvent::SessionStarted { key, .. }
+        | SessionEvent::SessionRenamed { key, .. }
+        | SessionEvent::WorkingDirectoryChanged { key, .. }
         | SessionEvent::ToolStarting { key, .. }
         | SessionEvent::ToolCompleted { key }
         | SessionEvent::Notification { key, .. }
         | SessionEvent::SessionStopped { key, .. }
+        | SessionEvent::SessionStoppedIfOwner { key, .. }
+        | SessionEvent::SessionUnbound { key, .. }
         | SessionEvent::ResumeDispatched { key }
         | SessionEvent::ResumeFailed { key, .. }
         | SessionEvent::ResumePaneAssigned { key, .. } => Some(key.as_str()),
@@ -10897,7 +11259,10 @@ async fn agent_for_row(
 /// early-out: only fetch the agent's session/list when this row is synthetic.
 /// The shared refresh owns history/title notifications; callers publish only
 /// their own lifecycle mutations.
-async fn try_refresh_title_via_acp(state: &MasterStateInner, sid: &acp::schema::v1::SessionId) {
+async fn try_refresh_title_via_acp(
+    state: &Arc<MasterStateInner>,
+    sid: &acp::schema::v1::SessionId,
+) {
     let Some(info) = state.registry.lookup(sid).await else {
         return;
     };
@@ -10922,7 +11287,9 @@ async fn try_refresh_title_via_acp(state: &MasterStateInner, sid: &acp::schema::
     if !row_belongs_to_agent(&info, &agent) {
         return;
     }
-    refresh_agent_history(state, &agent, HistoryRefreshTrigger::Event).await;
+    // The per-agent worker owns one coalesced refresh stream. Never hold a
+    // hook/ACP dispatch handler behind a slow history request.
+    start_agent_history_worker(state, &agent);
 }
 
 /// Pure async handler for the `intellterm.wta/focus_session` ExtRequest.

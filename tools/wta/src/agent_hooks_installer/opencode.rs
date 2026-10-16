@@ -249,7 +249,8 @@ fn package_is_managed(path: &Path) -> bool {
 }
 
 pub(super) fn managed_entry(home: &Path) -> bool {
-    managed_file(&opencode_support_dir(home).join(OPENCODE_PLUGIN_JS))
+    let support = opencode_support_dir(home);
+    managed_file(&support.join(OPENCODE_PLUGIN_JS)) || managed_file(&support.join("server.js"))
 }
 
 pub(super) fn apply_compatibility(status: &mut CliStatus, home: Option<&Path>) {
@@ -339,6 +340,43 @@ fn check_owned_files(home: &Path) -> std::io::Result<()> {
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
             Err(error) => return Err(error),
         }
+    }
+    let nested = support.join(OPENCODE_SUPPORT_DIR);
+    match fs::symlink_metadata(&nested) {
+        Ok(metadata) if !metadata.file_type().is_dir() => {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::AlreadyExists,
+                "OpenCode legacy support path is not a regular directory",
+            ));
+        }
+        Ok(_) => {
+            let rpc = nested.join("rpc.js");
+            match fs::symlink_metadata(&rpc) {
+                Ok(metadata) if !metadata.file_type().is_file() || !managed_file(&rpc) => {
+                    return Err(std::io::Error::new(
+                        std::io::ErrorKind::AlreadyExists,
+                        "OpenCode legacy RPC file is not managed by Intelligent Terminal",
+                    ));
+                }
+                Ok(_) => {}
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+                Err(error) => return Err(error),
+            }
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(error) => return Err(error),
+    }
+    Ok(())
+}
+
+fn remove_legacy_rpc(home: &Path) -> std::io::Result<()> {
+    let nested = opencode_support_dir(home).join(OPENCODE_SUPPORT_DIR);
+    let rpc = nested.join("rpc.js");
+    if rpc.exists() {
+        fs::remove_file(rpc)?;
+    }
+    if nested.is_dir() && fs::read_dir(&nested)?.next().is_none() {
+        fs::remove_dir(nested)?;
     }
     Ok(())
 }
@@ -439,6 +477,7 @@ pub(super) fn copy_bundle(source: &Path, home: &Path, variant: ApiVariant) -> st
     if legacy.exists() {
         fs::remove_file(legacy)?;
     }
+    remove_legacy_rpc(home)?;
     fs::write(
         marker,
         serde_json::to_vec_pretty(&manifest).map_err(std::io::Error::other)?,
@@ -467,6 +506,7 @@ pub(super) fn install(home: &Path) -> InstallOutcome {
 
 pub(super) fn remove_support_files(home: &Path) -> std::io::Result<()> {
     check_owned_files(home)?;
+    remove_legacy_rpc(home)?;
     let support = opencode_support_dir(home);
     for file in std::iter::once(BRIDGE).chain(
         V2_FILES
@@ -485,6 +525,41 @@ pub(super) fn remove_support_files(home: &Path) -> std::io::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn migrates_legacy_v2_layout_and_preserves_foreign_nested_dependencies() {
+        let fixture = Fixture::new();
+        let support = opencode_support_dir(&fixture.0);
+        let nested = support.join(OPENCODE_SUPPORT_DIR);
+        fs::create_dir_all(&nested).unwrap();
+        fs::write(
+            support.join(OPENCODE_MANIFEST),
+            fs::read(source().join(OPENCODE_MANIFEST)).unwrap(),
+        )
+        .unwrap();
+        fs::write(
+            support.join("server.js"),
+            "// Managed by Intelligent Terminal: wt-agent-hooks",
+        )
+        .unwrap();
+        fs::write(nested.join("rpc.js"), "user dependency").unwrap();
+        assert!(copy_bundle(&source(), &fixture.0, ApiVariant::V2).is_err());
+        assert!(!opencode_uninstall(Some(&fixture.0)).succeeded());
+        assert_eq!(
+            fs::read_to_string(nested.join("rpc.js")).unwrap(),
+            "user dependency"
+        );
+        fs::write(
+            nested.join("rpc.js"),
+            "// Managed by Intelligent Terminal: wt-agent-hooks",
+        )
+        .unwrap();
+        copy_bundle(&source(), &fixture.0, ApiVariant::V2).unwrap();
+        assert!(complete(&fixture.0));
+        assert!(!nested.exists());
+        assert!(opencode_uninstall(Some(&fixture.0)).succeeded());
+        assert!(!support.exists());
+    }
 
     #[test]
     fn versions_select_only_supported_majors() {
