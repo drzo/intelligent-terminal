@@ -9651,20 +9651,30 @@ namespace TerminalAppLocalTests
             auto page = _commonSetup(nullptr, nullptr, std::nullopt, true);
             TestOnUIThread([&]() {
                 const auto tab = page->_GetFocusedTabImpl();
+                const auto sourceId = tab->GetActivePane()->GetSessionId();
                 auto agentPane = page->_WrapInAgentPaneContent(page->_MakePane(nullptr, nullptr, nullptr));
                 agentPane->IsAgentPane(true);
                 VERIFY_IS_TRUE(page->_SplitPane(tab, SplitDirection::Right, 0.5f, agentPane));
                 VERIFY_IS_TRUE(tab->GetActivePane()->IsAgentPane());
                 const auto paneId = tab->GetActivePane()->GetSessionId();
+                const auto agentContent = tab->FindAgentPaneContent();
                 page->_tabStrip.HistoryActive(historyActive);
                 page->_tabStrip.SidebarFilters().ShowAgentsOnly(historyActive);
                 page->_tabStrip.HistoryError(L"");
                 ActionEventArgs args{ SplitPaneArgs{ SplitType::Duplicate, SplitDirection::Down, 0.5f, nullptr } };
                 page->_HandleSplitPane(nullptr, args);
 
-                VERIFY_IS_FALSE(args.Handled());
-                VERIFY_ARE_EQUAL(2, tab->GetLeafPaneCount());
-                VERIFY_ARE_EQUAL(paneId, tab->GetActivePane()->GetSessionId());
+                VERIFY_IS_TRUE(args.Handled());
+                VERIFY_ARE_EQUAL(3, tab->GetLeafPaneCount());
+                const auto newPane = tab->GetActivePane();
+                VERIFY_IS_FALSE(newPane->IsAgentPane());
+                VERIFY_IS_NOT_NULL(newPane->GetContent().try_as<TerminalPaneContent>());
+                VERIFY_ARE_NOT_EQUAL(sourceId, newPane->GetSessionId());
+                VERIFY_ARE_NOT_EQUAL(paneId, newPane->GetSessionId());
+                agentPane = tab->GetRootPane()->FindPaneBySessionId(paneId);
+                VERIFY_IS_NOT_NULL(agentPane);
+                VERIFY_IS_TRUE(agentPane->IsAgentPane());
+                VERIFY_IS_TRUE(tab->FindAgentPaneContent() == agentContent);
                 VERIFY_ARE_EQUAL(historyActive, page->_tabStrip.HistoryActive());
                 VERIFY_ARE_EQUAL(historyActive, page->_tabStrip.SidebarFilters().ShowAgentsOnly());
                 VERIFY_IS_TRUE(page->_tabStrip.HistoryError().empty());
