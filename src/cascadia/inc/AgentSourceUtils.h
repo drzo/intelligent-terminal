@@ -148,6 +148,10 @@ namespace Microsoft::Terminal::AgentSource
         for (int i = 1; i < argc; ++i)
         {
             const std::wstring_view arg{ argv.get()[i] };
+            if (arg == L"~")
+            {
+                continue;
+            }
             if (arg == L"--" || arg == L"--exec" || arg == L"-e" || !arg.starts_with(L'-'))
             {
                 break;
@@ -188,8 +192,19 @@ namespace Microsoft::Terminal::AgentSource
         {
             return {};
         }
+        if (sourceCwd.find(L'\0') != std::wstring_view::npos)
+        {
+            LOG_HR_MSG(E_INVALIDARG, "Split working directory contains an embedded NUL");
+            return {};
+        }
         if (sourceCwd.starts_with(L'/') && !sourceCwd.starts_with(L"//"))
         {
+            // The WSL launcher embeds --cd in a quoted command-line argument.
+            if (sourceCwd.find_first_of(L"\"\\%\r\n") != std::wstring_view::npos)
+            {
+                LOG_HR_MSG(E_INVALIDARG, "Split working directory cannot be safely passed to WSL");
+                return {};
+            }
             const auto source = WslLaunchIdentity(sourceCommand);
             const auto target = WslLaunchIdentity(targetCommand);
             // POSIX paths are meaningful only in the same known launch namespace.

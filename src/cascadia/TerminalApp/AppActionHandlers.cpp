@@ -298,7 +298,7 @@ namespace winrt::TerminalApp::implementation
             if (realArgs.SplitMode() == SplitType::Profile && activeTab)
             {
                 const auto decision = ::Microsoft::Terminal::ProfileSplits::Resolve(
-                    _settings, activeTab->GetFocusedProfile(), contentArgs);
+                    _settings, _SourceTerminalProfileForTab(activeTab), contentArgs);
                 if (decision.duplicate)
                 {
                     duplicateFromTab = *activeTab;

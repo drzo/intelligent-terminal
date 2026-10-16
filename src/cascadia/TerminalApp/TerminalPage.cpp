@@ -1824,19 +1824,22 @@ namespace winrt::TerminalApp::implementation
         {
             return args;
         }
-        const auto sourceSettings = control.Settings();
+        const auto connection = control.Connection().try_as<TerminalConnection::ConptyConnection>();
+        const auto sourceCommand = connection ? connection.Commandline() : winrt::hstring{};
+        const auto sourceDirectory = connection ? connection.StartingDirectory() : winrt::hstring{};
         const auto targetSettings = duplicate ?
-                                        Settings::TerminalSettings::CreateWithProfile(_settings, _SourceTerminalProfileForTab(tab)) :
+                                        Settings::TerminalSettings::CreateWithProfile(_settings, GetClosestProfileForDuplicationOfProfile(_SourceTerminalProfileForTab(tab))) :
                                         Settings::TerminalSettings::CreateWithNewTerminalArgs(_settings, args);
+        const auto targetCommand = wil::ExpandEnvironmentStringsW<std::wstring>(targetSettings.DefaultSettings()->Commandline().c_str());
         const auto [agentOwned, agentCwd] = _RichTabAgentCwdForControl(control);
         const auto sourceCwd = agentCwd ? winrt::to_hstring(*agentCwd) :
                                           winrt::hstring{ ::Microsoft::Terminal::AgentSource::ResolvePaneCwd(
                                               agentOwned ? winrt::hstring{} : control.WorkingDirectory(),
                                               !agentOwned && control.WorkingDirectoryReportedByShell(),
-                                              sourceSettings.Commandline(),
-                                              sourceSettings.StartingDirectory()) };
+                                              sourceCommand,
+                                              sourceDirectory) };
         const auto directory = ::Microsoft::Terminal::AgentSource::ResolveSplitCwd(
-            sourceCwd, sourceSettings.Commandline(), targetSettings.DefaultSettings()->Commandline(), [](const std::wstring_view candidate) {
+            sourceCwd, sourceCommand, targetCommand, [](const std::wstring_view candidate) {
                 const std::wstring path{ candidate };
                 return ::Microsoft::Console::Utils::IsValidDirectory(path.c_str());
             });
@@ -9028,6 +9031,15 @@ namespace winrt::TerminalApp::implementation
 
         const auto dispatchToElevatedWindow = ctrlPressed && !IsRunningElevated();
 
+        _OpenNewTerminalViaDropdown(newTerminalArgs, altPressed, shiftPressed, dispatchToElevatedWindow, debugTap);
+    }
+
+    void TerminalPage::_OpenNewTerminalViaDropdown(const NewTerminalArgs newTerminalArgs,
+                                                   const bool altPressed,
+                                                   const bool shiftPressed,
+                                                   const bool dispatchToElevatedWindow,
+                                                   const bool debugTap)
+    {
         auto sessionType = "";
         if ((shiftPressed || dispatchToElevatedWindow) && !debugTap)
         {
@@ -9056,7 +9068,11 @@ namespace winrt::TerminalApp::implementation
         }
         else
         {
-            const auto newPane = _MakePane(newTerminalArgs);
+            const auto split = altPressed && !debugTap;
+            const auto contentArgs = split ?
+                                         _PrepareSplitDirectory(_GetFocusedTabImpl(), newTerminalArgs, false) :
+                                         newTerminalArgs.as<INewContentArgs>();
+            const auto newPane = _MakePane(contentArgs);
             // If the newTerminalArgs caused us to open an elevated window
             // instead of creating a pane, it may have returned nullptr. Just do
             // nothing then.
@@ -9064,7 +9080,7 @@ namespace winrt::TerminalApp::implementation
             {
                 return;
             }
-            if (altPressed && !debugTap)
+            if (split)
             {
                 this->_SplitPane(_GetFocusedTabImpl(),
                                  SplitDirection::Automatic,
@@ -14492,7 +14508,15 @@ namespace winrt::TerminalApp::implementation
             return false;
         }
 
-        // Agent panes are fixed panels and cannot be split.
+        std::optional<uint32_t> previousFocus;
+        auto restoreFocus = wil::scope_exit([&]() {
+            if (previousFocus)
+            {
+                activeTab->FocusPane(*previousFocus);
+            }
+        });
+        // Agent panels stay intact: a user split targets their source terminal.
+        // Content transfers still use the existing fixed-panel completion path.
         if (const auto activePane = activeTab->GetActivePane())
         {
             if (activePane->IsAgentPane())
@@ -14500,9 +14524,19 @@ namespace winrt::TerminalApp::implementation
                 const auto content = activePane->GetContent().try_as<winrt::TerminalApp::AgentPaneContent>();
                 const bool completingTransfer = content &&
                                                 winrt::get_self<implementation::AgentPaneContent>(content)->AwaitingTransferredTabContent();
-                if (!completingTransfer || !newPane || newPane->IsAgentPane())
+                if (!newPane || newPane->IsAgentPane())
                 {
                     return false;
+                }
+                if (!completingTransfer)
+                {
+                    const auto source = _SourceTerminalPaneForTab(activeTab);
+                    if (_receivingContentTransfer || !source || !source->Id())
+                    {
+                        return false;
+                    }
+                    previousFocus = activePane->Id();
+                    activeTab->FocusPane(*source->Id());
                 }
             }
         }
@@ -14536,6 +14570,10 @@ namespace winrt::TerminalApp::implementation
             _CheckpointContentTransfer(ContentTransferStage::BeforeSplitInsertion, control ? control.ContentId() : 0);
         }
         auto [original, newGuy] = activeTab->SplitPane(*realSplitType, splitSize, newPane);
+        if (focusNewPane)
+        {
+            restoreFocus.release();
+        }
         closeUnattached.release();
         _NotifyRestoredSessionBindings(activeTab);
         if (const auto content = activeTab->FindAgentPaneContent())

@@ -21,6 +21,7 @@ namespace TerminalAppUnitTests
         TEST_METHOD(PaneCwdDoesNotInferUnknownWslDirectories);
         TEST_METHOD(SplitCwdValidatesHostDirectories);
         TEST_METHOD(SplitCwdKeepsWslNamespacesSeparate);
+        TEST_METHOD(SplitCwdRejectsUnsafeWslArguments);
     };
 
     void AgentSourceUtilsTests::SplitCwdValidatesHostDirectories()
@@ -61,6 +62,45 @@ namespace TerminalAppUnitTests
         }
         VERIFY_ARE_EQUAL(std::wstring{},
                          ResolveSplitCwd(L"/work", L"claude.exe", L"wsl.exe -d Ubuntu", noWindowsDirectory));
+        VERIFY_ARE_EQUAL(std::wstring{ L"/work" },
+                         ResolveSplitCwd(L"/work", L"wsl.exe ~ -d Debian", L"wsl.exe -d Debian", noWindowsDirectory));
+        VERIFY_ARE_EQUAL(std::wstring{ L"/work" },
+                         ResolveSplitCwd(L"/work", L"wsl.exe ~ --distribution-id {1234}", L"wsl.exe --distribution-id {1234}", noWindowsDirectory));
+        for (const auto target : { L"wsl.exe", L"wsl.exe -d Ubuntu", L"wsl.exe ~ -d Debian" })
+        {
+            VERIFY_ARE_EQUAL(std::wstring{},
+                             ResolveSplitCwd(L"/work", L"wsl.exe ~ -d Debian", target, noWindowsDirectory));
+        }
+    }
+
+    void AgentSourceUtilsTests::SplitCwdRejectsUnsafeWslArguments()
+    {
+        using Microsoft::Terminal::AgentSource::ResolveSplitCwd;
+        const auto noWindowsDirectory = [](std::wstring_view) { return false; };
+        for (const auto directory : { L"/tmp/\" --exec printf injected \"", L"/tmp/back\\slash", L"/tmp/trailing\\", L"/tmp/%TEMP%", L"/tmp/new\nline", L"/tmp/new\rline" })
+        {
+            VERIFY_ARE_EQUAL(std::wstring{},
+                             ResolveSplitCwd(directory, L"wsl.exe", L"wsl.exe", noWindowsDirectory));
+        }
+        const std::wstring embeddedNul{ L"/tmp/valid\0suffix", 17 };
+        VERIFY_ARE_EQUAL(std::wstring{},
+                         ResolveSplitCwd(embeddedNul, L"wsl.exe", L"wsl.exe", noWindowsDirectory));
+        const std::wstring hostNul{ L"C:\\work\0suffix", 14 };
+        VERIFY_ARE_EQUAL(std::wstring{},
+                         ResolveSplitCwd(hostNul, L"pwsh.exe", L"pwsh.exe", [](std::wstring_view) { return true; }));
+
+        const std::wstring directory{ L"/work with spaces/\u6d4b\u8bd5" };
+        VERIFY_ARE_EQUAL(directory, ResolveSplitCwd(directory, L"wsl.exe", L"wsl.exe --exec bash", noWindowsDirectory));
+        const auto [command, hostDirectory] = Microsoft::Console::Utils::MangleStartingDirectoryForWSL(L"wsl.exe --exec bash", directory);
+        int argc{};
+        const wil::unique_hlocal_ptr<PWSTR[]> argv{ CommandLineToArgvW(command.c_str(), &argc) };
+        VERIFY_IS_NOT_NULL(argv.get());
+        VERIFY_ARE_EQUAL(5, argc);
+        VERIFY_ARE_EQUAL(std::wstring{ L"--cd" }, std::wstring{ argv.get()[1] });
+        VERIFY_ARE_EQUAL(directory, std::wstring{ argv.get()[2] });
+        VERIFY_ARE_EQUAL(std::wstring{ L"--exec" }, std::wstring{ argv.get()[3] });
+        VERIFY_ARE_EQUAL(std::wstring{ L"bash" }, std::wstring{ argv.get()[4] });
+        VERIFY_IS_TRUE(hostDirectory.empty());
     }
 
     void AgentSourceUtilsTests::ReadEnvironmentVariableSupportsLongValues()

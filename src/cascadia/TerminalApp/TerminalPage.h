@@ -942,6 +942,11 @@ namespace winrt::TerminalApp::implementation
         void _OpenWorkspaceWindow(const winrt::hstring name);
 
         void _OpenNewTerminalViaDropdown(const Microsoft::Terminal::Settings::Model::NewTerminalArgs newTerminalArgs);
+        void _OpenNewTerminalViaDropdown(const Microsoft::Terminal::Settings::Model::NewTerminalArgs newTerminalArgs,
+                                         bool altPressed,
+                                         bool shiftPressed,
+                                         bool dispatchToElevatedWindow,
+                                         bool debugTap);
 
         bool _displayingCloseDialog{ false };
         bool _windowCloseAccepted{ false };

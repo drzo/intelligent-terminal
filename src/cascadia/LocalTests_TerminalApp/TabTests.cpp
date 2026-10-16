@@ -694,6 +694,8 @@ namespace TerminalAppLocalTests
         TEST_METHOD(SplitDirectoryFollowsShellAndAgentSources);
         TEST_METHOD(SplitDirectoryPreservesExplicitAndRestoreArguments);
         TEST_METHOD(SplitDirectoryUsesAssistantSourceInsteadOfHelper);
+        TEST_METHOD(SplitDirectoryUsesConnectionLaunchMetadata);
+        TEST_METHOD(SplitDirectoryDropdownOnlyInheritsForSplit);
 
         TEST_METHOD(TryZoomPane);
         TEST_METHOD(MoveFocusFromZoomedPane);
@@ -19803,6 +19805,8 @@ namespace TerminalAppLocalTests
             const auto current = startup + L"\\System32";
             const auto sourceProfile = page->_settings.ActiveProfiles().GetAt(0);
             const auto target = page->_settings.ActiveProfiles().GetAt(1);
+            sourceProfile.Commandline(L"cmd.exe /d /k");
+            target.Commandline(L"cmd.exe /d /k");
             target.StartingDirectory(winrt::hstring{ startup });
             for (const auto agentSource : { false, true })
             {
@@ -19851,12 +19855,11 @@ namespace TerminalAppLocalTests
                 if (agentSource)
                 {
                     page->_richTabAgentCwdAvailable = false;
-                    VERIFY_ARE_EQUAL(winrt::hstring{ startup },
-                                     page->_PrepareSplitDirectory(tab, nullptr, true).as<NewTerminalArgs>().StartingDirectory());
+                    // An opaque test connection has no trusted launch directory.
+                    VERIFY_IS_TRUE(page->_PrepareSplitDirectory(tab, nullptr, true).as<NewTerminalArgs>().StartingDirectory().empty());
                     page->_richTabAgentCwdAvailable = true;
                     page->_activeCliAgentPanes[connection->SessionId()] = { L"different-session" };
-                    VERIFY_ARE_EQUAL(winrt::hstring{ startup },
-                                     page->_PrepareSplitDirectory(tab, nullptr, true).as<NewTerminalArgs>().StartingDirectory());
+                    VERIFY_IS_TRUE(page->_PrepareSplitDirectory(tab, nullptr, true).as<NewTerminalArgs>().StartingDirectory().empty());
                     page->_activeCliAgentPanes.erase(connection->SessionId());
                     VERIFY_IS_TRUE(page->_ApplyAgentSessionStatusDelta(
                         "split-source", paneId, "copilot", uint64_t{ 2000 }, "Working", winrt::to_string(startup + L"\\missing-" + Utils::GuidToPlainString(connection->SessionId()).c_str())));
@@ -19901,6 +19904,15 @@ namespace TerminalAppLocalTests
             VERIFY_IS_TRUE(page->_PrepareSplitDirectory(tab, transfer, false) == transfer);
             BaseContentArgs other{ L"settings" };
             VERIFY_IS_TRUE(page->_PrepareSplitDirectory(tab, other, false) == other);
+            NewTerminalArgs append;
+            append.Commandline(L"/d");
+            append.AppendCommandLine(true);
+            const auto copy = append.Copy().as<NewTerminalArgs>();
+            VERIFY_IS_TRUE(copy.AppendCommandLine());
+            VERIFY_IS_TRUE(copy.Equals(append));
+            const auto prepared = page->_PrepareSplitDirectory(tab, append, false).as<NewTerminalArgs>();
+            VERIFY_IS_TRUE(prepared.AppendCommandLine());
+            VERIFY_ARE_EQUAL(append.Commandline(), prepared.Commandline());
         });
     }
 
@@ -19927,6 +19939,111 @@ namespace TerminalAppLocalTests
             VERIFY_IS_TRUE(page->_SplitPane(tab, SplitDirection::Right, .5f, helper));
             VERIFY_IS_TRUE(tab->GetActivePane()->IsAgentPane());
             VERIFY_ARE_EQUAL(winrt::hstring{ expected }, page->_PrepareSplitDirectory(tab, nullptr, false).as<NewTerminalArgs>().StartingDirectory());
+            const auto assistant = tab->FindAgentPaneContent();
+            const auto before = tab->GetLeafPaneCount();
+            NewTerminalArgs splitArgs;
+            splitArgs.Commandline(L"cmd.exe /d /k");
+            ActionEventArgs action{ SplitPaneArgs{ SplitType::Manual, SplitDirection::Down, .5f, splitArgs } };
+            page->_HandleSplitPane(nullptr, action);
+            VERIFY_IS_TRUE(action.Handled());
+            VERIFY_ARE_EQUAL(before + 1, tab->GetLeafPaneCount());
+            VERIFY_IS_FALSE(tab->GetActivePane()->IsAgentPane());
+            VERIFY_IS_TRUE(tab->FindAgentPaneContent() == assistant);
+            VERIFY_ARE_EQUAL(winrt::hstring{ expected }, tab->GetActiveTerminalControl().Settings().StartingDirectory());
+            VERIFY_IS_FALSE(page->_paneAgentSessions.contains(tab->GetActiveTerminalControl().Connection().SessionId()));
+        });
+    }
+
+    void TabTests::SplitDirectoryUsesConnectionLaunchMetadata()
+    {
+        auto page = _commonSetup();
+        TestOnUIThread([&]() {
+            using Conpty = winrt::Microsoft::Terminal::TerminalConnection::ConptyConnection;
+            const auto tab = page->_GetFocusedTabImpl();
+            const auto control = tab->GetActiveTerminalControl();
+            const auto originalConnection = control.Connection();
+            auto restore = wil::scope_exit([&]() { control.Connection(originalConnection); });
+            const auto source = tab->GetFocusedProfile();
+            const auto target = page->_settings.ActiveProfiles().GetAt(1);
+            const auto directory = wil::ExpandEnvironmentStringsW<std::wstring>(L"%SystemRoot%");
+            page->_WindowProperties.VirtualWorkingDirectory(winrt::hstring{ directory });
+            NewTerminalArgs launch;
+            launch.Commandline(L"cmd.exe /d /k");
+            launch.StartingDirectory(L".");
+            const auto settings = winrt::Microsoft::Terminal::Settings::TerminalSettings::CreateWithNewTerminalArgs(page->_settings, launch);
+            const auto launched = page->_CreateConnectionFromSettings(source, *settings.DefaultSettings(), false);
+            control.Connection(launched);
+            const auto launchDirectory = winrt::hstring{ directory + L"\\." };
+            VERIFY_ARE_EQUAL(launchDirectory, launched.as<Conpty>().StartingDirectory());
+            page->_activeCliAgentPanes[launched.SessionId()] = { L"no-cwd-yet" };
+            target.Commandline(L"cmd.exe /d /k");
+            NewTerminalArgs args;
+            args.Profile(Utils::GuidToString(target.Guid()));
+            source.StartingDirectory(L"C:\\changed-after-launch");
+            source.Commandline(L"wsl.exe -d WrongDistro");
+            VERIFY_ARE_EQUAL(launchDirectory, page->_PrepareSplitDirectory(tab, args, false).as<NewTerminalArgs>().StartingDirectory());
+            page->_activeCliAgentPanes.erase(launched.SessionId());
+
+            // These initialized connections supply metadata only; they are never started.
+            const auto wsl = Conpty{};
+            wsl.Initialize(Conpty::CreateSettings(L"%SystemRoot%\\System32\\wsl.exe -d Ubuntu --cd /work",
+                                                  winrt::hstring{ directory },
+                                                  L"",
+                                                  false,
+                                                  L"",
+                                                  nullptr,
+                                                  30,
+                                                  120,
+                                                  {},
+                                                  source.Guid()));
+            VERIFY_ARE_EQUAL(winrt::hstring{ directory + L"\\System32\\wsl.exe -d Ubuntu --cd /work" }, wsl.Commandline());
+            control.Connection(wsl);
+            page->_activeCliAgentPanes[wsl.SessionId()] = { L"no-cwd-yet" };
+            target.Commandline(L"%SystemRoot%\\System32\\wsl.exe -d Ubuntu");
+            VERIFY_ARE_EQUAL(winrt::hstring{ L"/work" }, page->_PrepareSplitDirectory(tab, args, false).as<NewTerminalArgs>().StartingDirectory());
+            target.Commandline(L"wsl.exe -d Debian");
+            VERIFY_IS_TRUE(page->_PrepareSplitDirectory(tab, args, false).as<NewTerminalArgs>().StartingDirectory().empty());
+
+            const auto defaults = page->_settings.ProfileDefaults();
+            defaults.Commandline(L"wsl.exe -d Ubuntu");
+            const auto defaultProfile = page->_settings.FindProfile(page->_settings.GlobalSettings().DefaultProfile());
+            defaultProfile.Commandline(L"wsl.exe -d Debian");
+            const auto content = winrt::make<winrt::TerminalApp::implementation::TerminalPaneContent>(
+                defaults, std::shared_ptr<winrt::TerminalApp::implementation::TerminalSettingsCache>{}, control);
+            const auto defaultsTab = winrt::make_self<winrt::TerminalApp::implementation::Tab>(std::make_shared<Pane>(content));
+            VERIFY_IS_TRUE(page->_PrepareSplitDirectory(defaultsTab, nullptr, true).as<NewTerminalArgs>().StartingDirectory().empty());
+            defaultProfile.Commandline(L"wsl.exe -d Ubuntu");
+            VERIFY_ARE_EQUAL(winrt::hstring{ L"/work" }, page->_PrepareSplitDirectory(defaultsTab, nullptr, true).as<NewTerminalArgs>().StartingDirectory());
+            page->_activeCliAgentPanes.erase(wsl.SessionId());
+        });
+    }
+
+    void TabTests::SplitDirectoryDropdownOnlyInheritsForSplit()
+    {
+        using State = winrt::Microsoft::Terminal::TerminalConnection::ConnectionState;
+        const auto connection = winrt::make_self<TestConnection>(Utils::CreateGuid(), State::Connected);
+        auto page = _commonSetup(*connection);
+        TestOnUIThread([&]() {
+            const auto tab = page->_GetFocusedTabImpl();
+            const auto directory = wil::ExpandEnvironmentStringsW<std::wstring>(L"%SystemRoot%");
+            const auto output = L"\x1b]9;9;\"" + directory + L"\"\x1b\\";
+            connection->TerminalOutput.raise(winrt::array_view<const char16_t>{
+                reinterpret_cast<const char16_t*>(output.data()),
+                reinterpret_cast<const char16_t*>(output.data() + output.size()) });
+            const auto target = page->_settings.ActiveProfiles().GetAt(1);
+            target.Commandline(L"cmd.exe /d /k");
+            target.StartingDirectory(winrt::hstring{ directory + L"\\System32" });
+            NewTerminalArgs args;
+            args.Profile(Utils::GuidToString(target.Guid()));
+            const auto before = tab->GetLeafPaneCount();
+            page->_OpenNewTerminalViaDropdown(args, true, false, false, false);
+            VERIFY_ARE_EQUAL(before + 1, tab->GetLeafPaneCount());
+            VERIFY_ARE_EQUAL(winrt::hstring{ directory }, tab->GetActiveTerminalControl().Settings().StartingDirectory());
+            VERIFY_IS_TRUE(args.StartingDirectory().empty());
+            const auto tabsBefore = page->_tabs.Size();
+            page->_OpenNewTerminalViaDropdown(args, false, false, false, false);
+            VERIFY_ARE_EQUAL(tabsBefore + 1, page->_tabs.Size());
+            VERIFY_ARE_EQUAL(target.StartingDirectory(), page->_GetFocusedTabImpl()->GetActiveTerminalControl().Settings().StartingDirectory());
         });
     }
 
