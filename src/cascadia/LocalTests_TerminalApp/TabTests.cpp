@@ -4494,19 +4494,21 @@ namespace TerminalAppLocalTests
         {
             targets.push_back({ L"copilot", L"selected-session", wsl ? L"wsl:Ubuntu:copilot" : L"host:copilot", wsl ? L"/home/u/project" : L"C:\\selected project", L"selected-home", wsl ? L"wsl.exe -d Ubuntu --exec copilot --resume selected-session" : L"cmd /d /s /c \"copilot --resume selected-session\"" });
         }
-        String masterCommand;
-        const auto hasMasterCommand = SUCCEEDED(RuntimeParameters::TryGetValue(L"MasterResumeCommandline", masterCommand));
+        String masterCommandParameter;
+        std::wstring masterCommand;
+        const auto hasMasterCommand = SUCCEEDED(RuntimeParameters::TryGetValue(L"MasterResumeCommandline", masterCommandParameter));
         if (hasMasterCommand)
         {
-            VERIFY_IS_TRUE(masterCommand.GetLength() > 0, L"Provided master wire must not be empty.");
-            if (masterCommand.GetLength() == 0)
+            VERIFY_IS_TRUE(masterCommandParameter.GetLength() > 0, L"Provided master wire must not be empty.");
+            if (masterCommandParameter.GetLength() == 0)
             {
                 return;
             }
-            const auto parsed = Restore::ParseResumeCommandline(masterCommand.GetBuffer());
+            masterCommand.assign(reinterpret_cast<const wchar_t*>(masterCommandParameter.GetBuffer()), masterCommandParameter.GetLength());
+            const auto parsed = Restore::ParseResumeCommandline(masterCommand);
             VERIFY_IS_FALSE(parsed.agent.empty(), L"Provided master wire must be a valid canonical resume envelope.");
-            VERIFY_IS_TRUE(Restore::IsPersistedResumeCommandline(masterCommand.GetBuffer()));
-            if (parsed.agent.empty() || !Restore::IsPersistedResumeCommandline(masterCommand.GetBuffer()))
+            VERIFY_IS_TRUE(Restore::IsPersistedResumeCommandline(masterCommand));
+            if (parsed.agent.empty() || !Restore::IsPersistedResumeCommandline(masterCommand))
             {
                 return;
             }
@@ -4529,7 +4531,7 @@ namespace TerminalAppLocalTests
                     const auto& cwd = target.cwd;
                     NewTerminalArgs args;
                     VERIFY_ARE_EQUAL(winrt::guid{}, args.SessionId());
-                    args.Commandline(index >= 2 ? winrt::hstring{ masterCommand.GetBuffer() } :
+                    args.Commandline(index >= 2 ? winrt::hstring{ masterCommand } :
                                                   winrt::hstring{ Restore::BuildPersistedResumeCommandline(target) });
                     const auto pane = page->_MakeTerminalPane(args, nullptr, *connection);
                     VERIFY_IS_NOT_NULL(pane);
