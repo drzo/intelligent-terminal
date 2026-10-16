@@ -272,8 +272,11 @@ unowned pane retains its normal discovery behavior.
 
 Live rows may also include response-only `owner_window_id` and `background_tab`
 fields from one metadata-only `wtcli list-panes --all` snapshot across all windows,
-matched to the exact bound pane. The two-second ownership budget covers one
-query rather than launching a process per live session. `background_tab: true` means the
+matched to the exact bound pane. The five-second ownership budget covers one
+query rather than launching a process per live session, leaving headroom within
+the Sidebar's 15-second capture deadline for other snapshot work. Cross-window
+UI dispatcher work can exceed two seconds even with a single query.
+`background_tab: true` means the
 pane belongs to a kept-running whole tab; activating it restores that entire
 tab. Only an explicit `false` with a different owning window enables the
 other-window action. Missing or malformed membership is unknown, not evidence
@@ -302,14 +305,12 @@ their detailed activity and window/background attribution in the same response.
 External evidence applies only to unchanged eligible history rows; it cannot
 restore removed rows or overwrite a newer binding.
 
-Activation checks the same qualified native evidence again before any
-resume path; it never trusts the status returned to the sidebar. An actively
-held external lease rejects activation without changing registry ownership.
-Busy, timed-out, or failed verification also rejects activation instead of
-assuming the session is free. Absent or released evidence allows the normal
-historical resume path. A live IT registration observed after the asynchronous
-probe takes precedence over its older evidence and retains detailed activity.
-This does not infer a window/pane owner or enable a running-location indicator.
+External **In use** evidence is informational, not a resume restriction.
+Activation resumes the session through the CLI in a new tab without probing
+or waiting for an external lease; the CLI handles concurrent store access.
+An authoritative live IT pane binding still focuses that pane instead of
+launching another CLI. External evidence does not infer a window/pane owner
+or enable a running-location indicator.
 
 Session CLI connections retry transient missing/busy named-pipe instances under
 a bounded backoff (up to 1.87 seconds). Concurrent windows can refresh immediately
