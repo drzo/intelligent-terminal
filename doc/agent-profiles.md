@@ -136,7 +136,7 @@ All new-terminal splits, including explicit profile selections and protocol
 splits, inherit the source pane's working directory unless the operation supplies
 an explicit directory. Shell-to-shell, shell-to-agent, agent-to-shell and
 agent-to-agent splits follow the same rule. Native agents use their current
-pane-bound session directory when available, otherwise their startup directory.
+pane-bound session directory when available; otherwise their startup directory.
 The built-in assistant uses its source terminal, not the helper's directory.
 Unavailable or invalid directories fall back to the target profile's starting
 directory. POSIX directories are inherited only between matching WSL launch
