@@ -1027,6 +1027,9 @@ impl WtChannel for CliChannel {
             }
             "list_panes" => {
                 let mut args = vec!["list-panes"];
+                if params.get("all").and_then(serde_json::Value::as_bool) == Some(true) {
+                    args.push("--all");
+                }
                 let wid = params
                     .get("window_id")
                     .and_then(json_id_as_str)

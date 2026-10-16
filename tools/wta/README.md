@@ -271,7 +271,9 @@ session-start hooks still replace a pane's session, and activity in an
 unowned pane retains its normal discovery behavior.
 
 Live rows may also include response-only `owner_window_id` and `background_tab`
-fields from the exact bound pane's context. `background_tab: true` means the
+fields from one metadata-only `wtcli list-panes --all` snapshot across all windows,
+matched to the exact bound pane. The two-second ownership budget covers one
+query rather than launching a process per live session. `background_tab: true` means the
 pane belongs to a kept-running whole tab; activating it restores that entire
 tab. Only an explicit `false` with a different owning window enables the
 other-window action. Missing or malformed membership is unknown, not evidence

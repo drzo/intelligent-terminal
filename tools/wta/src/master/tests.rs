@@ -10647,13 +10647,13 @@ async fn sessions_list_probe_live_registration_keeps_new_pane_ownership() {
     ] {
         for background in [false, true] {
             let pane = uuid::Uuid::new_v4();
-            let mock = Arc::new(MockWtChannel::responding(serde_json::json!({
-                "pane": {
+            let mock = Arc::new(MockWtChannel::responding(serde_json::json!({ "panes": [
+                {
                     "session_id": pane.to_string(),
                     "window_id": 84,
                     "is_background_tab": background
                 }
-            })));
+            ] })));
             let state = make_state_with_wt(mock.clone());
             let mut row = SessionInfo::new(
                 SessionId::new(uuid::Uuid::new_v4().to_string()),
@@ -10692,12 +10692,7 @@ async fn sessions_list_probe_live_registration_keeps_new_pane_ownership() {
             assert_eq!(raw["sessions"][0]["background_tab"], background);
             assert_eq!(
                 mock.calls(),
-                [(
-                    "get_pane_context".into(),
-                    serde_json::json!({
-                        "session_id": pane.to_string(), "max_lines": 0, "max_chars": 0
-                    })
-                )]
+                [("list_panes".into(), serde_json::json!({ "all": true }))]
             );
             assert_eq!(
                 state.registry.lookup_identity(&identity).await.unwrap(),
@@ -10705,6 +10700,65 @@ async fn sessions_list_probe_live_registration_keeps_new_pane_ownership() {
             );
         }
     }
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn sessions_list_batches_ownership_without_losing_foreign_or_background_panes() {
+    use crate::agent_sessions::{AgentStatus, SessionLocation};
+    use crate::session_registry::{self, SessionInfo};
+
+    let panes: Vec<_> = (0..24).map(|_| uuid::Uuid::new_v4()).collect();
+    let metadata = serde_json::json!({ "panes": [
+        { "session_id": panes[22].to_string(), "window_id": 2, "is_background_tab": false },
+        { "session_id": panes[23].to_string(), "window_id": 1, "is_background_tab": true },
+        { "session_id": panes[21].to_string(), "window_id": 1, "is_background_tab": false },
+        { "session_id": panes[21].to_string(), "window_id": 2, "is_background_tab": false },
+        { "session_id": panes[20].to_string(), "window_id": 0, "is_background_tab": false }
+    ] });
+    let mock = Arc::new(MockWtChannel::responding(metadata));
+    let state = make_state_with_wt(mock.clone());
+    for (index, pane) in panes.iter().enumerate() {
+        let mut row = SessionInfo::new(
+            SessionId::new(format!("batched-owner-{index}")),
+            PathBuf::from("C:\\repo"),
+        );
+        row.provider_id = Some("copilot".into());
+        row.location = SessionLocation::Host;
+        row.pane_session_id = Some(pane.to_string());
+        row.status = Some(AgentStatus::Working);
+        state.registry.upsert(row).await;
+    }
+    let response = handle_sessions_list_with_probe(
+        &state,
+        None,
+        &Default::default(),
+        |rows| async move { rows },
+    )
+    .await
+    .unwrap();
+    let snapshot = session_registry::parse_sessions_list_response(&response.0).unwrap();
+    assert_eq!(snapshot.sessions.len(), 24);
+    for row in snapshot.sessions {
+        assert_eq!(row.status, Some(AgentStatus::Working));
+        match row.session_id.0.as_ref() {
+            "batched-owner-22" => {
+                assert_eq!(row.owner_window_id, Some(2));
+                assert_eq!(row.background_tab, Some(false));
+            }
+            "batched-owner-23" => {
+                assert_eq!(row.owner_window_id, Some(1));
+                assert_eq!(row.background_tab, Some(true));
+            }
+            _ => {
+                assert_eq!(row.owner_window_id, None);
+                assert_eq!(row.background_tab, None);
+            }
+        }
+    }
+    assert_eq!(
+        mock.calls(),
+        [("list_panes".into(), serde_json::json!({ "all": true }))]
+    );
 }
 
 #[tokio::test(flavor = "current_thread")]

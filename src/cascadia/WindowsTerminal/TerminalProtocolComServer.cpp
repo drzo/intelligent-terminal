@@ -729,7 +729,9 @@ try
         {
             auto p = panes.GetAt(i);
             p.WindowId = windowId;
-            arr.append(_toJson(p));
+            auto value = _toJson(p);
+            value["is_background_tab"] = page.GetProtocolPaneIsBackground(p.SessionId).get();
+            arr.append(std::move(value));
         }
     }
 

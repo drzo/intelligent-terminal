@@ -7999,7 +7999,6 @@ where
     // Enrich only the response copy; pane/window attribution is not registry state.
     if let Some(wt) = state.wt.as_ref() {
         use crate::agent_sessions::AgentStatus;
-        use futures::{stream, StreamExt};
         let panes: std::collections::HashSet<uuid::Uuid> = sessions
             .iter()
             .filter(|row| {
@@ -8017,40 +8016,53 @@ where
             .filter_map(|pane| uuid::Uuid::parse_str(pane).ok())
             .filter(|pane| !pane.is_nil())
             .collect();
-        let mut requests = stream::iter(panes)
-            .map(|pane| async move {
-                let result = wt
-                    .request(
-                        "get_pane_context",
-                        serde_json::json!({
-                            "session_id": pane.to_string(), "max_lines": 0, "max_chars": 0
-                        }),
-                    )
-                    .await;
-                (pane, result)
-            })
-            .buffer_unordered(8);
-        let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(2);
         let mut owners = std::collections::HashMap::new();
-        loop {
-            match tokio::time::timeout_at(deadline, requests.next()).await {
-                Ok(Some((pane, Ok(context)))) => {
-                    if let Some(window_id) = pane_context_owner_window(pane, &context) {
-                        owners.insert(
-                            pane,
-                            (window_id, pane_context_background_tab(pane, &context)),
-                        );
-                    } else {
-                        tracing::warn!(target: "master_history", %pane, "pane ownership context invalid; retaining unattributed status");
+        if !panes.is_empty() {
+            // One metadata-only query covers attached and kept-running panes in
+            // every window. Per-pane wtcli launches can exhaust the snapshot
+            // deadline before reaching a live shell pane in a busy sidebar.
+            let request = async {
+                wt.request("list_panes", serde_json::json!({ "all": true }))
+                    .await?
+                    .get("panes")
+                    .and_then(serde_json::Value::as_array)
+                    .cloned()
+                    .context("pane ownership snapshot has no panes array")
+            };
+            match tokio::time::timeout(std::time::Duration::from_secs(2), request).await {
+                Ok(Ok(metadata)) => {
+                    for metadata in metadata {
+                        let Some(pane) = metadata
+                            .get("session_id")
+                            .and_then(serde_json::Value::as_str)
+                            .and_then(|id| uuid::Uuid::parse_str(id).ok())
+                            .filter(|pane| panes.contains(pane))
+                        else {
+                            continue;
+                        };
+                        let context = serde_json::json!({ "pane": metadata });
+                        if let Some(window_id) = pane_context_owner_window(pane, &context) {
+                            let ownership =
+                                (window_id, pane_context_background_tab(pane, &context));
+                            match owners.entry(pane) {
+                                std::collections::hash_map::Entry::Vacant(entry) => {
+                                    entry.insert(Some(ownership));
+                                }
+                                std::collections::hash_map::Entry::Occupied(mut entry) => {
+                                    entry.insert(None);
+                                    tracing::warn!(target: "master_history", %pane, "pane ownership is ambiguous; retaining unattributed status");
+                                }
+                            }
+                        } else {
+                            tracing::warn!(target: "master_history", %pane, "pane ownership context invalid; retaining unattributed status");
+                        }
                     }
                 }
-                Ok(Some((pane, Err(error)))) => {
-                    tracing::debug!(target: "master_history", %pane, %error, "pane ownership unavailable; retaining unattributed status");
+                Ok(Err(error)) => {
+                    tracing::warn!(target: "master_history", %error, "pane ownership snapshot unavailable; retaining unattributed statuses");
                 }
-                Ok(None) => break,
                 Err(_) => {
                     tracing::warn!(target: "master_history", "pane ownership snapshot timed out; retaining unresolved statuses");
-                    break;
                 }
             }
         }
@@ -8070,7 +8082,7 @@ where
                 .pane_session_id
                 .as_deref()
                 .and_then(|pane| uuid::Uuid::parse_str(pane).ok())
-                .and_then(|pane| owners.get(&pane).copied())
+                .and_then(|pane| owners.get(&pane).copied().flatten())
             {
                 row.owner_window_id = Some(window_id);
                 row.background_tab = background_tab;

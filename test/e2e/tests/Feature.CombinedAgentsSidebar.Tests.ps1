@@ -1831,6 +1831,11 @@ Describe 'Feature: combined Agents sidebar' -Tag @('Feature', 'CombinedAgentsSid
             $context = Invoke-WtCli -App $foreignApp -Arguments @('get-pane-context', '--target', $tab.session_id)
             [string]$context.pane.session_id | Should -Be $tab.session_id
             [string]$context.pane.window_id | Should -Be $foreignWindow
+            $allPanes = (Invoke-WtCli -App $sourceApp -Arguments @('list-panes', '--all')).panes
+            $listedOwner = @($allPanes | Where-Object { [guid]$_.session_id -eq [guid]$tab.session_id })
+            $listedOwner.Count | Should -Be 1
+            [string]$listedOwner[0].window_id | Should -Be $foreignWindow
+            $listedOwner[0].is_background_tab | Should -BeFalse
             Wait-Until -TimeoutSec 20 -Condition {
                 $row = @((Get-CombinedSnapshot).sessions | Where-Object session_id -eq $sid)
                 $row.Count -eq 1 -and $row[0].owner_window_id -and $row[0].owner_window_id -ne $sourceOwner
@@ -1848,6 +1853,7 @@ Describe 'Feature: combined Agents sidebar' -Tag @('Feature', 'CombinedAgentsSid
                 $script:app = $sourceApp
                 Set-CombinedView $true
                 Set-CombinedQuery (Split-Path $folder -Leaf)
+                Save-CombinedActionEvidence "other-window-$($state.Status)-before-render" -SessionId $sid -Screenshot
                 Wait-Until -TimeoutSec 15 -Because 'the rendered history snapshot confirms the moved owner window' -Condition {
                     $rows = @(Get-CombinedRows Recent)
                     $rows.Count -eq 1 -and
