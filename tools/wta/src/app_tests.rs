@@ -1651,6 +1651,12 @@ fn copilot_tool_finished_keeps_working_only_agent_stop_idles() {
         AgentStatus::Idle,
         "agent.stop owns the turn-end → Idle",
     );
+    route(&mut reg, "agent.tool.finished");
+    assert_eq!(
+        reg.get(&sid.to_string()).unwrap().status,
+        AgentStatus::Idle,
+        "a late tool return must not reactivate the completed turn",
+    );
     route(&mut reg, "agent.error");
     route(&mut reg, "agent.tool.finished");
     assert_eq!(

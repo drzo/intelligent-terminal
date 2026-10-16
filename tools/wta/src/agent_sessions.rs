@@ -800,10 +800,7 @@ impl AgentSessionRegistry {
             SessionEvent::ToolReturned { key } => {
                 if let Some(entry) = self.sessions.get_mut(&key) {
                     if entry.cli_source != CliSource::Copilot
-                        || !matches!(
-                            entry.status,
-                            AgentStatus::Idle | AgentStatus::Working | AgentStatus::Attention
-                        )
+                        || !matches!(entry.status, AgentStatus::Working | AgentStatus::Attention)
                     {
                         return;
                     }

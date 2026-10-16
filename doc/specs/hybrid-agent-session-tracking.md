@@ -139,7 +139,8 @@ throughout, so no duplicate is ever produced.
 
 Hook-owned sessions do not supplement hooks with transcript permission events.
 Copilot's `PostToolUse` restores Working after a successful tool return;
-`Stop` owns Idle. This intentionally uses the latest session-level hook,
+`Stop` owns Idle, and late tool returns do not reactivate an Idle turn.
+This intentionally uses the latest session-level hook,
 not per-request approval correlation: a tool can remain Waiting while it runs,
 and another parallel tool's return may replace an outstanding wait. The original
 born-bound, hookless file-watcher fallback is unchanged.

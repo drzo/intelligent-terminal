@@ -2678,7 +2678,7 @@ fn apply_event_locked(state: &mut RegistryState, ev: SessionEvent) -> bool {
             if entry.cli_source != Some(CliSource::Copilot)
                 || !matches!(
                     entry.status,
-                    Some(AgentStatus::Idle | AgentStatus::Working | AgentStatus::Attention)
+                    Some(AgentStatus::Working | AgentStatus::Attention)
                 )
             {
                 return false;

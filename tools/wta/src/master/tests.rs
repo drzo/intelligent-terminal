@@ -17506,6 +17506,12 @@ async fn copilot_completion_hooks_resume_activity_without_file_events() {
         state.registry.lookup(&sid).await.unwrap().status,
         Some(AgentStatus::Idle)
     );
+    handle_master_wt_event(&state, hook("agent.tool.finished")).await;
+    assert_eq!(
+        state.registry.lookup(&sid).await.unwrap().status,
+        Some(AgentStatus::Idle),
+        "a late tool return must not reactivate the completed turn",
+    );
     handle_master_wt_event(&state, hook("agent.error")).await;
     handle_master_wt_event(&state, hook("agent.tool.finished")).await;
     assert_eq!(
