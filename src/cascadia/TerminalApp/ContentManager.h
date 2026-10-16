@@ -113,6 +113,7 @@ namespace winrt::TerminalApp::implementation
         {
             winrt::hstring agentSessionId;
             winrt::hstring eventJson;
+            winrt::hstring agent;
         };
         struct KeptGroup
         {
