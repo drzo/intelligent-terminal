@@ -33,6 +33,7 @@
 #include "../inc/AgentPaneRestore.h"
 #include "../inc/AgentPaneBackend.h"
 #include "../inc/WindowPersistence.h"
+#include "../inc/WtaProcess.h"
 #include "../UnitTests_Control/MockControlSettings.h"
 #include "CppWinrtTailored.h"
 #include <ScopedResourceLoader.h>
@@ -458,6 +459,10 @@ namespace TerminalAppLocalTests
         TEST_METHOD(AgentSnapshotTiesPreserveLastReceivedPaneReport);
         TEST_METHOD(SessionSnapshotsUseOwnedMasterPipe);
         TEST_METHOD(AgentStatusSnapshotPreservesNullableOptionalFields);
+        TEST_METHOD(AgentSnapshotProjectsPaneAndRecentIndependently);
+        TEST_METHOD(AgentSnapshotRefreshSharesConsumers);
+        TEST_METHOD(AgentSnapshotCompletionKeepsConsumersIndependent);
+        TEST_METHOD(AgentStatusLookupIsReadOnly);
         TEST_METHOD(SharedWtaNativeReceiverGenerationSurvivesWaitRetirement);
         TEST_METHOD(NativeAgentReceiverSnapshotsRequireReadyGeneration);
         TEST_METHOD(NativeAgentReceiverReplayIsPageLocalAndOrdered);
@@ -7648,10 +7653,12 @@ namespace TerminalAppLocalTests
         TestOnUIThread([&]() {
             const auto item = winrt::make<winrt::TerminalApp::implementation::TabStripHistoryItem>();
             item.SessionId(L"preserved-session");
+            item.AgentId(L"copilot");
+            item.AgentSource(L"host");
             item.Title(L"Preserved conversation");
             item.Status(L"Working");
-            page->_tabStrip.HistoryItems().Append(item);
             const auto stripImpl = winrt::get_self<winrt::TerminalApp::implementation::TabStrip>(page->_tabStrip);
+            stripImpl->CommitHistorySnapshot({ item });
             for (const auto useAction : { false, true })
             {
                 page->_tabStrip.HistoryActive(true);
@@ -8143,10 +8150,10 @@ namespace TerminalAppLocalTests
             stripImpl->CommitHistorySnapshot({ item });
             const auto idleStyle = item.StatusTextStyle();
 
-            page->_richTabAgentStatusRequestGeneration = 41;
-            page->_richTabAgentStatusSnapshotLoaded = false;
-            page->_richTabAgentStatusRefreshInFlight = true;
-            page->_richTabAgentStatusRefreshPending = false;
+            page->_agentSnapshotRequestGeneration = 41;
+            page->_agentSnapshotLoaded = false;
+            page->_agentSnapshotRefreshInFlight = true;
+            page->_agentSnapshotRefreshPending = false;
             VERIFY_IS_TRUE(page->_ApplyAgentSessionStatusDelta(
                 "session-a",
                 "00000000-0000-0000-0000-000000000001",
@@ -8154,9 +8161,9 @@ namespace TerminalAppLocalTests
                 uint64_t{ 1234 },
                 "Attention",
                 std::string{ "C:\\first" }));
-            VERIFY_ARE_EQUAL(uint64_t{ 42 }, page->_richTabAgentStatusRequestGeneration);
-            VERIFY_IS_FALSE(page->_richTabAgentStatusSnapshotLoaded);
-            VERIFY_IS_TRUE(page->_richTabAgentStatusRefreshPending);
+            VERIFY_ARE_EQUAL(uint64_t{ 42 }, page->_agentSnapshotRequestGeneration);
+            VERIFY_IS_FALSE(page->_agentSnapshotLoaded);
+            VERIFY_IS_TRUE(page->_agentSnapshotRefreshPending);
             VERIFY_ARE_EQUAL(
                 std::string{ "Attention" },
                 page->_richTabAgentStatusBySessionId.at("session-a").status);
@@ -8245,7 +8252,7 @@ namespace TerminalAppLocalTests
         auto page = _commonSetup();
         TestOnUIThread([&]() {
             page->_tabStrip.RichTabAgentStatusVisible(false);
-            page->_richTabAgentStatusRefreshInFlight = true;
+            page->_agentSnapshotRefreshInFlight = true;
             const auto firstPane = winrt::guid{ L"00000000-0000-0000-0000-000000000001" };
             const auto secondPane = winrt::guid{ L"00000000-0000-0000-0000-000000000002" };
             VERIFY_IS_TRUE(page->_ApplyAgentSessionStatusDelta(
@@ -8449,16 +8456,10 @@ namespace TerminalAppLocalTests
         const std::wstring pipe{ L"\\\\.\\pipe\\wta-master-owned fixture" };
         VERIFY_ARE_EQUAL(
             std::wstring{ L"sessions list --json --include-status --master \"\\\\.\\pipe\\wta-master-owned fixture\"" },
-            Page::_BuildSessionsListArguments(pipe, false));
-        VERIFY_ARE_EQUAL(
-            std::wstring{ L"sessions list --origin shell --json --include-status --master \"\\\\.\\pipe\\wta-master-owned fixture\"" },
-            Page::_BuildSessionsListArguments(pipe, true));
+            Page::_BuildSessionsListArguments(pipe));
         VERIFY_ARE_EQUAL(
             std::wstring{ L"sessions list --json --include-status" },
-            Page::_BuildSessionsListArguments({}, false));
-        VERIFY_ARE_EQUAL(
-            std::wstring{ L"sessions list --origin shell --json --include-status" },
-            Page::_BuildSessionsListArguments({}, true));
+            Page::_BuildSessionsListArguments({}));
     }
 
     void TabTests::AgentStatusSnapshotPreservesNullableOptionalFields()
@@ -8467,43 +8468,37 @@ namespace TerminalAppLocalTests
         const std::string pane{ "62711111-2222-3333-4444-555555555555" };
         const winrt::guid paneId{ winrt::to_hstring(pane) };
         Json::Value canonical;
-        canonical["session_id"] = "known-conversation";
+        canonical["pane_id"] = pane;
         canonical["status"] = "Working";
         canonical["cli_source"] = "Copilot";
         for (const auto providerKind : { 0, 1, 2, 3 })
         {
-            for (const auto paneKind : { 0, 1, 2, 3 })
+            for (const auto sessionKind : { 0, 1, 2, 3 })
             {
                 auto row = canonical;
                 if (providerKind != 0)
                 {
                     row["provider_id"] = providerKind == 1 ? Json::Value{} : Json::Value{ providerKind == 2 ? "" : "claude" };
                 }
-                if (paneKind != 0)
+                if (sessionKind != 0)
                 {
-                    row["pane_session_id"] = paneKind == 1 ? Json::Value{} : Json::Value{ paneKind == 2 ? "" : pane };
+                    row["agent_session_id"] = sessionKind == 1 ? Json::Value{} :
+                                                                 Json::Value{ sessionKind == 2 ? "" : "known-conversation" };
                 }
                 Json::Value response;
-                response["sessions"].append(row);
-                const auto parsed = Page::_ParseAgentStatusResponse(response);
+                response["pane_statuses"].append(row);
+                const auto parsed = Page::_ParsePaneAgentStatuses(response);
                 VERIFY_ARE_EQUAL(size_t{ 1 }, parsed.size());
                 const auto snapshot = Page::_BuildAgentStatusSnapshot(parsed, {});
-                VERIFY_ARE_EQUAL(size_t{ 1 }, snapshot.bySession.size());
-                const auto& info = snapshot.bySession.at("known-conversation");
+                VERIFY_ARE_EQUAL(sessionKind == 3 ? size_t{ 1 } : size_t{ 0 }, snapshot.bySession.size());
+                const auto& info = snapshot.byPane.at(paneId);
                 VERIFY_ARE_EQUAL(std::string{ providerKind == 3 ? "claude" : "copilot" }, info.providerId);
                 VERIFY_ARE_EQUAL(std::string{ "Working" }, info.status);
-                VERIFY_ARE_EQUAL(paneKind == 3, info.paneSessionId.has_value());
-                if (paneKind == 3)
-                {
-                    VERIFY_ARE_EQUAL(paneId, info.paneSessionId.value());
-                }
-                else
-                {
-                    VERIFY_IS_TRUE(snapshot.byPane.empty());
-                }
+                VERIFY_ARE_EQUAL(paneId, info.paneSessionId.value());
+                VERIFY_ARE_EQUAL(std::string{ sessionKind == 3 ? "known-conversation" : "" }, info.sessionId);
             }
         }
-        for (const auto field : { "provider_id", "pane_session_id" })
+        for (const auto field : { "provider_id", "agent_session_id", "pane_id" })
         {
             for (const auto& invalid : { Json::Value{ true }, Json::Value{ 7 }, Json::Value{ 1.5 },
                                          Json::Value{ Json::arrayValue }, Json::Value{ Json::objectValue } })
@@ -8511,11 +8506,11 @@ namespace TerminalAppLocalTests
                 auto row = canonical;
                 row[field] = invalid;
                 Json::Value response;
-                response["sessions"].append(row);
+                response["pane_statuses"].append(row);
                 auto retained = canonical;
-                retained["session_id"] = "retained-conversation";
-                response["sessions"].append(retained);
-                const auto parsed = Page::_ParseAgentStatusResponse(response);
+                retained["agent_session_id"] = "retained-conversation";
+                response["pane_statuses"].append(retained);
+                const auto parsed = Page::_ParsePaneAgentStatuses(response);
                 VERIFY_ARE_EQUAL(size_t{ 1 }, parsed.size());
                 VERIFY_ARE_EQUAL(std::string{ "retained-conversation" }, parsed[0].sessionId);
             }
@@ -8534,9 +8529,224 @@ namespace TerminalAppLocalTests
             row[field] = Json::Value{};
             Json::Value response;
             response["sessions"] = Json::arrayValue;
-            response["native_pane_observations"].append(row);
-            VERIFY_IS_TRUE(Page::_ParseAgentStatusResponse(response).empty());
+            response["pane_statuses"].append(row);
+            VERIFY_IS_TRUE(Page::_ParsePaneAgentStatuses(response).empty());
         }
+        for (const auto paneKind : { 0, 1, 2 })
+        {
+            auto row = canonical;
+            row.removeMember("pane_id");
+            if (paneKind != 0)
+            {
+                row["pane_id"] = paneKind == 1 ? Json::Value{} : Json::Value{ "" };
+            }
+            Json::Value response;
+            response["pane_statuses"].append(row);
+            VERIFY_IS_TRUE(Page::_ParsePaneAgentStatuses(response).empty());
+        }
+    }
+
+    void TabTests::AgentSnapshotProjectsPaneAndRecentIndependently()
+    {
+        using Page = winrt::TerminalApp::implementation::TerminalPage;
+        auto page = _commonSetup(nullptr, nullptr, std::nullopt, true);
+        const auto cleanup = wil::scope_exit([&]() { RunOnUIThread([&]() { page = nullptr; }); });
+        TestOnUIThread([&]() {
+            const std::string pane{ "62811111-2222-3333-4444-555555555555" };
+            Json::Value response;
+            response["history_status"] = "ready";
+            Json::Value conversation;
+            conversation["session_id"] = "history-only";
+            conversation["provider_id"] = "copilot";
+            conversation["location"] = "Host";
+            conversation["status"] = "Historical";
+            response["sessions"].append(conversation);
+            conversation["session_id"] = "hidden-helper";
+            conversation["origin"] = "AgentPane";
+            response["sessions"].append(conversation);
+            Json::Value state;
+            state["pane_id"] = pane;
+            state["provider_id"] = "copilot";
+            state["status"] = "Working";
+            response["pane_statuses"].append(state);
+            state["pane_id"] = "62911111-2222-3333-4444-555555555555";
+            state["agent_session_id"] = "known-conversation";
+            state["status"] = "Idle";
+            response["pane_statuses"].append(state);
+            state["pane_id"] = pane;
+            state["status"] = "Error";
+            response["native_pane_observations"].append(state);
+            const auto statuses = Page::_BuildAgentStatusSnapshot(Page::_ParsePaneAgentStatuses(response), {});
+            VERIFY_ARE_EQUAL(size_t{ 2 }, statuses.byPane.size());
+            VERIFY_ARE_EQUAL(size_t{ 1 }, statuses.bySession.size());
+            const auto& unknown = statuses.byPane.at(winrt::guid{ winrt::to_hstring(pane) });
+            VERIFY_ARE_EQUAL(std::string{ "Working" }, unknown.status);
+            VERIFY_IS_TRUE(unknown.sessionId.empty());
+            Json::StreamWriterBuilder writer;
+            const auto recent = Page::_ParseSidebarHistorySnapshot(Json::writeString(writer, response));
+            VERIFY_ARE_EQUAL(Page::_SidebarHistorySnapshot::State::Ready, recent.state);
+            VERIFY_ARE_EQUAL(size_t{ 1 }, recent.items.size());
+            VERIFY_ARE_EQUAL(winrt::hstring{ L"history-only" }, recent.items[0].SessionId());
+            VERIFY_IS_TRUE(recent.items[0].PaneSessionId().empty());
+        });
+    }
+
+    void TabTests::AgentSnapshotRefreshSharesConsumers()
+    {
+        auto page = _commonSetup(nullptr, nullptr, std::nullopt, true);
+        const auto cleanup = wil::scope_exit([&]() { RunOnUIThread([&]() { page = nullptr; }); });
+        TestOnUIThread([&]() {
+            page->_agentSnapshotRefreshInFlight = true;
+            page->_agentSnapshotRefreshPending = false;
+            page->_historyRefreshInFlight = true;
+            page->_settings.GlobalSettings().SidebarShowRecentAgentSessions(true);
+            page->_ApplySidebarFilterSettings();
+            page->_StopSidebarHistoryRefreshTimer();
+            page->_historyRefreshInFlight = false;
+            page->_historyRefreshPending = false;
+            page->_historyNextRefresh = {};
+            const auto snapshotGeneration = page->_agentSnapshotRequestGeneration;
+            page->_RequestSidebarHistoryRefresh(false);
+            VERIFY_IS_TRUE(page->_historyRefreshInFlight);
+            VERIFY_IS_FALSE(page->_agentSnapshotRefreshPending);
+            VERIFY_ARE_EQUAL(snapshotGeneration, page->_agentSnapshotRequestGeneration);
+            page->_RequestAgentSnapshotRefresh();
+            VERIFY_IS_TRUE(page->_agentSnapshotRefreshPending);
+            VERIFY_ARE_EQUAL(snapshotGeneration, page->_agentSnapshotRequestGeneration);
+            const auto cancellation = page->_historyRefreshCancellation;
+            VERIFY_IS_TRUE(cancellation != nullptr);
+            page->_StopSidebarHistoryRefreshTimer();
+            VERIFY_IS_TRUE(cancellation->load());
+            VERIFY_IS_TRUE(page->_agentSnapshotRefreshInFlight);
+            page->_agentSnapshotRefreshInFlight = false;
+            page->_agentSnapshotRefreshPending = false;
+            page->_historyRefreshInFlight = false;
+        });
+    }
+
+    void TabTests::AgentSnapshotCompletionKeepsConsumersIndependent()
+    {
+        using Page = winrt::TerminalApp::implementation::TerminalPage;
+        auto page = _commonSetup(nullptr, nullptr, std::nullopt, true);
+        const auto cleanup = wil::scope_exit([&]() { RunOnUIThread([&]() { page = nullptr; }); });
+        TestOnUIThread([&]() {
+            page->_agentSnapshotRefreshInFlight = true;
+            page->_historyRefreshInFlight = true;
+            page->_settings.GlobalSettings().SidebarShowRecentAgentSessions(true);
+            page->_ApplySidebarFilterSettings();
+            page->_StopSidebarHistoryRefreshTimer();
+            page->_historyRefreshInFlight = false;
+            page->_historyRefreshPending = false;
+            page->_historyNextRefresh = {};
+            const auto receiver = winrt::TerminalApp::implementation::SharedWta::Instance().MasterGeneration();
+            const std::string pane{ "63111111-2222-3333-4444-555555555555" };
+            const winrt::guid paneId{ winrt::to_hstring(pane) };
+            Json::Value response;
+            response["sessions"] = Json::arrayValue;
+            response["history_status"] = "ready";
+            response["native_observation_receiver_generation"] = Json::UInt64{ receiver };
+            response["native_observation_listener_ready"] = false;
+            Json::Value state;
+            state["pane_id"] = pane;
+            state["provider_id"] = "copilot";
+            state["status"] = "Working";
+            response["pane_statuses"].append(state);
+            const auto begin = [&](const bool withHistory, const uint64_t capturedReceiver) {
+                page->_agentSnapshotRefreshInFlight = true;
+                page->_agentSnapshotRefreshPending = false;
+                ++page->_agentSnapshotRequestGeneration;
+                if (withHistory)
+                {
+                    page->_RequestSidebarHistoryRefresh(false);
+                }
+                return Page::_AgentSnapshotRequest{
+                    page->_agentSnapshotRequestGeneration, capturedReceiver, page->_historyRefreshInFlight ? std::optional<uint64_t>{ page->_historyRequestGeneration } : std::nullopt, page->_historyRefreshCancellation
+                };
+            };
+            const auto complete = [&](const Page::_AgentSnapshotRequest& request) {
+                ::Microsoft::Terminal::WtaProcess::CaptureResult capture;
+                capture.completed = true;
+                capture.exitCode = 0;
+                Json::StreamWriterBuilder writer;
+                capture.output = Json::writeString(writer, response);
+                return page->_CompleteAgentSnapshot(
+                    request, capture, response, Page::_BuildAgentStatusSnapshot(Page::_ParsePaneAgentStatuses(response), {}), true);
+            };
+
+            // Recent joins a capture that was already serving metadata.
+            auto request = begin(false, receiver);
+            page->_RequestSidebarHistoryRefresh(false);
+            VERIFY_IS_FALSE(complete(request));
+            VERIFY_IS_FALSE(page->_historyRefreshInFlight);
+            VERIFY_IS_FALSE(page->_agentSnapshotRefreshInFlight);
+            VERIFY_ARE_EQUAL(std::string{ "Working" }, page->_richTabAgentStatusByPaneId.at(paneId).status);
+
+            // Cancel/reopen keeps the new Recent consumer, without cancelling metadata.
+            request = begin(true, receiver);
+            const auto cancelled = request.historyCancellation;
+            page->_StopSidebarHistoryRefreshTimer();
+            page->_RequestSidebarHistoryRefresh(false);
+            VERIFY_IS_TRUE(complete(request));
+            VERIFY_IS_TRUE(cancelled->load());
+            VERIFY_IS_TRUE(page->_historyRefreshInFlight);
+            VERIFY_IS_FALSE(page->_agentSnapshotRefreshInFlight);
+            VERIFY_ARE_EQUAL(std::string{ "Working" }, page->_richTabAgentStatusByPaneId.at(paneId).status);
+            request = begin(false, receiver);
+            VERIFY_IS_FALSE(complete(request));
+            VERIFY_IS_FALSE(page->_historyRefreshInFlight);
+
+            // A newer delta invalidates the old result, but does not strand Recent.
+            request = begin(true, receiver);
+            VERIFY_IS_TRUE(page->_ApplyAgentSessionStatusDelta("sdk-delta", pane, "copilot", uint64_t{ 2000 }, "Attention"));
+            VERIFY_IS_TRUE(complete(request));
+            VERIFY_IS_TRUE(page->_historyRefreshInFlight);
+            VERIFY_ARE_EQUAL(std::string{ "Attention" }, page->_richTabAgentStatusByPaneId.at(paneId).status);
+            response["pane_statuses"][0]["status"] = "Attention";
+            response["pane_statuses"][0]["agent_session_id"] = "sdk-delta";
+            request = begin(false, receiver);
+            VERIFY_IS_FALSE(complete(request));
+            VERIFY_IS_FALSE(page->_historyRefreshInFlight);
+
+            // A replacement receiver rejects the old projection and queues one fresh read.
+            request = begin(true, receiver + 1);
+            response["pane_statuses"][0]["status"] = "Error";
+            VERIFY_IS_TRUE(complete(request));
+            VERIFY_IS_TRUE(page->_historyRefreshInFlight);
+            VERIFY_ARE_EQUAL(std::string{ "Attention" }, page->_richTabAgentStatusByPaneId.at(paneId).status);
+            request = begin(false, receiver);
+            VERIFY_IS_FALSE(complete(request));
+            VERIFY_IS_FALSE(page->_historyRefreshInFlight);
+            VERIFY_ARE_EQUAL(std::string{ "Error" }, page->_richTabAgentStatusByPaneId.at(paneId).status);
+        });
+    }
+
+    void TabTests::AgentStatusLookupIsReadOnly()
+    {
+        using State = winrt::Microsoft::Terminal::TerminalConnection::ConnectionState;
+        auto page = _commonSetup(nullptr, nullptr, std::nullopt, true);
+        const auto cleanup = wil::scope_exit([&]() { RunOnUIThread([&]() { page = nullptr; }); });
+        TestOnUIThread([&]() {
+            page->_settings.GlobalSettings().AgentSessionManagementEnabled(false);
+            page->_SyncNativeAgentStatusMode();
+            const auto connection = winrt::make_self<TestConnection>(
+                winrt::guid{ L"63011111-2222-3333-4444-555555555555" }, State::Connected);
+            NewTerminalArgs args;
+            args.NativeAgentProviderId(L"copilot");
+            const auto pane = page->_MakePane(args, nullptr, *connection);
+            VERIFY_IS_NOT_NULL(page->_CreateNewTabFromPane(pane));
+            const auto control = pane->GetTerminalControl();
+            const auto manager = winrt::get_self<winrt::TerminalApp::implementation::ContentManager>(page->_manager);
+            manager->RemoveNativeAgentObservation(control.ContentId());
+            size_t published{};
+            const auto token = page->ProtocolVtSequenceReceived([&](auto&&, auto&&) { ++published; });
+            const auto revoke = wil::scope_exit([&]() { page->ProtocolVtSequenceReceived(token); });
+            VERIFY_IS_FALSE(page->_RichTabAgentInfoForControl(control).has_value());
+            VERIFY_IS_FALSE(page->_BuildRichTabFirstPartyFields(control).contains("agentStatus"));
+            VERIFY_IS_FALSE(manager->NativeAgentObservationForContent(control.ContentId()).has_value());
+            VERIFY_ARE_EQUAL(size_t{ 0 }, published);
+            page->_NotifyRestoredSessionBindings(page->_GetFocusedTabImpl());
+            VERIFY_IS_TRUE(manager->NativeAgentObservationForContent(control.ContentId()).has_value());
+        });
     }
 
     void TabTests::SharedWtaNativeReceiverGenerationSurvivesWaitRetirement()
@@ -10521,9 +10731,9 @@ namespace TerminalAppLocalTests
             row["tab_id"] = identity.tabId;
             row["mode_epoch"] = Json::UInt64{ identity.modeEpoch };
             const auto apply = [&](const Json::Value& observation) {
-                response["native_pane_observations"] = Json::arrayValue;
-                response["native_pane_observations"].append(observation);
-                const auto snapshot = page->_BuildAgentStatusSnapshot(page->_ParseAgentStatusResponse(response), {});
+                response["pane_statuses"] = Json::arrayValue;
+                response["pane_statuses"].append(observation);
+                const auto snapshot = page->_BuildAgentStatusSnapshot(page->_ParsePaneAgentStatuses(response), {});
                 page->_richTabAgentStatusByPaneId = snapshot.byPane;
                 page->_ApplyTabListProjection();
             };
@@ -11527,8 +11737,8 @@ namespace TerminalAppLocalTests
             changed.Subtitle(L"2 minutes ago");
             changed.PaneSessionId(L"new-pane");
             stripImpl->CommitHistorySnapshot({ makeItem(L"copilot", L"same-id", L"Historical"), changed });
-            VERIFY_ARE_EQUAL(1u, changes.size());
-            VERIFY_ARE_EQUAL(CollectionChange::ItemChanged, changes[0]);
+            VERIFY_IS_TRUE(changes.empty());
+            VERIFY_IS_TRUE(items.GetAt(1) == second);
             VERIFY_ARE_EQUAL(winrt::hstring{ L"2 minutes ago" }, items.GetAt(1).Subtitle());
             VERIFY_ARE_EQUAL(winrt::hstring{ L"new-pane" }, items.GetAt(1).PaneSessionId());
 
@@ -11548,7 +11758,8 @@ namespace TerminalAppLocalTests
         view.Search(L"claude");
         TestOnUIThread([&]() {
             VERIFY_ARE_EQUAL(1u, items.Size());
-            VERIFY_ARE_EQUAL(CollectionChange::Reset, changes.back());
+            VERIFY_IS_TRUE(std::ranges::find(changes, CollectionChange::Reset) == changes.end());
+            VERIFY_ARE_EQUAL(winrt::hstring{ L"claude" }, items.GetAt(0).AgentId());
             changes.clear();
             stripImpl->CommitHistorySnapshot({ makeItem(L"copilot", L"same-id", L"Historical"), changed });
             VERIFY_IS_TRUE(changes.empty());
@@ -13698,14 +13909,26 @@ namespace TerminalAppLocalTests
     {
         auto page = _commonSetup(nullptr, nullptr, std::nullopt, true);
         TestOnUIThread([&]() {
+            page->_historyRefreshInFlight = true;
+            page->_tabStrip.HistoryActive(true);
+            page->UpdateLayout();
+        });
+        _waitForContentTransferReviewUI([&]() {
+            page->UpdateLayout();
+            return winrt::get_self<winrt::TerminalApp::implementation::TabStrip>(page->_tabStrip)->HistoryMessage() != nullptr;
+        });
+        TestOnUIThread([&]() {
             const auto strip = page->_tabStrip;
             const auto impl = winrt::get_self<winrt::TerminalApp::implementation::TabStrip>(strip);
             using State = winrt::TerminalApp::implementation::TerminalPage::_SidebarHistorySnapshot::State;
             strip.HistoryActive(true);
             auto item = winrt::make<winrt::TerminalApp::implementation::TabStripHistoryItem>();
             item.SessionId(L"existing");
+            item.AgentId(L"copilot");
+            item.AgentSource(L"host");
             item.Title(L"Session");
             impl->CommitHistorySnapshot({ item });
+            strip.HistoryLoading(false);
             page->_historyRefreshInFlight = true;
             const auto cancellation = std::make_shared<std::atomic<bool>>(false);
             page->_historyRefreshCancellation = cancellation;
@@ -13754,23 +13977,34 @@ namespace TerminalAppLocalTests
     {
         auto page = _commonSetup(nullptr, nullptr, std::nullopt, true);
         TestOnUIThread([&]() {
+            page->_historyRefreshInFlight = true;
+            page->_tabStrip.HistoryActive(true);
+            page->UpdateLayout();
+        });
+        _waitForContentTransferReviewUI([&]() {
+            page->UpdateLayout();
+            return winrt::get_self<winrt::TerminalApp::implementation::TabStrip>(page->_tabStrip)->HistoryMessage() != nullptr;
+        });
+        TestOnUIThread([&]() {
             const auto strip = page->_tabStrip;
             const auto impl = winrt::get_self<winrt::TerminalApp::implementation::TabStrip>(strip);
             using State = winrt::TerminalApp::implementation::TerminalPage::_SidebarHistorySnapshot::State;
             strip.HistoryActive(true);
             const auto generation = page->_historyRequestGeneration;
             page->_CompleteSidebarHistoryRefresh(generation, {});
+            const auto retryDelay = page->_historyRetryDelay;
             page->_historyRefreshInFlight = true;
             const auto cancellation = std::make_shared<std::atomic<bool>>(false);
             page->_historyRefreshCancellation = cancellation;
             impl->OnHistoryCloseClick(nullptr, {});
-            VERIFY_ARE_EQUAL(int64_t{ 0 }, page->_historyRetryDelay.count());
+            VERIFY_ARE_EQUAL(retryDelay.count(), page->_historyRetryDelay.count());
             VERIFY_ARE_EQUAL(Visibility::Visible, impl->ItemsList().Visibility());
             VERIFY_IS_TRUE(cancellation->load());
             VERIFY_IS_FALSE(strip.HistoryActive());
-            VERIFY_ARE_EQUAL(int64_t{ 0 }, page->_historyRetryDelay.count());
+            VERIFY_ARE_EQUAL(retryDelay.count(), page->_historyRetryDelay.count());
             page->_historyRefreshInFlight = true;
             impl->OnHistoryClick(nullptr, {});
+            VERIFY_ARE_EQUAL(int64_t{ 0 }, page->_historyRetryDelay.count());
             VERIFY_IS_TRUE(strip.HistoryLoading());
             VERIFY_IS_TRUE(page->_historyRefreshPending);
             VERIFY_ARE_EQUAL(Visibility::Collapsed, impl->HistoryMessage().Visibility());
@@ -17752,11 +17986,12 @@ namespace TerminalAppLocalTests
                 row["location"] = location;
             }
         }
-        response["native_pane_observations"].append(row);
-        const auto snapshot = page->_BuildAgentStatusSnapshot(page->_ParseAgentStatusResponse(response), {});
+        response["pane_statuses"].append(row);
+        const auto snapshot = page->_BuildAgentStatusSnapshot(page->_ParsePaneAgentStatuses(response), {});
         page->_richTabAgentStatusByPaneId.insert_or_assign(control.Connection().SessionId(),
             snapshot.byPane.at(control.Connection().SessionId()));
-        page->_richTabAgentStatusSnapshotLoaded = true;
+        page->_PreserveNativeAgentIdentity(control);
+        page->_agentSnapshotLoaded = true;
     }
 
     void TabTests::NativeAgentSessionsOffStatusIsPaneLocal()
@@ -17855,9 +18090,10 @@ namespace TerminalAppLocalTests
             VERIFY_ARE_EQUAL(std::string{ "Attention" }, page->_RichTabAgentInfoForControl(controls[0])->status);
             // A failed/unloaded listener is not permission to enable the OFF fallback.
             page->_richTabAgentStatusByPaneId.clear();
-            page->_richTabAgentStatusSnapshotLoaded = false;
+            page->_agentSnapshotLoaded = false;
             VERIFY_IS_FALSE(page->_RichTabAgentInfoForControl(controls[0]).has_value());
             page->_settings.GlobalSettings().AgentSessionManagementEnabled(false);
+            page->_SyncNativeAgentStatusMode();
             VERIFY_IS_FALSE(page->_RichTabAgentInfoForControl(controls[0]).has_value());
             _applyNativeRegistrySnapshot(page, controls[0], "Working");
             VERIFY_ARE_EQUAL(std::string{ "Working" }, page->_RichTabAgentInfoForControl(controls[0])->status);
@@ -18315,22 +18551,23 @@ namespace TerminalAppLocalTests
             row["window_id"] = Json::UInt64{ identity.windowId };
             row["tab_id"] = identity.tabId;
             row["mode_epoch"] = Json::UInt64{ identity.modeEpoch };
-            response["native_pane_observations"].append(row);
+            response["pane_statuses"].append(row);
             auto unknown = row;
             unknown["pane_id"] = "91711111-2222-3333-4444-555555555555";
             unknown.removeMember("agent_session_id");
             unknown.removeMember("location");
-            response["native_pane_observations"].append(unknown);
-            const auto snapshot = page->_BuildAgentStatusSnapshot(page->_ParseAgentStatusResponse(response), {});
-            VERIFY_ARE_EQUAL(size_t{ 1 }, snapshot.bySession.size());
+            response["pane_statuses"].append(unknown);
+            const auto snapshot = page->_BuildAgentStatusSnapshot(page->_ParsePaneAgentStatuses(response), {});
+            VERIFY_ARE_EQUAL(size_t{ 0 }, snapshot.bySession.size());
             VERIFY_ARE_EQUAL(size_t{ 2 }, snapshot.byPane.size());
             VERIFY_IS_FALSE(snapshot.bySession.contains(""));
             const auto project = [&](const Json::Value& native) {
                 auto input = response;
-                input["native_pane_observations"] = Json::arrayValue;
-                input["native_pane_observations"].append(native);
-                const auto parsed = page->_BuildAgentStatusSnapshot(page->_ParseAgentStatusResponse(input), {});
+                input["pane_statuses"] = Json::arrayValue;
+                input["pane_statuses"].append(native);
+                const auto parsed = page->_BuildAgentStatusSnapshot(page->_ParsePaneAgentStatuses(input), {});
                 page->_richTabAgentStatusByPaneId = parsed.byPane;
+                page->_PreserveNativeAgentIdentity(control);
                 return page->_RichTabAgentInfoForControl(control);
             };
             const auto projected = project(row);
@@ -18363,15 +18600,15 @@ namespace TerminalAppLocalTests
             VERIFY_ARE_EQUAL(identity.agentSessionId,
                 manager->NativeAgentObservationForContent(control.ContentId()).value().qualifiedSessionId);
             auto malformed = response;
-            malformed["native_pane_observations"] = Json::objectValue;
-            VERIFY_ARE_EQUAL(size_t{ 1 }, page->_ParseAgentStatusResponse(malformed).size());
-            malformed["native_pane_observations"] = Json::arrayValue;
+            malformed["pane_statuses"] = Json::objectValue;
+            VERIFY_IS_TRUE(page->_ParsePaneAgentStatuses(malformed).empty());
+            malformed["pane_statuses"] = Json::arrayValue;
             wrong = row;
             wrong["agent_session_id"] = 7;
-            malformed["native_pane_observations"].append(wrong);
-            VERIFY_ARE_EQUAL(size_t{ 1 }, page->_ParseAgentStatusResponse(malformed).size());
-            malformed.removeMember("native_pane_observations");
-            VERIFY_ARE_EQUAL(size_t{ 1 }, page->_ParseAgentStatusResponse(malformed).size());
+            malformed["pane_statuses"].append(wrong);
+            VERIFY_IS_TRUE(page->_ParsePaneAgentStatuses(malformed).empty());
+            malformed.removeMember("pane_statuses");
+            VERIFY_IS_TRUE(page->_ParsePaneAgentStatuses(malformed).empty());
             page->_paneAgentSessions.at(paneId).backend = L"";
             page->_PublishNativeAgentObservation(control, "reset");
             const auto unspecified = manager->NativeAgentObservationForContent(control.ContentId()).value();
@@ -20093,7 +20330,7 @@ namespace TerminalAppLocalTests
             const auto tab = page->_GetFocusedTabImpl();
             source = tab->GetRootPane()->FindPaneBySessionId(sourceConnection->SessionId());
             VERIFY_IS_NOT_NULL(source);
-            page->_richTabAgentStatusSnapshotLoaded = true;
+            page->_agentSnapshotLoaded = true;
 
             const auto apply = [&](const std::shared_ptr<Pane>& pane, const std::wstring& text, const std::string& status) {
                 const auto control = pane->GetTerminalControl();

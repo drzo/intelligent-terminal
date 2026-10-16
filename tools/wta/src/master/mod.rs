@@ -8107,17 +8107,19 @@ where
     }
 
     sessions.sort_by(|l, r| l.session_id.0.cmp(&r.session_id.0));
+    let (pane_statuses, native_pane_observations) = state.registry.pane_status_snapshot().await;
     let raw = crate::session_registry::build_sessions_list_response(
         sessions,
         Some(history_status.status),
         history_status.error_kind,
-        state.registry.native_pane_observations().await,
+        native_pane_observations,
         state.native_observation_receiver_generation,
         state.native_observation_receiver_generation.map(|_| {
             state
                 .native_observation_listener_ready
                 .load(std::sync::atomic::Ordering::Acquire)
         }),
+        pane_statuses,
     );
     Ok(acp::schema::v1::ExtResponse::new(raw.into()))
 }

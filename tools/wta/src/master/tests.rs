@@ -11049,6 +11049,7 @@ async fn sessions_list_handler_returns_registry_snapshot_payload() {
     row.status = Some(crate::agent_sessions::AgentStatus::Idle);
     row.cli_source = Some(crate::agent_sessions::CliSource::Copilot);
     row.last_activity_at_ms = Some(42);
+    row.pane_session_id = Some("00112233-4455-6677-8899-aabbccddeeff".into());
     state.registry.upsert(row.clone()).await;
 
     let resp = handle_sessions_list(
@@ -11060,7 +11061,19 @@ async fn sessions_list_handler_returns_registry_snapshot_payload() {
     .expect("sessions/list succeeds");
     let parsed = session_registry::parse_sessions_list_response(&resp.0).expect("response parses");
 
-    assert_eq!(parsed.sessions, vec![row]);
+    assert_eq!(parsed.sessions, vec![row.clone()]);
+    assert_eq!(parsed.pane_statuses.len(), 1);
+    assert_eq!(
+        parsed.pane_statuses[0].pane_id,
+        row.pane_session_id.unwrap()
+    );
+    assert_eq!(
+        parsed.pane_statuses[0].agent_session_id,
+        Some("sess-b".into())
+    );
+    assert_eq!(parsed.pane_statuses[0].provider_id, "copilot");
+    assert_eq!(parsed.pane_statuses[0].last_activity_at_ms, Some(42));
+    assert!(parsed.pane_statuses[0].mode_epoch.is_none());
 }
 
 #[tokio::test(flavor = "current_thread")]

@@ -193,8 +193,12 @@ and may require network access; discovery is not an offline-only operation. See
 [Installing dependencies](../../doc/installing-dependencies.md) for the native CLI
 and ACP wrapper prerequisites.
 
-Sidebar Agent sessions runs
-`wta sessions list --origin shell --json --include-status`.
+Tab/pane agent metadata and Sidebar Recent share a bounded
+`wta sessions list --json --include-status` snapshot request. Recent applies
+the existing shell-origin filter to the conversation projection; pane metadata
+reads the normalized `pane_statuses` projection without requiring an agent
+session ID. A Recent request can join an in-flight metadata request, and hiding
+Recent cancels only that projection, not the shared request.
 This only reads the current registry snapshot; it never starts an agent or waits
 for an ACP history query. Each initialized, listing-capable agent command/source
 has a separate, reusable history-only ACP process, including already-connected
@@ -994,7 +998,17 @@ its canonical activity and activity timestamp while updating window/tab context
 and epoch. A changed provider, exact session identity, or backend is a new owner;
 OFF after ON also starts a fresh Idle baseline. Earlier epochs remain fenced.
 
-The existing `_intellterm.wta/sessions/list` response adds
+The existing `_intellterm.wta/sessions/list` response exposes `pane_statuses`
+for tab/pane metadata and retains `sessions` for conversation history. Each
+pane status requires `pane_id`, `provider_id` and `status`; its
+`agent_session_id` is optional. WTA resolves canonical and native representations
+into one pane projection, so the UI does not merge those model collections.
+Conversation rows still require real, qualified session identity. The shared
+UI capture feeds both projections, and status getters do not register panes or
+change observation mode. Registration remains on explicit pane lifecycle,
+setting and receiver-recovery paths.
+
+For diagnostics and existing consumers, the response also retains
 `native_pane_observations`, omitted when empty. Each entry has `pane_id`,
 `provider_id`, `window_id`, `tab_id`, `mode_epoch`, `status`,
 `last_activity_at_ms`, optional `location`, and `agent_session_id` only when

@@ -1,5 +1,57 @@
 # Hooks-Fallback Agent Session Watcher (Hybrid Tracking)
 
+## Shared read model: pane metadata and Recent conversations
+
+Pane identity and conversation identity have different lifetimes. A live agent
+pane is identified by its existing Terminal connection GUID and can display
+activity before an agent session ID is known. A conversation is identified by
+its qualified provider, execution/history store and real agent session ID; it
+can remain in Recent after its pane disappears. Neither identity is a
+placeholder for the other.
+
+WTA owns conversation discovery, confirmed associations and effective agent
+activity. Terminal owns actual pane existence and the immutable launch facts
+it publishes. The existing snapshot carries two read projections:
+
+| Projection | Required key | Optional relationship |
+| --- | --- | --- |
+| `pane_statuses` | Terminal pane GUID | Confirmed agent conversation ID |
+| `sessions` | Qualified real conversation identity | Associated live pane GUID |
+
+Tab and pane metadata consume only the pane projection. Recent consumes the
+conversation projection, retaining its existing shell-origin, visibility and
+represented-session filters. A shared snapshot does not make the conversation
+ID mandatory for every record. List-inferred associations remain advisory
+metadata, never the confirmed relationship used for control or resume.
+
+```text
+Existing hooks / parsed OSC/BEL / pane lifecycle
+                       |
+             Existing COM and WTA model
+                       |
+            One shared UI snapshot request
+                       |
+              +--------+---------+
+              |                  |
+        pane_statuses          sessions
+        key: pane GUID         key: conversation
+              |                  |
+        Tab/pane metadata     Recent + filters
+```
+
+This is a read-side diagram; it does not replace the existing signal,
+creation or exact-resume flows. Shared refreshes reuse the existing bounded
+request and retry machinery, without a new polling loop. A hidden or cancelled
+Recent projection must not cancel a request still serving pane metadata.
+
+UI presentation owns labels, icons, filtering and command availability, not
+conversation matching or agent activity transitions. Status getters are
+lookups: registration occurs at pane creation/attachment, setting changes,
+ownership changes and receiver readiness/recovery. Retained launch facts and
+versioned transport/replay receipts are legitimate host state, not another
+activity authority. Existing SDK routing and conversation IDs remain unchanged;
+no new MVVM framework, generic store or conversation-ID migration is required.
+
 ## Sessions OFF: native observations in the shared registry
 
 Terminal uses `EffectiveAgentSessionManagementEnabled()` (the user setting
