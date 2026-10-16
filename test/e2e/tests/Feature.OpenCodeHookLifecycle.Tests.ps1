@@ -218,9 +218,13 @@ Describe 'Feature: packaged OpenCode hook lifecycle' -Tag 'Feature', 'OpenCodeHo
         Send-HookAction $driver @{ action = 'lookup-race'; id = "$prefix-deleted" }
         Send-HookAction $driver @{ action = 'lookup-race'; id = "$prefix-disposed"; dispose = $true }
         $unbound = Wait-Until -TimeoutSec 20 -Because 'disposing the TUI detaches rather than deletes its server session' -Condition {
-            Read-HookSessions | Where-Object { $_.session_id -eq $root -and $_.status -eq 'Historical' -and -not $_.pane_session_id }
+            Read-HookSessions | Where-Object { $_.session_id -eq $root -and $_.status -eq 'Idle' -and -not $_.pane_session_id }
         }
         $unbound | Should -Not -BeNullOrEmpty
+        @(Get-WtEvents -Listener $script:listener -Predicate {
+            $_.method -eq 'agent_event' -and $_.params.agent_session_id -eq $root -and
+            $_.params.event -eq 'agent.session.end'
+        }).Count | Should -Be 0 -Because 'detaching a TUI does not delete its shared-server session'
         $unexpected = Wait-Until -TimeoutSec 3 -IntervalSec 0.2 -Quiet -Because 'completed negative actions produce no delayed bridge event' -Condition {
             @(Get-WtEvents -Listener $script:listener -Predicate {
                 $_.method -eq 'agent_event' -and $_.params.agent_session_id -like "$prefix-*" -and
@@ -386,12 +390,17 @@ Describe 'Feature: packaged OpenCode hook lifecycle' -Tag 'Feature', 'OpenCodeHo
                 [Text.Encoding]::UTF8.GetBytes("opencode:$password"))
         }
         $tuiPane = $null
+        $secondTuiPane = $null
         try {
             Wait-Until -TimeoutSec 30 -Because 'the newly created local OpenCode server becomes responsive' -Condition {
                 if ($server.HasExited) { throw "OpenCode server exited with code $($server.ExitCode)" }
                 $ownedListener = @(Get-NetTCPConnection -LocalPort $port -State Listen -ErrorAction Stop |
                     Where-Object OwningProcess -eq $server.Id)
                 if ($ownedListener.Count -lt 1) { return $false }
+                if ($v2) {
+                    $inventory = Invoke-RestMethod -Uri "$base/api/plugin" -Headers $headers -TimeoutSec 2
+                    return $null -ne $inventory.PSObject.Properties['data']
+                }
                 (Invoke-RestMethod -Uri "$base/global/health" -TimeoutSec 2).healthy
             } | Should -BeTrue
             if ($v2) {
@@ -426,26 +435,59 @@ Describe 'Feature: packaged OpenCode hook lifecycle' -Tag 'Feature', 'OpenCodeHo
             if ($v2) {
                 @(Read-HookSessions | Where-Object session_id -eq $created.id).Count | Should -Be 0 `
                     -Because 'V2 server-only hooks must not claim a pane before any TUI views the session'
-                $launch = '"' + (Get-Command pwsh).Source + '" -NoProfile -File "' + $script:tuiDriverPath +
-                    '" -Executable "' + $executable + '" -BaseUrl "' + $base + '" -SessionId "' + $created.id +
-                    '" -Config "' + $config + '" -Data "' + $environment.XDG_DATA_HOME +
-                    '" -Cache "' + $environment.XDG_CACHE_HOME + '" -State "' + $environment.XDG_STATE_HOME +
-                    '" -CredentialFile "' + $credentialFile + '"'
-                $tuiPane = (New-WtTab -App $script:app -Command $launch -Cwd $nativeWork).session_id
-                $viewed = Wait-Until -TimeoutSec 60 -IntervalSec 0.5 -Quiet -Because 'native TUI view sends a pane-owned hook' -Condition {
-                    @(Get-WtEvents -Listener $script:listener -Predicate ({
-                        $_.method -eq 'agent_event' -and $_.params.cli_source -eq 'opencode' -and
-                        $_.params.agent_session_id -eq $created.id -and $_.params.event -eq 'agent.session.start' -and
-                        $_.params.pane_id -and
-                        $_.params.pane_id.Trim('{}').ToLowerInvariant() -eq $tuiPane.Trim('{}').ToLowerInvariant()
-                    }.GetNewClosure())).Count -gt 0
+                $tuiCommand = {
+                    param([string]$SessionId, [string]$CredentialPath)
+                    '"' + (Get-Command pwsh).Source + '" -NoProfile -File "' + $script:tuiDriverPath +
+                        '" -Executable "' + $executable + '" -BaseUrl "' + $base + '" -SessionId "' + $SessionId +
+                        '" -Config "' + $config + '" -Data "' + $environment.XDG_DATA_HOME +
+                        '" -Cache "' + $environment.XDG_CACHE_HOME + '" -State "' + $environment.XDG_STATE_HOME +
+                        '" -CredentialFile "' + $CredentialPath + '"'
                 }
-                $viewed | Should -BeTrue -Because (Get-WtCapture -App $script:app -SessionId $tuiPane -MaxLines 60)
-                $row = Wait-Until -TimeoutSec 20 -Because 'viewing the native V2 session binds it to the TUI pane' -Condition {
-                    Read-HookSessions | Where-Object session_id -eq $created.id | Select-Object -First 1
+                $firstTab = New-WtTab -App $script:app -Command (& $tuiCommand $created.id $credentialFile) -Cwd $nativeWork
+                $tuiPane = $firstTab.session_id
+                $row = Wait-Until -TimeoutSec 60 -Because 'viewing the native V2 session binds it to the TUI pane in the authoritative master' -Condition {
+                    Read-HookSessions | Where-Object {
+                        $_.session_id -eq $created.id -and $_.status -eq 'Idle' -and $_.pane_session_id -and
+                        $_.pane_session_id.Trim('{}').ToLowerInvariant() -eq $tuiPane.Trim('{}').ToLowerInvariant()
+                    } | Select-Object -First 1
                 }
                 $row.status | Should -Be 'Idle'
                 $row.pane_session_id.Trim('{}').ToLowerInvariant() | Should -Be $tuiPane.Trim('{}').ToLowerInvariant()
+                $second = (Invoke-RestMethod -Method Post -Uri $sessionEndpoint -Headers $headers -ContentType 'application/json' `
+                    -Body '{"title":"ITE2E native OpenCode second pane"}' -TimeoutSec 45).data
+                $second.id | Should -Not -BeNullOrEmpty
+                $secondCredential = Join-Path $nativeRoot 'second-server-credential.dpapi'
+                $password | ConvertTo-SecureString -AsPlainText -Force |
+                    ConvertFrom-SecureString | Set-Content -LiteralPath $secondCredential -NoNewline
+                $secondTuiPane = (Split-WtPane -App $script:app -SessionId $tuiPane -Direction right `
+                    -Command (& $tuiCommand $second.id $secondCredential)).session_id
+                $secondTuiPane | Should -Not -BeNullOrEmpty
+                Wait-Until -TimeoutSec 60 -Because 'a second native TUI independently binds its own shared-server session' -Condition {
+                    Read-HookSessions | Where-Object {
+                        $_.session_id -eq $second.id -and $_.status -eq 'Idle' -and $_.pane_session_id -and
+                        $_.pane_session_id.Trim('{}').ToLowerInvariant() -eq $secondTuiPane.Trim('{}').ToLowerInvariant()
+                    }
+                } | Should -Not -BeNullOrEmpty
+                $panes = @(Get-WtPanes -App $script:app -TabId $firstTab.tab_id)
+                foreach ($id in @($tuiPane, $secondTuiPane)) {
+                    @($panes | Where-Object session_id -eq $id) | Should -HaveCount 1 -Because 'both real TUIs must share one terminal tab'
+                }
+                $firstRow = Read-HookSessions | Where-Object session_id -eq $created.id
+                $firstRow.pane_session_id.Trim('{}').ToLowerInvariant() | Should -Be $tuiPane.Trim('{}').ToLowerInvariant()
+                Close-WtPane -App $script:app -SessionId $tuiPane
+                $tuiPane = $null
+                Wait-Until -TimeoutSec 20 -Because 'closing the first native TUI clears its binding' -Condition {
+                    Read-HookSessions | Where-Object { $_.session_id -eq $created.id -and -not $_.pane_session_id }
+                } | Should -Not -BeNullOrEmpty
+                $remaining = Read-HookSessions | Where-Object session_id -eq $second.id
+                $remaining.status | Should -Be 'Idle'
+                $remaining.pane_session_id.Trim('{}').ToLowerInvariant() | Should -Be $secondTuiPane.Trim('{}').ToLowerInvariant()
+                Invoke-RestMethod -Method Delete -Uri "$sessionEndpoint/$($second.id)" -Headers $headers -TimeoutSec 15 | Out-Null
+                Wait-Until -TimeoutSec 20 -Because 'deleting the remaining viewed native session ends its registry row' -Condition {
+                    Read-HookSessions | Where-Object {
+                        $_.session_id -eq $second.id -and $_.status -eq 'Ended' -and -not $_.pane_session_id
+                    }
+                } | Should -Not -BeNullOrEmpty
             }
             Invoke-RestMethod -Method Delete -Uri "$sessionEndpoint/$($created.id)" -Headers $headers -TimeoutSec 15 | Out-Null
             if (-not $v2) {
@@ -455,6 +497,7 @@ Describe 'Feature: packaged OpenCode hook lifecycle' -Tag 'Feature', 'OpenCodeHo
         finally {
             try {
                 if ($tuiPane) { Close-WtPane -App $script:app -SessionId $tuiPane }
+                if ($secondTuiPane) { Close-WtPane -App $script:app -SessionId $secondTuiPane }
             }
             finally {
                 if (-not $server.HasExited) { $server.Kill() }
@@ -468,6 +511,15 @@ Describe 'Feature: packaged OpenCode hook lifecycle' -Tag 'Feature', 'OpenCodeHo
                 }
                 Write-ItLog -Message "OpenCode server stdout: $serverOut"
                 Write-ItLog -Message "OpenCode server stderr: $serverErr"
+                foreach ($log in Get-ChildItem -LiteralPath $nativeRoot -Recurse -File -Filter '*.log') {
+                    $diagnostics = @(Get-Content -LiteralPath $log.FullName |
+                        Where-Object { $_ -match 'wt-agent-hooks|plugin|rpc|error|WT_SESSION|WT_COM_CLSID|WTCLI_PATH' }) -join "`n"
+                    if ($diagnostics) {
+                        $diagnostics = $diagnostics.Replace($password, '[redacted]')
+                        if ($v2) { $diagnostics = $diagnostics.Replace($token, '[redacted]') }
+                        Write-ItLog -Message "OpenCode native log $($log.Name): $diagnostics"
+                    }
+                }
                 $server.Dispose()
             }
         }

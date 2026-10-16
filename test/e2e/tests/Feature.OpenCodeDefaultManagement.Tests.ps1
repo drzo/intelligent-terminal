@@ -61,6 +61,19 @@ Describe 'Feature: default OpenCode session management' -Tag 'Feature', 'OpenCod
             $opencode[0].opencode.api_variant | Should -Be "v$Major"
             $opencode[0].opencode.installed_api_variant | Should -Be "v$Major"
             $opencode[0].plugin_enabled | Should -BeTrue
+            $opencode[0].installed_version | Should -Be $opencode[0].bundle_version
+            $bundle = Join-Path $script:app.InstallLocation 'wt-agent-hooks\opencode'
+            $support = Join-Path $opencode[0].marketplace_path 'wt-agent-hooks'
+            $installedEntry = if ($Major -ge 2) { Join-Path $support 'wt-agent-hooks.js' }
+                else { Join-Path $opencode[0].marketplace_path 'wt-agent-hooks.js' }
+            (Get-FileHash -LiteralPath $installedEntry).Hash |
+                Should -Be (Get-FileHash -LiteralPath (Join-Path $bundle "v$Major\wt-agent-hooks.js")).Hash
+            if ($Major -ge 2) {
+                foreach ($file in @('server.js', 'tui.js', 'rpc.js', 'package.json')) {
+                    (Get-FileHash -LiteralPath (Join-Path $support $file)).Hash |
+                        Should -Be (Get-FileHash -LiteralPath (Join-Path $bundle "v2\$file")).Hash
+                }
+            }
             $entry = $opencode[0].binary_path
             $entry | Should -Not -BeNullOrEmpty
             $shell = Get-ActivePane -App $script:app
@@ -71,12 +84,31 @@ Describe 'Feature: default OpenCode session management' -Tag 'Feature', 'OpenCod
             ) -WorkingDirectory $shell.cwd -TimeoutSec 30
             $result.ExitCode | Should -Be 0 -Because $result.StdErr
             $nativeIds = @((ConvertFrom-Json -InputObject $result.StdOut).id)
-            $history = Wait-Until -TimeoutSec 60 -Because "default V$Major history is discovered through ACP" -Condition {
-                Read-DefaultSessions | Where-Object {
-                    $_.provider_id -eq 'opencode' -and $_.status -in @('Historical', 'Ended') -and
-                    $_.location -eq 'Host' -and $_.session_id -in $nativeIds -and
-                    $_.title -and $_.title -notlike 'New session*' -and (Test-Path -LiteralPath $_.cwd -PathType Container)
-                } | Select-Object -First 1
+            $activeNativeIds = @(Get-CimInstance Win32_Process -Filter "Name='opencode.exe'" | ForEach-Object {
+                $match = [regex]::Match([string]$_.CommandLine, '(?:--session|-s)(?:=|\s+)"?([A-Za-z0-9_-]+)')
+                if ($match.Success) { $match.Groups[1].Value }
+            })
+            try {
+                $history = Wait-Until -TimeoutSec 60 -Because "default V$Major history is discovered through ACP" -Condition {
+                    Read-DefaultSessions | Where-Object {
+                        $_.provider_id -eq 'opencode' -and $_.status -in @('Historical', 'Ended') -and
+                        $_.location -eq 'Host' -and $_.session_id -in $nativeIds -and
+                        $_.session_id -notin $activeNativeIds -and
+                        $_.title -and $_.title -notlike 'New session*' -and (Test-Path -LiteralPath $_.cwd -PathType Container)
+                    } | Select-Object -First 1
+                }
+            }
+            catch {
+                $snapshot = @(Read-DefaultSessions)
+                Write-ItLog -Level ERROR -Message ("Default OpenCode history mismatch: " + (@{
+                    native_ids = $nativeIds
+                    active_native_ids = $activeNativeIds
+                    shell_cwd = $shell.cwd
+                    rows = @($snapshot | Where-Object provider_id -eq opencode |
+                        Select-Object session_id, provider_id, location, status, cwd)
+                    provider_ids = @($snapshot.provider_id | Sort-Object -Unique)
+                } | ConvertTo-Json -Depth 6 -Compress))
+                throw
             }
             $history | Should -Not -BeNullOrEmpty
             $before = @(Get-WtTabs -App $script:app -WindowId $script:app.WindowId).tab_id
