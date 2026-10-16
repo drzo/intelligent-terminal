@@ -171,8 +171,7 @@ namespace wtcli
     inline constexpr size_t kMaxHookEventChars = 8192;
 
     // Per-field ceiling applied when an event overflows `kMaxHookEventChars`.
-    // Sized so the reduced payload is always well under budget even if every
-    // retained member is at its limit (10 strings + 3 nested = 6.5 KB of values).
+    // Clamp retained strings while preserving scalar routing metadata.
     inline constexpr size_t kMaxRetainedFieldChars = 512;
 
     // Members of the hook payload that WTA reads, and the members it reads out
@@ -181,6 +180,7 @@ namespace wtcli
     // fails if they drift.
     inline constexpr const char* kConsumedPayloadKeys[] = {
         "cwd",
+        "new_cwd",
         "title",
         "tool_name",
         "toolName",
@@ -191,6 +191,8 @@ namespace wtcli
         "timestamp",
         "reason",
         "error",
+        "pane_owner",
+        "running",
     };
     inline constexpr const char* kConsumedToolInputKeys[] = {
         "question",
@@ -240,6 +242,11 @@ namespace wtcli
                 reduced[key] = ClampUtf8(member.asString(), kMaxRetainedFieldChars);
             }
             else if (member.isUInt64())
+            {
+                reduced[key] = member;
+            }
+            else if (member.isBool() &&
+                     (std::string_view{ key } == "pane_owner" || std::string_view{ key } == "running"))
             {
                 reduced[key] = member;
             }
