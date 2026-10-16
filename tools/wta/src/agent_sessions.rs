@@ -393,13 +393,13 @@ pub enum SessionEvent {
     ToolCompleted {
         key: AgentKey,
     },
+    /// A Copilot tool returned; the agent may continue until its Stop hook.
+    ToolReturned {
+        key: AgentKey,
+    },
     Notification {
         key: AgentKey,
         message: String,
-    },
-    Permission {
-        key: AgentKey,
-        update: crate::session_permissions::PermissionUpdate,
     },
     SessionStopped {
         key: AgentKey,
@@ -506,7 +506,6 @@ pub fn is_user_input_tool(name: &str) -> bool {
 #[derive(Default)]
 pub struct AgentSessionRegistry {
     sessions: HashMap<AgentKey, AgentSession>,
-    permissions: HashMap<AgentKey, crate::session_permissions::PermissionWaits>,
     active_by_pane: HashMap<String, AgentKey>, // pane Guid (text) -> AgentKey
     /// Union of pane GUIDs ever seen in any alive-mirror snapshot
     /// (lowercased). Used by [`Self::apply_alive_pane_snapshot`] to
@@ -641,7 +640,6 @@ impl AgentSessionRegistry {
                             if let Some(prev) = self.sessions.get_mut(&prev_key) {
                                 if prev.pane_session_id.as_deref() == Some(pane_session_id.as_str())
                                 {
-                                    self.permissions.remove(&prev_key);
                                     prev.status = AgentStatus::Ended;
                                     prev.pane_session_id = None;
                                     prev.current_tool = None;
@@ -746,7 +744,6 @@ impl AgentSessionRegistry {
                     entry.last_error = None;
                     entry.attention_reason = None;
                     entry.current_tool = None;
-                    self.permissions.remove(&key);
                 }
                 entry.last_activity_at = now;
                 if pane_known {
@@ -793,17 +790,26 @@ impl AgentSessionRegistry {
 
             SessionEvent::ToolStarting { key, tool_name } => {
                 if let Some(entry) = self.sessions.get_mut(&key) {
-                    let pending = self
-                        .permissions
-                        .get_mut(&key)
-                        .and_then(|waits| waits.working());
-                    entry.status = if pending.is_some() {
-                        AgentStatus::Attention
-                    } else {
-                        AgentStatus::Working
-                    };
-                    entry.attention_reason = pending;
+                    entry.status = AgentStatus::Working;
                     entry.current_tool = Some(tool_name);
+                    entry.last_activity_at = now;
+                    self.dirty = true;
+                }
+            }
+
+            SessionEvent::ToolReturned { key } => {
+                if let Some(entry) = self.sessions.get_mut(&key) {
+                    if entry.cli_source != CliSource::Copilot
+                        || !matches!(
+                            entry.status,
+                            AgentStatus::Idle | AgentStatus::Working | AgentStatus::Attention
+                        )
+                    {
+                        return;
+                    }
+                    entry.status = AgentStatus::Working;
+                    entry.current_tool = None;
+                    entry.attention_reason = None;
                     entry.last_activity_at = now;
                     self.dirty = true;
                 }
@@ -811,20 +817,8 @@ impl AgentSessionRegistry {
 
             SessionEvent::ToolCompleted { key } => {
                 if let Some(entry) = self.sessions.get_mut(&key) {
-                    if entry.cli_source == CliSource::Copilot {
-                        self.permissions.entry(key).or_default().stop(None);
-                    }
-                    // Demote to Idle when this completion resolves an active
-                    // wait. Two cases produce Attention:
-                    //   1. A user-input tool started (e.g. Copilot's `ask_user`)
-                    //      — its matching ToolCompleted means the user replied.
-                    //   2. A `Notification` event from a permission_prompt hook
-                    //      escalated us mid-tool — the matching tool.completed
-                    //      / tool.failed (approve / reject) resolves it.
-                    // Both cases mean "next event clears Attention", so we
-                    // demote on any ToolCompleted while in Attention. The Error
-                    // state is separate (set by ConnectionFailed) and is NOT
-                    // touched here, so transient-error UX still works.
+                    // Turn completion owns Idle. Ordinary Copilot tool returns
+                    // use ToolReturned so between-tool work remains Active.
                     let demotable = entry.status == AgentStatus::Working
                         || entry.status == AgentStatus::Attention;
                     if demotable {
@@ -839,39 +833,8 @@ impl AgentSessionRegistry {
 
             SessionEvent::Notification { key, message } => {
                 if let Some(entry) = self.sessions.get_mut(&key) {
-                    if let Some(waits) = self.permissions.get_mut(&key) {
-                        waits.other_attention();
-                    }
                     entry.status = AgentStatus::Attention;
                     entry.attention_reason = Some(message);
-                    entry.last_activity_at = now;
-                    self.dirty = true;
-                }
-            }
-
-            SessionEvent::Permission { key, update } => {
-                if let Some(entry) = self.sessions.get_mut(&key) {
-                    match self
-                        .permissions
-                        .entry(key)
-                        .or_default()
-                        .apply(update, &entry.status)
-                    {
-                        Some(crate::session_permissions::PermissionActivity::Waiting(message)) => {
-                            entry.status = AgentStatus::Attention;
-                            entry.attention_reason = Some(message);
-                        }
-                        Some(crate::session_permissions::PermissionActivity::Working) => {
-                            entry.status = AgentStatus::Working;
-                            entry.attention_reason = None;
-                        }
-                        Some(crate::session_permissions::PermissionActivity::Idle) => {
-                            entry.status = AgentStatus::Idle;
-                            entry.attention_reason = None;
-                            entry.current_tool = None;
-                        }
-                        None => return,
-                    }
                     entry.last_activity_at = now;
                     self.dirty = true;
                 }
@@ -960,9 +923,6 @@ impl AgentSessionRegistry {
                 let keep_idle =
                     is_agent_pane_session && pane_still_live && reason_keeps_session_alive;
                 if let Some(entry) = self.sessions.get_mut(&key) {
-                    if let Some(waits) = self.permissions.get_mut(&key) {
-                        waits.stop(None);
-                    }
                     if keep_idle {
                         entry.status = AgentStatus::Idle;
                     } else {
@@ -980,7 +940,6 @@ impl AgentSessionRegistry {
 
             SessionEvent::PaneClosed { pane_session_id } => {
                 if let Some(key) = self.active_by_pane.remove(&pane_session_id) {
-                    self.permissions.remove(&key);
                     if let Some(entry) = self.sessions.get_mut(&key) {
                         entry.status = AgentStatus::Ended;
                         entry.pane_session_id = None;
@@ -997,9 +956,6 @@ impl AgentSessionRegistry {
                 reason,
             } => {
                 if let Some(key) = self.active_by_pane.get(&pane_session_id).cloned() {
-                    if let Some(waits) = self.permissions.get_mut(&key) {
-                        waits.stop(None);
-                    }
                     if let Some(entry) = self.sessions.get_mut(&key) {
                         // Idempotent for the same reason as master's reducer:
                         // the pane binding survives a failure, so a repeat
@@ -1270,7 +1226,6 @@ impl AgentSessionRegistry {
     }
 
     pub fn remove(&mut self, key: &AgentKey) {
-        self.permissions.remove(key);
         if let Some(s) = self.sessions.remove(key) {
             if let Some(pane) = s.pane_session_id {
                 self.active_by_pane.remove(&pane);
@@ -1534,7 +1489,6 @@ impl AgentSessionRegistry {
         let pane_lc = pane_key(pane_session_id);
         if let Some(key) = self.active_by_pane.get(&pane_lc).cloned() {
             if key.starts_with("pane:") {
-                self.permissions.remove(&key);
                 self.sessions.remove(&key);
                 self.active_by_pane.remove(&pane_lc);
                 self.dirty = true;

@@ -503,7 +503,6 @@ pub const CONSUMED_PAYLOAD_KEYS: &[&str] = &[
     "message",
     "notification_type",
     "notificationType",
-    "timestamp",
     "reason",
     "error",
     "pane_owner",
@@ -541,7 +540,8 @@ pub struct AgentEventFacts {
 #[derive(Debug, Default)]
 pub struct AgentEventPlan {
     /// Session events to apply, in emit order. Empty when the hook is
-    /// deliberately ignored (tool completions, informational notifications).
+    /// deliberately ignored (informational notifications and other providers'
+    /// tool completions).
     pub events: Vec<crate::agent_sessions::SessionEvent>,
     /// Set when a real `agent.session.started` should supersede any
     /// `pane:`-keyed placeholder previously minted for this pane.
@@ -727,29 +727,17 @@ pub fn plan_agent_event(
             key,
             tool_name: "prompt".to_string(),
         },
-        // Tool completion does NOT end the turn. Copilot and Gemini fire a
-        // `tool.finished` per tool — often several per turn, in parallel
-        // batches — but the agent keeps working until it emits `agent.stop`.
-        // Mapping each completion to `ToolCompleted` made multi-tool turns
-        // flicker to Idle and sit there during the agent's between-tool
-        // thinking. The arm stays so an older installed bundle that still
-        // emits them is ignored rather than mis-routed.
+        // Copilot tool returns resume activity, not Idle. Other providers retain
+        // the legacy no-op; agent.stop still owns the turn-end transition.
         "agent.tool.completed" | "agent.tool.finished" | "agent.tool.failed" => {
-            plan.events.clear();
-            return plan;
-        }
-        "agent.stop" | "agent.subagent.stop" => match payload
-            .get("timestamp")
-            .and_then(crate::session_permissions::timestamp_ms)
-        {
-            Some(at_ms) if *cli_source == crate::agent_sessions::CliSource::Copilot => {
-                SessionEvent::Permission {
-                    key,
-                    update: crate::session_permissions::PermissionUpdate::TurnEnded { at_ms },
-                }
+            if *cli_source == crate::agent_sessions::CliSource::Copilot {
+                SessionEvent::ToolReturned { key }
+            } else {
+                plan.events.clear();
+                return plan;
             }
-            _ => SessionEvent::ToolCompleted { key },
-        },
+        }
+        "agent.stop" | "agent.subagent.stop" => SessionEvent::ToolCompleted { key },
         "agent.notification" => {
             // Background work and idle reminders do not block the owning session.
             // Drop them rather than resetting activity: a pending approval may
@@ -771,24 +759,6 @@ pub fn plan_agent_event(
                     ))
             {
                 plan.events.clear();
-                return plan;
-            }
-            if matches!(cli_source, crate::agent_sessions::CliSource::Copilot)
-                && notification_type == "permission_prompt"
-            {
-                plan.events.push(SessionEvent::Permission {
-                    key,
-                    update: crate::session_permissions::PermissionUpdate::Prompt {
-                        message: payload
-                            .get("message")
-                            .and_then(|value| value.as_str())
-                            .unwrap_or("")
-                            .to_string(),
-                        at_ms: payload
-                            .get("timestamp")
-                            .and_then(crate::session_permissions::timestamp_ms),
-                    },
-                });
                 return plan;
             }
             SessionEvent::Notification {

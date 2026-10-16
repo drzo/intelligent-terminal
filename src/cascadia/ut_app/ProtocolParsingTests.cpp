@@ -29,21 +29,20 @@ namespace TerminalAppUnitTests
         TEST_METHOD(HookCwdUsesOnlyOwningPaneMetadata);
         TEST_METHOD(HookCwdPreservesProviderWorkspaceAndExecutionSource);
         TEST_METHOD(OversizedOpenCodeHooksRetainTitle);
-        TEST_METHOD(OversizedCopilotHooksRetainPermissionTimestamp);
+        TEST_METHOD(OversizedCopilotHooksRetainNotificationType);
         TEST_METHOD(OversizedOpenCodeBindingRetainsRunningState);
         TEST_METHOD(OversizedCwdChangeRetainsNewDirectory);
         TEST_METHOD(HostClsidOverridesStaleEnvironment);
         TEST_METHOD(UnpublishedStartupRemovesInheritedClsid);
     };
 
-    void ProtocolParsingTests::OversizedCopilotHooksRetainPermissionTimestamp()
+    void ProtocolParsingTests::OversizedCopilotHooksRetainNotificationType()
     {
         for (const auto* typeKey : { "notificationType", "notification_type" })
         {
             Json::Value payload;
             payload["sessionId"] = "copilot-session";
-            payload[typeKey] = "permission_prompt";
-            payload["timestamp"] = Json::UInt64{ 1792043537256 };
+            payload[typeKey] = "shell_completed";
             payload["message"] = std::string(wtcli::kMaxHookEventChars, 'x');
             Json::StreamWriterBuilder writer;
             writer["indentation"] = "";
@@ -51,9 +50,7 @@ namespace TerminalAppUnitTests
             VERIFY_IS_TRUE(wtcli::BuildAgentHookEventJson("agent.notification", "copilot", Json::writeString(writer, payload), "pane-a", "", event));
             const auto& reduced = event["params"]["payload"];
             VERIFY_IS_TRUE(reduced["_truncated"].asBool());
-            VERIFY_ARE_EQUAL("permission_prompt", reduced[typeKey].asString());
-            VERIFY_IS_TRUE(reduced["timestamp"].isUInt64());
-            VERIFY_ARE_EQUAL(Json::UInt64{ 1792043537256 }, reduced["timestamp"].asUInt64());
+            VERIFY_ARE_EQUAL("shell_completed", reduced[typeKey].asString());
             VERIFY_IS_TRUE(Json::writeString(writer, event).size() <= wtcli::kMaxHookEventChars);
         }
     }

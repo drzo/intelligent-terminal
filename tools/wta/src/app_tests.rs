@@ -1573,7 +1573,7 @@ fn sessionless_notification_falls_back_to_recent_live_cli_session() {
     );
 }
 
-/// Turn-based hook status (multi-tool turn bug): Copilot/Gemini fire a
+/// Turn-based hook status (multi-tool turn bug): Copilot fires a
 /// `tool.finished` per tool — several per turn, in parallel batches — but
 /// the agent keeps working until `agent.stop`. A `tool.finished` must NOT
 /// demote the row to Idle (only `agent.stop` ends the turn); otherwise a
@@ -1632,12 +1632,39 @@ fn copilot_tool_finished_keeps_working_only_agent_stop_idles() {
         "tool completions never end the turn",
     );
 
+    for completion in ["agent.tool.finished", "agent.tool.failed"] {
+        route(&mut reg, "agent.notification");
+        assert_eq!(
+            reg.get(&sid.to_string()).unwrap().status,
+            AgentStatus::Attention
+        );
+        route(&mut reg, completion);
+        let row = reg.get(&sid.to_string()).unwrap();
+        assert_eq!(row.status, AgentStatus::Working);
+        assert!(row.current_tool.is_none());
+        assert!(row.attention_reason.is_none());
+    }
+
     // Only agent.stop ends the turn → Idle.
     route(&mut reg, "agent.stop");
     assert_eq!(
         reg.get(&sid.to_string()).unwrap().status,
         AgentStatus::Idle,
         "agent.stop owns the turn-end → Idle",
+    );
+    route(&mut reg, "agent.error");
+    route(&mut reg, "agent.tool.failed");
+    assert_eq!(
+        reg.get(&sid.to_string()).unwrap().status,
+        AgentStatus::Error
+    );
+    reg.apply(SessionEvent::PaneClosed {
+        pane_session_id: pane.into(),
+    });
+    route(&mut reg, "agent.tool.finished");
+    assert_eq!(
+        reg.get(&sid.to_string()).unwrap().status,
+        AgentStatus::Ended
     );
 }
 

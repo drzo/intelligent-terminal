@@ -35,7 +35,6 @@ mod rtl;
 mod runtime_paths;
 mod session_history;
 mod session_mgmt;
-mod session_permissions;
 mod session_registry;
 mod session_watcher;
 mod shell;

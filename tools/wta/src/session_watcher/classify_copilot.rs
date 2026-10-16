@@ -13,8 +13,8 @@
 //! `tool.execution_*` windows. Tool starts only refine the picture (the
 //! current tool, or ATTENTION for a user-input tool); `tool.execution_complete`
 //! is ignored because IDLE is owned by `turn_end`. A `permission.requested`
-//! record starts a correlated permission wait. `permission.completed` ends that
-//! wait even when tool.execution_start was written before the approval dialog.
+//! record (the agent waiting for the user to approve/deny a command) also maps
+//! to ATTENTION.
 //!
 //! The session key is the session-state directory name (supplied by the
 //! watcher from the file path), never the record body.
@@ -36,25 +36,12 @@ pub fn classify(record: &serde_json::Value, key: &AgentKey) -> Vec<SessionEvent>
             key: key.clone(),
             tool_name: String::new(),
         }],
-        "assistant.turn_end" => vec![match record
-            .get("timestamp")
-            .and_then(crate::session_permissions::timestamp_ms)
-        {
-            Some(at_ms) => SessionEvent::Permission {
-                key: key.clone(),
-                update: crate::session_permissions::PermissionUpdate::TurnEnded { at_ms },
-            },
-            None => SessionEvent::ToolCompleted { key: key.clone() },
-        }],
-        "permission.requested" | "permission.completed" => {
-            let request_id = record
-                .get("data")
-                .and_then(|data| data.get("requestId"))
-                .and_then(|value| value.as_str())
-                .filter(|value| !value.is_empty());
-            let at_ms = record
-                .get("timestamp")
-                .and_then(crate::session_permissions::timestamp_ms);
+        "assistant.turn_end" => vec![SessionEvent::ToolCompleted { key: key.clone() }],
+        // The agent paused to ask the user to approve/deny a command (the
+        // permission y/n gate) → ATTENTION. The pending command only runs after
+        // approval, at which point the resulting `tool.execution_start`
+        // (→ WORKING) or the turn's `turn_end` (→ IDLE) clears the attention.
+        "permission.requested" => {
             let reason = record
                 .get("data")
                 .and_then(|d| d.get("permissionRequest"))
@@ -63,35 +50,9 @@ pub fn classify(record: &serde_json::Value, key: &AgentKey) -> Vec<SessionEvent>
                 .filter(|s| !s.is_empty())
                 .unwrap_or("permission requested")
                 .to_string();
-            let (Some(request_id), Some(at_ms)) = (request_id, at_ms) else {
-                tracing::debug!(target: "session_watcher", kind, "Copilot permission record lacks correlation metadata");
-                return if kind == "permission.requested" {
-                    vec![SessionEvent::Permission {
-                        key: key.clone(),
-                        update: crate::session_permissions::PermissionUpdate::Uncorrelated {
-                            message: reason,
-                            at_ms,
-                        },
-                    }]
-                } else {
-                    Vec::new()
-                };
-            };
-            let update = if kind == "permission.requested" {
-                crate::session_permissions::PermissionUpdate::Requested {
-                    request_id: request_id.to_string(),
-                    message: reason,
-                    at_ms,
-                }
-            } else {
-                crate::session_permissions::PermissionUpdate::Completed {
-                    request_id: request_id.to_string(),
-                    at_ms,
-                }
-            };
-            vec![SessionEvent::Permission {
+            vec![SessionEvent::Notification {
                 key: key.clone(),
-                update,
+                message: reason,
             }]
         }
         "tool.execution_start" => {
@@ -166,12 +127,9 @@ mod tests {
         let out = classify(&r, &"sess-1".to_string());
         assert_eq!(
             out,
-            vec![SessionEvent::Permission {
+            vec![SessionEvent::Notification {
                 key: "sess-1".to_string(),
-                update: crate::session_permissions::PermissionUpdate::Uncorrelated {
-                    message: "run git log".to_string(),
-                    at_ms: None,
-                }
+                message: "run git log".to_string()
             }]
         );
     }
@@ -183,67 +141,8 @@ mod tests {
         let out = classify(&r, &"sess-1".to_string());
         assert!(matches!(
             out.as_slice(),
-            [SessionEvent::Permission { update: crate::session_permissions::PermissionUpdate::Uncorrelated { message, .. }, .. }] if message == "permission requested"
+            [SessionEvent::Notification { message, .. }] if message == "permission requested"
         ));
-    }
-
-    #[test]
-    fn permission_records_preserve_request_identity_and_event_time() {
-        for (kind, expected) in [
-            (
-                "permission.requested",
-                crate::session_permissions::PermissionUpdate::Requested {
-                    request_id: "approval".into(),
-                    message: "run sleep".into(),
-                    at_ms: 1792043537256,
-                },
-            ),
-            (
-                "permission.completed",
-                crate::session_permissions::PermissionUpdate::Completed {
-                    request_id: "approval".into(),
-                    at_ms: 1792043537256,
-                },
-            ),
-        ] {
-            let record = serde_json::json!({
-                "type": kind,
-                "timestamp": "2026-10-15T05:52:17.256Z",
-                "data": {
-                    "requestId": "approval",
-                    "permissionRequest": { "intention": "run sleep" },
-                },
-            });
-            assert_eq!(
-                classify(&record, &"session".into()),
-                vec![SessionEvent::Permission {
-                    key: "session".into(),
-                    update: expected
-                }]
-            );
-        }
-    }
-
-    #[test]
-    fn incomplete_permission_records_cannot_clear_an_approval() {
-        for data in [
-            serde_json::json!({}),
-            serde_json::json!({ "requestId": "" }),
-            serde_json::json!({ "requestId": 42 }),
-        ] {
-            let record = serde_json::json!({
-                "type": "permission.completed",
-                "timestamp": "2026-10-15T05:52:17.256Z",
-                "data": data,
-            });
-            assert!(classify(&record, &"session".into()).is_empty());
-        }
-        let record = serde_json::json!({
-            "type": "permission.completed",
-            "timestamp": "not-a-timestamp",
-            "data": { "requestId": "approval" },
-        });
-        assert!(classify(&record, &"session".into()).is_empty());
     }
 
     #[test]
@@ -273,22 +172,6 @@ mod tests {
             out,
             vec![SessionEvent::ToolCompleted {
                 key: "sess-1".to_string()
-            }]
-        );
-    }
-
-    #[test]
-    fn permission_turn_end_preserves_source_time() {
-        let record = serde_json::json!({
-            "type": "assistant.turn_end",
-            "timestamp": 1000,
-            "data": { "turnId": "old" },
-        });
-        assert_eq!(
-            classify(&record, &"session".into()),
-            vec![SessionEvent::Permission {
-                key: "session".into(),
-                update: crate::session_permissions::PermissionUpdate::TurnEnded { at_ms: 1000 },
             }]
         );
     }

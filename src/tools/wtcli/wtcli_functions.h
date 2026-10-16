@@ -188,7 +188,6 @@ namespace wtcli
         "message",
         "notification_type",
         "notificationType",
-        "timestamp",
         "reason",
         "error",
         "pane_owner",
@@ -240,10 +239,6 @@ namespace wtcli
             if (member.isString())
             {
                 reduced[key] = ClampUtf8(member.asString(), kMaxRetainedFieldChars);
-            }
-            else if (member.isUInt64())
-            {
-                reduced[key] = member;
             }
             else if (member.isBool() &&
                      (std::string_view{ key } == "pane_owner" || std::string_view{ key } == "running"))
