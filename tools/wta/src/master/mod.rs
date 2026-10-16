@@ -1911,6 +1911,7 @@ struct HistoryRefreshState {
     last_count: Option<usize>,
     query: history::HistoryQuery,
     owner: Option<AgentInstanceId>,
+    cwd_baseline: Option<HashMap<crate::session_registry::SessionIdentity, (u64, Option<String>)>>,
 }
 
 impl HistoryRefreshState {
@@ -6871,6 +6872,7 @@ fn session_event_is_activity_only(event: &crate::agent_sessions::SessionEvent) -
         SessionEvent::ToolStarting { .. }
             | SessionEvent::ToolCompleted { .. }
             | SessionEvent::Notification { .. }
+            | SessionEvent::WorkingDirectoryChanged { .. }
     )
 }
 
@@ -6907,6 +6909,8 @@ async fn publish_session_status_delta(state: &MasterStateInner, session_id: &str
         row.provider_id.as_deref(),
         row.last_activity_at_ms,
         status,
+        row.cwd.to_str().filter(|cwd| !cwd.is_empty()),
+        row.origin.as_ref(),
     ));
     true
 }
@@ -6915,7 +6919,7 @@ async fn publish_session_status_delta(state: &MasterStateInner, session_id: &str
 async fn host_session_list_raw(
     agent: &AgentCli,
     refresh: &mut HistoryRefreshState,
-) -> Result<Vec<acp::schema::v1::SessionInfo>, HistoryRefreshFailure> {
+) -> Result<acp::schema::v1::ListSessionsResponse, HistoryRefreshFailure> {
     if agent
         .cached_init_resp
         .agent_capabilities
@@ -6943,6 +6947,51 @@ async fn host_session_list_raw(
             &agent.history_refresh.cancelled,
         )
         .await
+}
+
+/// Additional pages are cwd evidence only: never add them to history or
+/// `listed_ever`. A failed page walk discards all of its candidates.
+async fn host_acp_cwd_from_later_pages(
+    agent: &AgentCli,
+    refresh: &mut HistoryRefreshState,
+    mut cursor: String,
+    mut wanted: HashSet<String>,
+) -> (Vec<acp::schema::v1::SessionInfo>, bool) {
+    let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(2);
+    let mut cursors = HashSet::new();
+    let mut found = Vec::new();
+    for _ in 0..8 {
+        if cursor.is_empty() || !cursors.insert(cursor.clone()) {
+            tracing::warn!(target: "master_history", "host ACP cwd pagination cursor repeated");
+            return (Vec::new(), false);
+        }
+        let Some(response) = refresh
+            .query
+            .list_cwd_page(cursor, deadline, &agent.history_refresh.cancelled)
+            .await
+        else {
+            return (Vec::new(), false);
+        };
+        let next_cursor = response.next_cursor;
+        for session in response.sessions {
+            if wanted.remove(session.session_id.0.as_ref()) {
+                found.push(session);
+            }
+        }
+        let Some(next_cursor) = next_cursor else {
+            return (found, true);
+        };
+        if wanted.is_empty() {
+            return (found, false);
+        }
+        cursor = next_cursor;
+    }
+    tracing::debug!(
+        target: "master_history",
+        remaining = wanted.len(),
+        "host ACP cwd pagination budget exhausted; retaining existing evidence"
+    );
+    (found, false)
 }
 
 /// Legacy fallback for rows without a qualified provider identity.
@@ -7060,6 +7109,32 @@ fn titles_from_listing(
         .collect()
 }
 
+fn host_acp_cwd_enabled(agent: &AgentCli) -> bool {
+    if agent.source.session_location() != crate::agent_sessions::SessionLocation::Host {
+        return false;
+    }
+    match agent.resolved_agent_id.as_str() {
+        "copilot" | "claude" => true,
+        "opencode" => agent
+            .cached_init_resp
+            .agent_info
+            .as_ref()
+            .is_some_and(|info| {
+                if info.name != "OpenCode" {
+                    return false;
+                }
+                let version = info.version.strip_prefix('v').unwrap_or(&info.version);
+                let Some((minor, patch)) =
+                    version.strip_prefix("2.").and_then(|v| v.split_once('.'))
+                else {
+                    return false;
+                };
+                minor.parse::<u32>().is_ok() && patch.parse::<u32>().is_ok()
+            }),
+        _ => false,
+    }
+}
+
 /// Sync master's history rows for `agent` to its `session/list` (the
 /// single source of truth for THAT CLI): add newly-listed sessions and drop
 /// terminal Class-B rows it no longer lists (phantoms, CLI-side deletes).
@@ -7070,8 +7145,49 @@ async fn sync_host_history(
     state: &MasterStateInner,
     agent: &AgentCli,
     refresh: &mut HistoryRefreshState,
+    search_later_pages: bool,
 ) -> Result<(bool, usize), HistoryRefreshFailure> {
-    let sessions = host_session_list_raw(agent, refresh).await?;
+    let host_acp_cwd = host_acp_cwd_enabled(agent);
+    if host_acp_cwd
+        && (!refresh.query.in_flight()
+            || refresh.owner != Some(agent.instance_id)
+            || refresh.cwd_baseline.is_none())
+    {
+        refresh.cwd_baseline = Some(
+            state
+                .registry
+                .snapshot()
+                .await
+                .into_iter()
+                .filter(|row| row_belongs_to_agent(row, agent))
+                .map(|row| {
+                    (
+                        crate::session_registry::SessionIdentity::from_info(&row),
+                        (row.cwd_revision(), row.pane_session_id),
+                    )
+                })
+                .collect(),
+        );
+    }
+    let listing = match host_session_list_raw(agent, refresh).await {
+        Ok(listing) => listing,
+        Err(error) => {
+            if !refresh.query.in_flight() {
+                refresh.cwd_baseline = None;
+            }
+            return Err(error);
+        }
+    };
+    let prior_rows = if host_acp_cwd {
+        refresh
+            .cwd_baseline
+            .take()
+            .expect("host ACP cwd baseline captured before session/list")
+    } else {
+        HashMap::new()
+    };
+    let mut listing_complete = listing.next_cursor.is_none();
+    let sessions = listing.sessions;
     if agent
         .history_refresh
         .retired
@@ -7079,6 +7195,29 @@ async fn sync_host_history(
     {
         return Err(HistoryRefreshFailure::Other);
     }
+    let first_page_ids: HashSet<_> = sessions
+        .iter()
+        .map(|row| row.session_id.to_string())
+        .collect();
+    let wanted: HashSet<_> = prior_rows
+        .iter()
+        .filter(|(identity, (_, pane))| {
+            pane.is_some() && !first_page_ids.contains(identity.session_id.0.as_ref())
+        })
+        .map(|(identity, _)| identity.session_id.to_string())
+        .collect();
+    let additional_cwd = if search_later_pages && host_acp_cwd && !wanted.is_empty() {
+        if let Some(cursor) = listing.next_cursor {
+            let (found, complete) =
+                host_acp_cwd_from_later_pages(agent, refresh, cursor, wanted).await;
+            listing_complete = complete;
+            found
+        } else {
+            Vec::new()
+        }
+    } else {
+        Vec::new()
+    };
     let rows = host_history_via_acp(state, agent, &sessions)
         .await
         .ok_or(HistoryRefreshFailure::Other)?;
@@ -7168,6 +7307,59 @@ async fn sync_host_history(
     .await
     {
         changed = true;
+    }
+
+    if host_acp_cwd {
+        for session in sessions.iter().chain(&additional_cwd) {
+            let Some(key) = crate::session_registry::HistoryRowKey::new(
+                &agent.resolved_agent_id,
+                crate::agent_sessions::SessionLocation::Host,
+                session.session_id.to_string(),
+                None,
+            ) else {
+                continue;
+            };
+            let identity = crate::session_registry::SessionIdentity {
+                session_id: session.session_id.clone(),
+                history_key: Some(key),
+            };
+            let Some((revision, _)) = prior_rows.get(&identity) else {
+                continue;
+            };
+            if state
+                .registry
+                .adopt_acp_cwd_identity(
+                    &identity,
+                    *revision,
+                    agent.instance_id,
+                    session.cwd.clone(),
+                )
+                .await
+            {
+                changed = true;
+            }
+        }
+        if listing_complete {
+            let listed_cwd_ids: HashSet<_> = first_page_ids
+                .iter()
+                .cloned()
+                .chain(
+                    additional_cwd
+                        .iter()
+                        .map(|session| session.session_id.to_string()),
+                )
+                .collect();
+            for (identity, (revision, _)) in &prior_rows {
+                if !listed_cwd_ids.contains(identity.session_id.0.as_ref())
+                    && state
+                        .registry
+                        .clear_acp_cwd_identity(identity, *revision)
+                        .await
+                {
+                    changed = true;
+                }
+            }
+        }
     }
 
     Ok((changed, rows.len()))
@@ -7327,7 +7519,6 @@ async fn refresh_agent_history(
     }
     // Manual, event and timer requests share the same in-flight operation.
     // Only an actual response or confirmed process exit releases its slot.
-    let _ = trigger;
     // Waiters share the completed refresh rather than queueing another ACP call.
     if agent.history_refresh.generation.load(Ordering::Acquire) != generation
         || (!refresh.query.in_flight()
@@ -7337,7 +7528,13 @@ async fn refresh_agent_history(
     {
         return refresh.last_count;
     }
-    let result = sync_host_history(state, agent, &mut refresh).await;
+    let result = sync_host_history(
+        state,
+        agent,
+        &mut refresh,
+        matches!(trigger, HistoryRefreshTrigger::Periodic),
+    )
+    .await;
     let delay = if result.is_ok() {
         refresh.failures = 0;
         HISTORY_REFRESH_INTERVAL
@@ -8519,6 +8716,8 @@ async fn handle_session_hook(
             &event,
             SessionEvent::SessionStarted { .. }
                 | SessionEvent::SessionStopped { .. }
+                | SessionEvent::SessionStoppedIfOwner { .. }
+                | SessionEvent::SessionUnbound { .. }
                 | SessionEvent::ConnectionFailed { .. }
                 | SessionEvent::PaneClosed { .. }
         );
@@ -8738,6 +8937,15 @@ async fn apply_qualified_master_session_event(
     is_born_bound: bool,
     identity: &crate::session_registry::SessionIdentity,
 ) -> (bool, Option<String>) {
+    if matches!(
+        &event,
+        crate::agent_sessions::SessionEvent::SessionRenamed { .. }
+    ) {
+        return (
+            state.registry.apply_event_identity(identity, event).await,
+            None,
+        );
+    }
     let unique = state.registry.lookup(&identity.session_id).await;
     if unique
         .as_ref()
@@ -8819,6 +9027,16 @@ async fn apply_master_session_event_inner(
     is_born_bound: bool,
     identity: Option<&crate::session_registry::SessionIdentity>,
 ) -> (bool, Option<String>) {
+    if matches!(
+        &event,
+        crate::agent_sessions::SessionEvent::SessionRenamed { .. }
+    ) {
+        let applied = match identity {
+            Some(identity) => state.registry.apply_event_identity(identity, event).await,
+            None => state.registry.apply_event(event).await,
+        };
+        return (applied, None);
+    }
     // Capture the session key BEFORE moving `event` into the reducer so
     // we can dispatch the post-apply title refresh against the right
     // row. Pane-keyed variants (PaneClosed, ConnectionFailed) don't
@@ -8948,6 +9166,8 @@ async fn apply_master_session_event_inner(
             let unseen_terminal = matches!(
                 &event,
                 crate::agent_sessions::SessionEvent::SessionStopped { .. }
+                    | crate::agent_sessions::SessionEvent::SessionStoppedIfOwner { .. }
+                    | crate::agent_sessions::SessionEvent::SessionUnbound { .. }
             ) && state.registry.lookup(&sid).await.is_none();
             if !unseen_terminal {
                 state.hook_owned.lock().await.insert(sid.clone());
@@ -10857,13 +11077,23 @@ async fn handle_master_agent_event(state: &Arc<MasterStateInner>, params: &serde
         return;
     };
 
+    let payload = params
+        .get("payload")
+        .cloned()
+        .unwrap_or(serde_json::Value::Null);
+    let non_binding_opencode = cli_source == CliSource::OpenCode
+        && payload
+            .get("pane_owner")
+            .and_then(serde_json::Value::as_bool)
+            == Some(false);
     let scope =
         match serde_json::from_value::<crate::session_registry::SessionHookScope>(params.clone()) {
             Ok(mut scope) => {
                 scope.cli_source = Some(crate::session_registry::SessionHookCliSource::from(
                     &cli_source,
                 ));
-                scope.pane_session_id = Some(pane_id.to_string());
+                // A shared OpenCode server's inherited pane is not evidence of ownership.
+                scope.pane_session_id = (!non_binding_opencode).then(|| pane_id.to_string());
                 scope
             }
             Err(error) => {
@@ -10879,8 +11109,63 @@ async fn handle_master_agent_event(state: &Arc<MasterStateInner>, params: &serde
         }
     };
     let session_known = state.registry.lookup_identity(&identity).await.is_some();
+    let rows = state.registry.snapshot().await;
+    let owner_pane = if non_binding_opencode {
+        if asid.is_empty()
+            || !matches!(
+                event,
+                "agent.prompt.submit"
+                    | "agent.tool.starting"
+                    | "agent.stop"
+                    | "agent.notification"
+                    | "agent.error"
+                    | "agent.session.renamed"
+                    | "agent.cwd.changed"
+                    | "agent.session.end"
+            )
+        {
+            return;
+        }
+        let mut matches = rows
+            .iter()
+            .filter(|row| crate::session_registry::SessionIdentity::from_info(row) == identity);
+        let Some(row) = matches.next() else {
+            tracing::debug!(target: "master_wt_event", key, event, "ignored unknown OpenCode server activity");
+            return;
+        };
+        if matches.next().is_some()
+            || row.cli_source.as_ref() != Some(&cli_source)
+            || !matches!(
+                row.status,
+                Some(
+                    crate::agent_sessions::AgentStatus::Idle
+                        | crate::agent_sessions::AgentStatus::Working
+                        | crate::agent_sessions::AgentStatus::Attention
+                        | crate::agent_sessions::AgentStatus::Error
+                )
+            )
+        {
+            return;
+        }
+        match row
+            .pane_session_id
+            .as_deref()
+            .filter(|pane| !pane.is_empty())
+        {
+            Some(pane) => pane.to_string(),
+            None if event == "agent.session.end"
+                && (state.hook_owned.lock().await.contains(&identity.session_id)
+                    || state.scoped_hook_ownership.lock().await.get(&identity) == Some(&true)) =>
+            {
+                String::new()
+            }
+            None => return,
+        }
+    } else {
+        pane_id.to_string()
+    };
     let location =
-        match validate_master_hook_source(state, params, &key, pane_id, &cli_source, &identity)
+        match validate_master_hook_source(state, params, &key, &owner_pane, &cli_source, &identity)
             .await
         {
             Ok(location) => location,
@@ -10890,13 +11175,36 @@ async fn handle_master_agent_event(state: &Arc<MasterStateInner>, params: &serde
             }
         };
 
-    let payload = params
-        .get("payload")
-        .cloned()
-        .unwrap_or(serde_json::Value::Null);
-    let pane_key = crate::agent_sessions::pane_key(pane_id);
+    let pane_key = crate::agent_sessions::pane_key(&owner_pane);
+    if !non_binding_opencode
+        && crate::app::opencode_end_from_another_pane(
+            &cli_source,
+            event,
+            rows.iter()
+                .find(|row| crate::session_registry::SessionIdentity::from_info(row) == identity)
+                .and_then(|row| row.pane_session_id.as_deref()),
+            pane_id,
+        )
+    {
+        tracing::debug!(target: "master_wt_event", key, pane_id, "ignored stale OpenCode end from another pane");
+        return;
+    }
+    if cli_source == CliSource::OpenCode
+        && event == "agent.session.end"
+        && !non_binding_opencode
+        && !rows.iter().any(|row| {
+            crate::session_registry::SessionIdentity::from_info(row) == identity
+                && row.pane_session_id.as_deref().is_some_and(|pane| {
+                    !pane_id.is_empty()
+                        && crate::agent_sessions::pane_key(pane)
+                            == crate::agent_sessions::pane_key(pane_id)
+                })
+        })
+    {
+        return;
+    }
     let pane_owned_by_other = !pane_key.is_empty()
-        && state.registry.snapshot().await.iter().any(|row| {
+        && rows.iter().any(|row| {
             crate::session_registry::SessionIdentity::from_info(row) != identity
                 && matches!(
                     row.status,
@@ -10913,12 +11221,16 @@ async fn handle_master_agent_event(state: &Arc<MasterStateInner>, params: &serde
                     .is_some_and(|pane| crate::agent_sessions::pane_key(pane) == pane_key)
         });
     let facts = crate::app::AgentEventFacts {
+        session_status: rows
+            .iter()
+            .find(|row| crate::session_registry::SessionIdentity::from_info(row) == identity)
+            .and_then(|row| row.status.clone()),
         key,
-        session_known,
+        session_known: session_known || non_binding_opencode,
         pane_owned_by_other,
     };
     let session_key = facts.key.clone();
-    let plan = crate::app::plan_agent_event(event, &payload, pane_id, &cli_source, &facts);
+    let plan = crate::app::plan_agent_event(event, &payload, &owner_pane, &cli_source, &facts);
     if plan.events.is_empty() {
         return;
     }
@@ -10928,6 +11240,20 @@ async fn handle_master_agent_event(state: &Arc<MasterStateInner>, params: &serde
     let mut refresh_keys = HashSet::new();
     let transition_count = plan.events.len();
     for ev in plan.events {
+        let ev = if cli_source == CliSource::OpenCode && event == "agent.session.end" {
+            match ev {
+                crate::agent_sessions::SessionEvent::SessionStopped { key, reason } => {
+                    crate::agent_sessions::SessionEvent::SessionStoppedIfOwner {
+                        key,
+                        pane_session_id: (!owner_pane.is_empty()).then(|| pane_key.clone()),
+                        reason,
+                    }
+                }
+                other => other,
+            }
+        } else {
+            ev
+        };
         tracing::debug!(
             target: "master_wt_event",
             event = ?ev,
@@ -11342,10 +11668,14 @@ fn session_event_key(event: &crate::agent_sessions::SessionEvent) -> Option<&str
     use crate::agent_sessions::SessionEvent;
     match event {
         SessionEvent::SessionStarted { key, .. }
+        | SessionEvent::SessionRenamed { key, .. }
+        | SessionEvent::WorkingDirectoryChanged { key, .. }
         | SessionEvent::ToolStarting { key, .. }
         | SessionEvent::ToolCompleted { key }
         | SessionEvent::Notification { key, .. }
         | SessionEvent::SessionStopped { key, .. }
+        | SessionEvent::SessionStoppedIfOwner { key, .. }
+        | SessionEvent::SessionUnbound { key, .. }
         | SessionEvent::ResumeDispatched { key }
         | SessionEvent::ResumeFailed { key, .. }
         | SessionEvent::ResumePaneAssigned { key, .. } => Some(key.as_str()),

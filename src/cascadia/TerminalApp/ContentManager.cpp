@@ -491,12 +491,20 @@ namespace winrt::TerminalApp::implementation
         const auto ended = name == "agent.session.end" || name == "agent.session.stopped";
         const auto started = name == "agent.session.start" || name == "agent.session.started";
         const auto prompt = name == "agent.prompt.submit";
+        const auto unbound = name == "agent.session.unbind";
         const auto activity = name == "agent.stop"          ? L"Idle" :
                               name == "agent.error"         ? L"Error" :
                               name == "agent.notification"  ? L"Attention" :
                               name == "agent.tool.starting" ? L"Working" :
                                                               L"";
-        if (!ended && !started && !prompt && !*activity && !name.empty())
+        if (!ended && !started && !prompt && !unbound && !*activity && !name.empty())
+        {
+            return;
+        }
+        const auto& payload = params["payload"];
+        const auto paneOwner = payload.isObject() ? payload.get("pane_owner", Json::Value{}) : Json::Value{};
+        if (params.get("agent", params.get("cli_source", "")).asString() == "opencode" &&
+            paneOwner.isBool() && !paneOwner.asBool())
         {
             return;
         }
@@ -512,7 +520,8 @@ namespace winrt::TerminalApp::implementation
         const auto agentSessionId = winrt::to_hstring(params.get("agent_session_id", "").asString());
         const auto agent = winrt::to_hstring(params.get("agent", params.get("cli_source", "")).asString());
         if (std::wstring_view{ agentSessionId }.starts_with(L"sidekick-") ||
-            (!ended && agent.empty()))
+            (!ended && agent.empty()) ||
+            (unbound && (agent != L"opencode" || agentSessionId.empty())))
         {
             return;
         }
@@ -555,12 +564,19 @@ namespace winrt::TerminalApp::implementation
             winrt::to_hstring(params.get("agent_source", "").asString()),
             winrt::to_hstring(params.get("wsl_distro", "").asString()),
             winrt::to_hstring(params.get("session_universe", "").asString()));
-        if (ended)
+        if (ended || unbound)
         {
+            if (unbound)
+            {
+                const auto metadata = MetadataForPane(sessionId);
+                if (!metadata || metadata->session.sessionId != agentSessionId || metadata->session.agent != agent)
+                {
+                    return;
+                }
+            }
             EndPaneSession(sessionId, agentSessionId, agent, identity.source, identity.distro, params.isMember("session_universe") ? std::optional<winrt::hstring>{ identity.universe } : std::nullopt);
             return;
         }
-        const auto& payload = params["payload"];
         const auto cwd = params.isMember("cwd") ? params["cwd"] :
                          payload.isObject()     ? payload.get("cwd", Json::Value{}) :
                                                   Json::Value{};
