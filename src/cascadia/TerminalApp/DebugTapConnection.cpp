@@ -3,6 +3,7 @@
 
 #include "pch.h"
 #include "DebugTapConnection.h"
+#include "../../types/inc/utils.hpp"
 
 using namespace ::winrt::Microsoft::Terminal::TerminalConnection;
 using namespace ::winrt::Windows::Foundation;
