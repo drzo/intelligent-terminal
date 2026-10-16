@@ -691,16 +691,8 @@ fn spawn_wsl_agent_process(
         script = super::history_process::wsl_history_script(&script, marker);
     }
 
-    let mut command = tokio::process::Command::new("wsl.exe");
+    let mut command = wsl_agent_command(distro, &script);
     command
-        .arg("-d")
-        .arg(distro)
-        .arg(if history_only { "--exec" } else { "--" })
-        .arg("bash")
-        .arg("--noprofile")
-        .arg("--norc")
-        .arg("-c")
-        .arg(script)
         .stdin(std::process::Stdio::piped())
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped())
@@ -741,6 +733,20 @@ fn spawn_wsl_agent_process(
         is_npx,
         adapter_package,
     })
+}
+
+fn wsl_agent_command(distro: &str, script: &str) -> tokio::process::Command {
+    let mut command = tokio::process::Command::new("wsl.exe");
+    command
+        .arg("-d")
+        .arg(distro)
+        .arg("--exec")
+        .arg("bash")
+        .arg("--noprofile")
+        .arg("--norc")
+        .arg("-c")
+        .arg(script);
+    command
 }
 
 fn scrub_provider_environment_from_wslenv(command: &mut tokio::process::Command) {
@@ -882,6 +888,41 @@ mod tests {
             assert!(
                 !script.contains(key),
                 "normal WSL launch must preserve the distro's own {key}: {script}"
+            );
+        }
+    }
+
+    #[test]
+    fn wsl_acp_command_executes_bash_directly_without_default_shell_reparsing() {
+        let script = antigravity_wsl_launch_script(
+            &["agy_acp_server.par".into(), "--uid=".into()],
+            ChildEnvironmentPolicy::ApplySharedProvider,
+        );
+        for history_only in [false, true] {
+            let script = if history_only {
+                super::super::history_process::wsl_history_script(&script, "wta-history-test")
+            } else {
+                script.clone()
+            };
+            let command = wsl_agent_command("Debian", &script);
+            assert_eq!(command.as_std().get_program(), "wsl.exe");
+            assert_eq!(
+                command
+                    .as_std()
+                    .get_args()
+                    .map(|arg| arg.to_str().unwrap())
+                    .collect::<Vec<_>>(),
+                [
+                    "-d",
+                    "Debian",
+                    "--exec",
+                    "bash",
+                    "--noprofile",
+                    "--norc",
+                    "-c",
+                    &script,
+                ],
+                "an extra default shell must not expand ACP cache variables or quotes"
             );
         }
     }

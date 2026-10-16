@@ -199,6 +199,10 @@ and ACP wrapper prerequisites.
 The read-only `probe-host-agents` and `probe-agent-sources` availability commands
 only report readiness or bootstrap eligibility; they do not install dependencies.
 
+WSL ACP launches start Bash directly as the selected distribution's default user.
+The login-shell environment is loaded without sending the generated launch script
+through an extra default shell, preserving managed-cache paths and quoted arguments.
+
 Sidebar Agent sessions runs
 `wta sessions list --origin shell --json --include-status`.
 This only reads the current registry snapshot; it never starts an agent or waits
