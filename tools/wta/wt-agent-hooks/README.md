@@ -40,7 +40,7 @@ wt-agent-hooks/
 Every integration dispatches through the native `wtcli agent-hook` command,
 invoked directly from `hooks.json` with no script or batch launcher in between.
 Claude and Copilot share non-version plugin metadata and common lifecycle hooks;
-Copilot additionally subscribes tool-return hooks.
+Copilot additionally subscribes a successful tool-return hook.
 
 Hook versions are independent per provider. Bump only the manifest for the
 provider whose installed payload changes; for Claude and Copilot, also update
@@ -179,7 +179,6 @@ names. Event vocabularies differ per CLI:
 | `agent.prompt.submit`   | `UserPromptSubmit`     | `UserPromptSubmit`     | `BeforeAgent`    |
 | `agent.tool.starting`   | *(not subscribed)*     | *(not subscribed)*     | `BeforeTool`     |
 | `agent.tool.finished`   | *(not subscribed)*     | `PostToolUse`          | *(not emitted)*  |
-| `agent.tool.failed`     | *(not subscribed)*     | `PostToolUseFailure`   | *(not emitted)*  |
 | `agent.error`           | `StopFailure`          | `StopFailure`          | *(not emitted)*  |
 | `agent.stop`            | `Stop`                 | `Stop`                 | `AfterAgent`     |
 | `agent.subagent.stop`   | *(not subscribed)*     | *(not subscribed)*     | *(not emitted)*  |
@@ -191,16 +190,17 @@ which is no longer used. Gemini's manifest has no native equivalents for
 the failure topics, so those rows are silent on Gemini.
 
 Copilot background shell/agent completion notifications are informational and
-leave the existing status unchanged. Its permission and question notifications
-still mark the session Attention (Waiting for input).
+leave the existing status unchanged, including an unanswered approval/question.
+Both `notificationType` and `notification_type` are recognised. Its permission
+and question notifications still mark the session Attention (Waiting for input).
 
-**Copilot activity is hook-only once hooks own the session.** `PostToolUse` and
-`PostToolUseFailure` resume Working (Active) after a tool returns; only `Stop`
-ends the turn as Idle. This is deliberately session-level, latest-hook behavior,
-not per-request approval matching. Waiting can persist for the whole tool run,
-and a parallel tool's return may replace another unanswered wait. No transcript
-permission events are mixed into a hook-owned session. The original hookless
-file-watcher fallback remains unchanged.
+**Copilot activity is hook-only once hooks own the session.** `PostToolUse`
+resumes Working (Active) after a tool succeeds; only `Stop` ends the turn as
+Idle. Failed tools do not restore activity. This is deliberately session-level,
+latest-hook behavior, not per-request approval matching. Waiting can persist for
+the whole tool run, and a parallel tool's successful return may replace another
+unanswered wait. No transcript permission events are mixed into a hook-owned
+session. The original hookless file-watcher fallback remains unchanged.
 
 Two topics keep a routing arm in `app.rs` that outlives their subscription in
 the Claude and Copilot bundles: `agent.subagent.stop`, which no shipped manifest

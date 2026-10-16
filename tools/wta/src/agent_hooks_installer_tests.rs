@@ -2413,7 +2413,12 @@ fn claude_and_copilot_carry_full_event_catalog() {
         "StopFailure",
         "Stop",
     ];
-    const UNSUBSCRIBED_EVENTS: &[&str] = &["PreToolUse", "BeforeTool", "AfterTool"];
+    const UNSUBSCRIBED_EVENTS: &[&str] = &[
+        "PreToolUse",
+        "PostToolUseFailure",
+        "BeforeTool",
+        "AfterTool",
+    ];
     for (label, hooks) in [
         ("claude", CLAUDE_HOOKS_JSON),
         ("copilot", COPILOT_HOOKS_JSON),
@@ -2434,25 +2439,20 @@ fn claude_and_copilot_carry_full_event_catalog() {
                 "{label} hooks.json must not subscribe {event}"
             );
         }
-        for (event, topic) in [
-            ("PostToolUse", "agent.tool.finished"),
-            ("PostToolUseFailure", "agent.tool.failed"),
-        ] {
-            let doc: Value = serde_json::from_str(hooks).unwrap();
-            if label == "copilot" {
-                let handlers = doc["hooks"][event][0]["hooks"].as_array().unwrap();
-                assert!(!handlers.is_empty());
-                for handler in handlers {
-                    for field in ["powershell", "bash"] {
-                        assert!(handler[field]
-                            .as_str()
-                            .unwrap()
-                            .contains(&format!("--event {topic}")));
-                    }
+        let doc: Value = serde_json::from_str(hooks).unwrap();
+        if label == "copilot" {
+            let handlers = doc["hooks"]["PostToolUse"][0]["hooks"].as_array().unwrap();
+            assert!(!handlers.is_empty());
+            for handler in handlers {
+                for field in ["powershell", "bash"] {
+                    assert!(handler[field]
+                        .as_str()
+                        .unwrap()
+                        .contains("--event agent.tool.finished"));
                 }
-            } else {
-                assert!(doc["hooks"].get(event).is_none());
             }
+        } else {
+            assert!(doc["hooks"].get("PostToolUse").is_none());
         }
     }
 }
@@ -2495,13 +2495,11 @@ fn claude_and_copilot_hooks_json_are_parity_identical() {
         .as_object_mut()
         .unwrap()
         .remove("CwdChanged");
-    for event in ["PostToolUse", "PostToolUseFailure"] {
-        assert!(normalized_copilot["hooks"]
-            .as_object_mut()
-            .unwrap()
-            .remove(event)
-            .is_some());
-    }
+    assert!(normalized_copilot["hooks"]
+        .as_object_mut()
+        .unwrap()
+        .remove("PostToolUse")
+        .is_some());
     strip_per_cli_hook_fields(&mut normalized_claude);
     strip_per_cli_hook_fields(&mut normalized_copilot);
 

@@ -393,7 +393,7 @@ pub enum SessionEvent {
     ToolCompleted {
         key: AgentKey,
     },
-    /// A Copilot tool returned; the agent may continue until its Stop hook.
+    /// A Copilot tool succeeded; the agent may continue until its Stop hook.
     ToolReturned {
         key: AgentKey,
     },
