@@ -134,8 +134,10 @@ param([string]$Signal, [string]$Receipt, [string]$Title, [int]$LifetimeSec = 300
 $last = ''
 $clock = [Diagnostics.Stopwatch]::StartNew()
 while ($clock.Elapsed.TotalSeconds -lt $LifetimeSec) {
-    if (Test-Path -LiteralPath $Signal) {
-        $stream = [IO.File]::Open($Signal, [IO.FileMode]::Open, [IO.FileAccess]::Read,
+    $next = Get-ChildItem -LiteralPath ([IO.Path]::GetDirectoryName($Signal)) `
+        -Filter ([IO.Path]::GetFileName($Signal) + '.*.request') -File | Select-Object -First 1
+    if ($next) {
+        $stream = [IO.File]::Open($next.FullName, [IO.FileMode]::Open, [IO.FileAccess]::Read,
             [IO.FileShare]::ReadWrite -bor [IO.FileShare]::Delete)
         $reader = [IO.StreamReader]::new($stream)
         try { $line = $reader.ReadToEnd() } finally { $reader.Dispose() }
@@ -147,6 +149,7 @@ while ($clock.Elapsed.TotalSeconds -lt $LifetimeSec) {
             else { [Console]::Write([char]27 + ']9;4;' + $request.state + ';50' + [char]27 + '\') }
             [Console]::Out.Flush()
             [IO.File]::WriteAllText($Receipt, $request.token)
+            Remove-Item -LiteralPath $next.FullName
         }
     }
     Start-Sleep -Milliseconds 50
@@ -387,8 +390,9 @@ catch {
             $token = [guid]::NewGuid().ToString('N')
             $request = @{ kind = $Kind; state = $State; token = $token } | ConvertTo-Json -Compress
             $staging = "$($Fixture.Signal).next"
+            $destination = "$($Fixture.Signal).$token.request"
             [IO.File]::WriteAllText($staging, $request)
-            [IO.File]::Move($staging, $Fixture.Signal, $true)
+            [IO.File]::Move($staging, $destination)
             if ($Kind -ne 'close') {
                 Wait-Until -TimeoutSec 10 -Because 'the real child emitted the exact signal' -Condition {
                     Assert-StatusDeadline
