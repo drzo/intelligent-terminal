@@ -1832,10 +1832,11 @@ namespace winrt::TerminalApp::implementation
                                         Settings::TerminalSettings::CreateWithNewTerminalArgs(_settings, args);
         const auto targetCommand = wil::ExpandEnvironmentStringsW<std::wstring>(targetSettings.DefaultSettings()->Commandline().c_str());
         const auto [agentOwned, agentCwd] = _RichTabAgentCwdForControl(control);
+        const auto shellReportedCwd = !agentOwned && control.WorkingDirectoryReportedByShell();
         const auto sourceCwd = agentCwd ? winrt::to_hstring(*agentCwd) :
                                           winrt::hstring{ ::Microsoft::Terminal::AgentSource::ResolvePaneCwd(
-                                              agentOwned ? winrt::hstring{} : control.WorkingDirectory(),
-                                              !agentOwned && control.WorkingDirectoryReportedByShell(),
+                                              shellReportedCwd ? control.WorkingDirectory() : winrt::hstring{},
+                                              shellReportedCwd,
                                               sourceCommand,
                                               sourceDirectory) };
         const auto directory = ::Microsoft::Terminal::AgentSource::ResolveSplitCwd(

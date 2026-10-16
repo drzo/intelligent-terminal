@@ -19975,10 +19975,21 @@ namespace TerminalAppLocalTests
             control.Connection(launched);
             const auto launchDirectory = winrt::hstring{ directory + L"\\." };
             VERIFY_ARE_EQUAL(launchDirectory, launched.as<Conpty>().StartingDirectory());
-            page->_activeCliAgentPanes[launched.SessionId()] = { L"no-cwd-yet" };
             target.Commandline(L"cmd.exe /d /k");
             NewTerminalArgs args;
             args.Profile(Utils::GuidToString(target.Guid()));
+            {
+                const auto shellConnection = page->_CreateConnectionFromSettings(source, *settings.DefaultSettings(), false);
+                const auto shellPane = page->_MakePane(launch, nullptr, shellConnection);
+                auto closeShellPane = wil::scope_exit([&]() { shellPane->Shutdown(); });
+                const auto shellTab = winrt::make_self<winrt::TerminalApp::implementation::Tab>(shellPane);
+                const auto shellControl = shellPane->GetTerminalControl();
+                VERIFY_ARE_EQUAL(winrt::hstring{ L"." }, shellControl.WorkingDirectory());
+                VERIFY_IS_FALSE(shellControl.WorkingDirectoryReportedByShell());
+                VERIFY_IS_FALSE(page->_RichTabAgentCwdForControl(shellControl).first);
+                VERIFY_ARE_EQUAL(launchDirectory, page->_PrepareSplitDirectory(shellTab, args, false).as<NewTerminalArgs>().StartingDirectory());
+            }
+            page->_activeCliAgentPanes[launched.SessionId()] = { L"no-cwd-yet" };
             source.StartingDirectory(L"C:\\changed-after-launch");
             source.Commandline(L"wsl.exe -d WrongDistro");
             VERIFY_ARE_EQUAL(launchDirectory, page->_PrepareSplitDirectory(tab, args, false).as<NewTerminalArgs>().StartingDirectory());
