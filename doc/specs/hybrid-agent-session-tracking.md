@@ -174,8 +174,17 @@ registry lookup for the real native CLI session ID, not the helper's ACP ID.
 This known binding keeps the resumed tab visible under Agents only before its
 first hook. Idle is an initial baseline, not evidence that the CLI loaded or
 that subsequent activity is being observed.
-This initialization does not change subsequent hook-loss activity behavior,
-watcher ownership, or saved-layout restore routing.
+For an unambiguous native host row, a newly assigned resume pane also registers
+`born_bound` watcher ownership and clears the previous generation's hook claim.
+The binding and ownership transition share the hook lifecycle gate. If a real
+hook already bound that exact pane during tab creation, its activity and
+ownership remain authoritative. No helper subscription or hook installation is
+required for this native activity fallback; saved-layout restore routing is
+unchanged.
+
+Watcher ownership checks and activity updates share that lifecycle gate too.
+Native file records only update a unique row for the matching CLI, never a WSL,
+agent-pane, alternate-universe, or ambiguous raw-ID row.
 
 **Resume pane ownership.** `ResumePaneAssigned` marks the row's pane binding
 `born_bound_pane` (`session_registry.rs`). WTA creates the resume pane and binds
@@ -440,6 +449,15 @@ Activation has a separate busy state from list loading: existing rows and the se
 query stay visible without the full-list loading spinner while focus/resume runs.
 Repeated activation clicks are ignored until completion, and background snapshots
 cannot clear the activation guard. Closing History resets that guard.
+
+External Copilot **In use** evidence is informational, not a resume restriction.
+Selecting such a row resumes it through the CLI in a new tab; activation does not
+probe external ownership or wait for an in-use lock to be released. Failure to
+read ownership evidence likewise does not block resume. The session list still
+shows **In use** when supported by external evidence. A live session with an
+authoritative Terminal pane binding continues to focus that pane instead of
+starting another CLI. The agent CLI remains responsible for accepting the resume
+request and handling any concurrent access to its session store.
 
 History list requests are single-flight per window. Notifications received during
 activation are coalesced and serviced after activation completes, without hiding
