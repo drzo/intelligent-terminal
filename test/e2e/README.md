@@ -49,6 +49,71 @@ Invoke-Pester -Configuration $cfg
 This focused run does not validate the other 33 cases or grant their checklist
 coverage. Use `Run.SkipRun = $true` for non-live discovery only.
 
+History metadata checks wait up to five seconds for the exact named
+`HistoryProviderIcon` Raw peer in the same row/runtime generation as the Content
+view. Duplicate peers, wrong provider/process identity, offscreen/zero geometry,
+or failed row/viewport containment remain failures. Failure observations are
+saved in `history-provider-readiness-failure.json`; there is no generic Image
+fallback. The numeric-navigation matrix restores its original tail viewport
+before the movement assertions; the exact visible owning-group oracle remains
+unchanged. Validate movement in both default fixture mode (leave
+`ITE2E_HISTORY_INDICATORS_ONLY` unset) and `-OwningTabMoveOnly` mode.
+
+Debug builds log `HistoryCollapseFocus` phases to the package/version-scoped
+`terminal-agent-pane.log`: handler entry, attempted heading focus and result,
+actual XAML focus immediately after layout, and a later read-only dispatcher
+observation. This is diagnostic instrumentation, not an additional focus retry
+or proof that the focused-collapse regression is fixed.
+
+### Held-hook native resume fixture
+
+The `Native history resume publishes Idle before hooks` case requires an empty,
+session-owned resolver directory in `ITE2E_CANONICAL_SHIM_DIRECTORY`. Prepend it
+to the **current harness process** PATH before `Start-Terminal`; the verified Dev
+creation path uses `Process.Start` without shell execution, and WTA's master
+inherits that PATH and resolves the fixture executable at activation time.
+`RefreshProcessPath` appends registry entries without replacing inherited
+session-only entries. No user/machine PATH or PowerShell profile edit is needed.
+The owning shell must also see the resolver: in the parent's existing
+byte-for-byte settings backup/restore scope, add an isolated test profile, make
+it the temporary default, and give its JSON `"environment"` map an explicit
+`"PATH": "<resolver>;<original harness PATH>"` value. Keep the absolute existing
+PowerShell executable as that profile's commandline with `-NoLogo -NoProfile
+-NoExit`. Do not overwrite another profile or change profile scripts. Explicit
+profile environment overrides work even with the default
+`"compatibility.reloadEnvironmentVariables": true`; process PATH alone is
+insufficient for shells that regenerate their environment from the registry.
+
+```powershell
+$resolver = Join-Path $PWD ("Generated Files\resume-resolver-" + [guid]::NewGuid().ToString('N'))
+New-Item -ItemType Directory -Path $resolver -ErrorAction Stop | Out-Null
+$oldPath = $env:PATH
+$oldResolver = $env:ITE2E_CANONICAL_SHIM_DIRECTORY
+try {
+    $env:PATH = "$resolver;$oldPath"
+    $env:ITE2E_CANONICAL_SHIM_DIRECTORY = $resolver
+    # Prepare the outer-backed-up isolated test profile described above here.
+    $cfg = New-PesterConfiguration
+    $cfg.Run.Path = 'test\e2e\tests\Feature.CombinedAgentsSidebar.Tests.ps1'
+    $cfg.Filter.FullName = 'Feature: combined Agents sidebar.Native history resume publishes Idle before hooks'
+    Invoke-Pester -Configuration $cfg
+} finally {
+    $env:PATH = $oldPath
+    $env:ITE2E_CANONICAL_SHIM_DIRECTORY = $oldResolver
+    if (-not @(Get-ChildItem -LiteralPath $resolver -Force).Count) {
+        Remove-Item -LiteralPath $resolver
+    } else {
+        Write-Warning "Retained nonempty resolver directory for failed fixture cleanup: $resolver"
+    }
+}
+```
+
+Retain the suite's existing exact-package/hash/source prerequisites. Do not put
+the fixture into a real CLI directory or overwrite any executable. This setup
+does not satisfy the separate `History Enter resumes an unbound native session`
+cases' existing machine/user PATH-membership gate, nor does it prove the helper
+picker path. Those are distinct validation scenarios.
+
 ## Release-checklist coverage
 
 ### Startup and failure ownership

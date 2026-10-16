@@ -19,6 +19,51 @@ BeforeAll {
 Describe 'Combined owning-tab container selection' -Tag 'Unit' {
     AfterAll { $env:ITE2E_HISTORY_INDICATORS_ONLY = $script:originalHistoryMode }
 
+    It 'restores the tail viewport and requires the real group (<Scrollable>, <Missing>)' -ForEach @(
+        @{ Scrollable = $true; Missing = $false }
+        @{ Scrollable = $false; Missing = $false }
+        @{ Scrollable = $true; Missing = $true }
+    ) {
+        Add-Type -AssemblyName UIAutomationClient
+        $body = $script:suiteAst.Find({ param($node)
+            $node -is [Management.Automation.Language.FunctionDefinitionAst] -and
+                $node.Name -eq 'Assert-MoveNumberKeys'
+        }, $true).Body.Extent.Text
+        $start = $body.IndexOf('# The final no-match numeric case')
+        $start | Should -BeGreaterThan 0
+        $tail = $body.Substring($start, $body.Length - $start - 1)
+        $state = @{ Scrolls = 0; Attempts = 0 }
+        $scrollPeer = [pscustomobject]@{ Current = @{ VerticallyScrollable = $Scrollable }; State = $state }
+        $scrollPeer | Add-Member ScriptMethod SetScrollPercent {
+            param($Horizontal, $Vertical)
+            $Horizontal | Should -Be ([Windows.Automation.ScrollPattern]::NoScroll)
+            $Vertical | Should -Be 100
+            ++$this.State.Scrolls
+        }
+        function Get-CombinedScroll { param($Id) $Id | Should -Be ItemsList; $scrollPeer }
+        function Get-MoveGroup {
+            ++$state.Attempts
+            if ($Missing -or $state.Attempts -eq 1) { throw 'no visible exact owning group' }
+            'exact-owning-group'
+        }
+        function Wait-Until {
+            param($TimeoutSec, $Because, $Condition)
+            $TimeoutSec | Should -Be 5
+            foreach ($attempt in 1..3) {
+                try { if (& $Condition) { return $true } } catch {}
+            }
+            throw 'bounded group readiness timeout'
+        }
+        if ($Missing) {
+            { . ([scriptblock]::Create($tail)) } | Should -Throw '*bounded group readiness timeout*'
+            $state.Attempts | Should -Be 3
+        } else {
+            . ([scriptblock]::Create($tail))
+            $state.Attempts | Should -Be 2
+        }
+        $state.Scrolls | Should -Be $(if ($Scrollable) { 1 } else { 0 })
+    }
+
     It 'includes the native owner only in the matching fixture mode <Mode>' -ForEach @(
         @{ Mode = 'Full'; Focused = $false; Indicators = '' }
         @{ Mode = 'Focused'; Focused = $true; Indicators = '' }

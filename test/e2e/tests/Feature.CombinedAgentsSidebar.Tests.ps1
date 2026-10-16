@@ -314,6 +314,96 @@ Describe 'Feature: combined Agents sidebar' -Tag @('Feature', 'CombinedAgentsSid
             $parts.Count | Should -Be 1 -Because "the rendered $Id must have one real UIA peer, including Raw view"
             $parts[0]
         }
+        function Wait-CombinedHistoryObservation {
+            param([string]$Title, [string]$Provider)
+            $state = @{ Error = $null; Last = $null; Observation = $null }
+            try {
+                Wait-Until -TimeoutSec 5 -Because 'the exact history row and its real Raw provider peer share a visible generation' -Condition {
+                    $list = Get-CombinedElement ItemsList
+                    if (-not $list) { return $false }
+                    $viewport = $list.Current.BoundingRectangle
+                    $rows = @($list.FindAll([Windows.Automation.TreeScope]::Children,
+                        [Windows.Automation.PropertyCondition]::new(
+                            [Windows.Automation.AutomationElement]::ControlTypeProperty,
+                            [Windows.Automation.ControlType]::ListItem)) | Where-Object {
+                        $_.Current.Name -ceq "$Title $([char]0xB7) $Provider"
+                    })
+                    $state.Last = @{ row_count = $rows.Count; viewport = $viewport.ToString(); peers = @() }
+                    if ($rows.Count -gt 1) { $state.Error = 'Duplicate exact fixture history rows.'; return $true }
+                    if ($rows.Count -ne 1) { return $false }
+                    $row = $rows[0]
+                    $raw = @(Get-CombinedRawChildren $row)
+                    $state.Last.row_runtime_id = @($row.GetRuntimeId())
+                    $state.Last.raw_peers = @($raw | ForEach-Object { @{
+                        id = $_.Current.AutomationId; name = $_.Current.Name; pid = $_.Current.ProcessId
+                        offscreen = $_.Current.IsOffscreen; bounds = $_.Current.BoundingRectangle.ToString()
+                    } })
+                    $icons = @($raw | Where-Object { $_.Current.AutomationId -ceq 'HistoryProviderIcon' })
+                    $state.Last.peers = @($icons | ForEach-Object { @{
+                        id = $_.Current.AutomationId; name = $_.Current.Name; pid = $_.Current.ProcessId
+                        offscreen = $_.Current.IsOffscreen; bounds = $_.Current.BoundingRectangle.ToString()
+                    } })
+                    if ($icons.Count -gt 1) { $state.Error = 'Duplicate real Raw HistoryProviderIcon peers.'; return $true }
+                    if ($icons.Count -ne 1) { return $false }
+                    $icon = $icons[0]
+                    $iconRuntime = $icon.GetRuntimeId() -join ','
+                    $bounds = $row.Current.BoundingRectangle
+                    $iconBounds = $icon.Current.BoundingRectangle
+                    if ($list.Current.ProcessId -ne $script:app.Pid -or $row.Current.ProcessId -ne $script:app.Pid -or
+                        $icon.Current.ProcessId -ne $script:app.Pid -or $icon.Current.Name -cne $Provider) {
+                        $state.Error = 'History observation has a foreign process or provider identity.'; return $true
+                    }
+                    $state.Last.row_bounds = $bounds.ToString()
+                    $state.Last.row_offscreen = $row.Current.IsOffscreen
+                    if ($list.Current.IsOffscreen -or $row.Current.IsOffscreen -or $icon.Current.IsOffscreen -or
+                        $viewport.Width -le 0 -or $viewport.Height -le 0 -or
+                        $bounds.Width -le 0 -or $bounds.Height -le 0 -or
+                        $iconBounds.Width -le 0 -or $iconBounds.Height -le 0 -or
+                        -not $viewport.Contains($bounds) -or -not $bounds.Contains($iconBounds) -or
+                        -not $viewport.Contains($iconBounds)) { return $false }
+                    $parts = @(Get-CombinedRawChildren $row -ContentView)
+                    $current = @(Get-CombinedRows Recent | Where-Object {
+                        $_.Current.Name -ceq "$Title $([char]0xB7) $Provider"
+                    })
+                    if ($current.Count -ne 1 -or
+                        ($current[0].GetRuntimeId() -join ',') -cne ($row.GetRuntimeId() -join ',')) {
+                        $state.Last.generation_changed = $true
+                        return $false
+                    }
+                    $currentIcons = @(Get-CombinedRawChildren $current[0] | Where-Object {
+                        $_.Current.AutomationId -ceq 'HistoryProviderIcon'
+                    })
+                    if ($currentIcons.Count -gt 1) { $state.Error = 'Duplicate real Raw HistoryProviderIcon peers.'; return $true }
+                    if ($currentIcons.Count -ne 1 -or
+                        ($currentIcons[0].GetRuntimeId() -join ',') -cne $iconRuntime) {
+                        $state.Last.generation_changed = $true
+                        return $false
+                    }
+                    # Revalidate the same real peer after both tree views were read.
+                    $icon = $currentIcons[0]
+                    $bounds = $row.Current.BoundingRectangle
+                    $iconBounds = $icon.Current.BoundingRectangle
+                    $viewport = $list.Current.BoundingRectangle
+                    if ($row.Current.Name -cne "$Title $([char]0xB7) $Provider" -or
+                        $icon.Current.Name -cne $Provider -or $icon.Current.ProcessId -ne $script:app.Pid -or
+                        $list.Current.IsOffscreen -or $row.Current.IsOffscreen -or $icon.Current.IsOffscreen -or
+                        $viewport.Width -le 0 -or $viewport.Height -le 0 -or
+                        $bounds.Width -le 0 -or $bounds.Height -le 0 -or
+                        $iconBounds.Width -le 0 -or $iconBounds.Height -le 0 -or
+                        -not $viewport.Contains($bounds) -or -not $bounds.Contains($iconBounds) -or
+                        -not $viewport.Contains($iconBounds)) { return $false }
+                    $state.Observation = @{ Row = $row; Icon = $icon; Parts = $parts }
+                    return $true
+                } | Out-Null
+                if ($state.Error) { throw $state.Error }
+                $state.Observation
+            }
+            catch {
+                $state.Last | ConvertTo-Json -Depth 6 |
+                    Set-Content -LiteralPath (Join-Path $script:evidence 'history-provider-readiness-failure.json')
+                throw
+            }
+        }
         function Get-CombinedHistoryHeader {
             $scroll = Get-CombinedScroll ItemsList
             $state = @{ Percent = 0.0 }
@@ -381,11 +471,16 @@ Describe 'Feature: combined Agents sidebar' -Tag @('Feature', 'CombinedAgentsSid
             param([string]$Title, [Parameter(Mandatory)][string]$Cwd, [string]$Status, [string]$Provider, [switch]$OtherWindow)
             $metadataPhase = if ($OtherWindow) { "metadata-other-window-$Status" } else { "metadata-$($Status ?? 'Historical')" }
             Save-CombinedActionEvidence $metadataPhase -Screenshot
-            $rows = @(Get-CombinedRows Recent)
-            $rows.Count | Should -Be 1
-            $row = $rows[0]
             $beforeQuery = [DateTimeOffset]::UtcNow
-            $parts = @(Get-CombinedRawChildren $row -ContentView)
+            $sources = @((Get-CombinedSnapshot).sessions | Where-Object {
+                $_.title -eq $Title -and $_.provider_id -eq $Provider -and $_.cwd -eq $Cwd
+            })
+            $sources.Count | Should -Be 1 -Because 'the displayed fixture row must have one timestamp source'
+            $observation = Wait-CombinedHistoryObservation -Title $Title -Provider $Provider
+            @(Get-CombinedRows Recent).Count | Should -Be 1
+            $row = $observation.Row
+            $parts = $observation.Parts
+            $afterQuery = [DateTimeOffset]::UtcNow
             $keepRunningIcons = @($parts | Where-Object { $_.Current.AutomationId -eq 'HistoryKeepRunningIcon' })
             $keepRunningIcons.Count | Should -BeLessOrEqual 1
             $keepRunningParts = @($keepRunningIcons; foreach ($badge in $keepRunningIcons) {
@@ -417,12 +512,7 @@ Describe 'Feature: combined Agents sidebar' -Tag @('Feature', 'CombinedAgentsSid
             if (-not ('ItSidebarAgeOracle' -as [type])) {
                 . (Join-Path $PSScriptRoot '..\fixtures\SidebarRelativeTimeOracle.ps1')
             }
-            $sources = @((Get-CombinedSnapshot).sessions | Where-Object {
-                $_.title -eq $Title -and $_.provider_id -eq $Provider -and $_.cwd -eq $Cwd
-            })
-            $sources.Count | Should -Be 1 -Because 'the displayed fixture row must have one timestamp source'
             $sourceTime = [DateTimeOffset]::FromUnixTimeMilliseconds([long]$sources[0].last_activity_at_ms)
-            $afterQuery = [DateTimeOffset]::UtcNow
             $expectedTimes = @(foreach ($capture in @($beforeQuery, $afterQuery)) {
                 ($capture - $sourceTime).TotalSeconds | Should -BeLessThan 3600 -Because 'these metadata fixtures exercise recent ages, not the separate locale timestamp matrix'
                 if (($capture - $sourceTime).TotalSeconds -lt 60) { 'just now' }
@@ -430,7 +520,7 @@ Describe 'Feature: combined Agents sidebar' -Tag @('Feature', 'CombinedAgentsSid
             }) | Select-Object -Unique
             $times = @($textLeaves | Where-Object { $_.Current.Name -in $expectedTimes })
             $times.Count | Should -Be $(if ($Status) { 0 } else { 1 }) -Because 'live status replaces rather than accompanies age'
-            $icon = Get-CombinedVisiblePart $row HistoryProviderIcon
+            $icon = $observation.Icon
             (Get-CombinedRowText $row) | Should -Match ([regex]::Escape($Title))
             $icon.Current.Name | Should -Be $Provider -Because 'the leading provider control retains its accessible identity'
             $providers = @($textLeaves | Where-Object { $_.Current.Name -eq $Provider })
@@ -2372,6 +2462,15 @@ Describe 'Feature: combined Agents sidebar' -Tag @('Feature', 'CombinedAgentsSid
             Set-WtPaneFocus -App $script:app -SessionId $owner.session_id
             @((Get-CombinedSnapshot).sessions.session_id) | Should -Be $historyBefore
             Assert-MoveIdentity | Out-Null
+            # The final no-match numeric case can leave the viewport at the top
+            # after search closes. Restore the original tail-group observation.
+            $scroll = Get-CombinedScroll ItemsList
+            if ($scroll.Current.VerticallyScrollable) {
+                $scroll.SetScrollPercent([Windows.Automation.ScrollPattern]::NoScroll, 100)
+            }
+            Wait-Until -TimeoutSec 5 -Because 'the unchanged owning group is visible after numeric search navigation' -Condition {
+                Get-MoveGroup
+            } | Out-Null
         }
         try {
             Set-CombinedView $false

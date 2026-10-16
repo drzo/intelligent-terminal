@@ -7,6 +7,7 @@
 #include "TabStrip.h"
 #include "TerminalPage.h"
 #include "AgentIconUtils.h"
+#include "AgentPaneLog.h"
 #include "TabStripAutomationPeer.h"
 #include "..\RichTabProvider\ProviderBroker.h"
 #include "TabHeaderControl.h"
@@ -2282,6 +2283,36 @@ namespace winrt::TerminalApp::implementation
 
     void TabStrip::OnHistoryExpandedChanged(IInspectable const& sender, RoutedEventArgs const&)
     {
+#if defined(_DEBUG)
+        const auto traceFocus = [weak = get_weak()](const char* phase, const bool attempted = false, const bool succeeded = false) {
+            try
+            {
+                if (const auto self = weak.get())
+                {
+                    const auto root = self->XamlRoot();
+                    const auto heading = self->HistoryHeaderButton();
+                    const auto focused = root ? WUX::Input::FocusManager::GetFocusedElement(root) : nullptr;
+                    const auto dependency = focused.try_as<DependencyObject>();
+                    _agentPaneLog(
+                        std::string{ "HistoryCollapseFocus phase=" } + phase +
+                            " syncing=" + std::to_string(self->_syncingHistorySection) +
+                            " section=" + std::to_string(static_cast<bool>(self->_historySection.get())) +
+                            " expanded=" + std::to_string(self->_historyExpanded) +
+                            " attempted=" + std::to_string(attempted) +
+                            " succeeded=" + std::to_string(succeeded) +
+                            " actual_is_heading=" + std::to_string(heading && focused == heading) +
+                            " heading_enabled=" + std::to_string(heading && heading.IsEnabled()) +
+                            " heading_tabstop=" + std::to_string(heading && heading.IsTabStop()) +
+                            " heading_visible=" + std::to_string(heading && heading.Visibility() == Visibility::Visible) +
+                            " actual_class=" + (focused ? winrt::to_string(winrt::get_class_name(focused)) : "<none>") +
+                            " actual_id=" + (dependency ? winrt::to_string(WUX::Automation::AutomationProperties::GetAutomationId(dependency)) : "<none>"),
+                        AgentPaneLogLevel::Debug);
+                }
+            }
+            CATCH_LOG();
+        };
+        traceFocus("entry");
+#endif
         if (_syncingHistorySection || !_historySection.get())
         {
             return;
@@ -2315,8 +2346,21 @@ namespace winrt::TerminalApp::implementation
                     // Removing the focused row can move focus again during
                     // ListView layout. Focus the surviving heading afterwards.
                     ItemsList().UpdateLayout();
-                    button.Focus(FocusState::Keyboard);
+                    const auto focusSucceeded = button.Focus(FocusState::Keyboard);
+                    (void)focusSucceeded;
+#if defined(_DEBUG)
+                    traceFocus("after-layout", true, focusSucceeded);
+#endif
                 }
+#if defined(_DEBUG)
+                else
+                {
+                    traceFocus("no-history-focus");
+                }
+                Dispatcher().RunAsync(Windows::UI::Core::CoreDispatcherPriority::Low, [traceFocus]() {
+                    traceFocus("dispatcher-low");
+                });
+#endif
             }
         }
     }
