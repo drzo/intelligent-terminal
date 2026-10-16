@@ -251,16 +251,21 @@
                 </StackPanel>
              </Grid>
 
-            <StackPanel Orientation="Horizontal"
-                        Spacing="8"
-                        Visibility="{x:Bind ViewModel.IsAcpPreparing, Mode=OneWay}">
+            <Grid ColumnSpacing="8"
+                  Visibility="{x:Bind ViewModel.IsAcpPreparing, Mode=OneWay}">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="Auto" />
+                    <ColumnDefinition Width="*" />
+                </Grid.ColumnDefinitions>
                 <muxc:ProgressRing Width="20"
                                    Height="20"
+                                   VerticalAlignment="Center"
                                    IsActive="{x:Bind ViewModel.IsAcpPreparing, Mode=OneWay}" />
                 <TextBlock x:Uid="AIAgents_AcpPreparing"
+                           Grid.Column="1"
                            VerticalAlignment="Center"
                            TextWrapping="Wrap" />
-            </StackPanel>
+            </Grid>
             <muxc:InfoBar IsClosable="False"
                           IsOpen="{x:Bind ViewModel.AcpPreparationFailed, Mode=OneWay}"
                           Severity="Error"
