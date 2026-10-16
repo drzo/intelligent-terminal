@@ -22,6 +22,7 @@ namespace TerminalAppUnitTests
         TEST_METHOD(SplitCwdValidatesHostDirectories);
         TEST_METHOD(SplitCwdKeepsWslNamespacesSeparate);
         TEST_METHOD(SplitCwdRejectsUnsafeWslArguments);
+        TEST_METHOD(SplitCwdQuotesWindowsRootsForWsl);
     };
 
     void AgentSourceUtilsTests::SplitCwdValidatesHostDirectories()
@@ -109,6 +110,26 @@ namespace TerminalAppUnitTests
         VERIFY_ARE_EQUAL(std::wstring{ L"--exec" }, std::wstring{ argv.get()[3] });
         VERIFY_ARE_EQUAL(std::wstring{ L"bash" }, std::wstring{ argv.get()[4] });
         VERIFY_IS_TRUE(hostDirectory.empty());
+    }
+
+    void AgentSourceUtilsTests::SplitCwdQuotesWindowsRootsForWsl()
+    {
+        using Microsoft::Terminal::AgentSource::ResolveSplitCwd;
+        for (const auto directory : { LR"(C:\)", LR"(C:\work with spaces\)", LR"(\\wsl$\Ubuntu\)" })
+        {
+            const auto inherited = ResolveSplitCwd(directory, L"pwsh.exe", L"wsl.exe -d Ubuntu", [](std::wstring_view) { return true; });
+            VERIFY_ARE_EQUAL(std::wstring{ directory }, inherited);
+            const auto [command, hostDirectory] = Microsoft::Console::Utils::MangleStartingDirectoryForWSL(L"wsl.exe -d Ubuntu", inherited);
+            int argc{};
+            const wil::unique_hlocal_ptr<PWSTR[]> argv{ CommandLineToArgvW(command.c_str(), &argc) };
+            VERIFY_IS_NOT_NULL(argv.get());
+            VERIFY_ARE_EQUAL(5, argc);
+            VERIFY_ARE_EQUAL(std::wstring{ L"--cd" }, std::wstring{ argv.get()[1] });
+            VERIFY_ARE_EQUAL(inherited, std::wstring{ argv.get()[2] });
+            VERIFY_ARE_EQUAL(std::wstring{ L"-d" }, std::wstring{ argv.get()[3] });
+            VERIFY_ARE_EQUAL(std::wstring{ L"Ubuntu" }, std::wstring{ argv.get()[4] });
+            VERIFY_IS_TRUE(hostDirectory.empty());
+        }
     }
 
     void AgentSourceUtilsTests::ReadEnvironmentVariableSupportsLongValues()
