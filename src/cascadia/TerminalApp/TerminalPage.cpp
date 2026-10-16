@@ -7097,11 +7097,13 @@ namespace winrt::TerminalApp::implementation
         if (!Json::parseFromStream(builder, json, &response, &errors) ||
             !response.isObject() || !response["sessions"].isArray() ||
             !response["history_status"].isString() ||
-            (!response["history_error_kind"].isNull() && !response["history_error_kind"].isString()))
+            (!response["history_error_kind"].isNull() && !response["history_error_kind"].isString()) ||
+            (!response["ownership_pending"].isNull() && !response["ownership_pending"].isBool()))
         {
             _agentPaneLog("invalid sidebar history snapshot: " + errors);
             return snapshot;
         }
+        snapshot.ownershipPending = response["ownership_pending"].isBool() && response["ownership_pending"].asBool();
         const auto historyStatus = response["history_status"].asString();
         if (historyStatus == "loading")
         {
@@ -7408,7 +7410,7 @@ namespace winrt::TerminalApp::implementation
         }
         if (_historyRefreshTimer)
         {
-            _historyRefreshTimer.Interval(snapshot.state == State::MasterUnavailable || snapshot.state == State::Loading ?
+            _historyRefreshTimer.Interval(snapshot.ownershipPending || snapshot.state == State::MasterUnavailable || snapshot.state == State::Loading ?
                                               sidebarHistoryFastRefreshInterval :
                                               sidebarHistoryRefreshInterval);
         }

@@ -10774,7 +10774,7 @@ async fn sessions_list_ownership_timeout_preserves_live_status() {
                 { "session_id": pane.to_string(), "window_id": 2, "is_background_tab": false }
             ] }))
         });
-        let state = make_state_with_wt(mock.clone());
+        let mut state = make_state_with_wt(mock.clone());
         let mut row = SessionInfo::new(SessionId::new("slow-owner"), PathBuf::from("C:\\repo"));
         row.provider_id = Some("copilot".into());
         row.location = SessionLocation::Host;
@@ -10788,6 +10788,7 @@ async fn sessions_list_ownership_timeout_preserves_live_status() {
             .await
             .unwrap();
         let snapshot = session_registry::parse_sessions_list_response(&response.0).unwrap();
+        assert_eq!(snapshot.ownership_pending, expected_owner.is_none());
         assert_eq!(snapshot.sessions.len(), 1);
         let actual = &snapshot.sessions[0];
         assert_eq!(actual.status, row.status);
@@ -10797,6 +10798,23 @@ async fn sessions_list_ownership_timeout_preserves_live_status() {
             mock.calls(),
             [("list_panes".into(), serde_json::json!({ "all": true }))]
         );
+        assert_eq!(state.registry.snapshot().await, [row.clone()]);
+        Arc::get_mut(&mut state).unwrap().wt =
+            Some(Arc::new(MockWtChannel::responding(serde_json::json!({
+                "panes": [{
+                    "session_id": pane.to_string(), "window_id": 2, "is_background_tab": false
+                }]
+            }))));
+        let response =
+            handle_sessions_list_with_probe(&state, None, &Default::default(), |rows| async move {
+                rows
+            })
+            .await
+            .unwrap();
+        let recovered = session_registry::parse_sessions_list_response(&response.0).unwrap();
+        assert!(!recovered.ownership_pending);
+        assert_eq!(recovered.sessions[0].owner_window_id, Some(2));
+        assert_eq!(recovered.sessions[0].status, row.status);
         assert_eq!(state.registry.snapshot().await, [row]);
     }
 }

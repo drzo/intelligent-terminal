@@ -7996,6 +7996,7 @@ where
         row.background_tab = None;
     }
 
+    let mut ownership_pending = false;
     // Enrich only the response copy; pane/window attribution is not registry state.
     if let Some(wt) = state.wt.as_ref() {
         use crate::agent_sessions::AgentStatus;
@@ -8061,9 +8062,11 @@ where
                     }
                 }
                 Ok(Err(error)) => {
+                    ownership_pending = true;
                     tracing::warn!(target: "master_history", %error, "pane ownership snapshot unavailable; retaining unattributed statuses");
                 }
                 Err(_) => {
+                    ownership_pending = true;
                     tracing::warn!(target: "master_history", "pane ownership snapshot timed out; retaining unresolved statuses");
                 }
             }
@@ -8097,6 +8100,7 @@ where
         sessions,
         Some(history_status.status),
         history_status.error_kind,
+        ownership_pending,
     );
     Ok(acp::schema::v1::ExtResponse::new(raw.into()))
 }

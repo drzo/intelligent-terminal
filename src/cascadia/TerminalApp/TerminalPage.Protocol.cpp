@@ -399,8 +399,7 @@ namespace winrt::TerminalApp::implementation
         _agentPaneLog("protocol pane snapshot queued");
 #endif
 
-        // Keep this bounded metadata read responsive under XAML/UIA layout work.
-        co_await wil::resume_foreground(Dispatcher(), Windows::UI::Core::CoreDispatcherPriority::High);
+        co_await wil::resume_foreground(Dispatcher());
 #ifdef _DEBUG
         _agentPaneLog(fmt::format("protocol pane snapshot dispatched window={} delay_ms={}", _WindowProperties.WindowId(), GetTickCount64() - requestedAt));
 #endif

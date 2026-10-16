@@ -1084,6 +1084,7 @@ namespace winrt::TerminalApp::implementation
             };
             State state{ State::Error };
             std::vector<TerminalApp::TabStripHistoryItem> items;
+            bool ownershipPending{};
         };
         static _SidebarHistorySnapshot _ParseSidebarHistorySnapshot(const std::string& output, uint64_t currentWindowId = 0);
         static _SidebarHistorySnapshot _ParseSidebarHistoryFailure(const std::string& output);

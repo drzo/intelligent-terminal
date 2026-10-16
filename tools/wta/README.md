@@ -275,9 +275,11 @@ fields from one metadata-only `wtcli list-panes --all` snapshot across all windo
 matched to the exact bound pane. The two-second ownership budget covers one
 query rather than launching a process per live session. Native pane metadata
 includes background membership in the same UI dispatch, without a separate
-foreground dispatch for each pane. The bounded metadata read uses high-priority
-UI dispatch to avoid waiting behind ordinary queued layout work.
-`background_tab: true` means the
+foreground dispatch for each pane. If the ownership query times out or fails,
+the response sets `ownership_pending: true`: existing sessions and activity
+remain available, while Sidebar retries on its five-second refresh interval
+instead of caching unattributed ownership for the normal sixty seconds.
+Successful ownership snapshots clear the flag. `background_tab: true` means the
 pane belongs to a kept-running whole tab; activating it restores that entire
 tab. Only an explicit `false` with a different owning window enables the
 other-window action. Missing or malformed membership is unknown, not evidence

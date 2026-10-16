@@ -439,6 +439,8 @@ pub struct SessionsListResponse {
     pub history_status: Option<HistoryLoadStatus>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub history_error_kind: Option<HistoryErrorKind>,
+    #[serde(default)]
+    pub ownership_pending: bool,
 }
 
 #[derive(Debug, Clone, Copy, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
@@ -623,11 +625,13 @@ pub fn build_sessions_list_response(
     sessions: Vec<SessionInfo>,
     history_status: Option<HistoryLoadStatus>,
     history_error_kind: Option<HistoryErrorKind>,
+    ownership_pending: bool,
 ) -> Box<serde_json::value::RawValue> {
     let response = SessionsListResponse {
         sessions,
         history_status,
         history_error_kind,
+        ownership_pending,
     };
     serde_json::value::to_raw_value(&response)
         .expect("SessionsListResponse serialization is infallible for owned data")
@@ -4662,7 +4666,7 @@ mod tests {
             born_bound_pane: false,
             cwd_evidence: CwdEvidence::default(),
         };
-        let raw = build_sessions_list_response(vec![row.clone()], None, None);
+        let raw = build_sessions_list_response(vec![row.clone()], None, None, false);
         let parsed = parse_sessions_list_response(&raw).expect("response parses");
         assert_eq!(parsed.sessions, vec![row]);
     }
@@ -6160,11 +6164,47 @@ mod tests {
             sessions: vec![info.clone()],
             history_status: Some(HistoryLoadStatus::Ready),
             history_error_kind: None,
+            ownership_pending: true,
         };
         let raw = serde_json::value::to_raw_value(&resp).unwrap();
         let parsed = parse_sessions_list_response(&raw).unwrap();
         assert_eq!(parsed.sessions, vec![info]);
         assert_eq!(parsed.history_status, Some(HistoryLoadStatus::Ready));
+        assert!(parsed.ownership_pending);
+    }
+
+    #[test]
+    fn sessions_list_response_ownership_pending_is_optional_and_typed() {
+        for pending in [false, true] {
+            let raw = build_sessions_list_response(
+                Vec::new(),
+                Some(HistoryLoadStatus::Ready),
+                None,
+                pending,
+            );
+            let json: serde_json::Value = serde_json::from_str(raw.get()).unwrap();
+            assert_eq!(json["ownership_pending"], pending);
+            assert_eq!(
+                parse_sessions_list_response(&raw)
+                    .unwrap()
+                    .ownership_pending,
+                pending
+            );
+        }
+        let legacy = serde_json::value::RawValue::from_string(
+            r#"{"sessions":[],"history_status":"ready"}"#.into(),
+        )
+        .unwrap();
+        assert!(
+            !parse_sessions_list_response(&legacy)
+                .unwrap()
+                .ownership_pending
+        );
+        let malformed = serde_json::value::RawValue::from_string(
+            r#"{"sessions":[],"history_status":"ready","ownership_pending":"true"}"#.into(),
+        )
+        .unwrap();
+        assert!(parse_sessions_list_response(&malformed).is_err());
     }
 
     #[test]
@@ -6174,7 +6214,7 @@ mod tests {
             (HistoryLoadStatus::Ready, "ready"),
             (HistoryLoadStatus::Error, "error"),
         ] {
-            let raw = build_sessions_list_response(Vec::new(), Some(status), None);
+            let raw = build_sessions_list_response(Vec::new(), Some(status), None, false);
             let json: serde_json::Value = serde_json::from_str(raw.get()).unwrap();
             assert_eq!(json["history_status"], wire);
             let parsed = parse_sessions_list_response(&raw).unwrap();
@@ -6197,6 +6237,7 @@ mod tests {
             Vec::new(),
             Some(HistoryLoadStatus::Error),
             Some(HistoryErrorKind::Timeout),
+            false,
         );
         let json: serde_json::Value = serde_json::from_str(raw.get()).unwrap();
         assert_eq!(json["history_status"], "error");
@@ -6225,7 +6266,8 @@ mod tests {
                 None
             );
         }
-        let raw = build_sessions_list_response(Vec::new(), Some(HistoryLoadStatus::Ready), None);
+        let raw =
+            build_sessions_list_response(Vec::new(), Some(HistoryLoadStatus::Ready), None, false);
         let json: serde_json::Value = serde_json::from_str(raw.get()).unwrap();
         assert!(json.get("history_error_kind").is_none());
         let unknown = serde_json::value::RawValue::from_string(

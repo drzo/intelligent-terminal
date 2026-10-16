@@ -616,6 +616,7 @@ namespace TerminalAppLocalTests
         TEST_METHOD(VerticalTabHistoryMasterUnavailableDeadlineDuringCapture);
         TEST_METHOD(VerticalTabHistoryMasterUnavailableDeadlineResets);
         TEST_METHOD(VerticalTabHistoryLoadingRefreshesUntilReady);
+        TEST_METHOD(VerticalTabHistoryOwnershipRetriesWithoutBlockingRows);
         TEST_METHOD(VerticalTabHistoryLoadingAndErrorsKeepRows);
         TEST_METHOD(VerticalTabHistoryTimeoutKeepsRowsWithoutError);
         TEST_METHOD(VerticalTabHistoryInitialTimeoutKeepsLoading);
@@ -11923,6 +11924,39 @@ namespace TerminalAppLocalTests
             VERIFY_IS_TRUE(page->_tabStrip.HistoryError().empty());
             VERIFY_ARE_EQUAL(int64_t{ 0 }, page->_historyRetryDelay.count());
             VERIFY_ARE_EQUAL(int64_t{ 60 }, std::chrono::duration_cast<std::chrono::seconds>(page->_historyRefreshTimer.Interval()).count());
+        });
+    }
+
+    void TabTests::VerticalTabHistoryOwnershipRetriesWithoutBlockingRows()
+    {
+        auto page = _commonSetup(nullptr, nullptr, std::nullopt, true);
+        TestOnUIThread([&]() {
+            using Page = winrt::TerminalApp::implementation::TerminalPage;
+            page->_historyRefreshInFlight = true;
+            page->_settings.GlobalSettings().SidebarShowRecentAgentSessions(true);
+            page->_ApplySidebarFilterSettings();
+            page->_historyRefreshPending = false;
+            const auto generation = page->_historyRequestGeneration;
+            const auto pending = page->_ParseSidebarHistorySnapshot(
+                R"({"history_status":"ready","ownership_pending":true,"sessions":[{"session_id":"available","provider_id":"copilot","title":"Available session","location":"Host","status":"Working"}]})");
+            VERIFY_IS_TRUE(pending.state == Page::_SidebarHistorySnapshot::State::Ready);
+            VERIFY_IS_TRUE(pending.ownershipPending);
+            page->_CompleteSidebarHistoryRefresh(generation, pending);
+            VERIFY_ARE_EQUAL(1u, page->_tabStrip.HistoryItems().Size());
+            VERIFY_ARE_EQUAL(winrt::hstring{ L"Working" }, page->_tabStrip.HistoryItems().GetAt(0).Status());
+            VERIFY_IS_FALSE(page->_tabStrip.HistoryLoading());
+            VERIFY_IS_TRUE(page->_tabStrip.HistoryError().empty());
+            VERIFY_ARE_EQUAL(int64_t{ 5 }, std::chrono::duration_cast<std::chrono::seconds>(page->_historyRefreshTimer.Interval()).count());
+            const auto recovered = page->_ParseSidebarHistorySnapshot(
+                R"({"history_status":"ready","ownership_pending":false,"sessions":[{"session_id":"available","provider_id":"copilot","title":"Available session","location":"Host","status":"Working"}]})");
+            page->_CompleteSidebarHistoryRefresh(generation, recovered);
+            VERIFY_IS_FALSE(recovered.ownershipPending);
+            VERIFY_ARE_EQUAL(1u, page->_tabStrip.HistoryItems().Size());
+            VERIFY_ARE_EQUAL(int64_t{ 60 }, std::chrono::duration_cast<std::chrono::seconds>(page->_historyRefreshTimer.Interval()).count());
+            VERIFY_IS_FALSE(page->_ParseSidebarHistorySnapshot(R"({"history_status":"ready","sessions":[]})").ownershipPending);
+            VERIFY_IS_TRUE(page->_ParseSidebarHistorySnapshot(
+                               R"({"history_status":"ready","ownership_pending":"true","sessions":[]})").state ==
+                           Page::_SidebarHistorySnapshot::State::InvalidResponse);
         });
     }
 
