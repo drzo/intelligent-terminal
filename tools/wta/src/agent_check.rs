@@ -47,6 +47,10 @@ impl AgentStatus {
     pub fn can_auto_install(&self) -> bool {
         self.auto_installable
     }
+
+    pub fn acp_bootstrap_available(&self) -> bool {
+        self.id == agent_registry::ANTIGRAVITY_AGENT_ID && self.auto_installable && !self.cli_found
+    }
 }
 
 // ─── Basic functions ────────────────────────────────────────────────────────
