@@ -414,6 +414,7 @@ namespace TerminalAppLocalTests
         TEST_METHOD(NativeAgentCreationOwnsProviderBeforeHooks);
         TEST_METHOD(NativeAgentCreationMetadataSurvivesAdmissionLifecycle);
         TEST_METHOD(NativeAgentLaunchSourceRefinesOnlyDeclaredPane);
+        TEST_METHOD(NativeAgentOnUnbindClearsMatchingTemporaryResumeProvider);
         TEST_METHOD(NativeAgentSessionsOffStatusIsPaneLocal);
         TEST_METHOD(NativeAgentSessionsOffObservesParsedSignals);
         TEST_METHOD(NativeAgentSessionsOffResumeUsesConnectionIdentity);
@@ -3911,6 +3912,7 @@ namespace TerminalAppLocalTests
             page->_settings.GlobalSettings().AgentSessionManagementEnabled(true);
             page->_isVerticalLayout = false;
             page->_tabView = winrt::MUX::Controls::TabView{};
+            page->_tabStrip = winrt::TerminalApp::TabStrip{};
             // These tests need pane identity, not a real shell process or the
             // application's first-run/startup UI.
             for (auto i = 0; i < 2; ++i)
@@ -17926,6 +17928,8 @@ namespace TerminalAppLocalTests
         uint64_t paneCreatedAtMs = 0;
         uint64_t paneCreationSequence = 0;
         std::string lastServerStatus;
+        const auto initialized = std::make_shared<::details::Event>();
+        VERIFY_IS_TRUE(initialized->IsValid());
         const auto cleanup = wil::scope_exit([&]() {
             RunOnUIThread([&]() {
                 page->ProtocolVtSequenceReceived(observationToken);
@@ -17953,11 +17957,13 @@ namespace TerminalAppLocalTests
             page->_settings.GetProfileForArgs(args).BellStyle(BellStyle::Taskbar);
             const auto pane = page->_MakePane(args, nullptr, *connection);
             control = pane->GetTerminalControl();
+            control.Initialized([initialized](auto&&, auto&&) { initialized->Set(); });
             const auto createdBeforeAdmissionMs = static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::milliseconds>(
                                                                            std::chrono::system_clock::now().time_since_epoch())
                                                                            .count());
             Sleep(35);
             VERIFY_IS_NOT_NULL(page->_CreateNewTabFromPane(pane));
+            page->UpdateLayout();
             tab = page->_GetFocusedTabImpl();
             VERIFY_IS_FALSE(page->_RichTabAgentInfoForControl(control).has_value());
             VERIFY_IS_FALSE(observations.empty());
@@ -17971,6 +17977,7 @@ namespace TerminalAppLocalTests
             VERIFY_ARE_EQUAL(control.ContentId(), paneCreationSequence);
             observedCount = observations.size();
         });
+        VERIFY_ARE_EQUAL(static_cast<DWORD>(WAIT_OBJECT_0), WaitForSingleObject(initialized->m_handle, 10000));
         const auto emit = [&](const std::u16string_view sequence) {
             TestOnUIThread([&]() {
                 connection->TerminalOutput.raise(winrt::array_view<const char16_t>{ sequence.data(), sequence.data() + sequence.size() });
@@ -18791,6 +18798,37 @@ namespace TerminalAppLocalTests
             VERIFY_IS_TRUE(AgentRegistry::CanonicalNativeAgentProviderId(L"not-a-provider").empty());
             VERIFY_IS_TRUE(AgentRegistry::CanonicalNativeAgentProviderId(L"custom:").empty());
             VERIFY_IS_TRUE(AgentRegistry::CanonicalNativeAgentProviderId(L"COPILOT") == L"copilot");
+        });
+    }
+
+    void TabTests::NativeAgentOnUnbindClearsMatchingTemporaryResumeProvider()
+    {
+        using State = winrt::Microsoft::Terminal::TerminalConnection::ConnectionState;
+        const auto connection = winrt::make_self<TestConnection>(
+            winrt::guid{ L"{9c411111-2222-3333-4444-555555555555}" }, State::Connected);
+        auto page = _commonSetup(*connection, nullptr, std::nullopt, true);
+        TestOnUIThread([&]() {
+            page->_settings.GlobalSettings().AgentSessionManagementEnabled(true);
+            page->_SyncNativeAgentStatusMode();
+            const auto control = page->_GetFocusedTabImpl()->GetActiveTerminalControl();
+            const auto paneId = page->_FindSessionIdForControl(control);
+            const auto tabId = page->_FindTabIdForControl(control);
+            const auto manager = winrt::get_self<winrt::TerminalApp::implementation::ContentManager>(page->_manager);
+            const auto session = L"9c411111-1111-2222-3333-444444444444";
+            page->_TryPublishInteractiveResumeBinding(control, paneId, tabId, L"opencode", session);
+            VERIFY_ARE_EQUAL(winrt::hstring{ L"opencode" }, manager->NativeAgentProviderId(control.ContentId()));
+            const auto paneGuid = connection->SessionId();
+            page->OnPaneAgentSessionChanged(_keepRunningHook(
+                paneGuid, "agent.session.unbind", "other-session", "opencode"));
+            VERIFY_ARE_EQUAL(winrt::hstring{ L"opencode" }, manager->NativeAgentProviderId(control.ContentId()));
+            page->OnPaneAgentSessionChanged(_keepRunningHook(
+                paneGuid, "agent.session.unbind", winrt::to_string(session), "opencode"));
+            VERIFY_IS_TRUE(manager->NativeAgentProviderId(control.ContentId()).empty());
+            VERIFY_IS_FALSE(page->_explicitNativeAgentSessions.contains(paneGuid));
+            VERIFY_IS_FALSE(page->_paneAgentSessions.contains(paneGuid));
+            page->_settings.GlobalSettings().AgentSessionManagementEnabled(false);
+            page->_SyncNativeAgentStatusMode();
+            VERIFY_IS_FALSE(manager->NativeAgentObservationForContent(control.ContentId()).has_value());
         });
     }
 
