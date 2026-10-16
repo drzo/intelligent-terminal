@@ -77,7 +77,15 @@ namespace TerminalAppUnitTests
     {
         using Microsoft::Terminal::AgentSource::ResolveSplitCwd;
         const auto noWindowsDirectory = [](std::wstring_view) { return false; };
-        for (const auto directory : { L"/tmp/\" --exec printf injected \"", L"/tmp/back\\slash", L"/tmp/trailing\\", L"/tmp/%TEMP%", L"/tmp/new\nline", L"/tmp/new\rline" })
+        for (const auto directory : {
+                 L"/tmp/\" --exec printf injected \"",
+                 L"/tmp/back\\slash",
+                 L"/tmp/trailing\\",
+                 L"/tmp/%TEMP%",
+                 L"/tmp/new\n"
+                 L"line",
+                 L"/tmp/new\r"
+                 L"line" })
         {
             VERIFY_ARE_EQUAL(std::wstring{},
                              ResolveSplitCwd(directory, L"wsl.exe", L"wsl.exe", noWindowsDirectory));
