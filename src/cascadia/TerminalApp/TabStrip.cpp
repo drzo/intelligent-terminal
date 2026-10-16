@@ -2327,6 +2327,11 @@ namespace winrt::TerminalApp::implementation
                     auto focused = WUX::Input::FocusManager::GetFocusedElement(XamlRoot()).try_as<DependencyObject>();
                     while (focused)
                     {
+                        if (focused == button)
+                        {
+                            restoreHeadingFocus = true;
+                            break;
+                        }
                         if (const auto row = focused.try_as<ListViewItem>())
                         {
                             const auto item = row.Content().try_as<TerminalApp::TabStripHistoryItem>();

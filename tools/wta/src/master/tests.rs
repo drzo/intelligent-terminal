@@ -11045,6 +11045,173 @@ async fn sidebar_activation_uses_exact_collision_row_and_replays_receipt() {
 }
 
 #[tokio::test(flavor = "current_thread")]
+async fn sidebar_resume_launch_envelope_precedes_bootstrap_and_completion() {
+    use crate::agent_sessions::{AgentStatus, CliSource, SessionEvent, SessionLocation};
+    use crate::session_registry::{SessionActivateParams, SessionIdentity, SessionInfo};
+    use std::sync::Mutex as StdMutex;
+    use std::time::Duration;
+
+    struct Fixture(std::path::PathBuf);
+    impl Drop for Fixture {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+    struct PausedCreate {
+        entered: tokio::sync::Notify,
+        release: tokio::sync::Notify,
+        calls: StdMutex<Vec<(String, serde_json::Value)>>,
+    }
+    #[async_trait::async_trait]
+    impl crate::shell::wt_channel::WtChannel for PausedCreate {
+        async fn request(
+            &self,
+            method: &str,
+            params: serde_json::Value,
+        ) -> anyhow::Result<serde_json::Value> {
+            self.calls
+                .lock()
+                .unwrap()
+                .push((method.to_string(), params));
+            if method == "create_tab" {
+                self.entered.notify_one();
+                tokio::time::timeout(Duration::from_secs(5), self.release.notified())
+                    .await
+                    .context("release captured sidebar create_tab")?;
+            }
+            Ok(serde_json::json!({ "session_id": "captured-master-pane" }))
+        }
+        fn is_available(&self) -> bool {
+            true
+        }
+    }
+    for extension in ["exe", "cmd"] {
+        let fixture = Fixture(
+            std::env::current_dir()
+                .unwrap()
+                .join(format!("wta-sidebar-wire-{}", uuid::Uuid::new_v4())),
+        );
+        std::fs::create_dir(&fixture.0).unwrap();
+        let executable = fixture.0.join(format!("copilot.{extension}"));
+        std::fs::write(&executable, "test resolver fixture; never executed").unwrap();
+        if extension == "cmd" {
+            std::fs::write(executable.with_extension("ps1"), "throw 'must not execute'").unwrap();
+        }
+        let resolved =
+            crate::coordinator::quote_windows_commandline_arg(executable.to_str().unwrap());
+        let _resolver = crate::coordinator::override_test_executable_resolver(move |command| {
+            assert_eq!(command, "copilot");
+            resolved.clone()
+        });
+        let _capture = crate::wt_protocol_events::capture_test_published_events();
+        tokio::task::LocalSet::new()
+            .run_until(async {
+                let wt = Arc::new(PausedCreate {
+                    entered: tokio::sync::Notify::new(),
+                    release: tokio::sync::Notify::new(),
+                    calls: StdMutex::new(Vec::new()),
+                });
+                let state = make_state_with_wt(wt.clone());
+                let mut row =
+                    SessionInfo::new(SessionId::new("selected-session"), fixture.0.clone());
+                row.provider_id = Some("copilot".into());
+                row.cli_source = Some(CliSource::Copilot);
+                row.location = SessionLocation::Host;
+                row.status = Some(AgentStatus::Historical);
+                let params = SessionActivateParams {
+                    identity: SessionIdentity::from_info(&row),
+                    window_id: 42,
+                    activation_id: "captured-wire".into(),
+                };
+                state.registry.upsert(row).await;
+                let caller = tokio::task::spawn_local({
+                    let state = state.clone();
+                    async move { handle_session_activate(&state, &params).await }
+                });
+                tokio::time::timeout(Duration::from_secs(5), wt.entered.notified())
+                    .await
+                    .unwrap();
+                let request = wt.calls.lock().unwrap()[0].1.clone();
+                let envelope = crate::coordinator::resume_envelope_arguments(
+                    request["commandline"].as_str().unwrap(),
+                );
+                assert_eq!(
+                    &envelope[..5],
+                    [
+                        "intellterm-resume-v1",
+                        "host:copilot",
+                        "selected-session",
+                        fixture.0.to_str().unwrap(),
+                        ""
+                    ]
+                );
+                assert_eq!(envelope.len(), 6);
+                let command = crate::coordinator::build_delegate_resume_commandline(
+                    &crate::coordinator::default_delegate_agent_runtimes(
+                        Some("copilot"),
+                        None,
+                        None,
+                    )[0],
+                    "selected-session",
+                )
+                .unwrap();
+                assert_eq!(envelope[5], command);
+                assert_eq!(
+                    command.starts_with("powershell.exe -NoLogo -NoProfile -EncodedCommand "),
+                    extension == "cmd"
+                );
+                assert_eq!(request["native_agent_provider_id"], "copilot");
+                println!("MASTER_RESUME_REQUEST_{extension}={request}");
+                handle_session_hook(
+                    &state,
+                    SessionEvent::SessionStarted {
+                        key: "bootstrap-session".into(),
+                        cli_source: CliSource::Copilot,
+                        pane_session_id: "captured-master-pane".into(),
+                        cwd: fixture.0.clone(),
+                        title: "Bootstrap".into(),
+                    },
+                    false,
+                )
+                .await
+                .unwrap();
+                assert!(
+                    crate::wt_protocol_events::take_test_published_events()
+                        .iter()
+                        .all(|raw| {
+                            let event: serde_json::Value = serde_json::from_str(raw).unwrap();
+                            event["params"]["agent_session_id"] != "selected-session"
+                                || event["params"].get("resume_commandline").is_none()
+                        }),
+                    "selected completion binding cannot precede the create_tab reply"
+                );
+                wt.release.notify_one();
+                let response = tokio::time::timeout(Duration::from_secs(5), caller)
+                    .await
+                    .unwrap()
+                    .unwrap()
+                    .unwrap();
+                assert!(
+                    crate::session_registry::parse_session_activate_response(&response.0)
+                        .unwrap()
+                        .accepted
+                );
+                let binding = crate::wt_protocol_events::take_test_published_events()
+                    .into_iter()
+                    .map(|raw| serde_json::from_str::<serde_json::Value>(&raw).unwrap())
+                    .find(|event| {
+                        event["method"] == "pane_agent_session_changed"
+                            && event["params"]["agent_session_id"] == "selected-session"
+                    })
+                    .unwrap();
+                assert_eq!(binding["params"]["resume_commandline"], command);
+                assert_eq!(binding["params"]["pane_id"], "captured-master-pane");
+            })
+            .await;
+    }
+}
+
+#[tokio::test(flavor = "current_thread")]
 async fn sidebar_activation_host_shim_capabilities_are_explicit_and_replayed() {
     use crate::agent_sessions::{AgentStatus, CliSource, SessionLocation, SessionOrigin};
     use crate::session_registry::{SessionActivateParams, SessionIdentity, SessionInfo};
@@ -11091,8 +11258,9 @@ async fn sidebar_activation_host_shim_capabilities_are_explicit_and_replayed() {
             }
             let shim_command =
                 crate::coordinator::quote_windows_commandline_arg(shim.to_str().unwrap());
+            let resolver_provider = provider.clone();
             let _resolver = crate::coordinator::override_test_executable_resolver(move |command| {
-                assert_eq!(command, provider);
+                assert_eq!(command, resolver_provider);
                 shim_command.clone()
             });
             let mock = Arc::new(MockWtChannel::responding(serde_json::json!({
@@ -11124,10 +11292,34 @@ async fn sidebar_activation_host_shim_capabilities_are_explicit_and_replayed() {
             if companion {
                 assert_eq!(calls.len(), 2);
                 assert_eq!(calls[0].0, "create_tab");
-                assert!(calls[0].1["commandline"]
-                    .as_str()
-                    .unwrap()
-                    .starts_with("powershell.exe -NoLogo -NoProfile -EncodedCommand "));
+                let envelope = crate::coordinator::resume_envelope_arguments(
+                    calls[0].1["commandline"].as_str().unwrap(),
+                );
+                assert_eq!(
+                    &envelope[..5],
+                    [
+                        "intellterm-resume-v1",
+                        &format!("host:{provider}"),
+                        row.session_id.0.as_ref(),
+                        "C:\\repo",
+                        ""
+                    ],
+                );
+                let command = &envelope[5];
+                assert!(command.starts_with("powershell.exe -NoLogo -NoProfile -EncodedCommand "));
+                assert_eq!(
+                    command,
+                    &crate::coordinator::build_delegate_resume_commandline(
+                        &crate::coordinator::default_delegate_agent_runtimes(
+                            Some(&provider),
+                            None,
+                            None
+                        )[0],
+                        row.session_id.0.as_ref(),
+                    )
+                    .unwrap(),
+                    "the qualified launch must retain the exact supported shim invocation",
+                );
                 assert_eq!(calls[1].0, "focus_pane");
                 assert_eq!(calls[1].1["session_id"], "shim-resumed-pane");
             } else {
@@ -11225,7 +11417,9 @@ async fn sidebar_activation_explicit_live_unknown_origin_resumes_current_window_
                     "create_tab".to_string(),
                     serde_json::json!({
                         "window_id": 42,
-                        "commandline": invocation,
+                        "commandline": crate::coordinator::qualified_resume_launch_envelope(
+                            &provider, "live-unbound", &row.location, "C:\\repo", None, &invocation,
+                        ),
                         "background": true,
                         "native_agent_provider_id": provider,
                         "cwd": "C:\\repo",
@@ -11239,6 +11433,20 @@ async fn sidebar_activation_explicit_live_unknown_origin_resumes_current_window_
                 ),
             ];
             assert_eq!(mock.calls(), expected_calls);
+            assert_eq!(
+                crate::coordinator::resume_envelope_arguments(
+                    mock.calls()[0].1["commandline"].as_str().unwrap(),
+                ),
+                [
+                    "intellterm-resume-v1",
+                    &format!("host:{provider}"),
+                    "live-unbound",
+                    "C:\\repo",
+                    "",
+                    &invocation
+                ],
+                "the actual master request prebinds before create_tab can start its executable",
+            );
             let resumed = state.registry.lookup_identity(&identity).await.unwrap();
             assert_eq!(resumed.session_id, identity.session_id);
             assert_eq!(resumed.status, Some(status.clone()));
@@ -11367,7 +11575,7 @@ async fn sidebar_activation_resume_quotes_session_and_wsl_distro_through_registe
                 "C:\\repo"
             };
             let mut row = SessionInfo::new(SessionId::new(session_id), PathBuf::from(cwd));
-            row.provider_id = Some(provider);
+            row.provider_id = Some(provider.clone());
             row.cli_source = Some(cli.clone());
             row.location = location.clone();
             row.origin = Some(SessionOrigin::Unknown);
@@ -11391,7 +11599,26 @@ async fn sidebar_activation_resume_quotes_session_and_wsl_distro_through_registe
             let calls = mock.calls();
             assert_eq!(calls.len(), 2);
             assert_eq!(calls[0].0, "create_tab");
-            assert_eq!(calls[0].1["commandline"], expected);
+            assert_eq!(
+                crate::coordinator::resume_envelope_arguments(
+                    calls[0].1["commandline"].as_str().unwrap()
+                ),
+                [
+                    "intellterm-resume-v1",
+                    &format!(
+                        "{}:{provider}",
+                        if location.is_wsl() {
+                            "wsl:Distro with spaces \" & echo injected"
+                        } else {
+                            "host"
+                        }
+                    ),
+                    session_id,
+                    cwd,
+                    "",
+                    &expected
+                ],
+            );
             assert_eq!(calls[0].1["window_id"], 42);
             assert_eq!(calls[1].0, "focus_pane");
             assert_eq!(calls[1].1["session_id"], "resumed-quoted-pane");
@@ -11730,7 +11957,9 @@ async fn sidebar_activation_external_history_does_not_require_ownership_verifica
             assert_eq!(calls[0].1["window_id"], 42);
             assert_eq!(calls[0].1["native_agent_provider_id"], "copilot");
             assert_eq!(
-                calls[0].1["commandline"],
+                crate::coordinator::resume_envelope_arguments(
+                    calls[0].1["commandline"].as_str().unwrap()
+                )[5],
                 crate::coordinator::build_delegate_resume_commandline(
                     &crate::coordinator::default_delegate_agent_runtimes(
                         Some("copilot"),
@@ -12474,7 +12703,20 @@ async fn sidebar_antigravity_resume_preserves_interface_and_source() {
                 assert_eq!(response.action, "resume_cli");
                 let calls = mock.calls();
                 assert_eq!(calls[0].0, "create_tab");
-                let command = calls[0].1["commandline"].as_str().unwrap();
+                let envelope = crate::coordinator::resume_envelope_arguments(
+                    calls[0].1["commandline"].as_str().unwrap(),
+                );
+                assert_eq!(
+                    envelope[1],
+                    if location.is_wsl() {
+                        "wsl:Ubuntu:antigravity"
+                    } else {
+                        "host:antigravity"
+                    }
+                );
+                assert_eq!(envelope[2], "antigravity-history");
+                assert_eq!(envelope[3], cwd);
+                let command = &envelope[5];
                 if location.is_wsl() {
                     assert!(
                         command.contains("exec 'agy' '--conversation' 'antigravity-history'"),

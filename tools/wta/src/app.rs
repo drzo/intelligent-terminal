@@ -1682,44 +1682,6 @@ fn helper_persisted_resume_commandline(
     }
 }
 
-fn helper_resume_launch_envelope(
-    provider: &str,
-    session_id: &str,
-    location: &crate::agent_sessions::SessionLocation,
-    cwd: &str,
-    universe: Option<&str>,
-    commandline: &str,
-) -> String {
-    let backend = match location {
-        crate::agent_sessions::SessionLocation::Wsl { distro } => {
-            format!("wsl:{distro}:{provider}")
-        }
-        _ => format!("host:{provider}"),
-    };
-    let mut envelope = String::from("intellterm-resume-v1");
-    for value in [
-        backend.as_str(),
-        session_id,
-        cwd,
-        universe.unwrap_or_default(),
-        commandline,
-    ] {
-        let quoted = crate::coordinator::quote_windows_commandline_arg(value);
-        envelope.push(' ');
-        if quoted.starts_with('"') {
-            envelope.push_str(&quoted);
-        } else {
-            envelope.push('"');
-            envelope.push_str(&quoted);
-            // The canonical envelope always quotes, including bare paths
-            // whose trailing backslashes must not escape the closing quote.
-            envelope.push_str(&"\\".repeat(value.len() - value.trim_end_matches('\\').len()));
-            envelope.push('"');
-        }
-    }
-    envelope
-}
-
 /// Reverse of `CliSource::from_agent_id` — yields the lowercase CLI id
 /// used by the command-synthesis template and dispatch routing.
 /// Returns `None` for `CliSource::Unknown(_)` so each call-site retains
@@ -3718,7 +3680,7 @@ impl App {
         // Prebind the selected identity before bootstrap hooks can arrive.
         // The callback remains an idempotent confirmation, not launch authority.
         let persisted_commandline = helper_persisted_resume_commandline(&s.location, &commandline);
-        let launch_commandline = helper_resume_launch_envelope(
+        let launch_commandline = crate::coordinator::qualified_resume_launch_envelope(
             cli_id,
             &key,
             &s.location,

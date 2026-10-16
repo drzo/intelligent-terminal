@@ -65,6 +65,29 @@ actual XAML focus immediately after layout, and a later read-only dispatcher
 observation. This is diagnostic instrumentation, not an additional focus retry
 or proof that the focused-collapse regression is fixed.
 
+### Native resume wire bridge
+
+The deterministic Rust test
+`sidebar_resume_launch_envelope_precedes_bootstrap_and_completion` captures the
+actual master `create_tab` requests for a resolved executable and supported
+PowerShell shim. Run it with `--nocapture`; each
+`MASTER_RESUME_REQUEST_exe=` / `MASTER_RESUME_REQUEST_cmd=` line contains JSON.
+Decode that JSON and supply its exact `commandline` string as the optional TAEF
+`/p:MasterResumeCommandline=<commandline>` argument when selecting
+`/name:*TabTests::PaneFreshResumePrebindsBeforeBootstrapAndCallback*`.
+Pass the complete parameter as one native-process argument, without manually
+re-escaping the decoded command.
+
+The native regression retains its default Host/WSL cases and adds the supplied
+wire in both bootstrap/completion orders, asserting trusted command, selected
+scope and persisted resume retention. Malformed or non-envelope supplied data
+fails; it does not fall back. The log explicitly reports whether the external
+wire case ran. Run separately for each captured command. The test injects
+`TestConnection` and never executes those fixture commands, whose directories
+are already cleaned up by Rust. A default native pass without that parameter,
+or a Rust mock pass alone, is not cross-boundary native proof. UAP startup must
+also succeed before any native assertion can be credited.
+
 ### Held-hook native resume fixture
 
 The `Native history resume publishes Idle before hooks` case requires an empty,

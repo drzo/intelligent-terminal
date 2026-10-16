@@ -8533,9 +8533,17 @@ async fn execute_session_activation(
                 Ok(commandline) => commandline,
                 Err(error) => return failed("resume_cli", error),
             };
+            let launch_commandline = crate::coordinator::qualified_resume_launch_envelope(
+                &provider_id,
+                row.session_id.0.as_ref(),
+                &row.location,
+                &row.cwd.to_string_lossy(),
+                row.session_universe.as_deref(),
+                &commandline,
+            );
             let mut params = serde_json::json!({
                 "window_id": parsed.window_id,
-                "commandline": commandline,
+                "commandline": launch_commandline,
                 "background": true,
                 "native_agent_provider_id": provider_id,
             });

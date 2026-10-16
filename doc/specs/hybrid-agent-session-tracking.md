@@ -236,8 +236,15 @@ prove the new CLI's store. The helper also rejects ambiguous same-SID snapshot r
 from different universes.
 
 **Native History resume metadata.** Explicit Sidebar activation keeps the
-selected qualified session identity and binds the pane returned by tab
-creation. Historical/Ended becomes Idle; newer live activity is retained.
+selected qualified session identity. Both the master Sidebar path and helper
+picker send the canonical qualified launch envelope before the CLI starts, so
+Terminal prebinds the actual new connection even if a bootstrap hook precedes
+the creation reply. The envelope retains the exact resolved executable,
+supported PowerShell shim wrapper, or WSL command; the completion binding still
+carries that underlying command, not a nested envelope. The stale-event guard
+continues to reject attempts to replace another selected identity.
+After tab creation the master confirms the returned pane binding.
+Historical/Ended becomes Idle; newer live activity is retained.
 After binding, the master invalidates session lists and Terminal's status
 projection through the existing structural notification, without waiting for
 a hook. An exact matching binding established by an earlier hook is successful

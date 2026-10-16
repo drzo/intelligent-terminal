@@ -4489,22 +4489,48 @@ namespace TerminalAppLocalTests
     {
         namespace Restore = ::Microsoft::Terminal::AgentPaneRestore;
         using State = winrt::Microsoft::Terminal::TerminalConnection::ConnectionState;
+        std::vector<Restore::ResumeTarget> targets;
+        for (const auto wsl : { false, true })
+        {
+            targets.push_back({ L"copilot", L"selected-session", wsl ? L"wsl:Ubuntu:copilot" : L"host:copilot", wsl ? L"/home/u/project" : L"C:\\selected project", L"selected-home", wsl ? L"wsl.exe -d Ubuntu --exec copilot --resume selected-session" : L"cmd /d /s /c \"copilot --resume selected-session\"" });
+        }
+        String masterCommand;
+        const auto hasMasterCommand = SUCCEEDED(RuntimeParameters::TryGetValue(L"MasterResumeCommandline", masterCommand));
+        if (hasMasterCommand)
+        {
+            VERIFY_IS_TRUE(masterCommand.GetLength() > 0, L"Provided master wire must not be empty.");
+            if (masterCommand.GetLength() == 0)
+            {
+                return;
+            }
+            const auto parsed = Restore::ParseResumeCommandline(masterCommand.GetBuffer());
+            VERIFY_IS_FALSE(parsed.agent.empty(), L"Provided master wire must be a valid canonical resume envelope.");
+            VERIFY_IS_TRUE(Restore::IsPersistedResumeCommandline(masterCommand.GetBuffer()));
+            if (parsed.agent.empty() || !Restore::IsPersistedResumeCommandline(masterCommand.GetBuffer()))
+            {
+                return;
+            }
+            targets.push_back(parsed);
+        }
         const auto page = _paneMetadataSetup();
         TestOnUIThread([&]() {
-            for (const auto wsl : { false, true })
+            for (size_t index = 0; index < targets.size(); ++index)
             {
+                const auto& target = targets[index];
+                const auto parsedBackend = ::Microsoft::Terminal::Settings::Model::AgentPaneBackend::Parse(target.backend);
+                VERIFY_IS_TRUE(parsedBackend.has_value());
+                const auto wsl = parsedBackend->source == ::Microsoft::Terminal::Settings::Model::AgentPaneBackendSource::Wsl;
                 for (const auto callbackFirst : { false, true })
                 {
                     const auto id = ::Microsoft::Console::Utils::CreateGuid();
                     const auto connection = winrt::make_self<TestConnection>(id, State::Connected);
-                    const std::wstring backend{ wsl ? L"wsl:Ubuntu:copilot" : L"host:copilot" };
-                    const std::wstring command{ wsl ? L"wsl.exe -d Ubuntu --exec copilot --resume selected-session" :
-                                                      L"cmd /d /s /c \"copilot --resume selected-session\"" };
-                    const std::wstring cwd{ wsl ? L"/home/u/project" : L"C:\\selected project" };
+                    const auto& backend = target.backend;
+                    const auto& command = target.commandline;
+                    const auto& cwd = target.cwd;
                     NewTerminalArgs args;
                     VERIFY_ARE_EQUAL(winrt::guid{}, args.SessionId());
-                    args.Commandline(winrt::hstring{ Restore::BuildPersistedResumeCommandline(
-                        { L"copilot", L"selected-session", backend, cwd, L"selected-home", command }) });
+                    args.Commandline(index >= 2 ? winrt::hstring{ masterCommand.GetBuffer() } :
+                                                  winrt::hstring{ Restore::BuildPersistedResumeCommandline(target) });
                     const auto pane = page->_MakeTerminalPane(args, nullptr, *connection);
                     VERIFY_IS_NOT_NULL(pane);
                     VERIFY_ARE_EQUAL(winrt::guid{}, args.SessionId());
@@ -4513,10 +4539,11 @@ namespace TerminalAppLocalTests
                     const auto verify = [&]() {
                         const auto metadata = _paneMetadata(page->_manager, id);
                         VERIFY_IS_TRUE(metadata.has_value());
-                        VERIFY_ARE_EQUAL(winrt::hstring{ L"selected-session" }, metadata->session.sessionId);
+                        VERIFY_ARE_EQUAL(winrt::hstring{ target.agent }, metadata->session.agent);
+                        VERIFY_ARE_EQUAL(winrt::hstring{ target.sessionId }, metadata->session.sessionId);
                         VERIFY_ARE_EQUAL(winrt::hstring{ backend }, metadata->session.backend);
                         VERIFY_ARE_EQUAL(winrt::hstring{ cwd }, metadata->session.cwd);
-                        VERIFY_ARE_EQUAL(winrt::hstring{ L"selected-home" }, metadata->universe);
+                        VERIFY_ARE_EQUAL(winrt::hstring{ target.universe }, metadata->universe);
                         VERIFY_ARE_EQUAL(winrt::hstring{ command }, metadata->session.resumeCommandline);
                         VERIFY_IS_TRUE(metadata->resumeCommandlineTrusted);
                         VERIFY_IS_TRUE(metadata->awaitingSessionStart);
@@ -4525,13 +4552,13 @@ namespace TerminalAppLocalTests
                     Json::Value callback;
                     auto& binding = callback["params"];
                     binding["pane_id"] = _formatPaneId(id);
-                    binding["agent"] = "copilot";
-                    binding["agent_session_id"] = "selected-session";
+                    binding["agent"] = winrt::to_string(winrt::hstring{ target.agent });
+                    binding["agent_session_id"] = winrt::to_string(winrt::hstring{ target.sessionId });
                     binding["agent_source"] = wsl ? "wsl" : "host";
-                    binding["wsl_distro"] = wsl ? "Ubuntu" : "";
+                    binding["wsl_distro"] = winrt::to_string(winrt::hstring{ parsedBackend->wslDistro });
                     binding["agent_backend"] = winrt::to_string(winrt::hstring{ backend });
                     binding["cwd"] = winrt::to_string(winrt::hstring{ cwd });
-                    binding["session_universe"] = "selected-home";
+                    binding["session_universe"] = winrt::to_string(winrt::hstring{ target.universe });
                     binding["resume_commandline"] = winrt::to_string(winrt::hstring{ command });
                     const auto applyCallback = [&]() {
                         page->_manager.OnPaneAgentSessionChanged(winrt::to_hstring(Json::writeString(Json::StreamWriterBuilder{}, callback)));
@@ -4542,7 +4569,9 @@ namespace TerminalAppLocalTests
                         applyCallback();
                     }
                     const auto manager = winrt::get_self<winrt::TerminalApp::implementation::ContentManager>(page->_manager);
-                    manager->OnPaneAgentSessionChanged(_keepRunningHook(id, "agent.session.start", "bootstrap-session"), false);
+                    manager->OnPaneAgentSessionChanged(
+                        _keepRunningHook(id, "agent.session.start", target.sessionId == L"bootstrap-session" ? "different-bootstrap-session" : "bootstrap-session", winrt::to_string(winrt::hstring{ target.agent })),
+                        false);
                     verify();
                     if (!callbackFirst)
                     {
@@ -4555,11 +4584,14 @@ namespace TerminalAppLocalTests
                     VERIFY_ARE_EQUAL(command, saved.commandline);
                     VERIFY_ARE_EQUAL(backend, saved.backend);
                     VERIFY_ARE_EQUAL(cwd, saved.cwd);
-                    VERIFY_ARE_EQUAL(std::wstring{ L"selected-home" }, saved.universe);
+                    VERIFY_ARE_EQUAL(target.universe, saved.universe);
                     pane->Shutdown();
                 }
             }
         });
+        Log::Comment(hasMasterCommand ?
+                         L"Master-produced resume wire case ran in both bootstrap/completion orders." :
+                         L"No MasterResumeCommandline provided: master-produced wire case NOT RUN.");
     }
 
     void TabTests::PaneResumeBootstrapProtectionRespectsScope()
@@ -14434,26 +14466,32 @@ namespace TerminalAppLocalTests
         });
         TestOnUIThread([&]() {
             const auto selected = strip.SelectedItem();
-            const auto row = stripImpl->ItemsList().ContainerFromItem(strip.HistoryItems().GetAt(0)).as<ListViewItem>();
-            VERIFY_IS_TRUE(row.Focus(FocusState::Keyboard));
-            VERIFY_IS_TRUE(Input::FocusManager::GetFocusedElement(strip.XamlRoot()) == row);
             const auto heading = stripImpl->HistoryHeaderButton();
             const auto peer = Automation::Peers::FrameworkElementAutomationPeer::CreatePeerForElement(heading);
             const auto provider = peer.GetPattern(Automation::Peers::PatternInterface::ExpandCollapse)
                                       .as<Automation::Provider::IExpandCollapseProvider>();
-            provider.Collapse();
-            strip.UpdateLayout();
-            VERIFY_IS_TRUE(Input::FocusManager::GetFocusedElement(strip.XamlRoot()) == heading);
-            VERIFY_ARE_EQUAL(Visibility::Visible, heading.Visibility());
-            VERIFY_IS_TRUE(heading.ActualHeight() > 0);
-            VERIFY_IS_FALSE(heading.IsChecked().Value());
-            VERIFY_ARE_EQUAL(2u, stripImpl->ItemsList().Items().Size());
-            VERIFY_ARE_EQUAL(32u, strip.HistoryItems().Size());
-            VERIFY_IS_TRUE(strip.SelectedItem() == selected);
-            VERIFY_IS_TRUE(strip.SearchQuery().empty());
-            VERIFY_ARE_EQUAL(0u, activationRequests);
-
+            for (const auto focusHeading : { false, true })
+            {
+                provider.Expand();
+                strip.UpdateLayout();
+                const auto row = stripImpl->ItemsList().ContainerFromItem(strip.HistoryItems().GetAt(0)).as<ListViewItem>();
+                const Control target = focusHeading ? heading.as<Control>() : row.as<Control>();
+                VERIFY_IS_TRUE(target.Focus(FocusState::Keyboard));
+                VERIFY_IS_TRUE(Input::FocusManager::GetFocusedElement(strip.XamlRoot()) == target);
+                provider.Collapse();
+                strip.UpdateLayout();
+                VERIFY_IS_TRUE(Input::FocusManager::GetFocusedElement(strip.XamlRoot()) == heading);
+                VERIFY_ARE_EQUAL(Visibility::Visible, heading.Visibility());
+                VERIFY_IS_TRUE(heading.ActualHeight() > 0);
+                VERIFY_IS_FALSE(heading.IsChecked().Value());
+                VERIFY_ARE_EQUAL(2u, stripImpl->ItemsList().Items().Size());
+                VERIFY_ARE_EQUAL(32u, strip.HistoryItems().Size());
+                VERIFY_IS_TRUE(strip.SelectedItem() == selected);
+                VERIFY_IS_TRUE(strip.SearchQuery().empty());
+                VERIFY_ARE_EQUAL(0u, activationRequests);
+            }
             provider.Expand();
+            // Focus outside the owned history section must not be stolen.
             strip.SearchActive(true);
             const auto search = stripImpl->SearchTextBox();
             VERIFY_IS_TRUE(search.Focus(FocusState::Keyboard));

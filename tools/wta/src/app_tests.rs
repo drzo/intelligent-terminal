@@ -8,35 +8,13 @@ use super::*;
 use crate::agent_sessions::SessionLocation;
 use crate::app::tab_state::{collapsed_prompt_preview, PendingTerminalActionProposal};
 use crate::app_contracts::{PermOption, PlanEntry};
+use crate::coordinator::{qualified_resume_launch_envelope, resume_envelope_arguments};
 use serde_json::json;
 use std::sync::Mutex;
 
-fn resume_envelope_arguments(command: &str) -> Vec<String> {
-    let wide: Vec<u16> = command.encode_utf16().chain(Some(0)).collect();
-    let mut count = 0;
-    // The input is NUL terminated; Windows owns the returned allocation until
-    // LocalFree, and each of its count pointers addresses a terminated argument.
-    unsafe {
-        let args = windows_sys::Win32::UI::Shell::CommandLineToArgvW(wide.as_ptr(), &mut count);
-        assert!(!args.is_null());
-        let result = std::slice::from_raw_parts(args, count as usize)
-            .iter()
-            .map(|&arg| {
-                let mut len = 0;
-                while *arg.add(len) != 0 {
-                    len += 1;
-                }
-                String::from_utf16(std::slice::from_raw_parts(arg, len)).unwrap()
-            })
-            .collect();
-        windows_sys::Win32::Foundation::LocalFree(args.cast());
-        result
-    }
-}
-
 #[test]
 fn helper_resume_envelope_preserves_qualified_launch_contract() {
-    let bare_path = helper_resume_launch_envelope(
+    let bare_path = qualified_resume_launch_envelope(
         "copilot",
         "selected-session",
         &SessionLocation::Host,
@@ -59,7 +37,7 @@ fn helper_resume_envelope_preserves_qualified_launch_contract() {
             r#"wsl.exe -d Ubuntu --cd "/home/u/a b" -- bash -lc "copilot --resume selected-session""#,
         ),
     ] {
-        let envelope = helper_resume_launch_envelope(
+        let envelope = qualified_resume_launch_envelope(
             "copilot",
             "selected-session",
             &location,
