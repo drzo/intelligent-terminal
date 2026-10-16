@@ -253,6 +253,12 @@ pub(super) fn managed_entry(home: &Path) -> bool {
     managed_file(&support.join(OPENCODE_PLUGIN_JS)) || managed_file(&support.join("server.js"))
 }
 
+pub(super) fn managed_support(home: &Path) -> bool {
+    let support = opencode_support_dir(home);
+    opencode_manifest_is_managed(&support.join(OPENCODE_MANIFEST))
+        || managed_file(&support.join(BRIDGE))
+}
+
 pub(super) fn apply_compatibility(status: &mut CliStatus, home: Option<&Path>) {
     let detected = status.binary_path.as_deref().map(detect);
     let installed = home.and_then(installed_variant);
@@ -386,7 +392,7 @@ pub(super) fn copy_bundle(source: &Path, home: &Path, variant: ApiVariant) -> st
 }
 
 // Like prompt::write_atomic, stage beside the destination before replacing it.
-// Reserve the staging file so cleanup never removes a pre-existing foreign file.
+// Reserve the staging file so cleanup never removes a preexisting foreign file.
 fn replace_payload(
     path: &Path,
     bytes: &[u8],
@@ -422,12 +428,7 @@ fn copy_bundle_with_writer(
     let destination = opencode_plugins_dir(home);
     let support = opencode_support_dir(home);
     let root = destination.join(OPENCODE_PLUGIN_JS);
-    if support.exists()
-        && !opencode_manifest_is_managed(&support.join(OPENCODE_MANIFEST))
-        && !managed_file(&root)
-        && !managed_entry(home)
-        && !managed_file(&support.join(BRIDGE))
-    {
+    if support.exists() && !managed_support(home) && !managed_file(&root) && !managed_entry(home) {
         return Err(std::io::Error::new(
             std::io::ErrorKind::AlreadyExists,
             "OpenCode support directory is not managed by Intelligent Terminal",
@@ -726,6 +727,56 @@ mod tests {
                 assert!(!support.exists());
             }
         }
+    }
+
+    #[test]
+    fn bridge_only_partial_install_can_be_uninstalled() {
+        for variant in [ApiVariant::V1, ApiVariant::V2] {
+            let fixture = Fixture::new();
+            let home = &fixture.0;
+            let mut writes = 0;
+            assert!(
+                copy_bundle_with_writer(&source(), home, variant, |file, bytes| {
+                    writes += 1;
+                    if writes == 2 {
+                        interrupted_write(file, bytes)
+                    } else {
+                        file.write_all(bytes)
+                    }
+                })
+                .is_err()
+            );
+            let support = opencode_support_dir(home);
+            assert!(managed_file(&support.join(BRIDGE)));
+            assert!(!managed_entry(home));
+            assert!(!support.join(OPENCODE_MANIFEST).exists());
+            let removed = opencode_uninstall(Some(home));
+            assert!(removed.succeeded(), "{:?}", removed.messages);
+            assert!(!support.exists());
+        }
+    }
+
+    #[test]
+    fn bridge_only_uninstall_preserves_foreign_bridges_and_support_files() {
+        let fixture = Fixture::new();
+        let home = &fixture.0;
+        let support = opencode_support_dir(home);
+        fs::create_dir_all(&support).unwrap();
+        let bridge = support.join(BRIDGE);
+        fs::write(&bridge, "foreign bridge").unwrap();
+        assert!(!opencode_uninstall(Some(home)).succeeded());
+        assert_eq!(fs::read_to_string(&bridge).unwrap(), "foreign bridge");
+
+        let original = fs::read(source().join("shared").join(BRIDGE)).unwrap();
+        fs::write(&bridge, &original).unwrap();
+        let foreign = support.join("rpc.js");
+        fs::write(&foreign, "foreign dependency").unwrap();
+        assert!(!opencode_uninstall(Some(home)).succeeded());
+        assert_eq!(fs::read(&bridge).unwrap(), original);
+        assert_eq!(fs::read_to_string(&foreign).unwrap(), "foreign dependency");
+        fs::remove_file(&foreign).unwrap();
+        assert!(opencode_uninstall(Some(home)).succeeded());
+        assert!(!support.exists());
     }
 
     #[test]

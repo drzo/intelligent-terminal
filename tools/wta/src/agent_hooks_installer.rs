@@ -2892,7 +2892,7 @@ fn opencode_uninstall(home: Option<&Path>) -> CliUninstallResult {
         .map(|text| text.contains(OPENCODE_MANAGED_MARKER))
         .unwrap_or(false)
         || opencode::managed_entry(home);
-    let managed_support = opencode_manifest_is_managed(&support_dir.join(OPENCODE_MANIFEST));
+    let managed_support = opencode::managed_support(home);
     if (js.exists() && !managed_js) || (support_dir.exists() && !managed_support && !managed_js) {
         out.messages.push(format!(
             "refusing to remove non-managed OpenCode hook files under {}",
