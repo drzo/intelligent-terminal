@@ -462,6 +462,10 @@ pub struct NativeAgentObservation {
     pub agent_session_id: Option<String>,
     #[serde(default)]
     pub location: Option<SessionLocation>,
+    #[serde(default)]
+    pub pane_created_at_ms: Option<u64>,
+    #[serde(default)]
+    pub pane_creation_sequence: Option<u64>,
     #[serde(flatten)]
     pub event: NativeObservationKind,
 }
@@ -488,6 +492,15 @@ pub struct NativePaneObservation {
     pub location: Option<SessionLocation>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cwd: Option<PathBuf>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pane_created_at_ms: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pane_creation_sequence: Option<u64>,
+    /// Advisory list correlation only; never a live binding or routing identity.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub inferred_agent_session_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub inferred_history_key: Option<HistoryRowKey>,
     pub status: AgentStatus,
     pub last_activity_at_ms: u64,
 }
@@ -495,6 +508,12 @@ pub struct NativePaneObservation {
 struct NativePaneState {
     observation: NativePaneObservation,
     bound_identity: Option<SessionIdentity>,
+    inference_blocked: bool,
+}
+
+struct NativeListingEvidence {
+    first_observed_at_ms: u64,
+    provider_activity_at_ms: Option<u64>,
 }
 
 #[derive(Debug, Clone, serde::Deserialize)]
@@ -1657,6 +1676,15 @@ pub trait SessionRegistry: Send + Sync {
         false
     }
 
+    async fn refine_native_launch_source(
+        &self,
+        _pane: &str,
+        _provider: &str,
+        _location: SessionLocation,
+    ) -> bool {
+        false
+    }
+
     async fn register_native_born_binding(
         &self,
         _identity: &SessionIdentity,
@@ -1670,6 +1698,21 @@ pub trait SessionRegistry: Send + Sync {
 
     async fn native_pane_observations(&self) -> Vec<NativePaneObservation> {
         Vec::new()
+    }
+
+    /// Successful SDK list page, before inserting its historical rows. Partial
+    /// pages retain first-observation evidence but can never infer a binding.
+    async fn enrich_native_from_listing(
+        &self,
+        _provider: &str,
+        _location: &SessionLocation,
+        _rows: &[SessionInfo],
+        _previously_listed: &HashSet<String>,
+        _started_at_ms: u64,
+        _completed_at_ms: u64,
+        _listing_complete: bool,
+    ) -> bool {
+        false
     }
 
     /// Insert-or-replace the row for `info.session_id`. Idempotent — calling
@@ -1842,6 +1885,9 @@ struct RegistryState {
     native_panes: HashMap<String, NativePaneState>,
     native_retired_epochs: HashMap<uuid::Uuid, u64>,
     next_cwd_revision: u64,
+    known_raw_ids: HashSet<String>,
+    native_listing_completed_at: HashMap<(String, SessionLocation), u64>,
+    native_listing_evidence: HashMap<HistoryRowKey, NativeListingEvidence>,
 }
 
 #[derive(Default)]
@@ -1926,6 +1972,201 @@ pub(crate) fn title_is_displayable(cli: Option<&CliSource>, title: &str) -> bool
 
 #[async_trait::async_trait]
 impl SessionRegistry for InMemoryRegistry {
+    async fn refine_native_launch_source(
+        &self,
+        pane: &str,
+        provider: &str,
+        location: SessionLocation,
+    ) -> bool {
+        if !location.is_actionable() {
+            return false;
+        }
+        let mut state = self.inner.lock().await;
+        let Some(native) = state.native_panes.get_mut(&pane_key(pane)) else {
+            return false;
+        };
+        if native.observation.provider_id != provider
+            || native.observation.agent_session_id.is_some()
+            || native.bound_identity.is_some()
+            || native
+                .observation
+                .location
+                .as_ref()
+                .is_some_and(SessionLocation::is_actionable)
+        {
+            return false;
+        }
+        native.observation.location = Some(location);
+        true
+    }
+
+    async fn enrich_native_from_listing(
+        &self,
+        provider: &str,
+        location: &SessionLocation,
+        rows: &[SessionInfo],
+        previously_listed: &HashSet<String>,
+        started_at_ms: u64,
+        completed_at_ms: u64,
+        listing_complete: bool,
+    ) -> bool {
+        // Five minutes is a launch-correlation window, NOT the discovery cadence.
+        // SDK updated_at is activity, not birth: even a unique match stays advisory.
+        const STARTUP_WINDOW_MS: u64 = 5 * 60 * 1000;
+        let mut state = self.inner.lock().await;
+        let scope = (provider.to_ascii_lowercase(), location.clone());
+        if !location.is_actionable()
+            || completed_at_ms < started_at_ms
+            || state
+                .native_listing_completed_at
+                .get(&scope)
+                .is_some_and(|last| started_at_ms <= *last)
+        {
+            return false;
+        }
+        state
+            .native_listing_completed_at
+            .insert(scope.clone(), completed_at_ms);
+        state.native_listing_evidence.retain(|_, evidence| {
+            completed_at_ms.saturating_sub(evidence.first_observed_at_ms) <= STARTUP_WINDOW_MS
+        });
+        let mut panes: Vec<_> = state
+            .native_panes
+            .iter()
+            .filter_map(|(id, pane)| {
+                let row = &pane.observation;
+                let birth = row.pane_created_at_ms?;
+                let sequence = row.pane_creation_sequence?;
+                (row.provider_id == scope.0
+                    && row.location.as_ref() == Some(location)
+                    && row.agent_session_id.is_none()
+                    && pane.bound_identity.is_none()
+                    && row.inferred_agent_session_id.is_none()
+                    && !pane.inference_blocked
+                    && birth <= started_at_ms
+                    && completed_at_ms.saturating_sub(birth) <= STARTUP_WINDOW_MS)
+                    .then(|| (birth, sequence, id.clone()))
+            })
+            .collect();
+        panes.sort();
+        let first_birth = panes.first().map(|p| p.0);
+        let mut candidates = Vec::new();
+        let mut ambiguous = false;
+        for row in rows {
+            let id = row.session_id.to_string();
+            let Some(key) = row.history_row_key() else {
+                ambiguous |= !state.known_raw_ids.contains(&id);
+                continue;
+            };
+            if key.provider_id != scope.0
+                || key.location != *location
+                || key.session_universe.is_some()
+            {
+                ambiguous = true;
+                continue;
+            }
+            if !state.native_listing_evidence.contains_key(&key) {
+                if previously_listed.contains(&id)
+                    || state.known_raw_ids.contains(&id)
+                    || panes.is_empty()
+                {
+                    continue;
+                }
+                state.native_listing_evidence.insert(
+                    key.clone(),
+                    NativeListingEvidence {
+                        first_observed_at_ms: completed_at_ms,
+                        provider_activity_at_ms: row.last_activity_at_ms,
+                    },
+                );
+            }
+            let evidence = &state.native_listing_evidence[&key];
+            if first_birth.is_none_or(|birth| evidence.first_observed_at_ms < birth) {
+                continue;
+            }
+            let Some(activity) = evidence.provider_activity_at_ms else {
+                ambiguous = true;
+                continue;
+            };
+            if activity == 0 {
+                ambiguous = true;
+                continue;
+            }
+            if first_birth.is_none_or(|birth| activity < birth) {
+                continue;
+            }
+            if activity > evidence.first_observed_at_ms {
+                ambiguous = true;
+                continue;
+            }
+            if row.origin == Some(SessionOrigin::AgentPane)
+                || row.pane_session_id.is_some()
+                || state.native_panes.values().any(|pane| {
+                    pane.observation.inferred_agent_session_id.as_deref() == Some(&id)
+                        || pane.observation.agent_session_id.as_deref() == Some(&id)
+                })
+                || rows
+                    .iter()
+                    .filter(|other| other.session_id == row.session_id)
+                    .count()
+                    != 1
+                || state
+                    .identities_by_raw
+                    .get(&row.session_id)
+                    .is_some_and(|identities| {
+                        identities
+                            .iter()
+                            .any(|identity| identity.history_key.as_ref() != Some(&key))
+                    })
+            {
+                ambiguous = true;
+                continue;
+            }
+            candidates.push((activity, key));
+        }
+        // Remember every raw ID, including rejected/ambiguous candidates. A later
+        // update (or a provider/backend collision) is never evidence of a new ID.
+        state
+            .known_raw_ids
+            .extend(rows.iter().map(|row| row.session_id.to_string()));
+        if !listing_complete || panes.is_empty() {
+            return false;
+        }
+        candidates.sort_by_key(|(activity, _)| *activity);
+        if ambiguous
+            || candidates.len() > panes.len()
+            || candidates.windows(2).any(|pair| pair[0].0 == pair[1].0)
+            || panes
+                .windows(2)
+                .any(|pair| pair[0].0 == pair[1].0 && pair[0].1 == pair[1].1)
+            || panes
+                .iter()
+                .zip(&candidates)
+                .any(|((birth, _, _), (activity, _))| {
+                    activity < birth || activity - birth > STARTUP_WINDOW_MS
+                })
+        {
+            for (_, _, pane) in &panes {
+                if let Some(native) = state.native_panes.get_mut(pane) {
+                    native.inference_blocked = true;
+                }
+            }
+            return false;
+        }
+        // Fewer rows are a staggered launch, not proof of ambiguity. Keep the
+        // immutable first-list evidence for the next existing discovery result.
+        if candidates.len() < panes.len() {
+            return false;
+        }
+        for ((_, _, pane), (_, key)) in panes.into_iter().zip(candidates) {
+            if let Some(native) = state.native_panes.get_mut(&pane) {
+                native.observation.inferred_agent_session_id = Some(key.session_id.clone());
+                native.observation.inferred_history_key = Some(key);
+            }
+        }
+        true
+    }
+
     async fn register_native_born_binding(
         &self,
         identity: &SessionIdentity,
@@ -2006,6 +2247,8 @@ impl SessionRegistry for InMemoryRegistry {
                 // but never attribute the old owner's activity to its successor.
                 native.bound_identity = Some(identity.clone());
                 native.observation.agent_session_id = Some(identity.session_id.to_string());
+                native.observation.inferred_agent_session_id = None;
+                native.observation.inferred_history_key = None;
                 native.observation.provider_id = key.provider_id.clone();
                 native.observation.location = Some(key.location.clone());
                 native.observation.status = row.status.unwrap_or(AgentStatus::Idle);
@@ -2026,6 +2269,8 @@ impl SessionRegistry for InMemoryRegistry {
         });
         if let Some(native) = state.native_panes.get_mut(&pane).filter(|_| bind_native) {
             native.bound_identity = Some(identity.clone());
+            native.observation.inferred_agent_session_id = None;
+            native.observation.inferred_history_key = None;
         }
         created || revived || assigned || confirmed || bind_native
     }
@@ -2521,8 +2766,16 @@ fn apply_native_observation_locked(
             || old.observation.provider_id != provider
             || old.observation.window_id != event.window_id
             || old.observation.tab_id != event.tab_id
-            || old.observation.agent_session_id != event.agent_session_id
-            || old.observation.location != event.location
+            || event
+                .agent_session_id
+                .as_ref()
+                .is_some_and(|id| old.observation.agent_session_id.as_ref() != Some(id))
+            || event.location.as_ref().is_some_and(|location| {
+                old.observation
+                    .location
+                    .as_ref()
+                    .is_some_and(|old| old != location)
+            })
     }) {
         return false;
     }
@@ -2554,9 +2807,23 @@ fn apply_native_observation_locked(
         window_id: event.window_id,
         tab_id: event.tab_id,
         mode_epoch: event.mode_epoch,
-        agent_session_id: event.agent_session_id,
-        location: event.location,
         cwd: None,
+        agent_session_id: event.agent_session_id.or_else(|| {
+            (!reset)
+                .then(|| old.and_then(|old| old.observation.agent_session_id.clone()))
+                .flatten()
+        }),
+        location: event
+            .location
+            .or_else(|| old.and_then(|old| old.observation.location.clone())),
+        pane_created_at_ms: old
+            .and_then(|old| old.observation.pane_created_at_ms)
+            .or(event.pane_created_at_ms),
+        pane_creation_sequence: old
+            .and_then(|old| old.observation.pane_creation_sequence)
+            .or(event.pane_creation_sequence),
+        inferred_agent_session_id: None,
+        inferred_history_key: None,
         status: status.clone(),
         last_activity_at_ms: now_ms(),
     };
@@ -2595,7 +2862,8 @@ fn apply_native_observation_locked(
         && old.is_some_and(|old| {
             old.observation.provider_id == observation.provider_id
                 && old.observation.agent_session_id == observation.agent_session_id
-                && old.observation.location == observation.location
+                && (old.observation.location == observation.location
+                    || old.observation.location.is_none())
                 && old.bound_identity == bound_identity
         });
     if continuation {
@@ -2611,6 +2879,15 @@ fn apply_native_observation_locked(
                 .unwrap_or(old.observation.last_activity_at_ms);
         }
     }
+    if !reset || continuation {
+        if let Some(old) = old {
+            observation.inferred_agent_session_id =
+                old.observation.inferred_agent_session_id.clone();
+            observation.inferred_history_key = old.observation.inferred_history_key.clone();
+        }
+    }
+    let inference_blocked =
+        (!reset || continuation) && old.is_some_and(|old| old.inference_blocked);
     // Binding an unbound history row requires Terminal's exact resume identity
     // and backend. A provider-only new launch must never guess a history row.
     if reset
@@ -2650,6 +2927,8 @@ fn apply_native_observation_locked(
         }
     }
     if let Some(identity) = bound_identity.as_ref() {
+        observation.inferred_agent_session_id = None;
+        observation.inferred_history_key = None;
         if removed {
             end_entry(state, identity, observation.last_activity_at_ms);
         } else if let Some(row) = state
@@ -2681,6 +2960,7 @@ fn apply_native_observation_locked(
             NativePaneState {
                 observation,
                 bound_identity,
+                inference_blocked,
             },
         );
     } else {
@@ -2725,6 +3005,7 @@ fn active_source_pane_session(info: &SessionInfo) -> bool {
 
 fn upsert_locked(state: &mut RegistryState, mut info: SessionInfo) {
     info.cwd_evidence.revision = advance_cwd_revision(state);
+    state.known_raw_ids.insert(info.session_id.to_string());
     let identity = SessionIdentity::from_info(&info);
     if let Some(old) = state.sessions.get(&identity) {
         if let Some(native) = old
@@ -2857,6 +3138,14 @@ fn assign_resume_pane_identity_locked(
     state
         .active_by_pane
         .insert(pane_session_id.clone(), identity.clone());
+    for native in state.native_panes.values_mut() {
+        if native.observation.inferred_agent_session_id.as_deref()
+            == Some(identity.session_id.0.as_ref())
+        {
+            native.observation.inferred_agent_session_id = None;
+            native.observation.inferred_history_key = None;
+        }
+    }
     // Explicit resume can finish after OFF admission. Link only at this
     // authoritative born-bound assignment, never from a later history upsert.
     if let Some(native) = state.native_panes.get(&pane_session_id) {
@@ -2892,6 +3181,8 @@ fn assign_resume_pane_identity_locked(
             }
             if let Some(native) = state.native_panes.get_mut(&pane_session_id) {
                 native.bound_identity = Some(identity.clone());
+                native.observation.inferred_agent_session_id = None;
+                native.observation.inferred_history_key = None;
             }
         }
     }
@@ -3433,7 +3724,11 @@ fn apply_event_locked(
             }) {
                 return false;
             }
-            apply_event_locked(state, SessionEvent::SessionStopped { key, reason })
+            apply_event_locked(
+                state,
+                SessionEvent::SessionStopped { key, reason },
+                qualified_activity,
+            )
         }
         SessionEvent::SessionStopped { key, reason } => {
             let sid = acp::schema::v1::SessionId::new(key);
@@ -3638,6 +3933,23 @@ mod tests {
 
     const NATIVE_PANE: &str = "00112233-4455-6677-8899-aabbccddeeff";
 
+    #[tokio::test]
+    async fn native_birth_wire_snapshot_precedes_osc() {
+        let registry = InMemoryRegistry::new();
+        let event = native_event(
+            serde_json::json!({
+                "kind":"reset", "tracking_enabled":false,
+                "pane_created_at_ms":1000, "pane_creation_sequence":42
+            }),
+            1,
+        );
+        assert!(registry.apply_native_observation(event).await);
+        let value = serde_json::to_value(registry.native_pane_observations().await).unwrap();
+        assert_eq!(value[0]["pane_created_at_ms"], 1000);
+        assert_eq!(value[0]["pane_creation_sequence"], 42);
+        assert!(value[0].get("agent_session_id").is_none());
+    }
+
     fn native_event(kind: serde_json::Value, epoch: u64) -> NativeAgentObservation {
         let mut value = serde_json::json!({
             "pane_id": NATIVE_PANE, "provider_id": "copilot",
@@ -3648,6 +3960,453 @@ mod tests {
             .unwrap()
             .extend(kind.as_object().unwrap().clone());
         serde_json::from_value(value).unwrap()
+    }
+
+    async fn pending_native(registry: &InMemoryRegistry, pane: &str, birth: u64, sequence: u64) {
+        let mut event = native_event(
+            serde_json::json!({
+                "kind":"reset", "tracking_enabled":false, "location":"Host",
+                "pane_created_at_ms":birth, "pane_creation_sequence":sequence
+            }),
+            1,
+        );
+        event.pane_id = pane.into();
+        assert!(registry.apply_native_observation(event).await);
+    }
+
+    fn listed_native(id: &str, activity: u64) -> SessionInfo {
+        let mut row = SessionInfo::new(id.to_string().into(), PathBuf::from(r"C:\repo"));
+        row.provider_id = Some("copilot".into());
+        row.location = SessionLocation::Host;
+        row.last_activity_at_ms = Some(activity);
+        row.status = Some(AgentStatus::Historical);
+        row
+    }
+
+    async fn enrich_native(registry: &InMemoryRegistry, rows: &[SessionInfo]) -> bool {
+        registry
+            .enrich_native_from_listing(
+                "copilot",
+                &SessionLocation::Host,
+                rows,
+                &HashSet::new(),
+                2000,
+                3000,
+                true,
+            )
+            .await
+    }
+
+    async fn ingest_native_listing_page(
+        registry: &InMemoryRegistry,
+        rows: &[SessionInfo],
+        complete: bool,
+        start: u64,
+        end: u64,
+    ) {
+        registry
+            .enrich_native_from_listing(
+                "copilot",
+                &SessionLocation::Host,
+                rows,
+                &HashSet::new(),
+                start,
+                end,
+                complete,
+            )
+            .await;
+        for row in rows {
+            registry.upsert_if_absent(row.clone()).await;
+        }
+    }
+
+    #[tokio::test]
+    async fn native_list_cohort_combines_staggered_discovery_and_freezes_first_activity() {
+        let registry = InMemoryRegistry::new();
+        pending_native(&registry, NATIVE_PANE, 1000, 42).await;
+        let second = "00112233-4455-6677-8899-aabbccddee00";
+        pending_native(&registry, second, 1000, 43).await;
+        ingest_native_listing_page(&registry, &[listed_native("A", 1500)], true, 2000, 3000).await;
+        assert!(registry
+            .native_pane_observations()
+            .await
+            .iter()
+            .all(|row| row.inferred_agent_session_id.is_none()));
+        ingest_native_listing_page(
+            &registry,
+            &[listed_native("B", 1700), listed_native("A", 9000)],
+            true,
+            4000,
+            5000,
+        )
+        .await;
+        let rows = registry.native_pane_observations().await;
+        assert_eq!(
+            rows.iter()
+                .find(|row| row.pane_id == NATIVE_PANE)
+                .unwrap()
+                .inferred_agent_session_id
+                .as_deref(),
+            Some("A")
+        );
+        assert_eq!(
+            rows.iter()
+                .find(|row| row.pane_id == second)
+                .unwrap()
+                .inferred_agent_session_id
+                .as_deref(),
+            Some("B")
+        );
+    }
+
+    #[tokio::test]
+    async fn native_list_cohort_complete_ambiguity_is_permanent_for_admission() {
+        let registry = InMemoryRegistry::new();
+        pending_native(&registry, NATIVE_PANE, 1000, 42).await;
+        ingest_native_listing_page(
+            &registry,
+            &[listed_native("A", 1500), listed_native("B", 1700)],
+            true,
+            2000,
+            3000,
+        )
+        .await;
+        ingest_native_listing_page(
+            &registry,
+            &[
+                listed_native("A", 1500),
+                listed_native("B", 1700),
+                listed_native("C", 2500),
+            ],
+            true,
+            4000,
+            5000,
+        )
+        .await;
+        assert!(registry.native_pane_observations().await[0]
+            .inferred_agent_session_id
+            .is_none());
+    }
+
+    #[tokio::test]
+    async fn native_list_cohort_partial_evidence_retains_competitors_until_complete() {
+        let registry = InMemoryRegistry::new();
+        pending_native(&registry, NATIVE_PANE, 1000, 42).await;
+        ingest_native_listing_page(&registry, &[listed_native("A", 1500)], false, 2000, 3000).await;
+        assert!(registry.native_pane_observations().await[0]
+            .inferred_agent_session_id
+            .is_none());
+        ingest_native_listing_page(
+            &registry,
+            &[listed_native("A", 1500), listed_native("B", 1700)],
+            true,
+            4000,
+            5000,
+        )
+        .await;
+        assert!(registry.native_pane_observations().await[0]
+            .inferred_agent_session_id
+            .is_none());
+    }
+
+    #[tokio::test]
+    async fn native_list_inference_is_advisory_and_preserves_immutable_birth_and_progress() {
+        let registry = InMemoryRegistry::new();
+        pending_native(&registry, NATIVE_PANE, 1000, 42).await;
+        assert!(
+            registry
+                .apply_native_observation(native_event(
+                    serde_json::json!({"kind":"progress","progress_state":1}),
+                    1
+                ))
+                .await
+        );
+        assert!(enrich_native(&registry, &[listed_native("new", 1500)]).await);
+        let row = &registry.native_pane_observations().await[0];
+        assert_eq!(row.inferred_agent_session_id.as_deref(), Some("new"));
+        assert!(row.agent_session_id.is_none());
+        assert_eq!(row.status, AgentStatus::Working);
+        assert!(registry.snapshot().await.is_empty());
+        assert!(registry.inner.lock().await.active_by_pane.is_empty());
+        assert!(
+            registry
+                .apply_native_observation(native_event(
+                    serde_json::json!({
+                        "kind":"reset","tracking_enabled":false,"location":"Host",
+                        "pane_created_at_ms":9999,"pane_creation_sequence":999
+                    }),
+                    2
+                ))
+                .await
+        );
+        let row = &registry.native_pane_observations().await[0];
+        assert_eq!(
+            (row.pane_created_at_ms, row.pane_creation_sequence),
+            (Some(1000), Some(42))
+        );
+        assert_eq!(row.status, AgentStatus::Working);
+        assert_eq!(row.inferred_agent_session_id.as_deref(), Some("new"));
+        assert!(
+            !registry
+                .enrich_native_from_listing(
+                    "copilot",
+                    &SessionLocation::Host,
+                    &[listed_native("replacement", 3500)],
+                    &HashSet::new(),
+                    4000,
+                    5000,
+                    true,
+                )
+                .await
+        );
+        assert_eq!(
+            registry.native_pane_observations().await[0]
+                .inferred_agent_session_id
+                .as_deref(),
+            Some("new")
+        );
+    }
+
+    #[tokio::test]
+    async fn native_list_inference_orders_panes_and_results_not_input_order() {
+        let registry = InMemoryRegistry::new();
+        let second = "00112233-4455-6677-8899-aabbccddee00";
+        pending_native(&registry, second, 1000, 43).await;
+        pending_native(&registry, NATIVE_PANE, 1000, 42).await;
+        assert!(
+            enrich_native(
+                &registry,
+                &[listed_native("second", 1700), listed_native("first", 1500)]
+            )
+            .await
+        );
+        let rows = registry.native_pane_observations().await;
+        assert_eq!(
+            rows.iter()
+                .find(|row| row.pane_id == NATIVE_PANE)
+                .unwrap()
+                .inferred_agent_session_id
+                .as_deref(),
+            Some("first")
+        );
+        assert_eq!(
+            rows.iter()
+                .find(|row| row.pane_id == second)
+                .unwrap()
+                .inferred_agent_session_id
+                .as_deref(),
+            Some("second")
+        );
+    }
+
+    #[tokio::test]
+    async fn native_birth_late_source_metadata_preserves_osc_and_does_not_admit_shells() {
+        let registry = InMemoryRegistry::new();
+        let mut birth = native_event(
+            serde_json::json!({
+                "kind":"reset","tracking_enabled":false,
+                "pane_created_at_ms":1000,"pane_creation_sequence":42
+            }),
+            1,
+        );
+        assert!(registry.apply_native_observation(birth.clone()).await);
+        assert!(
+            registry
+                .apply_native_observation(native_event(
+                    serde_json::json!({"kind":"progress","progress_state":1}),
+                    1
+                ))
+                .await
+        );
+        birth.mode_epoch = 2;
+        birth.location = Some(SessionLocation::Host);
+        assert!(registry.apply_native_observation(birth).await);
+        assert_eq!(
+            registry.native_pane_observations().await[0].status,
+            AgentStatus::Working
+        );
+        assert!(
+            registry
+                .apply_native_observation(native_event(
+                    serde_json::json!({"kind":"bell","pane_created_at_ms":9999}),
+                    2
+                ))
+                .await
+        );
+        let row = &registry.native_pane_observations().await[0];
+        assert_eq!(row.location, Some(SessionLocation::Host));
+        assert_eq!(row.pane_created_at_ms, Some(1000));
+        assert_eq!(row.status, AgentStatus::Attention);
+        assert!(enrich_native(&registry, &[listed_native("new", 1500)]).await);
+        let manual = InMemoryRegistry::new();
+        assert!(
+            !manual
+                .apply_native_observation(native_event(
+                    serde_json::json!({"kind":"progress","progress_state":1,"location":"Host"}),
+                    1
+                ))
+                .await
+        );
+        assert!(manual.native_pane_observations().await.is_empty());
+    }
+
+    #[tokio::test]
+    async fn native_list_inference_rejects_ambiguity_backend_ownership_and_missing_metadata() {
+        for case in 0..13 {
+            let registry = InMemoryRegistry::new();
+            pending_native(&registry, NATIVE_PANE, 1000, 42).await;
+            let mut rows = vec![listed_native("new", 1500)];
+            match case {
+                0 => rows[0].provider_id = Some("claude".into()),
+                1 => {
+                    rows[0].location = SessionLocation::Wsl {
+                        distro: "Ubuntu".into(),
+                    }
+                }
+                2 => rows[0].session_universe = Some("other".into()),
+                3 => rows[0].pane_session_id = Some("another-pane".into()),
+                4 => rows[0].origin = Some(SessionOrigin::AgentPane),
+                5 => rows.push(listed_native("external", 1600)),
+                6 => rows[0].last_activity_at_ms = None,
+                7 => rows[0].last_activity_at_ms = Some(0),
+                8 => rows[0].last_activity_at_ms = Some(999),
+                9 => {
+                    let mut old = listed_native("new", 1);
+                    old.provider_id = Some("claude".into());
+                    registry.upsert(old).await;
+                }
+                10 => {
+                    registry.upsert(listed_native("new", 1)).await;
+                    registry.remove(&"new".into()).await;
+                }
+                11 => {
+                    registry
+                        .inner
+                        .lock()
+                        .await
+                        .native_panes
+                        .get_mut(NATIVE_PANE)
+                        .unwrap()
+                        .observation
+                        .location = None
+                }
+                12 => {
+                    registry
+                        .inner
+                        .lock()
+                        .await
+                        .native_panes
+                        .get_mut(NATIVE_PANE)
+                        .unwrap()
+                        .observation
+                        .pane_created_at_ms = None
+                }
+                _ => unreachable!(),
+            }
+            assert!(!enrich_native(&registry, &rows).await, "case {case}");
+            assert!(registry.native_pane_observations().await[0]
+                .inferred_agent_session_id
+                .is_none());
+        }
+        let registry = InMemoryRegistry::new();
+        pending_native(&registry, NATIVE_PANE, 1000, 42).await;
+        pending_native(&registry, "00112233-4455-6677-8899-aabbccddee00", 1000, 43).await;
+        assert!(
+            !enrich_native(
+                &registry,
+                &[listed_native("a", 1500), listed_native("b", 1500)]
+            )
+            .await
+        );
+    }
+
+    #[tokio::test]
+    async fn native_list_inference_rejects_known_delayed_and_out_of_order_discovery() {
+        for (started, completed, known) in [
+            (999, 3000, false),
+            (2000, 301001, false),
+            (2000, 3000, true),
+        ] {
+            let registry = InMemoryRegistry::new();
+            pending_native(&registry, NATIVE_PANE, 1000, 42).await;
+            let known = if known {
+                HashSet::from(["new".into()])
+            } else {
+                HashSet::new()
+            };
+            assert!(
+                !registry
+                    .enrich_native_from_listing(
+                        "copilot",
+                        &SessionLocation::Host,
+                        &[listed_native("new", 1500)],
+                        &known,
+                        started,
+                        completed,
+                        true,
+                    )
+                    .await
+            );
+        }
+        let registry = InMemoryRegistry::new();
+        pending_native(&registry, NATIVE_PANE, 1000, 42).await;
+        assert!(!enrich_native(&registry, &[]).await);
+        assert!(
+            !registry
+                .enrich_native_from_listing(
+                    "copilot",
+                    &SessionLocation::Host,
+                    &[listed_native("new", 1500)],
+                    &HashSet::new(),
+                    1999,
+                    2999,
+                    true,
+                )
+                .await
+        );
+    }
+
+    #[tokio::test]
+    async fn native_list_inference_clears_on_exact_resume_mode_change_and_removal() {
+        for kind in ["resume", "mode", "removed"] {
+            let registry = InMemoryRegistry::new();
+            pending_native(&registry, NATIVE_PANE, 1000, 42).await;
+            assert!(enrich_native(&registry, &[listed_native("guess", 1500)]).await);
+            if kind == "resume" {
+                let row = listed_native("exact", 1600);
+                let identity = SessionIdentity::from_info(&row);
+                registry.upsert(row).await;
+                assert!(
+                    registry
+                        .register_native_born_binding(
+                            &identity,
+                            NATIVE_PANE,
+                            &PathBuf::from(r"C:\repo"),
+                            Some(2),
+                            None
+                        )
+                        .await
+                );
+                let native = &registry.native_pane_observations().await[0];
+                assert_eq!(native.agent_session_id.as_deref(), Some("exact"));
+                assert!(native.inferred_agent_session_id.is_none());
+                assert_eq!(
+                    registry.inner.lock().await.active_by_pane.get(NATIVE_PANE),
+                    Some(&identity)
+                );
+            } else {
+                let event = if kind == "mode" {
+                    native_event(
+                        serde_json::json!({"kind":"reset","tracking_enabled":true}),
+                        2,
+                    )
+                } else {
+                    native_event(serde_json::json!({"kind":"removed"}), 1)
+                };
+                assert!(registry.apply_native_observation(event).await);
+                assert!(registry.native_pane_observations().await.is_empty());
+            }
+        }
     }
 
     async fn native_bound_registry() -> (InMemoryRegistry, SessionIdentity) {
@@ -3664,6 +4423,67 @@ mod tests {
         let identity = SessionIdentity::from_info(&row);
         registry.upsert(row).await;
         (registry, identity)
+    }
+
+    #[tokio::test]
+    async fn native_cwd_projection_requires_exact_active_qualified_binding() {
+        for (location, cwd, other_location) in [
+            (
+                SessionLocation::Host,
+                PathBuf::from(r"C:\canonical"),
+                SessionLocation::Wsl {
+                    distro: "Ubuntu".into(),
+                },
+            ),
+            (
+                SessionLocation::Wsl {
+                    distro: "Ubuntu".into(),
+                },
+                PathBuf::from("/home/canonical"),
+                SessionLocation::Host,
+            ),
+        ] {
+            let registry = InMemoryRegistry::new();
+            let mut row =
+                SessionInfo::new("same-id".into(), cwd.clone()).with_pane_session_id(NATIVE_PANE);
+            row.provider_id = Some("copilot".into());
+            row.location = location.clone();
+            row.status = Some(AgentStatus::Idle);
+            row.born_bound_pane = true;
+            registry.upsert(row).await;
+            let mut other = SessionInfo::new("same-id".into(), PathBuf::from(r"C:\wrong-backend"));
+            other.provider_id = Some("copilot".into());
+            other.location = other_location;
+            other.status = Some(AgentStatus::Historical);
+            registry.upsert(other).await;
+            let mut event = native_event(
+                serde_json::json!({
+                    "kind":"reset","tracking_enabled":false
+                }),
+                1,
+            );
+            event.agent_session_id = Some("same-id".into());
+            event.location = Some(location);
+            assert!(registry.apply_native_observation(event).await);
+            let native = &registry.native_pane_observations().await[0];
+            assert_eq!(native.cwd.as_ref(), Some(&cwd));
+            assert_eq!(native.agent_session_id.as_deref(), Some("same-id"));
+            assert!(registry.inner.lock().await.native_panes[NATIVE_PANE]
+                .observation
+                .cwd
+                .is_none());
+        }
+        let registry = InMemoryRegistry::new();
+        pending_native(&registry, NATIVE_PANE, 1000, 42).await;
+        assert!(registry.native_pane_observations().await[0].cwd.is_none());
+        assert!(enrich_native(&registry, &[listed_native("inferred", 1500)]).await);
+        let native = &registry.native_pane_observations().await[0];
+        assert_eq!(
+            native.inferred_agent_session_id.as_deref(),
+            Some("inferred")
+        );
+        assert!(native.agent_session_id.is_none());
+        assert!(native.cwd.is_none());
     }
 
     #[tokio::test]

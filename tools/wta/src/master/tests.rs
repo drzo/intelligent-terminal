@@ -1764,6 +1764,79 @@ fn make_state() -> Arc<MasterStateInner> {
     make_state_with_retirement_pending_timeout(SESSION_CLOSE_TIMEOUT)
 }
 
+#[tokio::test]
+async fn native_launch_source_dispatch_refines_only_admitted_unbound_pane_in_place() {
+    let _capture = crate::wt_protocol_events::capture_test_published_events();
+    let state = make_state();
+    let pane = "00112233-4455-6677-8899-aabbccddeeff";
+    let source = |provider: &str, location: serde_json::Value| {
+        serde_json::json!({
+            "type":"event","method":"agent_event",
+            "params":{"event":"agent.pane.launch.source","pane_id":pane,"agent":provider,"location":location}
+        })
+    };
+    handle_master_wt_event(&state, source("copilot", serde_json::json!("Host"))).await;
+    assert!(state.registry.native_pane_observations().await.is_empty());
+    let mut native = serde_json::json!({
+        "pane_id":pane,"provider_id":"copilot","window_id":0,"tab_id":"tab",
+        "mode_epoch":1,"pane_created_at_ms":1000,"pane_creation_sequence":42,
+        "kind":"reset","tracking_enabled":false
+    });
+    handle_master_wt_event(
+        &state,
+        serde_json::json!({"method":"native_agent_observation","params":native.clone()}),
+    )
+    .await;
+    native["kind"] = serde_json::json!("progress");
+    native["progress_state"] = serde_json::json!(1);
+    handle_master_wt_event(
+        &state,
+        serde_json::json!({"method":"native_agent_observation","params":native.clone()}),
+    )
+    .await;
+    let before = state.registry.native_pane_observations().await[0].clone();
+    handle_master_wt_event(&state, source("claude", serde_json::json!("Host"))).await;
+    handle_master_wt_event(&state, source("copilot", serde_json::json!("Unknown"))).await;
+    assert_eq!(state.registry.native_pane_observations().await[0], before);
+    handle_master_wt_event(&state, source("copilot", serde_json::json!("Host"))).await;
+    let mut expected = before;
+    expected.location = Some(crate::agent_sessions::SessionLocation::Host);
+    assert_eq!(state.registry.native_pane_observations().await[0], expected);
+    handle_master_wt_event(
+        &state,
+        source("copilot", serde_json::json!({"Wsl":{"distro":"Ubuntu"}})),
+    )
+    .await;
+    handle_master_wt_event(&state, source("copilot", serde_json::json!("Host"))).await;
+    assert_eq!(state.registry.native_pane_observations().await[0], expected);
+    native["kind"] = serde_json::json!("bell");
+    handle_master_wt_event(
+        &state,
+        serde_json::json!({"method":"native_agent_observation","params":native.clone()}),
+    )
+    .await;
+    let row = &state.registry.native_pane_observations().await[0];
+    assert_eq!(row.status, crate::agent_sessions::AgentStatus::Attention);
+    assert_eq!(row.location, expected.location);
+    assert_eq!(row.mode_epoch, 1);
+    native["kind"] = serde_json::json!("reset");
+    native["mode_epoch"] = serde_json::json!(2);
+    native["agent_session_id"] = serde_json::json!("explicit");
+    native["location"] = serde_json::json!("Unknown");
+    handle_master_wt_event(
+        &state,
+        serde_json::json!({"method":"native_agent_observation","params":native}),
+    )
+    .await;
+    handle_master_wt_event(&state, source("copilot", serde_json::json!("Host"))).await;
+    assert_eq!(
+        state.registry.native_pane_observations().await[0].location,
+        Some(crate::agent_sessions::SessionLocation::Unknown)
+    );
+    assert!(state.registry.snapshot().await.is_empty());
+    assert!(state.session_to_helper.lock().await.is_empty());
+}
+
 #[test]
 fn native_receiver_generation_requires_positive_decimal_u64() {
     assert_eq!(
@@ -14707,6 +14780,21 @@ fn row_refreshable_skips_only_definitively_cross_cli() {
 /// Mock agent CLI that answers `session/list` with a fixed id set, so the
 /// per-agent history seed can be exercised without a real CLI.
 fn client_connection_to_listing_agent(ids: Vec<String>) -> conn::ClientLink {
+    client_connection_to_listing_agent_with_activity(ids, None)
+}
+
+fn client_connection_to_listing_agent_with_activity(
+    ids: Vec<String>,
+    activity: Option<String>,
+) -> conn::ClientLink {
+    client_connection_to_listing_agent_with_cursor(ids, activity, None)
+}
+
+fn client_connection_to_listing_agent_with_cursor(
+    ids: Vec<String>,
+    activity: Option<String>,
+    next_cursor: Option<String>,
+) -> conn::ClientLink {
     let (client_pipe, agent_pipe) = tokio::io::duplex(8192);
     let (client_read, client_write) = tokio::io::split(client_pipe);
     let (agent_read, agent_write) = tokio::io::split(agent_pipe);
@@ -14719,17 +14807,23 @@ fn client_connection_to_listing_agent(ids: Vec<String>) -> conn::ClientLink {
                   responder: acp::Responder<acp::schema::v1::ListSessionsResponse>,
                   _cx| {
                 let ids = ids.clone();
+                let activity = activity.clone();
+                let next_cursor = next_cursor.clone();
                 async move {
                     let rows: Vec<acp::schema::v1::SessionInfo> = ids
                         .iter()
                         .map(|id| {
-                            acp::schema::v1::SessionInfo::new(
+                            let mut row = acp::schema::v1::SessionInfo::new(
                                 acp::schema::v1::SessionId::new(id.clone()),
                                 std::path::PathBuf::from("C:\\repo"),
-                            )
+                            );
+                            row.updated_at = activity.clone();
+                            row
                         })
                         .collect();
-                    responder.respond(acp::schema::v1::ListSessionsResponse::new(rows))
+                    let mut response = acp::schema::v1::ListSessionsResponse::new(rows);
+                    response.next_cursor = next_cursor;
+                    responder.respond(response)
                 }
             },
             acp::on_receive_request!(),
@@ -17200,6 +17294,67 @@ fn listing_agent_from(
 /// helper's per-CLI view filter then rendered an empty session list for every
 /// agent the user switched to until Terminal was restarted.
 #[tokio::test]
+async fn native_list_inference_runs_through_existing_complete_history_ingestion() {
+    assert_native_list_inference_ingestion(None).await;
+}
+
+#[tokio::test]
+async fn native_list_inference_rejects_cursor_bearing_partial_history_ingestion() {
+    assert_native_list_inference_ingestion(Some("second-page".into())).await;
+}
+
+async fn assert_native_list_inference_ingestion(next_cursor: Option<String>) {
+    use crate::agent_sessions::{AgentStatus, CliSource};
+    tokio::task::LocalSet::new()
+        .run_until(async {
+            let state = make_state();
+            let now = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_millis() as u64;
+            let pane = "00112233-4455-6677-8899-aabbccddeeff";
+            let event = serde_json::from_value(serde_json::json!({
+                "pane_id":pane, "provider_id":"copilot", "window_id":7, "tab_id":"native",
+                "mode_epoch":1, "kind":"reset", "tracking_enabled":false, "location":"Host",
+                "pane_created_at_ms":now-1000, "pane_creation_sequence":42
+            }))
+            .unwrap();
+            assert!(state.registry.apply_native_observation(event).await);
+            let progress = serde_json::from_value(serde_json::json!({
+                "pane_id":pane, "provider_id":"copilot", "window_id":7, "tab_id":"native",
+                "mode_epoch":1, "kind":"progress", "progress_state":1
+            }))
+            .unwrap();
+            assert!(state.registry.apply_native_observation(progress).await);
+            let activity =
+                time::OffsetDateTime::from_unix_timestamp_nanos(i128::from(now - 500) * 1_000_000)
+                    .unwrap()
+                    .format(&time::format_description::well_known::Rfc3339)
+                    .unwrap();
+            let agent = listing_agent(CliSource::Copilot, &[]);
+            agent.history_refresh.gate.lock().await.query =
+                history::HistoryQuery::mock(client_connection_to_listing_agent_with_cursor(
+                    vec!["fresh-native".into()],
+                    Some(activity),
+                    next_cursor.clone(),
+                ));
+            assert_eq!(seed_host_and_broadcast(&state, &agent).await, Some(1));
+            let native = &state.registry.native_pane_observations().await[0];
+            assert_eq!(
+                native.inferred_agent_session_id.as_deref(),
+                next_cursor.is_none().then_some("fresh-native")
+            );
+            assert!(native.agent_session_id.is_none());
+            assert_eq!(native.status, AgentStatus::Working);
+            let history = state.registry.lookup(&"fresh-native".into()).await.unwrap();
+            assert_eq!(history.status, Some(AgentStatus::Historical));
+            assert!(history.pane_session_id.is_none());
+            assert!(state.session_to_helper.lock().await.is_empty());
+        })
+        .await;
+}
+
+#[tokio::test]
 async fn each_pooled_agent_seeds_and_stamps_its_own_history() {
     use crate::agent_sessions::CliSource;
 
@@ -19227,10 +19382,7 @@ async fn master_opencode_unbind_preserves_live_server_session_and_rejects_stale_
     .await;
     handle_master_wt_event(
         &other,
-        server(
-            "agent.session.end",
-            serde_json::json!({"pane_owner":false}),
-        ),
+        server("agent.session.end", serde_json::json!({"pane_owner":false})),
     )
     .await;
     assert_eq!(

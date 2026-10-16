@@ -1909,6 +1909,7 @@ struct HistoryRefreshState {
     failures: u32,
     last_count: Option<usize>,
     query: history::HistoryQuery,
+    listing_started_at_ms: Option<u64>,
     owner: Option<AgentInstanceId>,
     cwd_baseline: Option<HashMap<crate::session_registry::SessionIdentity, (u64, Option<String>)>>,
 }
@@ -6945,6 +6946,14 @@ async fn host_session_list_raw(
         }
     }
     refresh.owner = Some(agent.instance_id);
+    if !refresh.query.in_flight() {
+        refresh.listing_started_at_ms = Some(
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_millis() as u64,
+        );
+    }
     refresh
         .query
         .poll(
@@ -7183,6 +7192,7 @@ async fn sync_host_history(
             return Err(error);
         }
     };
+    let listing_started_at_ms = refresh.listing_started_at_ms.unwrap_or(0);
     let prior_rows = if host_acp_cwd {
         refresh
             .cwd_baseline
@@ -7248,11 +7258,12 @@ async fn sync_host_history(
     // in-distro Copilot both stamp `Some(Copilot)` while listing disjoint
     // sessions, so a set-difference against the whole registry would have each
     // one delete the other's rows on every poll, forever.
-    let prunable_ids: std::collections::HashSet<String> = {
+    let (prunable_ids, previously_listed): (std::collections::HashSet<String>, _) = {
         let mut ever = agent.listed_ever.lock().await;
         let prunable = ever.difference(&listed_ids).cloned().collect();
+        let previous = ever.clone();
         ever.extend(listed_ids.iter().cloned());
-        prunable
+        (prunable, previous)
     };
 
     // Snapshot once; compute existing ids for the add pass and reconcile the
@@ -7263,7 +7274,27 @@ async fn sync_host_history(
         .map(crate::session_registry::SessionIdentity::from_info)
         .collect();
 
-    let mut changed = false;
+    let listing_completed_at_ms = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis() as u64;
+    let listed_rows: Vec<_> = rows
+        .iter()
+        .map(crate::session_registry::agent_session_to_session_info)
+        .collect();
+    // Partial pages retain first-list evidence but never establish uniqueness.
+    let mut changed = state
+        .registry
+        .enrich_native_from_listing(
+            &agent.resolved_agent_id,
+            &agent.source.session_location(),
+            &listed_rows,
+            &previously_listed,
+            listing_started_at_ms,
+            listing_completed_at_ms,
+            refresh.query.last_response_complete(),
+        )
+        .await;
 
     // Add: newly-listed sessions not already in the registry.
     for s in &rows {
@@ -11092,6 +11123,28 @@ async fn handle_master_wt_event(state: &Arc<MasterStateInner>, event_json: serde
         if let Err(error) = handle_session_born_bound(state, event, distro).await {
             tracing::warn!(target: "master_wt_event", %error, "ordered restored born-bound event failed");
             return;
+        }
+        return;
+    }
+
+    if method == "agent_event"
+        && params.get("event").and_then(serde_json::Value::as_str)
+            == Some("agent.pane.launch.source")
+    {
+        if let (Some(pane), Some(provider), Some(location)) = (
+            params.get("pane_id").and_then(serde_json::Value::as_str),
+            params.get("agent").and_then(serde_json::Value::as_str),
+            params
+                .get("location")
+                .and_then(|value| serde_json::from_value(value.clone()).ok()),
+        ) {
+            if state
+                .registry
+                .refine_native_launch_source(pane, provider, location)
+                .await
+            {
+                broadcast_session_status_change(state, None).await;
+            }
         }
         return;
     }

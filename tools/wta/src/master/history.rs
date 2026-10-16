@@ -301,6 +301,7 @@ pub(super) struct HistoryQuery {
     pending: Option<PendingList>,
     recycling: bool,
     wait: AdaptiveWait,
+    last_response_complete: bool,
 }
 
 impl HistoryQuery {
@@ -326,8 +327,13 @@ impl HistoryQuery {
         self.pending.is_some()
     }
 
+    pub fn last_response_complete(&self) -> bool {
+        self.last_response_complete
+    }
+
     pub async fn stop(&mut self) -> Result<()> {
         self.pending = None;
+        self.last_response_complete = false;
         self.recycling = true;
         if let Some(process) = &mut self.process {
             process.stop().await?;
@@ -445,6 +451,7 @@ impl HistoryQuery {
                     }
                 };
                 self.wait.success(elapsed);
+                self.last_response_complete = response.next_cursor.is_none();
                 Ok(Ok(response))
             }
             _ = tokio::time::sleep_until(checkpoint) => {

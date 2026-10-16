@@ -11161,6 +11161,49 @@ namespace winrt::TerminalApp::implementation
             return;
         }
 
+        if (params["event"].isString() && params["event"].asString() == "agent.pane.launch.source")
+        {
+            std::string location;
+            const auto& value = params["location"];
+            if (value.isString() && value.asString() == "Host")
+            {
+                location = "Host";
+            }
+            else if (value.isObject() && value["Wsl"].isObject() &&
+                     value["Wsl"]["distro"].isString() && !value["Wsl"]["distro"].asString().empty())
+            {
+                location = "wsl:" + value["Wsl"]["distro"].asString();
+            }
+            if (!params["agent"].isString() || location.empty())
+            {
+                _agentPaneLog("invalid native agent launch source");
+                return;
+            }
+            _SyncNativeAgentStatusMode();
+            const auto manager = winrt::get_self<ContentManager>(_manager);
+            for (const auto& tab : _RuntimeTabs())
+            {
+                if (const auto tabImpl = _GetTabImpl(tab))
+                {
+                    if (const auto root = tabImpl->GetRootPane())
+                    {
+                        if (const auto pane = root->FindPaneBySessionId(*paneSessionId))
+                        {
+                            if (const auto control = pane->GetTerminalControl();
+                                control && manager->RefineNativeAgentLaunchLocation(
+                                    control.ContentId(), winrt::to_hstring(params["agent"].asString()), location))
+                            {
+                                _PublishNativeAgentObservation(control, "reset");
+                                _RaiseProtocolEvent("agent_event", params);
+                            }
+                            return;
+                        }
+                    }
+                }
+            }
+            return;
+        }
+
         _SyncNativeAgentStatusMode();
         if (!winrt::get_self<ContentManager>(_manager)->AcceptsAgentSessionEvents(*paneSessionId))
         {
@@ -12194,6 +12237,8 @@ namespace winrt::TerminalApp::implementation
         params["window_id"] = Json::UInt64{ identity.windowId };
         params["tab_id"] = identity.tabId;
         params["mode_epoch"] = Json::UInt64{ identity.modeEpoch };
+        params["pane_created_at_ms"] = Json::UInt64{ identity.paneCreatedAtMs };
+        params["pane_creation_sequence"] = Json::UInt64{ identity.paneCreationSequence };
         if (receiverGeneration != 0)
         {
             params["receiver_generation"] = Json::UInt64{ receiverGeneration };
@@ -12201,11 +12246,11 @@ namespace winrt::TerminalApp::implementation
         if (!identity.agentSessionId.empty())
         {
             params["agent_session_id"] = identity.agentSessionId;
-            const auto location = _NativeAgentObservationLocation(identity.location);
-            if (!location.isNull())
-            {
-                params["location"] = location;
-            }
+        }
+        const auto observationLocation = _NativeAgentObservationLocation(identity.location);
+        if (!observationLocation.isNull())
+        {
+            params["location"] = observationLocation;
         }
         const auto enabled = _settings.GlobalSettings().EffectiveAgentSessionManagementEnabled();
         if (!previous || previous->modeEpoch != identity.modeEpoch || birthBeforeReset)
@@ -15980,7 +16025,8 @@ namespace winrt::TerminalApp::implementation
         // Do any initialization that needs to apply to _every_ TermControl we
         // create here.
         const auto content = winrt::get_self<ContentManager>(_manager)->CreateAgentCliCore(
-            *settings.DefaultSettings(), settings.UnfocusedSettings().try_as<IControlAppearance>(), connection, nativeAgentProviderId);
+            *settings.DefaultSettings(), settings.UnfocusedSettings().try_as<IControlAppearance>(), connection, nativeAgentProviderId,
+            !nativeAgentProviderId.empty() && settings.DefaultSettings()->UsesManagedAgentCommand() ? "Host" : "");
         const TermControl control{ content };
         return _SetupControl(control);
     }
