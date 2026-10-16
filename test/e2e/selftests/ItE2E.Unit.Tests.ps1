@@ -126,6 +126,10 @@ Describe 'JSON helpers' -Tag 'Unit' {
 }
 
 Describe 'Localized WTA text matching' -Tag 'Unit' {
+    BeforeEach {
+        InModuleScope ItE2E { $script:WtaLocaleRegexCache = @{} }
+    }
+
     It 'matches action labels without depending on the trailing Enter glyph encoding' {
         $pattern = Get-WtaLocalizedTextRegex -Key 'recommendations.button_open_tab'
 
@@ -141,6 +145,161 @@ Describe 'Localized WTA text matching' -Tag 'Unit' {
 
         $pattern | Should -Not -BeNullOrEmpty
         "/allow_all: Automatic approval is disabled by your organization's policy." | Should -Match $pattern
+    }
+
+    It 'matches rendered mirrored authentication guidance for <Key>' -TestCases @(
+        @{ Key = 'setup.auth.sign_in' }
+        @{ Key = 'setup.auth.select_method' }
+    ) {
+        param($Key)
+        $localePath = Join-Path $PSScriptRoot '..\..\..\tools\wta\locales\qps-plocm.yml'
+        $line = (Select-String -LiteralPath $localePath -Pattern ('^' + [regex]::Escape($Key) + ':')).Line
+        $scalar = [regex]::Match($line, ':\s*("(?:[^"\\]|\\.)*")').Groups[1].Value
+        $rendered = $scalar | ConvertFrom-Json
+        $pattern = Get-WtaLocalizedTextRegex -Key $Key
+
+        $pattern | Should -Not -BeNullOrEmpty
+        $rendered | Should -Match $pattern
+    }
+
+    It 'decodes the YAML <Escape> Unicode escape' -TestCases @(
+        @{ Escape = 'x'; Scalar = '"\x41"'; Rendered = 'A' }
+        @{ Escape = 'u'; Scalar = '"\u202eGuidance\u202c"'; Rendered = ([char]0x202e).ToString() + 'Guidance' + [char]0x202c }
+        @{ Escape = 'U'; Scalar = '"\U0001F680"'; Rendered = [char]::ConvertFromUtf32(0x1f680) }
+    ) {
+        param($Escape, $Scalar, $Rendered)
+        InModuleScope ItE2E -Parameters @{ Scalar = $Scalar; Rendered = $Rendered } {
+            $script:LocaleScalarMatch = [regex]::Match('unit.unicode: ' + $Scalar, '^unit\.unicode:\s*(\S.*)$')
+            Mock Select-String { [pscustomobject]@{ Matches = @($script:LocaleScalarMatch) } }
+
+            $pattern = Get-WtaLocalizedTextRegex -Key 'unit.unicode'
+            $pattern | Should -Not -BeNullOrEmpty
+            $Rendered | Should -Match $pattern
+        }
+    }
+
+    It 'does not decode a Unicode escape behind an escaped backslash' {
+        InModuleScope ItE2E {
+            $script:LocaleScalarMatch = [regex]::Match('unit.literal: "Literal \\u202e"', '^unit\.literal:\s*(\S.*)$')
+            Mock Select-String { [pscustomobject]@{ Matches = @($script:LocaleScalarMatch) } }
+
+            $pattern = Get-WtaLocalizedTextRegex -Key 'unit.literal'
+            'Literal \u202e' | Should -Match $pattern
+            ('Literal ' + [char]0x202e) | Should -Not -Match $pattern
+        }
+    }
+
+    It 'preserves existing double-quote, backslash and whitespace escapes' {
+        InModuleScope ItE2E {
+            $script:LocaleScalarMatch = [regex]::Match('unit.existing: "Quote \" Slash \\ Newline \n Tab \t Return \r End"', '^unit\.existing:\s*(\S.*)$')
+            Mock Select-String { [pscustomobject]@{ Matches = @($script:LocaleScalarMatch) } }
+
+            $pattern = Get-WtaLocalizedTextRegex -Key 'unit.existing'
+            "Quote `" Slash \ Newline `n Tab `t Return `r End" | Should -Match $pattern
+        }
+    }
+
+    It 'logs an invalid Unicode scalar before returning the unavailable-key result' {
+        InModuleScope ItE2E {
+            $script:LocaleScalarMatch = [regex]::Match('unit.invalid: "\U00110000"', '^unit\.invalid:\s*(\S.*)$')
+            Mock Select-String { [pscustomobject]@{ Matches = @($script:LocaleScalarMatch) } }
+            Mock Write-ItLog {}
+
+            Get-WtaLocalizedTextRegex -Key 'unit.invalid' | Should -BeNullOrEmpty
+            Should -Invoke Write-ItLog -Times 1 -Exactly -ParameterFilter {
+                $Level -eq 'WARN' -and $Message -like "*WTA locale key 'unit.invalid'*"
+            }
+        }
+    }
+
+    It 'matches a wrapped authentication subtitle in <Case>' -TestCases @(
+        @{
+            Case = 'English sign-in at a word boundary'
+            Key = 'setup.auth.sign_in'
+            OtherKey = 'setup.auth.select_method'
+            Text = "Your agent `"Agent`" requires authentication. Follow the steps below to sign`r`n      in. To switch agents, go to Intelligent Terminal Settings > Agent."
+        }
+        @{
+            Case = 'English method selection with row padding'
+            Key = 'setup.auth.select_method'
+            OtherKey = 'setup.auth.sign_in'
+            Text = "Your agent `"Agent`" requires authentication. Select a sign-in method       `r`n    to continue here. To switch agents, go to Intelligent Terminal Settings > Agent."
+        }
+        @{
+            Case = 'English sign-in within a long word'
+            Key = 'setup.auth.sign_in'
+            OtherKey = 'setup.auth.select_method'
+            Text = "Your agent `"Agent`" requires authentication. Fol`n    low the steps below to sign in. To switch agents, go to Intelligent Terminal Settings > Agent."
+        }
+        @{
+            Case = 'Simplified Chinese without a source space'
+            Key = 'setup.auth.sign_in'
+            OtherKey = 'setup.auth.select_method'
+            Text = "您的智能体需要身份验证。请按照以下步`r`n    骤登录。如需切换智能体，请前往智能终端 Settings > Agent。"
+        }
+        @{
+            Case = 'Traditional Chinese method selection without a source space'
+            Key = 'setup.auth.select_method'
+            OtherKey = 'setup.auth.sign_in'
+            Text = "您的智能體需要驗證。請選擇登入方式以在此`n    處繼續。若要切換智能體，請前往智慧終端機 Settings > Agent。"
+        }
+        @{
+            Case = 'mirrored Unicode sign-in guidance'
+            Key = 'setup.auth.sign_in'
+            OtherKey = 'setup.auth.select_method'
+            Text = '[!! ' + [char]0x202e + "Fol_low the steps below to sign`r`n    in." + [char]0x202c + ' !!]'
+        }
+    ) {
+        param($Case, $Key, $OtherKey, $Text)
+        $expected = Get-WtaLocalizedTextRegex -Key $Key -AllowLineWrap
+        $other = Get-WtaLocalizedTextRegex -Key $OtherKey -AllowLineWrap
+
+        $expected | Should -Not -BeNullOrEmpty
+        $other | Should -Not -BeNullOrEmpty
+        $Text | Should -Match $expected
+        $Text | Should -Not -Match $other
+    }
+
+    It 'rejects incorrect guidance despite layout tolerance in <Case>' -TestCases @(
+        @{ Case = 'changed wording'; Key = 'setup.auth.sign_in'; Text = "Follow the steps above to sign`r`n    in." }
+        @{ Case = 'missing source word boundary'; Key = 'setup.auth.sign_in'; Text = 'Follow the steps below to signin.' }
+        @{ Case = 'changed CJK destination'; Key = 'setup.auth.select_method'; Text = "請選擇登入方式以在彼`n    處繼續。" }
+    ) {
+        param($Case, $Key, $Text)
+        $pattern = Get-WtaLocalizedTextRegex -Key $Key -AllowLineWrap
+
+        $pattern | Should -Not -BeNullOrEmpty
+        $Text | Should -Not -Match $pattern
+    }
+
+    It 'caches literal and wrapped matching independently when <Case> is requested first' -TestCases @(
+        @{ Case = 'literal'; WrapFirst = $false }
+        @{ Case = 'wrapped'; WrapFirst = $true }
+    ) {
+        param($Case, $WrapFirst)
+        $first = Get-WtaLocalizedTextRegex -Key 'setup.auth.sign_in' -AllowLineWrap:$WrapFirst
+        $second = Get-WtaLocalizedTextRegex -Key 'setup.auth.sign_in' -AllowLineWrap:(-not $WrapFirst)
+        $literal = if ($WrapFirst) { $second } else { $first }
+        $wrapped = if ($WrapFirst) { $first } else { $second }
+
+        'Follow the steps below to sign in.' | Should -Match $literal
+        "Follow the steps below to sign`n    in." | Should -Not -Match $literal
+        "Follow the steps below to sign`n    in." | Should -Match $wrapped
+    }
+
+    It 'allows line breaks only between complete Unicode text elements' {
+        InModuleScope ItE2E {
+            $script:LocaleScalarMatch = [regex]::Match('unit.wrap: "Connected e\u0301\U0001F680 now"', '^unit\.wrap:\s*(\S.*)$')
+            Mock Select-String { [pscustomobject]@{ Matches = @($script:LocaleScalarMatch) } }
+            $rocket = [char]::ConvertFromUtf32(0x1f680)
+            $accent = [char]0x0301
+            $pattern = Get-WtaLocalizedTextRegex -Key 'unit.wrap' -AllowLineWrap
+
+            $pattern | Should -Not -BeNullOrEmpty
+            ("Connected e" + $accent + "`r`n    " + $rocket + ' now') | Should -Match $pattern
+            ("Connected e`r`n    " + $accent + $rocket + ' now') | Should -Not -Match $pattern
+            ("Connected e" + $accent + $rocket[0] + "`n    " + $rocket[1] + ' now') | Should -Not -Match $pattern
+        }
     }
 }
 
@@ -458,7 +617,7 @@ permission_ui: current permission snapshot={"session_id":"old-session","tool_cal
 }
 
 Describe 'Agent settings cleanup' -Tag 'Unit' {
-    It 'removes showTokenUsageAndCost while preserving profiles' {
+    It 'removes agent display preferences while preserving profiles and other keys' {
         $settingsPath = Join-Path $TestDrive 'settings.json'
         @{
             defaultProfile = '{6239a42c-1111-49a3-80bd-e8fdd045185c}'
@@ -468,6 +627,8 @@ Describe 'Agent settings cleanup' -Tag 'Unit' {
             })
             acpAgent = 'copilot'
             showTokenUsageAndCost = $true
+            renderAgentMarkdown = $false
+            renderAgentMarkdownOther = 'keep'
         } | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $settingsPath -Encoding utf8
         $app = [pscustomobject]@{ SettingsPath = $settingsPath }
 
@@ -475,6 +636,8 @@ Describe 'Agent settings cleanup' -Tag 'Unit' {
 
         $settings = Get-WtSettingsObject -App $app
         $settings.PSObject.Properties.Name | Should -Not -Contain 'showTokenUsageAndCost'
+        $settings.PSObject.Properties.Name | Should -Not -Contain 'renderAgentMarkdown'
+        $settings.renderAgentMarkdownOther | Should -Be 'keep'
         $settings.PSObject.Properties.Name | Should -Not -Contain 'acpAgent'
         $settings.profiles[0].name | Should -Be 'p0'
     }
@@ -558,6 +721,73 @@ Describe 'Configuration backup and restore' -Tag 'Unit' {
         '{}' | Set-Content -LiteralPath $app.SettingsPath -Encoding utf8
         Restore-WtConfig -App $app
         Get-Content -LiteralPath $app.SettingsPath -Raw | Should -Match '"original":"settings"'
+    }
+}
+
+Describe 'Nested startup state verification' -Tag 'Unit' {
+    BeforeEach {
+        InModuleScope ItE2E -Parameters @{ Root = (Join-Path $TestDrive ([guid]::NewGuid().ToString('N'))) } {
+            param($Root)
+            $script:stateFixtureApp = [pscustomobject]@{
+                Package = 'fixture-package'
+                Version = '0.0.0.0'
+                WtcliPath = 'unused-wtcli.exe'
+                InstallLocation = Join-Path $Root 'install'
+                LocalStateDir = $Root
+                SettingsPath = Join-Path $Root 'settings.json'
+                StatePath = Join-Path $Root 'state.json'
+                LogStartOffset = @{}
+            }
+            $script:stateFixtureExpected = @(
+                @{
+                    tabLayout = @(
+                        @{ action = 'newTab'; commandline = 'cmd.exe' }
+                        @{ action = 'splitPane'; type = 'agent'; commandline = 'wta --initial-load-session-id "saved-fixture"' }
+                    )
+                }
+            )
+            $script:stateFixtureActual = $null
+            Mock Resolve-ItApp { $script:stateFixtureApp }
+            Mock Get-WtProcessesForApp { @() }
+            Mock Initialize-LogOffsets {}
+            Mock Write-ItLog {}
+            Mock Start-ItCreatedDevTerminal {
+                $script:stateFixtureActual = Get-WtStateObject -App $script:stateFixtureApp
+                throw 'State verified; stop before activation'
+            }
+        }
+    }
+
+    It 'verifies a persisted layout structurally and preserves its array shape' {
+        InModuleScope ItE2E {
+            {
+                Start-Terminal -Package Dev -PassFre $false -CleanSettings $false -State @{
+                    persistedWindowLayouts = $script:stateFixtureExpected
+                }
+            } | Should -Throw '*State verified; stop before activation*'
+            Should -Invoke Start-ItCreatedDevTerminal -Times 1
+            @($script:stateFixtureActual.persistedWindowLayouts) | Should -HaveCount 1
+            @($script:stateFixtureActual.persistedWindowLayouts[0].tabLayout) | Should -HaveCount 2
+            $script:stateFixtureActual.persistedWindowLayouts[0].tabLayout[1].type | Should -Be 'agent'
+            Test-Path -LiteralPath $script:stateFixtureApp.StatePath | Should -BeFalse
+            Test-Path -LiteralPath "$($script:stateFixtureApp.StatePath).e2ebak.missing" | Should -BeFalse
+        }
+    }
+
+    It 'rejects a changed nested value before attempting activation' {
+        InModuleScope ItE2E {
+            Mock Get-WtStateObject {
+                [pscustomobject]@{
+                    persistedWindowLayouts = @(@{ tabLayout = @(@{ action = 'newTab'; commandline = 'wrong' }) })
+                }
+            }
+            {
+                Start-Terminal -Package Dev -PassFre $false -CleanSettings $false -State @{
+                    persistedWindowLayouts = $script:stateFixtureExpected
+                }
+            } | Should -Throw '*Startup state did not persist: persistedWindowLayouts*'
+            Should -Invoke Start-ItCreatedDevTerminal -Times 0
+        }
     }
 }
 

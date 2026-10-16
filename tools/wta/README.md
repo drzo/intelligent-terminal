@@ -372,6 +372,10 @@ and returning to nonvertical layout immediately refreshes an already-open helper
 History-query recovery may rebuild only its history-only process. Startup
 discovery retries are separate and retain the existing ACP initialization timeout.
 
+Master allows up to 60 seconds for an ACP `initialize` reply from either a
+native agent or an `npx` adapter, including cold starts. Session creation,
+authentication and model-probe timeouts are separate and unchanged.
+
 ### tmux-like CLI
 
 WTA exposes tmux-equivalent subcommands for controlling Windows Terminal from the shell. Useful for humans and AI agents that can shell out.
@@ -394,7 +398,14 @@ wta list-windows --json                   # raw JSON output
 Short aliases are supported: `lsw`, `lst`, `lsp`, `neww`, `splitw`, `capturep`,
 `killp`, `setenv`, and `mon`.
 
-When `-t` (target pane) is omitted, the active pane is used automatically.
+`list-tabs` and `list-panes` accept `-w <window-id>` to select a window.
+They use the native `wtcli` default selection: the first-listed window, not the
+focused window. Without `-t`, `list-panes` lists the first tab in that window,
+not the active tab. Tab IDs are window-local, so use both `-w` and `-t` to query
+a specific window's tab; an explicit `-t` without `-w` queries across windows.
+
+For pane-targeting commands such as `capture-pane` and `kill-pane`, omitting `-t`
+uses the active pane automatically.
 
 ### Protocol Discovery & Environment Setup
 
@@ -444,6 +455,27 @@ shell, so any pane-launched process — including wta and wtcli — inherits it.
 |------|-------------|
 | `--json` | Output raw JSON instead of human-readable tables |
 | `--agent <CMD>` | Agent CLI command for ACP mode (default: `copilot --acp --stdio`) |
+| `--no-agent-markdown` | Keep the helper's agent replies and history as literal text after streaming |
+
+### Agent reply formatting
+
+Agent replies stream as plain text. When a response stops, WTA formats its
+received assistant text with `tui-markdown`, including partial replies after
+cancellation or an agent error and replies loaded from saved history. User
+prompts, thoughts, and tool output retain their existing presentation.
+
+**Markdown formatting** is on by default in first-run setup and Settings >
+Agents. Both use the global `renderAgentMarkdown` preference. Changes apply
+without restarting the terminal, helper, master, or agent session. A selected
+reply keeps its current display until the selection is cleared; completion
+and queued requests continue independently.
+
+Formatting uses pane-relative colors, hides heading markers, and retains code
+fences and language labels. It adds neither syntax highlighting nor interactive
+link actions. Raw source remains unchanged. If the package output cannot be
+projected safely within Ratatui's layout limits, WTA retains the raw display and
+records a diagnostic. Unchanged frames reuse compatible output; visible replies
+are rebuilt after width changes or cache eviction, not on every stream update.
 
 ## TUI Controls
 
