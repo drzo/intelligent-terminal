@@ -691,6 +691,9 @@ namespace TerminalAppLocalTests
         TEST_METHOD(TryDuplicateBadTab);
         TEST_METHOD(TryDuplicateBadPane);
         TEST_METHOD(ProfileAwareSplitPreservesExplicitTargets);
+        TEST_METHOD(SplitDirectoryFollowsShellAndAgentSources);
+        TEST_METHOD(SplitDirectoryPreservesExplicitAndRestoreArguments);
+        TEST_METHOD(SplitDirectoryUsesAssistantSourceInsteadOfHelper);
 
         TEST_METHOD(TryZoomPane);
         TEST_METHOD(MoveFocusFromZoomedPane);
@@ -19789,6 +19792,142 @@ namespace TerminalAppLocalTests
         VERIFY_SUCCEEDED(result);
 
         return page;
+    }
+
+    void TabTests::SplitDirectoryFollowsShellAndAgentSources()
+    {
+        auto page = _commonSetup();
+        TestOnUIThread([&]() {
+            using State = winrt::Microsoft::Terminal::TerminalConnection::ConnectionState;
+            const auto startup = wil::ExpandEnvironmentStringsW<std::wstring>(L"%SystemRoot%");
+            const auto current = startup + L"\\System32";
+            const auto sourceProfile = page->_settings.ActiveProfiles().GetAt(0);
+            const auto target = page->_settings.ActiveProfiles().GetAt(1);
+            target.StartingDirectory(winrt::hstring{ startup });
+            for (const auto agentSource : { false, true })
+            {
+                sourceProfile.AgentProfileId(agentSource ? L"copilot" : L"");
+                NewTerminalArgs launch;
+                launch.Profile(Utils::GuidToString(sourceProfile.Guid()));
+                launch.StartingDirectory(winrt::hstring{ startup });
+                GUID id{};
+                VERIFY_SUCCEEDED(CoCreateGuid(&id));
+                const auto connection = winrt::make_self<TestConnection>(winrt::guid{ id }, State::Connected);
+                const auto pane = page->_MakePane(launch, nullptr, *connection);
+                const auto runtimeTab = page->_CreateNewTabFromPane(pane);
+                const auto tab = page->_GetTabImpl(runtimeTab);
+                tab->SuppressAgentPrewarm();
+                const auto control = pane->GetTerminalControl();
+                const auto paneId = winrt::to_string(Utils::GuidToPlainString(connection->SessionId()));
+                if (agentSource)
+                {
+                    VERIFY_IS_TRUE(page->_ApplyAgentSessionStatusDelta(
+                        "split-source", paneId, "copilot", uint64_t{ 1000 }, "Working", winrt::to_string(current)));
+                }
+                else
+                {
+                    const auto output = L"\x1b]9;9;\"" + current + L"\"\x1b\\";
+                    connection->TerminalOutput.raise(winrt::array_view<const char16_t>{
+                        reinterpret_cast<const char16_t*>(output.data()),
+                        reinterpret_cast<const char16_t*>(output.data() + output.size()) });
+                    VERIFY_ARE_EQUAL(winrt::hstring{ current }, control.WorkingDirectory());
+                }
+                for (const auto agentTarget : { false, true })
+                {
+                    target.AgentProfileId(agentTarget ? L"claude" : L"");
+                    NewTerminalArgs args;
+                    args.Profile(Utils::GuidToString(target.Guid()));
+                    const auto inherited = page->_PrepareSplitDirectory(tab, args, false).as<NewTerminalArgs>();
+                    VERIFY_ARE_EQUAL(winrt::hstring{ current }, inherited.StartingDirectory());
+                    VERIFY_IS_TRUE(args.StartingDirectory().empty());
+                    const auto targetSettings = winrt::Microsoft::Terminal::Settings::TerminalSettings::CreateWithNewTerminalArgs(page->_settings, inherited);
+                    VERIFY_ARE_EQUAL(winrt::hstring{ current }, targetSettings.DefaultSettings()->StartingDirectory());
+                }
+                const auto duplicate = page->_PrepareSplitDirectory(tab, nullptr, true).as<NewTerminalArgs>();
+                const auto duplicateConnection = winrt::make_self<TestConnection>(winrt::guid{}, State::Connected);
+                const auto duplicatePane = page->_MakePane(duplicate, runtimeTab, *duplicateConnection);
+                VERIFY_ARE_EQUAL(winrt::hstring{ current }, duplicatePane->GetTerminalControl().Settings().StartingDirectory());
+                VERIFY_IS_FALSE(page->_paneAgentSessions.contains(duplicatePane->GetSessionId()));
+                if (agentSource)
+                {
+                    page->_richTabAgentCwdAvailable = false;
+                    VERIFY_ARE_EQUAL(winrt::hstring{ startup },
+                                     page->_PrepareSplitDirectory(tab, nullptr, true).as<NewTerminalArgs>().StartingDirectory());
+                    page->_richTabAgentCwdAvailable = true;
+                    page->_activeCliAgentPanes[connection->SessionId()] = { L"different-session" };
+                    VERIFY_ARE_EQUAL(winrt::hstring{ startup },
+                                     page->_PrepareSplitDirectory(tab, nullptr, true).as<NewTerminalArgs>().StartingDirectory());
+                    page->_activeCliAgentPanes.erase(connection->SessionId());
+                    VERIFY_IS_TRUE(page->_ApplyAgentSessionStatusDelta(
+                        "split-source", paneId, "copilot", uint64_t{ 2000 }, "Working", winrt::to_string(startup + L"\\missing-" + Utils::GuidToPlainString(connection->SessionId()).c_str())));
+                    NewTerminalArgs targetArgs;
+                    targetArgs.Profile(Utils::GuidToString(target.Guid()));
+                    VERIFY_IS_TRUE(page->_PrepareSplitDirectory(tab, targetArgs, false).as<NewTerminalArgs>().StartingDirectory().empty());
+                    VERIFY_IS_TRUE(page->_ApplyAgentSessionStatusDelta(
+                        "split-source", paneId, "copilot", uint64_t{ 3000 }, "Working", winrt::to_string(current)));
+                }
+                for (const auto mode : { SplitType::Manual, SplitType::Profile, SplitType::Duplicate })
+                {
+                    const auto sourcePane = tab->GetRootPane()->FindPaneBySessionId(connection->SessionId());
+                    tab->FocusPane(sourcePane->Id().value());
+                    NewTerminalArgs args;
+                    args.Profile(Utils::GuidToString(target.Guid()));
+                    sourceProfile.DefaultSplitProfile(Utils::GuidToString(target.Guid()));
+                    ActionEventArgs action{ SplitPaneArgs{ mode, SplitDirection::Right, .5f, mode == SplitType::Manual ? args : nullptr } };
+                    page->_HandleSplitPane(nullptr, action);
+                    VERIFY_IS_TRUE(action.Handled());
+                    const auto splitControl = tab->GetActiveTerminalControl();
+                    VERIFY_ARE_EQUAL(winrt::hstring{ current }, splitControl.Settings().StartingDirectory());
+                    VERIFY_IS_FALSE(page->_paneAgentSessions.contains(splitControl.Connection().SessionId()));
+                }
+            }
+        });
+    }
+
+    void TabTests::SplitDirectoryPreservesExplicitAndRestoreArguments()
+    {
+        auto page = _commonSetup();
+        TestOnUIThread([&]() {
+            const auto tab = page->_GetFocusedTabImpl();
+            NewTerminalArgs explicitArgs;
+            explicitArgs.StartingDirectory(L"relative-explicit-directory");
+            VERIFY_IS_TRUE(page->_PrepareSplitDirectory(tab, explicitArgs, false) == explicitArgs);
+            VERIFY_IS_TRUE(page->_PrepareSplitDirectory(tab, explicitArgs, true) == explicitArgs);
+            NewTerminalArgs restore;
+            restore.SessionId(winrt::guid{ L"{00000000-0000-0000-0000-000000000001}" });
+            VERIFY_IS_TRUE(page->_PrepareSplitDirectory(tab, restore, false) == restore);
+            NewTerminalArgs transfer;
+            transfer.ContentId(1);
+            VERIFY_IS_TRUE(page->_PrepareSplitDirectory(tab, transfer, false) == transfer);
+            BaseContentArgs other{ L"settings" };
+            VERIFY_IS_TRUE(page->_PrepareSplitDirectory(tab, other, false) == other);
+        });
+    }
+
+    void TabTests::SplitDirectoryUsesAssistantSourceInsteadOfHelper()
+    {
+        using State = winrt::Microsoft::Terminal::TerminalConnection::ConnectionState;
+        const auto connection = winrt::make_self<TestConnection>(
+            winrt::guid{ L"{00000000-0000-0000-0000-000000000001}" }, State::Connected);
+        auto page = _commonSetup(*connection);
+        TestOnUIThread([&]() {
+            const auto tab = page->_GetFocusedTabImpl();
+            const auto source = tab->GetActivePane();
+            const auto expected = wil::ExpandEnvironmentStringsW<std::wstring>(L"%SystemRoot%");
+            const auto output = L"\x1b]9;9;\"" + expected + L"\"\x1b\\";
+            connection->TerminalOutput.raise(winrt::array_view<const char16_t>{
+                reinterpret_cast<const char16_t*>(output.data()),
+                reinterpret_cast<const char16_t*>(output.data() + output.size()) });
+            source->SetSourceOfAgentPane(true);
+            NewTerminalArgs helperArgs;
+            helperArgs.StartingDirectory(L"C:\\not-the-source-directory");
+            const auto helperConnection = winrt::make_self<TestConnection>(winrt::guid{}, State::Connected);
+            const auto helper = page->_WrapInAgentPaneContent(page->_MakePane(helperArgs, nullptr, *helperConnection));
+            helper->IsAgentPane(true);
+            VERIFY_IS_TRUE(page->_SplitPane(tab, SplitDirection::Right, .5f, helper));
+            VERIFY_IS_TRUE(tab->GetActivePane()->IsAgentPane());
+            VERIFY_ARE_EQUAL(winrt::hstring{ expected }, page->_PrepareSplitDirectory(tab, nullptr, false).as<NewTerminalArgs>().StartingDirectory());
+        });
     }
 
     void TabTests::ProfileAwareSplitPreservesExplicitTargets()

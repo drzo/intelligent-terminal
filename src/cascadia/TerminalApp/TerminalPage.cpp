@@ -1805,6 +1805,48 @@ namespace winrt::TerminalApp::implementation
         return nullptr;
     }
 
+    INewContentArgs TerminalPage::_PrepareSplitDirectory(const winrt::com_ptr<Tab>& tab,
+                                                         const INewContentArgs& content,
+                                                         const bool duplicate)
+    {
+        const auto original = content.try_as<NewTerminalArgs>();
+        if (content && (!original || !original.Type().empty() || original.ContentId() ||
+                        original.SessionId() != winrt::guid{} || !original.StartingDirectory().empty() ||
+                        ::Microsoft::Terminal::AgentPaneRestore::IsResumeCommandline(original.Commandline())))
+        {
+            return content;
+        }
+        NewTerminalArgs args{ original ? original.Copy().as<NewTerminalArgs>() : NewTerminalArgs{} };
+        const auto activePane = tab ? tab->GetActivePane() : nullptr;
+        const auto pane = activePane && activePane->IsAgentPane() ? _SourceTerminalPaneForTab(tab) : activePane;
+        const auto control = pane ? pane->GetTerminalControl() : nullptr;
+        if (!control)
+        {
+            return args;
+        }
+        const auto sourceSettings = control.Settings();
+        const auto targetSettings = duplicate ?
+                                        Settings::TerminalSettings::CreateWithProfile(_settings, _SourceTerminalProfileForTab(tab)) :
+                                        Settings::TerminalSettings::CreateWithNewTerminalArgs(_settings, args);
+        const auto [agentOwned, agentCwd] = _RichTabAgentCwdForControl(control);
+        const auto sourceCwd = agentCwd ? winrt::to_hstring(*agentCwd) :
+                                          winrt::hstring{ ::Microsoft::Terminal::AgentSource::ResolvePaneCwd(
+                                              agentOwned ? winrt::hstring{} : control.WorkingDirectory(),
+                                              !agentOwned && control.WorkingDirectoryReportedByShell(),
+                                              sourceSettings.Commandline(),
+                                              sourceSettings.StartingDirectory()) };
+        const auto directory = ::Microsoft::Terminal::AgentSource::ResolveSplitCwd(
+            sourceCwd, sourceSettings.Commandline(), targetSettings.DefaultSettings()->Commandline(), [](const std::wstring_view candidate) {
+                const std::wstring path{ candidate };
+                return ::Microsoft::Console::Utils::IsValidDirectory(path.c_str());
+            });
+        if (!directory.empty())
+        {
+            args.StartingDirectory(winrt::hstring{ directory });
+        }
+        return args;
+    }
+
     static const winrt::guid& _ProfileDefaultsAgentBackendGuid()
     {
         static const winrt::guid value{ L"{6f753615-8b19-4e3f-8f49-aac2ff577d79}" };
@@ -15627,14 +15669,15 @@ namespace winrt::TerminalApp::implementation
 
         if (const auto& tabImpl{ _GetTabImpl(sourceTab) })
         {
-            profile = tabImpl->GetFocusedProfile();
+            profile = newTerminalArgs ? _SourceTerminalProfileForTab(tabImpl) : tabImpl->GetFocusedProfile();
             if (profile)
             {
                 // TODO GH#5047 If we cache the NewTerminalArgs, we no longer need to do this.
                 profile = GetClosestProfileForDuplicationOfProfile(profile);
                 controlSettings = Settings::TerminalSettings::CreateWithProfile(_settings, profile);
-                const auto workingDirectory = tabImpl->GetActiveTerminalControl().WorkingDirectory();
-                if (Utils::IsValidDirectory(workingDirectory.c_str()))
+                const auto workingDirectory = newTerminalArgs ? newTerminalArgs.StartingDirectory() :
+                                                                tabImpl->GetActiveTerminalControl().WorkingDirectory();
+                if (!workingDirectory.empty() && (newTerminalArgs || Utils::IsValidDirectory(workingDirectory.c_str())))
                 {
                     controlSettings.DefaultSettings()->StartingDirectory(workingDirectory);
                 }
