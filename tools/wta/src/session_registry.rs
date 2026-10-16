@@ -3230,11 +3230,37 @@ fn apply_event_locked(
     ev: SessionEvent,
     qualified_activity: Option<&SessionIdentity>,
 ) -> bool {
+    let unqualified_activity_key = match &ev {
+        SessionEvent::ToolStarting { key, .. }
+        | SessionEvent::ToolCompleted { key }
+        | SessionEvent::Notification { key, .. }
+            if qualified_activity.is_none() =>
+        {
+            Some(key)
+        }
+        _ => None,
+    };
+    // OFF activity belongs to OSC or the explicitly qualified watcher path,
+    // never an unqualified hook sharing the same raw SDK session ID.
+    if unqualified_activity_key.is_some_and(|key| {
+        state.native_panes.values().any(|native| {
+            native.bound_identity.as_ref().is_some_and(|identity| {
+                identity.session_id.0.as_ref() == key.as_str()
+                    && state.active_by_pane.get(&native.observation.pane_id) == Some(identity)
+                    && native_bound_identity(state, &native.observation).as_ref() == Some(identity)
+            })
+        })
+    }) {
+        return false;
+    }
     let protected_pane = match &ev {
         SessionEvent::SessionStarted {
             pane_session_id, ..
         }
         | SessionEvent::ConnectionFailed {
+            pane_session_id, ..
+        }
+        | SessionEvent::SessionUnbound {
             pane_session_id, ..
         }
         | SessionEvent::PaneClosed { pane_session_id } => Some(pane_key(pane_session_id)),
@@ -4861,10 +4887,14 @@ mod tests {
                 .born_bound_pane
         );
         registry
-            .apply_event(SessionEvent::ToolStarting {
-                key: "late-resume".into(),
-                tool_name: "canonical-tool".into(),
-            })
+            .apply_native_watcher_activity(
+                &CliSource::Copilot,
+                "late-resume",
+                SessionEvent::ToolStarting {
+                    key: "late-resume".into(),
+                    tool_name: "canonical-tool".into(),
+                },
+            )
             .await;
         // No additional native observation is required after the assignment.
         let observation = registry.native_pane_observations().await.remove(0);
@@ -4971,9 +5001,13 @@ mod tests {
                     AgentStatus::Attention
                 );
                 registry
-                    .apply_event(SessionEvent::ToolCompleted {
-                        key: "real-session".into(),
-                    })
+                    .apply_native_watcher_activity(
+                        &CliSource::Copilot,
+                        "real-session",
+                        SessionEvent::ToolCompleted {
+                            key: "real-session".into(),
+                        },
+                    )
                     .await;
                 registry.apply_native_observation(transferred.clone()).await;
             }
@@ -5149,16 +5183,24 @@ mod tests {
             ))
             .await;
         registry
-            .apply_event(SessionEvent::ToolStarting {
-                key: "real-session".into(),
-                tool_name: "prompt".into(),
-            })
+            .apply_native_watcher_activity(
+                &CliSource::Copilot,
+                "real-session",
+                SessionEvent::ToolStarting {
+                    key: "real-session".into(),
+                    tool_name: "prompt".into(),
+                },
+            )
             .await;
         registry
-            .apply_event(SessionEvent::Notification {
-                key: "real-session".into(),
-                message: "input requested".into(),
-            })
+            .apply_native_watcher_activity(
+                &CliSource::Copilot,
+                "real-session",
+                SessionEvent::Notification {
+                    key: "real-session".into(),
+                    message: "input requested".into(),
+                },
+            )
             .await;
         let waiting = registry.lookup_identity(&identity).await.unwrap();
         for progress in [1, 3, 0, 4] {
@@ -5182,9 +5224,13 @@ mod tests {
             .await;
         assert_eq!(registry.lookup_identity(&identity).await, Some(waiting));
         registry
-            .apply_event(SessionEvent::ToolCompleted {
-                key: "real-session".into(),
-            })
+            .apply_native_watcher_activity(
+                &CliSource::Copilot,
+                "real-session",
+                SessionEvent::ToolCompleted {
+                    key: "real-session".into(),
+                },
+            )
             .await;
         assert_eq!(
             registry.lookup_identity(&identity).await.unwrap().status,
@@ -5201,16 +5247,24 @@ mod tests {
             Some(AgentStatus::Working)
         );
         registry
-            .apply_event(SessionEvent::Notification {
-                key: "real-session".into(),
-                message: "ready for next request".into(),
-            })
+            .apply_native_watcher_activity(
+                &CliSource::Copilot,
+                "real-session",
+                SessionEvent::Notification {
+                    key: "real-session".into(),
+                    message: "ready for next request".into(),
+                },
+            )
             .await;
         registry
-            .apply_event(SessionEvent::ToolStarting {
-                key: "real-session".into(),
-                tool_name: "prompt".into(),
-            })
+            .apply_native_watcher_activity(
+                &CliSource::Copilot,
+                "real-session",
+                SessionEvent::ToolStarting {
+                    key: "real-session".into(),
+                    tool_name: "prompt".into(),
+                },
+            )
             .await;
         registry
             .apply_native_observation(native_event(
@@ -5527,6 +5581,206 @@ mod tests {
         };
         assert!(registry.apply_native_observation(second).await);
         assert_eq!(registry.native_pane_observations().await.len(), 2);
+    }
+
+    #[tokio::test]
+    async fn native_off_generic_opencode_lifecycle_cannot_detach_owner() {
+        for event in [
+            SessionEvent::SessionUnbound {
+                key: "real-session".into(),
+                pane_session_id: NATIVE_PANE.into(),
+            },
+            SessionEvent::SessionStoppedIfOwner {
+                key: "real-session".into(),
+                pane_session_id: Some(NATIVE_PANE.into()),
+                reason: "exit".into(),
+            },
+        ] {
+            let registry = InMemoryRegistry::new();
+            let mut row = SessionInfo::new("real-session".into(), PathBuf::from(r"C:\repo"))
+                .with_pane_session_id(NATIVE_PANE);
+            row.provider_id = Some("opencode".into());
+            row.cli_source = Some(CliSource::OpenCode);
+            row.location = SessionLocation::Host;
+            row.status = Some(AgentStatus::Working);
+            row.born_bound_pane = true;
+            let identity = SessionIdentity::from_info(&row);
+            registry.upsert(row).await;
+            let mut reset = native_event(
+                serde_json::json!({"kind":"reset","tracking_enabled":false}),
+                1,
+            );
+            reset.provider_id = "opencode".into();
+            assert!(registry.apply_native_observation(reset.clone()).await);
+            let before = registry.lookup_identity(&identity).await.unwrap();
+            assert!(!registry.apply_event(event.clone()).await);
+            assert_eq!(registry.lookup_identity(&identity).await.unwrap(), before);
+            assert_eq!(
+                registry.inner.lock().await.active_by_pane.get(NATIVE_PANE),
+                Some(&identity)
+            );
+            reset.mode_epoch = 2;
+            reset.event = NativeObservationKind::Reset {
+                tracking_enabled: true,
+            };
+            assert!(registry.apply_native_observation(reset).await);
+            assert!(registry.apply_event(event).await);
+        }
+    }
+
+    #[tokio::test]
+    async fn native_off_generic_tool_start_preserves_osc() {
+        assert_native_off_generic_activity_rejected(SessionEvent::ToolStarting {
+            key: "real-session".into(),
+            tool_name: "ReadFile".into(),
+        })
+        .await;
+    }
+
+    #[tokio::test]
+    async fn native_off_generic_tool_complete_preserves_osc() {
+        assert_native_off_generic_activity_rejected(SessionEvent::ToolCompleted {
+            key: "real-session".into(),
+        })
+        .await;
+    }
+
+    #[tokio::test]
+    async fn native_off_generic_notification_preserves_osc() {
+        assert_native_off_generic_activity_rejected(SessionEvent::Notification {
+            key: "real-session".into(),
+            message: "ask_user".into(),
+        })
+        .await;
+    }
+
+    async fn assert_native_off_generic_activity_rejected(event: SessionEvent) {
+        let (registry, identity) = native_bound_registry().await;
+        assert!(
+            registry
+                .apply_native_observation(native_event(
+                    serde_json::json!({"kind":"reset","tracking_enabled":false}),
+                    1
+                ))
+                .await
+        );
+        assert!(
+            registry
+                .apply_native_observation(native_event(
+                    serde_json::json!({"kind":"progress","progress_state":1}),
+                    1
+                ))
+                .await
+        );
+        let before = registry.lookup_identity(&identity).await.unwrap();
+        let observation = registry.native_pane_observations().await;
+        assert!(!registry.apply_event(event).await);
+        assert_eq!(registry.lookup_identity(&identity).await.unwrap(), before);
+        assert_eq!(registry.native_pane_observations().await, observation);
+    }
+
+    fn native_activity_variants() -> Vec<(SessionEvent, AgentStatus)> {
+        vec![
+            (
+                SessionEvent::ToolStarting {
+                    key: "real-session".into(),
+                    tool_name: "ReadFile".into(),
+                },
+                AgentStatus::Working,
+            ),
+            (
+                SessionEvent::ToolCompleted {
+                    key: "real-session".into(),
+                },
+                AgentStatus::Idle,
+            ),
+            (
+                SessionEvent::Notification {
+                    key: "real-session".into(),
+                    message: "ask_user".into(),
+                },
+                AgentStatus::Attention,
+            ),
+        ]
+    }
+
+    #[tokio::test]
+    async fn native_off_generic_guard_preserves_qualified_watcher_activity() {
+        for (event, status) in native_activity_variants() {
+            let (registry, identity) = native_bound_registry().await;
+            assert!(
+                registry
+                    .apply_native_observation(native_event(
+                        serde_json::json!({"kind":"reset","tracking_enabled":false}),
+                        1
+                    ))
+                    .await
+            );
+            assert!(
+                registry
+                    .apply_native_observation(native_event(
+                        serde_json::json!({"kind":"progress","progress_state":1}),
+                        1
+                    ))
+                    .await
+            );
+            assert_eq!(
+                registry
+                    .apply_native_watcher_activity(&CliSource::Copilot, "real-session", event)
+                    .await,
+                Some(true)
+            );
+            assert_eq!(
+                registry.lookup_identity(&identity).await.unwrap().status,
+                Some(status.clone())
+            );
+            assert_eq!(registry.native_pane_observations().await[0].status, status);
+        }
+    }
+
+    #[tokio::test]
+    async fn native_off_generic_guard_leaves_on_and_helper_activity_enabled() {
+        for helper in [false, true] {
+            for (event, status) in native_activity_variants() {
+                let (registry, identity) = native_bound_registry().await;
+                if helper {
+                    let mut row = registry.lookup_identity(&identity).await.unwrap();
+                    row.origin = Some(SessionOrigin::AgentPane);
+                    registry.upsert(row).await;
+                } else {
+                    assert!(
+                        registry
+                            .apply_native_observation(native_event(
+                                serde_json::json!({"kind":"reset","tracking_enabled":false}),
+                                1
+                            ))
+                            .await
+                    );
+                    assert!(
+                        registry
+                            .apply_native_observation(native_event(
+                                serde_json::json!({"kind":"progress","progress_state":1}),
+                                1
+                            ))
+                            .await
+                    );
+                    assert!(
+                        registry
+                            .apply_native_observation(native_event(
+                                serde_json::json!({"kind":"reset","tracking_enabled":true}),
+                                2
+                            ))
+                            .await
+                    );
+                }
+                assert!(registry.native_pane_observations().await.is_empty());
+                assert!(registry.apply_event(event).await);
+                assert_eq!(
+                    registry.lookup_identity(&identity).await.unwrap().status,
+                    Some(status)
+                );
+            }
+        }
     }
 
     #[tokio::test]

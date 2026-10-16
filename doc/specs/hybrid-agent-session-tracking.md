@@ -56,6 +56,9 @@ presentation is unchanged. BEL maps to the existing Attention status, displayed
 as Waiting for input, and retains the existing tab bell handling. Here Waiting
 for input includes both needing a response and finishing work ready for the
 next human request; BEL does not prove a mandatory response or approval.
+Leftover unqualified COM hook activity cannot overwrite an active OFF native
+owner. Precisely qualified watcher evidence for an exact bound identity remains
+supported; ON and helper activity retain their existing paths.
 Native status observes the unthrottled parsed bell source; the existing
 one-second throttle still applies to visual bell feedback.
 Each progress event also retains its parsed state before UI dispatch. A queued

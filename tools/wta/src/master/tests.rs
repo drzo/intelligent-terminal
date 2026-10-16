@@ -2035,10 +2035,14 @@ async fn native_receiver_ordered_birth_reset_preserves_late_rpc_activity() {
     );
     state
         .registry
-        .apply_event(SessionEvent::Notification {
-            key: "restored-real".into(),
-            message: "ask_user".into(),
-        })
+        .apply_native_watcher_activity(
+            &crate::agent_sessions::CliSource::Copilot,
+            "restored-real",
+            SessionEvent::Notification {
+                key: "restored-real".into(),
+                message: "ask_user".into(),
+            },
+        )
         .await;
     handle_master_wt_event(
         &state,

@@ -810,7 +810,12 @@ class CopilotFixture {
         start.Arguments = "-NoProfile -File \"__DISPATCH__\" " + args[0] + " " + args[1];
         start.EnvironmentVariables["ITE2E_COPILOT_LAUNCHER_PID"] = Process.GetCurrentProcess().Id.ToString();
         using (var child = Process.Start(start)) {
-            child.WaitForExit();
+            if (!child.WaitForExit(330000)) {
+                child.CloseMainWindow();
+                if (!child.WaitForExit(5000)) child.Kill();
+                if (!child.WaitForExit(5000)) return 124;
+                return 124;
+            }
             return child.ExitCode;
         }
     }
@@ -951,6 +956,35 @@ class CopilotFixture {
                 $text = Get-StatusText $native
                 if ($text -match [regex]::Escape($step.Text)) { $text }
             } | Set-Content (Join-Path $script:evidence "known-$($step.Status)-tab.txt")
+            $hookEvents = switch ($step.Status) {
+                Working { @('agent.stop') }
+                Idle { @('agent.tool.starting', 'agent.notification') }
+                default { @() }
+            }
+            foreach ($hookEvent in $hookEvents) {
+                $hook = @{
+                    type = 'event'; method = 'agent_event'; params = @{
+                        event = $hookEvent; pane_id = $launch.pane_session_id
+                        agent_session_id = $sid; cli_source = 'copilot'; agent = 'copilot'
+                        payload = @{ tool_name = 'auto:smoke:stale-hook'; message = 'auto:smoke:stale-hook' }
+                    }
+                } | ConvertTo-Json -Depth 8 -Compress
+                Invoke-WtCli -App $script:app -Arguments @('publish', '--existing-only', $hook) | Out-Null
+                Wait-Until -TimeoutSec 5 -Because 'the real master processes this exact leftover COM hook' -Condition {
+                    $log = Get-ItLogText -App $script:app -Name 'wta-main_master*.log' -SinceStart
+                    @($log -split "`n" | Where-Object {
+                        $_.Contains('processed COM agent hook') -and $_.Contains($sid) -and $_.Contains($hookEvent)
+                    }).Count -gt 0
+                } | Out-Null
+                $deadline = [datetime]::UtcNow.AddSeconds(2)
+                do {
+                    $protected = Get-StatusRegistrySnapshot
+                    @($protected.sessions | Where-Object session_id -EQ $sid)[0].status | Should -Be $step.Status
+                    @($protected.native_pane_observations | Where-Object agent_session_id -EQ $sid)[0].status |
+                        Should -Be $step.Status -Because 'Sessions OFF ignores unqualified COM activity, not qualified watcher evidence'
+                    Start-Sleep -Milliseconds 100
+                } while ([datetime]::UtcNow -lt $deadline)
+            }
         }
         Set-TestSidebarScope -App $script:app -AgentsOnly $true -Recent $true
         $recent = Wait-Until -TimeoutSec 10 -Because 'only the unrelated same-title history remains in Recent' -Condition {
