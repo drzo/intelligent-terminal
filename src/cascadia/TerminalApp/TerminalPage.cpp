@@ -1817,6 +1817,12 @@ namespace winrt::TerminalApp::implementation
             return content;
         }
         NewTerminalArgs args{ original ? original.Copy().as<NewTerminalArgs>() : NewTerminalArgs{} };
+        if (duplicate && !original)
+        {
+            // A cwd-only argument must not turn an in-process duplicate into
+            // a new elevated window merely because its profile changed.
+            args.Elevate(false);
+        }
         const auto activePane = tab ? tab->GetActivePane() : nullptr;
         const auto pane = activePane && activePane->IsAgentPane() ? _SourceTerminalPaneForTab(tab) : activePane;
         const auto control = pane ? pane->GetTerminalControl() : nullptr;
@@ -15714,6 +15720,13 @@ namespace winrt::TerminalApp::implementation
                 // TODO GH#5047 If we cache the NewTerminalArgs, we no longer need to do this.
                 profile = GetClosestProfileForDuplicationOfProfile(profile);
                 controlSettings = Settings::TerminalSettings::CreateWithProfile(_settings, profile);
+                if (newTerminalArgs && newTerminalArgs.Elevate())
+                {
+                    NewTerminalArgs duplicateSettingsArgs;
+                    duplicateSettingsArgs.Profile(Utils::GuidToString(profile.Guid()));
+                    duplicateSettingsArgs.Elevate(newTerminalArgs.Elevate());
+                    controlSettings = Settings::TerminalSettings::CreateWithNewTerminalArgs(_settings, duplicateSettingsArgs);
+                }
                 const auto workingDirectory = newTerminalArgs ? newTerminalArgs.StartingDirectory() :
                                                                 tabImpl->GetActiveTerminalControl().WorkingDirectory();
                 if (!workingDirectory.empty() && (newTerminalArgs || Utils::IsValidDirectory(workingDirectory.c_str())))

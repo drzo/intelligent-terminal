@@ -52,8 +52,13 @@ namespace TerminalAppUnitTests
         const auto noWindowsDirectory = [](std::wstring_view) { return false; };
         VERIFY_ARE_EQUAL(std::wstring{ L"/work with spaces" },
                          ResolveSplitCwd(L"/work with spaces", L"wsl.exe -d Ubuntu --exec bash", L"wsl.exe --distribution Ubuntu --exec claude", noWindowsDirectory));
-        VERIFY_ARE_EQUAL(std::wstring{ L"/work" },
+        VERIFY_ARE_EQUAL(std::wstring{},
                          ResolveSplitCwd(L"/work", L"wsl.exe", L"wsl.exe --exec bash", noWindowsDirectory));
+        for (const auto target : { L"wsl.exe", L"wsl.exe -d Ubuntu", L"wsl.exe -d Debian" })
+        {
+            VERIFY_ARE_EQUAL(std::wstring{},
+                             ResolveSplitCwd(L"/work", L"wsl.exe --exec bash", target, noWindowsDirectory));
+        }
         VERIFY_ARE_EQUAL(std::wstring{ L"/work" },
                          ResolveSplitCwd(L"/work", L"wsl.exe --distribution-id {1234}", L"wsl.exe --distribution-id {1234} -e bash", noWindowsDirectory));
         for (const auto target : { L"pwsh.exe", L"copilot.exe", L"wsl.exe", L"wsl.exe -d Debian", L"wsl.exe --distribution-id {1234}", L"wsl.exe -d Ubuntu --cd /explicit", L"wsl.exe -d Ubuntu ~", L"wsl.exe --unknown -d Ubuntu", L"wsl.exe -d", L"wsl.exe -d Ubuntu -d Debian", L"cmd.exe /c wsl.exe -d Ubuntu" })
@@ -89,17 +94,17 @@ namespace TerminalAppUnitTests
                  L"line" })
         {
             VERIFY_ARE_EQUAL(std::wstring{},
-                             ResolveSplitCwd(directory, L"wsl.exe", L"wsl.exe", noWindowsDirectory));
+                             ResolveSplitCwd(directory, L"wsl.exe -d Ubuntu", L"wsl.exe -d Ubuntu", noWindowsDirectory));
         }
         const std::wstring embeddedNul{ L"/tmp/valid\0suffix", 17 };
         VERIFY_ARE_EQUAL(std::wstring{},
-                         ResolveSplitCwd(embeddedNul, L"wsl.exe", L"wsl.exe", noWindowsDirectory));
+                         ResolveSplitCwd(embeddedNul, L"wsl.exe -d Ubuntu", L"wsl.exe -d Ubuntu", noWindowsDirectory));
         const std::wstring hostNul{ L"C:\\work\0suffix", 14 };
         VERIFY_ARE_EQUAL(std::wstring{},
                          ResolveSplitCwd(hostNul, L"pwsh.exe", L"pwsh.exe", [](std::wstring_view) { return true; }));
 
         const std::wstring directory{ L"/work with spaces/\u6d4b\u8bd5" };
-        VERIFY_ARE_EQUAL(directory, ResolveSplitCwd(directory, L"wsl.exe", L"wsl.exe --exec bash", noWindowsDirectory));
+        VERIFY_ARE_EQUAL(directory, ResolveSplitCwd(directory, L"wsl.exe -d Ubuntu", L"wsl.exe -d Ubuntu --exec bash", noWindowsDirectory));
         const auto [command, hostDirectory] = Microsoft::Console::Utils::MangleStartingDirectoryForWSL(L"wsl.exe --exec bash", directory);
         int argc{};
         const wil::unique_hlocal_ptr<PWSTR[]> argv{ CommandLineToArgvW(command.c_str(), &argc) };

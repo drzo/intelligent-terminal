@@ -693,6 +693,7 @@ namespace TerminalAppLocalTests
         TEST_METHOD(ProfileAwareSplitPreservesExplicitTargets);
         TEST_METHOD(SplitDirectoryFollowsShellAndAgentSources);
         TEST_METHOD(SplitDirectoryPreservesExplicitAndRestoreArguments);
+        TEST_METHOD(SplitDirectoryDuplicatePreservesElevation);
         TEST_METHOD(SplitDirectoryUsesAssistantSourceInsteadOfHelper);
         TEST_METHOD(SplitDirectoryUsesConnectionLaunchMetadata);
         TEST_METHOD(SplitDirectoryDropdownOnlyInheritsForSplit);
@@ -19923,6 +19924,45 @@ namespace TerminalAppLocalTests
             const auto prepared = page->_PrepareSplitDirectory(tab, append, false).as<NewTerminalArgs>();
             VERIFY_IS_TRUE(prepared.AppendCommandLine());
             VERIFY_ARE_EQUAL(append.Commandline(), prepared.Commandline());
+        });
+    }
+
+    void TabTests::SplitDirectoryDuplicatePreservesElevation()
+    {
+        using State = winrt::Microsoft::Terminal::TerminalConnection::ConnectionState;
+        const auto connection = winrt::make_self<TestConnection>(Utils::CreateGuid(), State::Connected);
+        auto page = _commonSetup(*connection);
+        TestOnUIThread([&]() {
+            const auto tab = page->_GetFocusedTabImpl();
+            const auto profile = tab->GetFocusedProfile();
+            profile.Elevate(true);
+            profile.Commandline(L"cmd.exe /d /k");
+            const auto directory = wil::ExpandEnvironmentStringsW<std::wstring>(L"%SystemRoot%");
+            const auto output = L"\x1b]9;9;\"" + directory + L"\"\x1b\\";
+            connection->TerminalOutput.raise(winrt::array_view<const char16_t>{
+                reinterpret_cast<const char16_t*>(output.data()),
+                reinterpret_cast<const char16_t*>(output.data() + output.size()) });
+            const auto prepared = page->_PrepareSplitDirectory(tab, nullptr, true).as<NewTerminalArgs>();
+            VERIFY_IS_NOT_NULL(prepared.Elevate());
+            VERIFY_IS_FALSE(prepared.Elevate().Value());
+            VERIFY_ARE_EQUAL(winrt::hstring{ directory }, prepared.StartingDirectory());
+            const auto duplicateConnection = winrt::make_self<TestConnection>(Utils::CreateGuid(), State::Connected);
+            const auto pane = page->_MakePane(prepared, *tab, *duplicateConnection);
+            VERIFY_IS_NOT_NULL(pane);
+            VERIFY_IS_FALSE(winrt::get_self<winrt::Microsoft::Terminal::Settings::TerminalSettings>(
+                                pane->GetTerminalControl().Settings())
+                                ->Elevate());
+            VERIFY_IS_TRUE(page->_SplitPane(tab, SplitDirection::Right, .5f, pane));
+            VERIFY_ARE_EQUAL(2, tab->GetLeafPaneCount());
+            VERIFY_ARE_EQUAL(winrt::hstring{ directory }, tab->GetActiveTerminalControl().Settings().StartingDirectory());
+
+            NewTerminalArgs explicitArgs;
+            const auto explicitDefault = page->_PrepareSplitDirectory(tab, explicitArgs, true).as<NewTerminalArgs>();
+            VERIFY_IS_NULL(explicitDefault.Elevate());
+            explicitArgs.Elevate(true);
+            const auto explicitElevated = page->_PrepareSplitDirectory(tab, explicitArgs, true).as<NewTerminalArgs>();
+            VERIFY_IS_TRUE(explicitElevated.Elevate().Value());
+            VERIFY_IS_TRUE(profile.Elevate());
         });
     }
 

@@ -145,7 +145,9 @@ directory. POSIX directories are inherited only between matching WSL launch
 namespaces; no Windows/WSL or cross-distro path conversion is guessed.
 Source identity comes from the running connection, not reloaded profile settings.
 Commands are expanded before WSL validation; unknown source identities do not
-inherit POSIX paths.
+inherit POSIX paths. WSL launches without an explicit distribution selector use
+the target's normal startup directory instead, because the default distribution
+may have changed since the source started.
 Saved-layout, existing-content and session-resume arguments remain unchanged.
 New-tab startup behavior is unchanged. A hidden,
 missing, or invalid split target produces a warning and falls back to the global

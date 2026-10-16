@@ -179,7 +179,8 @@ namespace Microsoft::Terminal::AgentSource
                 return std::nullopt;
             }
         }
-        return identity;
+        // The default distribution may have changed since the source process started.
+        return identity.empty() ? std::nullopt : std::optional{ std::move(identity) };
     }
 
     template<typename IsWindowsDirectory>
