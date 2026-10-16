@@ -270,7 +270,7 @@ each other's sessions. Background native tabs are not bound to the current
 pane; changing its route releases the previous binding and binds the new root,
 and returning home releases it without claiming sessions from shared tabs.
 Requests are scoped to the session's location. Server callbacks publish
-revisioned RPC signals only to the owning clients. Each TUI invokes its own
+RPC signals with revision numbers only to the owning clients. Each TUI invokes its own
 `WTCLI_PATH` bridge with its pane environment; the shared server's `WT_SESSION`
 is never used. Viewing the same session in another pane explicitly transfers
 ownership. An evicted client cannot reclaim it merely by polling.

@@ -116,6 +116,7 @@ Describe 'Feature §8 OpenCode hook bridge' -Tag 'Feature' -Skip:(-not $script:R
                 $arrived = Wait-Until -TimeoutSec 60 -IntervalSec 1 -Quiet -Condition {
                     @(Get-WtEvents -Listener $listener -Predicate {
                         $_.method -eq 'agent_event' -and $_.params.pane_id -eq $paneId -and
+                        $_.params.agent_session_id -eq $script:fixtureSessionId -and
                         $_.params.cli_source -eq 'opencode' -and $_.params.event -eq 'agent.session.start'
                     }).Count -gt 0
                 }

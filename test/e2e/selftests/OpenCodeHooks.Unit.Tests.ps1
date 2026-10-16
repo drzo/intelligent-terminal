@@ -21,6 +21,81 @@ BeforeAll {
     $script:nativeCases['Node component wrapper'] = $componentCase.CommandElements[2].ScriptBlock.GetScriptBlock()
     $script:nativeLoaderCase = 'OpenCode CLI loads copied hooks and native V2 TUI binds a viewed session'
     $script:nativeCases[$script:nativeLoaderCase] | Should -Not -BeNullOrEmpty -Because 'the native loader regression must track its current E2E title'
+    $tracking = [Management.Automation.Language.Parser]::ParseFile(
+        (Join-Path $PSScriptRoot '..\tests\Feature.OpenCodeHooks.Tests.ps1'), [ref]$null, [ref]$null)
+    foreach ($name in @('BeforeAll', 'AfterAll')) {
+        $block = $tracking.Find({
+            param($node)
+            $node -is [Management.Automation.Language.CommandAst] -and $node.GetCommandName() -eq $name
+        }, $true)
+        Set-Variable -Name "tracking$name" -Scope Script -Value $block.CommandElements[1].ScriptBlock.GetScriptBlock()
+    }
+    $bridge = [Management.Automation.Language.Parser]::ParseFile(
+        (Join-Path $PSScriptRoot '..\tests\Feature.OpenCodeHookBridge.Tests.ps1'), [ref]$null, [ref]$null)
+    $events = $bridge.Find({
+        param($node)
+        $node -is [Management.Automation.Language.CommandAst] -and $node.GetCommandName() -eq 'Get-WtEvents' -and
+            $node.Extent.Text -match 'agent\.session\.start'
+    }, $true)
+    $script:bridgePredicate = $events.CommandElements[-1].ScriptBlock.GetScriptBlock()
+}
+
+Describe 'Unit: OpenCode hook live-test isolation' -Tag 'Unit' {
+    It 'restores all V2 plugin files after the V1 installer removes them' {
+        $previousConfig = $env:XDG_CONFIG_HOME
+        $previousApp = $script:app
+        $env:XDG_CONFIG_HOME = Join-Path $TestDrive 'config'
+        $plugins = Join-Path $env:XDG_CONFIG_HOME 'opencode\plugins'
+        $original = @{}
+        foreach ($relative in @(
+            'wt-agent-hooks.js', 'wt-agent-hooks\bridge.js', 'wt-agent-hooks\plugin.json',
+            'wt-agent-hooks\send-event.ps1', 'wt-agent-hooks\wt-agent-hooks.js',
+            'wt-agent-hooks\server.js', 'wt-agent-hooks\rpc.js', 'wt-agent-hooks\tui.js',
+            'wt-agent-hooks\package.json', 'wt-agent-hooks\wt-agent-hooks\rpc.js'
+        )) {
+            $path = Join-Path $plugins $relative
+            New-Item -ItemType Directory -Path (Split-Path $path) -Force | Out-Null
+            $original[$path] = [Text.Encoding]::UTF8.GetBytes("original $relative`r`n")
+            [IO.File]::WriteAllBytes($path, $original[$path])
+        }
+        $pwsh = (Get-Command pwsh).Source
+        Mock Get-Command { [pscustomobject]@{ Source = $pwsh } } -ParameterFilter { $Name -eq 'opencode' }
+        try {
+            & $script:trackingBeforeAll
+            foreach ($path in $original.Keys) { Remove-Item -LiteralPath $path }
+            & $script:trackingAfterAll
+            foreach ($path in $original.Keys) {
+                Test-Path -LiteralPath $path -PathType Leaf | Should -BeTrue
+                [Convert]::ToBase64String([IO.File]::ReadAllBytes($path)) |
+                    Should -Be ([Convert]::ToBase64String($original[$path]))
+            }
+        }
+        finally {
+            $script:app = $previousApp
+            if ($null -eq $previousConfig) { Remove-Item Env:\XDG_CONFIG_HOME -ErrorAction SilentlyContinue }
+            else { $env:XDG_CONFIG_HOME = $previousConfig }
+        }
+    }
+
+    It 'requires the fixture session and pane for a V2 bridge event (<SessionId>, <Pane>)' -TestCases @(
+        @{ SessionId = 'fixture-session'; Pane = 'fixture-pane'; Expected = 1 },
+        @{ SessionId = 'restored-session'; Pane = 'fixture-pane'; Expected = 0 },
+        @{ SessionId = 'fixture-session'; Pane = 'other-pane'; Expected = 0 }
+    ) {
+        param($SessionId, $Pane, $Expected)
+        $script:fixtureSessionId = 'fixture-session'
+        $paneId = 'fixture-pane'
+        $event = [pscustomobject]@{
+            method = 'agent_event'
+            params = [pscustomobject]@{
+                agent_session_id = $SessionId
+                pane_id = $Pane
+                cli_source = 'opencode'
+                event = 'agent.session.start'
+            }
+        }
+        @($event | Where-Object -FilterScript $script:bridgePredicate).Count | Should -Be $Expected
+    }
 }
 
 Describe 'Unit: OpenCode hook component behavior' -Tag 'Unit' {

@@ -31,11 +31,19 @@ Describe 'Feature: OpenCode session tracking hooks' -Tag 'Feature' -Skip:(-not $
         $configRoot = if ($env:XDG_CONFIG_HOME) { $env:XDG_CONFIG_HOME } else { Join-Path $HOME '.config' }
         $script:pluginsDir = Join-Path $configRoot 'opencode\plugins'
         $script:supportDir = Join-Path $script:pluginsDir 'wt-agent-hooks'
-        $script:managedPaths = @(
+        $script:requiredPaths = @(
             (Join-Path $script:pluginsDir 'wt-agent-hooks.js'),
-            (Join-Path $script:supportDir 'send-event.ps1'),
             (Join-Path $script:supportDir 'bridge.js'),
             (Join-Path $script:supportDir 'plugin.json')
+        )
+        $script:managedPaths = $script:requiredPaths + @(
+            (Join-Path $script:supportDir 'send-event.ps1'),
+            (Join-Path $script:supportDir 'wt-agent-hooks.js'),
+            (Join-Path $script:supportDir 'server.js'),
+            (Join-Path $script:supportDir 'rpc.js'),
+            (Join-Path $script:supportDir 'tui.js'),
+            (Join-Path $script:supportDir 'package.json'),
+            (Join-Path $script:supportDir 'wt-agent-hooks\rpc.js')
         )
         $script:pluginsDirExisted = Test-Path $script:pluginsDir
         $script:supportDirExisted = Test-Path $script:supportDir
@@ -96,8 +104,7 @@ Describe 'Feature: OpenCode session tracking hooks' -Tag 'Feature' -Skip:(-not $
         $openCodeHook = @($status.clis | Where-Object name -eq 'opencode')
         $openCodeHook | Should -HaveCount 1
         $openCodeHook[0].plugin_installed | Should -BeTrue -Because 'the packaged installer must report the complete OpenCode plugin'
-        foreach ($path in $script:managedPaths) {
-            if ((Split-Path $path -Leaf) -eq 'send-event.ps1') { continue }
+        foreach ($path in $script:requiredPaths) {
             Test-Path $path | Should -BeTrue -Because "the OpenCode hook install must include $path"
         }
 

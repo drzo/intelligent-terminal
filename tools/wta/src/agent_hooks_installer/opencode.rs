@@ -1,5 +1,5 @@
 use super::*;
-use std::io::Read;
+use std::io::{Read, Write};
 use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
 
@@ -382,6 +382,42 @@ fn remove_legacy_rpc(home: &Path) -> std::io::Result<()> {
 }
 
 pub(super) fn copy_bundle(source: &Path, home: &Path, variant: ApiVariant) -> std::io::Result<()> {
+    copy_bundle_with_writer(source, home, variant, |file, bytes| file.write_all(bytes))
+}
+
+// Like prompt::write_atomic, stage beside the destination before replacing it.
+// Reserve the staging file so cleanup never removes a pre-existing foreign file.
+fn replace_payload(
+    path: &Path,
+    bytes: &[u8],
+    write: &mut impl FnMut(&mut fs::File, &[u8]) -> std::io::Result<()>,
+) -> std::io::Result<()> {
+    let staging = path.with_file_name(format!(".wta-{}.tmp", uuid::Uuid::new_v4()));
+    let mut file = fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&staging)?;
+    let result = write(&mut file, bytes).and_then(|()| file.sync_all());
+    drop(file);
+    let result = result.and_then(|()| fs::rename(&staging, path));
+    if let Err(error) = result {
+        return match fs::remove_file(&staging) {
+            Ok(()) => Err(error),
+            Err(cleanup) => Err(std::io::Error::new(
+                error.kind(),
+                format!("{error}; cannot clean {}: {cleanup}", staging.display()),
+            )),
+        };
+    }
+    Ok(())
+}
+
+fn copy_bundle_with_writer(
+    source: &Path,
+    home: &Path,
+    variant: ApiVariant,
+    mut write: impl FnMut(&mut fs::File, &[u8]) -> std::io::Result<()>,
+) -> std::io::Result<()> {
     check_owned_files(home)?;
     let destination = opencode_plugins_dir(home);
     let support = opencode_support_dir(home);
@@ -445,21 +481,38 @@ pub(super) fn copy_bundle(source: &Path, home: &Path, variant: ApiVariant) -> st
             "OpenCode bundle contains an unmanaged bridge",
         ));
     }
-    fs::create_dir_all(&support)?;
+    fs::create_dir_all(&destination)?;
+    let created_support = match fs::create_dir(&support) {
+        Ok(()) => true,
+        Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => false,
+        Err(error) => return Err(error),
+    };
     // Invalidate the old completion marker first; a partial switch is retryable
     // even when the source bundle's version number did not change.
     let marker = support.join(OPENCODE_MANIFEST);
     if marker.is_file() {
         fs::remove_file(&marker)?;
     }
-    fs::write(support.join(BRIDGE), bridge)?;
+    if let Err(error) = replace_payload(&support.join(BRIDGE), &bridge, &mut write) {
+        // Before the first committed payload there is no ownership marker.
+        // Remove only our new, empty directory; never recursively remove files.
+        if created_support {
+            if let Err(cleanup) = fs::remove_dir(&support) {
+                return Err(std::io::Error::new(
+                    error.kind(),
+                    format!("{error}; cannot clean {}: {cleanup}", support.display()),
+                ));
+            }
+        }
+        return Err(error);
+    }
     for (file, bytes) in payloads {
         let target = if variant == ApiVariant::V1 {
             root.clone()
         } else {
             support.join(file)
         };
-        fs::write(target, bytes)?;
+        replace_payload(&target, &bytes, &mut write)?;
     }
     if variant == ApiVariant::V2 {
         if root.exists() {
@@ -478,9 +531,10 @@ pub(super) fn copy_bundle(source: &Path, home: &Path, variant: ApiVariant) -> st
         fs::remove_file(legacy)?;
     }
     remove_legacy_rpc(home)?;
-    fs::write(
-        marker,
-        serde_json::to_vec_pretty(&manifest).map_err(std::io::Error::other)?,
+    replace_payload(
+        &marker,
+        &serde_json::to_vec_pretty(&manifest).map_err(std::io::Error::other)?,
+        &mut write,
     )
 }
 
@@ -604,6 +658,74 @@ mod tests {
         Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("wt-agent-hooks")
             .join("opencode")
+    }
+
+    fn interrupted_write(file: &mut fs::File, bytes: &[u8]) -> std::io::Result<()> {
+        file.write_all(&bytes[..1])?;
+        Err(std::io::Error::new(
+            std::io::ErrorKind::WriteZero,
+            "injected partial write",
+        ))
+    }
+
+    #[test]
+    fn first_payload_write_failure_cleans_only_new_support_and_allows_retry() {
+        for variant in [ApiVariant::V1, ApiVariant::V2] {
+            let fixture = Fixture::new();
+            let home = &fixture.0;
+            let support = opencode_support_dir(home);
+            assert!(copy_bundle_with_writer(&source(), home, variant, interrupted_write).is_err());
+            assert!(!support.exists());
+            copy_bundle(&source(), home, variant).unwrap();
+            assert!(complete(home));
+
+            let user_file = support.join("user.txt");
+            fs::write(&user_file, "preserve").unwrap();
+            assert!(copy_bundle_with_writer(&source(), home, variant, interrupted_write).is_err());
+            assert_eq!(fs::read_to_string(&user_file).unwrap(), "preserve");
+            check_owned_files(home).unwrap();
+            copy_bundle(&source(), home, variant).unwrap();
+            assert!(complete(home));
+        }
+    }
+
+    #[test]
+    fn interrupted_payload_updates_preserve_owned_files_and_allow_retry() {
+        for variant in [ApiVariant::V1, ApiVariant::V2] {
+            let payload_count = if variant == ApiVariant::V1 { 2 } else { 6 };
+            // Include the last-written completion manifest as a failure point.
+            for fail_at in 0..=payload_count {
+                let fixture = Fixture::new();
+                let home = &fixture.0;
+                copy_bundle(&source(), home, variant).unwrap();
+                let support = opencode_support_dir(home);
+                let mut call = 0;
+                let error = copy_bundle_with_writer(&source(), home, variant, |file, bytes| {
+                    let current = call;
+                    call += 1;
+                    if current == fail_at {
+                        interrupted_write(file, bytes)
+                    } else {
+                        file.write_all(bytes)
+                    }
+                })
+                .unwrap_err();
+                assert_eq!(error.kind(), std::io::ErrorKind::WriteZero);
+                assert!(!complete(home));
+                check_owned_files(home).unwrap();
+                assert!(managed_file(&support.join(BRIDGE)));
+                assert!(!support.join(OPENCODE_MANIFEST).exists());
+                assert!(!fs::read_dir(&support).unwrap().any(|entry| entry
+                    .unwrap()
+                    .file_name()
+                    .to_string_lossy()
+                    .ends_with(".tmp")));
+                copy_bundle(&source(), home, variant).unwrap();
+                assert!(complete(home));
+                assert!(opencode_uninstall(Some(home)).succeeded());
+                assert!(!support.exists());
+            }
+        }
     }
 
     #[test]
