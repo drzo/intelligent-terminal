@@ -647,6 +647,45 @@ async fn transfer_wsl_file(distro: &str, local: &Path, destination: &str) -> Res
     Ok(())
 }
 
+fn wsl_activation_script(
+    ownership: &Ownership,
+    directory: &str,
+    stage: &str,
+    owner: &str,
+    backup: &str,
+) -> String {
+    let q = crate::coordinator::sh_quote;
+    let verify = ownership
+        .files
+        .iter()
+        .map(|file| {
+            format!(
+                "[ \"$(sha256sum -- {} | cut -d ' ' -f 1)\" = {} ]",
+                q(&format!("{stage}/{}", file.name)),
+                q(&file.sha256)
+            )
+        })
+        .collect::<Vec<_>>()
+        .join(" && ");
+    // A failed early AND-list check does not stop Bash with set -e.
+    format!(
+        "set -eu; if ! {{ {verify}; }}; then \
+         printf '%s\\n' 'ACP file checksum verification failed.' >&2; exit 1; fi; \
+         printf '%s\\n' {} > {}/{}; \
+         if [ -e {} ]; then \
+         for f in {}/* {}/.[!.]* {}/..?*; do [ -e \"$f\" ] || [ -L \"$f\" ] || continue; \
+         case \"${{f##*/}}\" in agy_acp_server.par|localharness_external|{OWNER_FILE}) ;; \
+         *) printf '%s\\n' 'The ACP directory contains user-owned files.' >&2; exit 1 ;; esac; \
+         [ -f \"$f\" ] && [ ! -L \"$f\" ]; done; mv {} {}; fi; \
+         if ! mv {} {}; then if [ -d {} ]; then mv {} {}; fi; exit 1; fi; \
+         if [ -d {} ]; then rm -f -- {}/agy_acp_server.par {}/localharness_external {}/{}; rmdir {}; fi",
+        q(owner), q(stage), OWNER_FILE, q(directory),
+        q(directory), q(directory), q(directory), q(directory), q(backup),
+        q(stage), q(directory), q(backup), q(backup), q(directory),
+        q(backup), q(backup), q(backup), q(backup), OWNER_FILE, q(backup)
+    )
+}
+
 pub(crate) async fn ensure_wsl(distro: &str) -> Result<String> {
     ensure!(
         crate::agent_source::is_safe_wsl_distro_name(distro),
@@ -701,32 +740,17 @@ pub(crate) async fn ensure_wsl(distro: &str) -> Result<String> {
     .await?;
     let result: Result<String> = async {
         for name in platform.files() {
-            transfer_wsl_file(distro, &extracted.join(name), &format!("{stage_name}/{name}")).await?;
-        }
-        let verify = ownership.files.iter().map(|file| {
-            format!(
-                "[ \"$(sha256sum -- {} | cut -d ' ' -f 1)\" = {} ]",
-                q(&format!("{stage_name}/{}", file.name)),
-                q(&file.sha256)
+            transfer_wsl_file(
+                distro,
+                &extracted.join(name),
+                &format!("{stage_name}/{name}"),
             )
-        }).collect::<Vec<_>>().join(" && ");
+            .await?;
+        }
         let backup = format!("{parent}/.previous-{}", uuid::Uuid::new_v4());
         run_wsl_script(
             distro,
-            &format!(
-                "set -eu; {verify}; printf '%s\\n' {} > {}/{}; \
-                 if [ -e {} ]; then \
-                 for f in {}/* {}/.[!.]* {}/..?*; do [ -e \"$f\" ] || [ -L \"$f\" ] || continue; \
-                 case \"${{f##*/}}\" in agy_acp_server.par|localharness_external|{OWNER_FILE}) ;; \
-                 *) printf '%s\\n' 'The ACP directory contains user-owned files.' >&2; exit 1 ;; esac; \
-                 [ -f \"$f\" ] && [ ! -L \"$f\" ]; done; mv {} {}; fi; \
-                 if ! mv {} {}; then if [ -d {} ]; then mv {} {}; fi; exit 1; fi; \
-                 if [ -d {} ]; then rm -f -- {}/agy_acp_server.par {}/localharness_external {}/{}; rmdir {}; fi",
-                q(&owner), q(&stage_name), OWNER_FILE, q(&directory),
-                q(&directory), q(&directory), q(&directory), q(&directory), q(&backup),
-                q(&stage_name), q(&directory), q(&backup), q(&backup), q(&directory),
-                q(&backup), q(&backup), q(&backup), q(&backup), OWNER_FILE, q(&backup)
-            ),
+            &wsl_activation_script(&ownership, &directory, &stage_name, &owner, &backup),
         )
         .await?;
         Ok(format!("{directory}/agy_acp_server.par"))
@@ -786,6 +810,134 @@ pub(crate) async fn prepare(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn check_wsl_activation_checksum(corrupt_file: Option<usize>) {
+        let bash = [
+            r"C:\Program Files\Git\bin\bash.exe",
+            r"C:\Program Files\Git\usr\bin\bash.exe",
+        ]
+        .into_iter()
+        .find(|path| Path::new(path).is_file())
+        .expect("the shell regression requires Git for Windows Bash");
+        for existing in [false, true] {
+            let root = fixture();
+            let stage = root.join("stage");
+            let target = root.join("target");
+            fs::create_dir(&stage).unwrap();
+            let files = Platform::LinuxX64.files();
+            let expected: [&[u8]; 2] = [b"verified server", b"verified companion"];
+            let previous: [&[u8]; 2] = [b"previous server", b"previous companion"];
+            let ownership = Ownership {
+                agent: "antigravity".into(),
+                version: VERSION.into(),
+                platform: Platform::LinuxX64.id().into(),
+                archive_sha256: Platform::LinuxX64.archive_sha256().into(),
+                files: files
+                    .iter()
+                    .zip(expected)
+                    .map(|(name, content)| InstalledFile {
+                        name: (*name).into(),
+                        bytes: content.len() as u64,
+                        sha256: format!("{:x}", Sha256::digest(content)),
+                    })
+                    .collect(),
+            };
+            for (name, content) in files.iter().zip(expected) {
+                fs::write(stage.join(name), content).unwrap();
+            }
+            if let Some(index) = corrupt_file {
+                fs::write(stage.join(files[index]), b"changed after transfer").unwrap();
+            }
+            if existing {
+                fs::create_dir(&target).unwrap();
+                for (name, content) in files.iter().zip(previous) {
+                    fs::write(target.join(name), content).unwrap();
+                }
+                fs::write(target.join(OWNER_FILE), "fixture-owned\n").unwrap();
+            }
+            let script =
+                wsl_activation_script(&ownership, "target", "stage", "fixture-owned", "backup");
+            let output = std::process::Command::new(bash)
+                .args([
+                    "--noprofile",
+                    "--norc",
+                    "-c",
+                    &format!("export PATH=/usr/bin:/bin:$PATH; {script}"),
+                ])
+                .current_dir(&root)
+                .output()
+                .unwrap();
+            let target_files = target.is_dir().then(|| {
+                files
+                    .iter()
+                    .map(|name| fs::read(target.join(name)).unwrap())
+                    .collect::<Vec<_>>()
+            });
+            let owner = target
+                .is_dir()
+                .then(|| fs::read(target.join(OWNER_FILE)).unwrap());
+            let stage_marked_owned = stage.join(OWNER_FILE).exists();
+            let stage_exists = stage.exists();
+            let backup_exists = root.join("backup").exists();
+            fs::remove_dir_all(root).unwrap();
+            if corrupt_file.is_some() {
+                assert!(
+                    !output.status.success(),
+                    "a mismatched checksum must stop activation (existing={existing}): {output:?}"
+                );
+                assert!(
+                    !stage_marked_owned,
+                    "failed verification must not publish ownership"
+                );
+                assert!(stage_exists, "failed verification must not move the stage");
+                assert!(
+                    !backup_exists,
+                    "failed verification must not move the previous target"
+                );
+                assert_eq!(
+                    target_files,
+                    existing.then(|| previous
+                        .iter()
+                        .map(|content| content.to_vec())
+                        .collect::<Vec<_>>()),
+                    "the previous installation must remain unchanged"
+                );
+                assert_eq!(owner, existing.then(|| b"fixture-owned\n".to_vec()));
+            } else {
+                assert!(
+                    output.status.success(),
+                    "valid activation failed: {output:?}"
+                );
+                assert_eq!(
+                    target_files,
+                    Some(
+                        expected
+                            .iter()
+                            .map(|content| content.to_vec())
+                            .collect::<Vec<_>>()
+                    )
+                );
+                assert_eq!(owner, Some(b"fixture-owned\n".to_vec()));
+                assert!(!stage_exists);
+                assert!(!backup_exists);
+            }
+        }
+    }
+
+    #[test]
+    fn wsl_activation_rejects_first_file_checksum_mismatch() {
+        check_wsl_activation_checksum(Some(0));
+    }
+
+    #[test]
+    fn wsl_activation_rejects_second_file_checksum_mismatch() {
+        check_wsl_activation_checksum(Some(1));
+    }
+
+    #[test]
+    fn wsl_activation_accepts_only_a_fully_verified_pair() {
+        check_wsl_activation_checksum(None);
+    }
 
     fn fixture() -> PathBuf {
         let root = std::env::temp_dir().join(format!("wta-acp-archive-{}", uuid::Uuid::new_v4()));

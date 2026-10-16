@@ -893,7 +893,7 @@ mod tests {
     }
 
     #[test]
-    fn wsl_acp_command_executes_bash_directly_without_default_shell_reparsing() {
+    fn wsl_acp_command_executes_bash_directly_without_default_shell_expansion() {
         let script = antigravity_wsl_launch_script(
             &["agy_acp_server.par".into(), "--uid=".into()],
             ChildEnvironmentPolicy::ApplySharedProvider,

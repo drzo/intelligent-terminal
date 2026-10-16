@@ -20,6 +20,8 @@ The binary is output to
 target in this repo: the package project prefers that output over the host-target
 fallback.
 
+Shell activation regression tests use Bash included with Git for Windows.
+
 ### How WTA runs
 
 WTA is normally launched **by Windows Terminal**, not by hand. WT spawns one
@@ -202,6 +204,10 @@ only report readiness or bootstrap eligibility; they do not install dependencies
 WSL ACP launches start Bash directly as the selected distribution's default user.
 The login-shell environment is loaded without sending the generated launch script
 through an extra default shell, preserving managed-cache paths and quoted arguments.
+
+The WSL Session MCP relay also requires native Python 3 in that user's login
+environment. It is separate from Antigravity's bundled ACP runtime; preparing
+the ACP dependency does not install Python.
 
 Sidebar Agent sessions runs
 `wta sessions list --origin shell --json --include-status`.

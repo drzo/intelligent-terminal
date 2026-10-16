@@ -142,6 +142,12 @@ Antigravity ships a separate native ACP server. When its ordinary `agy` CLI is
 detected, Intelligent Terminal prepares the ACP dependency before using it.
 Neither executable requires Node.js or a user-installed Python runtime.
 
+For agents running in WSL, Intelligent Terminal's separate terminal-control MCP
+relay requires a native Python 3 interpreter in the selected Linux user's login
+environment. A system or user-local Python installation is supported; Windows
+Python interoperability does not substitute for it. Preparing Antigravity ACP
+does not install Python or change your shell profile.
+
 > [!NOTE]
 > **Bringing your own ACP agent.** Any CLI that speaks ACP can also be
 > wired up from **Settings → AI Agents → Add custom agent**. Custom
