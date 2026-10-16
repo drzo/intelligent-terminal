@@ -56,7 +56,7 @@ namespace winrt::Microsoft::TerminalApp::implementation
         void TerminalOutput(const winrt::event_token& token) noexcept { _wrappedConnection.TerminalOutput(token); };
         winrt::event_token StateChanged(const TypedEventHandler<ITerminalConnection, IInspectable>& handler) { return _wrappedConnection.StateChanged(handler); };
         void StateChanged(const winrt::event_token& token) noexcept { _wrappedConnection.StateChanged(token); };
-        winrt::guid SessionId() const noexcept { return {}; }
+        winrt::guid SessionId() const noexcept { return _wrappedConnection.SessionId(); }
         ConnectionState State() const noexcept { return _wrappedConnection.State(); }
 
     private:
@@ -64,7 +64,8 @@ namespace winrt::Microsoft::TerminalApp::implementation
         ITerminalConnection _wrappedConnection;
     };
 
-    DebugTapConnection::DebugTapConnection(ITerminalConnection wrappedConnection)
+    DebugTapConnection::DebugTapConnection(ITerminalConnection wrappedConnection) :
+        _sessionId{ ::Microsoft::Console::Utils::CreateGuid() }
     {
         _outputRevoker = wrappedConnection.TerminalOutput(winrt::auto_revoke, { get_weak(), &DebugTapConnection::_OutputHandler });
         _stateChangedRevoker = wrappedConnection.StateChanged(winrt::auto_revoke, [weak = get_weak()](auto&& /*s*/, auto&& /*e*/) {
@@ -110,11 +111,7 @@ namespace winrt::Microsoft::TerminalApp::implementation
 
     guid DebugTapConnection::SessionId() const noexcept
     {
-        if (const auto c = _wrappedConnection.get())
-        {
-            return c.SessionId();
-        }
-        return {};
+        return _sessionId;
     }
 
     ConnectionState DebugTapConnection::State() const noexcept

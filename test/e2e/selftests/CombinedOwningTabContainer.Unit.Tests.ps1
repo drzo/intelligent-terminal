@@ -19,6 +19,39 @@ BeforeAll {
 Describe 'Combined owning-tab container selection' -Tag 'Unit' {
     AfterAll { $env:ITE2E_HISTORY_INDICATORS_ONLY = $script:originalHistoryMode }
 
+    It 'includes the native owner only in the matching fixture mode <Mode>' -ForEach @(
+        @{ Mode = 'Full'; Focused = $false; Indicators = '' }
+        @{ Mode = 'Focused'; Focused = $true; Indicators = '' }
+        @{ Mode = 'Indicators'; Focused = $false; Indicators = '1' }
+    ) {
+        $body = $script:suiteAst.Find({ param($node)
+            $node -is [Management.Automation.Language.FunctionDefinitionAst] -and
+                $node.Name -eq 'Assert-MoveNumberKeys'
+        }, $true)
+        $guard = $body.Find({ param($node)
+            $node -is [Management.Automation.Language.IfStatementAst] -and
+                $node.Extent.Text.Contains('$qualifiedOwnerIds += $script:nativeScopeTab.session_id')
+        }, $true)
+        $guard | Should -Not -BeNullOrEmpty
+        $guard.Clauses[0].Item1.Extent.Text |
+            Should -BeExactly '-not $OwningTabMoveOnly -and $env:ITE2E_HISTORY_INDICATORS_ONLY -ne ''1'''
+        $guard.Extent.Text | Should -Not -Match 'openedFixtureOwners|FixtureSession'
+        $OwningTabMoveOnly = $Focused
+        $env:ITE2E_HISTORY_INDICATORS_ONLY = $Indicators
+        $script:marker = 'fixture'
+        $script:nativeScopeTab = if ($Mode -eq 'Full') { @{ session_id = 'native-pane' } } else { $null }
+        $qualifiedOwnerIds = @('helper-pane')
+        $fixtureOwnerTitles = @{}
+        . ([scriptblock]::Create($guard.Extent.Text))
+        if ($Mode -eq 'Full') {
+            $qualifiedOwnerIds | Should -Be @('helper-pane', 'native-pane')
+            $fixtureOwnerTitles['native-pane'] | Should -BeExactly 'fixture-open-native'
+        } else {
+            $qualifiedOwnerIds | Should -Be @('helper-pane')
+            $fixtureOwnerTitles.Count | Should -Be 0
+        }
+    }
+
     It 'settles exact search values without replay and fails closed for <Fault>' -ForEach @(
         @{ Fault = 'missing then ready' }, @{ Fault = 'old then ready' }, @{ Fault = 'empty active' },
         @{ Fault = 'missing' }, @{ Fault = 'duplicate' }, @{ Fault = 'wrong PID' },

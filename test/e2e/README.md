@@ -28,8 +28,10 @@ including physical top-row Ctrl+Alt+1/2/9 from shell, helper and ItemsList focus
 before/after movement in All/Agents-only with search closed/open. These targets
 retain selected-filter navigation ordinals independently of the query; global
 search display does not renumber them. It omits only
-the unrelated eight helper seeds and 30-second startup survival
-observation. Default discovery remains 34 cases (C427 plus 33 existing cases); the existing
+the unrelated eight helper seeds, provider-labelled native shell fixture, and
+30-second startup survival observation. In the default fixture mode, numeric
+navigation counts that native shell as a qualified owner without treating it as
+an ACP helper session. Default discovery remains 34 cases (C427 plus 33 existing cases); the existing
 `ITE2E_HISTORY_INDICATORS_ONLY` behavior is unchanged. A broad filter cannot run
 seed-dependent cases in the focused container.
 

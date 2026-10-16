@@ -11,6 +11,78 @@ use crate::app_contracts::{PermOption, PlanEntry};
 use serde_json::json;
 use std::sync::Mutex;
 
+fn resume_envelope_arguments(command: &str) -> Vec<String> {
+    let wide: Vec<u16> = command.encode_utf16().chain(Some(0)).collect();
+    let mut count = 0;
+    // The input is NUL terminated; Windows owns the returned allocation until
+    // LocalFree, and each of its count pointers addresses a terminated argument.
+    unsafe {
+        let args = windows_sys::Win32::UI::Shell::CommandLineToArgvW(wide.as_ptr(), &mut count);
+        assert!(!args.is_null());
+        let result = std::slice::from_raw_parts(args, count as usize)
+            .iter()
+            .map(|&arg| {
+                let mut len = 0;
+                while *arg.add(len) != 0 {
+                    len += 1;
+                }
+                String::from_utf16(std::slice::from_raw_parts(arg, len)).unwrap()
+            })
+            .collect();
+        windows_sys::Win32::Foundation::LocalFree(args.cast());
+        result
+    }
+}
+
+#[test]
+fn helper_resume_envelope_preserves_qualified_launch_contract() {
+    let bare_path = helper_resume_launch_envelope(
+        "copilot",
+        "selected-session",
+        &SessionLocation::Host,
+        r"C:\project\",
+        None,
+        "cmd /d /s /c \"copilot --resume selected-session\"",
+    );
+    assert_eq!(resume_envelope_arguments(&bare_path)[3], r"C:\project\");
+    for (location, backend, command) in [
+        (
+            SessionLocation::Host,
+            "host:copilot",
+            r#"cmd /d /s /c ""C:\resolved tools\copilot.cmd" --resume selected-session""#,
+        ),
+        (
+            SessionLocation::Wsl {
+                distro: "Ubuntu".into(),
+            },
+            "wsl:Ubuntu:copilot",
+            r#"wsl.exe -d Ubuntu --cd "/home/u/a b" -- bash -lc "copilot --resume selected-session""#,
+        ),
+    ] {
+        let envelope = helper_resume_launch_envelope(
+            "copilot",
+            "selected-session",
+            &location,
+            r#"C:\cwd with spaces\"tail\"#,
+            Some("selected-home"),
+            command,
+        );
+        assert_eq!(
+            resume_envelope_arguments(&envelope),
+            [
+                "intellterm-resume-v1",
+                backend,
+                "selected-session",
+                r#"C:\cwd with spaces\"tail\"#,
+                "selected-home",
+                command,
+            ]
+        );
+        assert!(!envelope.contains("echo "));
+        assert!(!envelope.contains("&&"));
+    }
+}
+
 #[test]
 fn helper_persisted_resume_commandline_only_wraps_host_commands() {
     let host = "copilot --resume session-id";
@@ -9080,26 +9152,15 @@ fn enter_on_history_row_dispatches_new_tab_with_resume() {
         "resume tab must use the session title: {:?}",
         cmd.argv
     );
-    // The CLI invocation is still wrapped in `cmd /c` so .cmd shims
-    // resolve via PATHEXT, but the legacy `cd /d` prefix is gone —
-    // cwd is threaded through wtcli's `-d` flag now. Issue #135:
-    // a muted "Resuming … session …" banner is prepended so the
-    // user sees immediate feedback while the CLI cold-starts; the
-    // CLI's alt-screen TUI overwrites it on success. (Previously
-    // SGR 1;36;5 — bold + cyan + slow-blink — was used, but the
-    // blink + bold were too noisy. Now SGR 2;37 = dim + white, a
-    // low-contrast tone similar to the cwd line in a typical
-    // Copilot-CLI shell prompt.)
-    assert!(
-        argv.contains("cmd /c echo \x1b[2;37mResuming claude session abc-123...\x1b[0m"),
-        "expected dim-white Resuming banner echo; argv: {:?}",
-        argv
+    let launch = &cmd.argv.windows(2).find(|args| args[0] == "-c").unwrap()[1];
+    let envelope = resume_envelope_arguments(launch);
+    assert_eq!(
+        &envelope[..3],
+        ["intellterm-resume-v1", "host:claude", "abc-123"]
     );
-    assert!(
-        argv.contains("&& claude --resume abc-123"),
-        "expected resume command chained after banner; argv: {}",
-        argv
-    );
+    assert_eq!(envelope[3], real_cwd_str);
+    assert_eq!(envelope[4], "");
+    assert_eq!(envelope[5], "cmd /d /s /c \"claude --resume abc-123\"");
     assert!(
         !argv.contains("cd /d"),
         "argv must NOT contain cd /d (cwd is now passed via -d): {}",
@@ -9169,10 +9230,10 @@ fn enter_on_history_row_with_missing_cwd_omits_d_flag() {
         "argv must omit -d when cwd is missing: {}",
         argv
     );
-    assert!(
-        !argv.contains(&missing.to_string_lossy().to_string()),
-        "argv must not embed the stale cwd: {}",
-        argv
+    let launch = &cmd.argv.windows(2).find(|args| args[0] == "-c").unwrap()[1];
+    assert_eq!(
+        resume_envelope_arguments(launch)[3],
+        missing.to_string_lossy()
     );
 }
 
@@ -27044,7 +27105,12 @@ fn antigravity_resume_keeps_acp_and_cli_sessions_in_their_own_stores() {
             assert_eq!(event["params"]["window_id"], "41");
         } else {
             assert_eq!(command.kind, DispatchedCommandKind::NewTabResume);
-            assert!(command.argv.join(" ").contains(
+            let launch = &command
+                .argv
+                .windows(2)
+                .find(|args| args[0] == "-c")
+                .unwrap()[1];
+            assert!(resume_envelope_arguments(launch)[5].contains(
                 "wsl.exe -d Ubuntu --cd \"/home/u/project with spaces\" -- bash -lc \"exec 'agy' '--conversation' 'antigravity-history'\""
             ));
             assert!(!events
@@ -27100,7 +27166,7 @@ fn antigravity_wsl_cli_resume_preserves_literal_cwd_arguments() {
             .find(|args| args[0] == "-c")
             .unwrap();
         assert_eq!(
-            command[1],
+            resume_envelope_arguments(&command[1])[5],
             format!(
                 "wsl.exe -d Ubuntu --cd {argument} -- bash -lc \"exec 'agy' '--conversation' 'antigravity-history'\""
             ),
@@ -27239,18 +27305,20 @@ fn enter_on_wsl_history_row_resumes_inside_distro() {
         .expect("a command was dispatched");
     assert_eq!(cmd.kind, DispatchedCommandKind::NewTabResume);
     let argv = cmd.argv.join(" ");
+    let launch = &cmd.argv.windows(2).find(|args| args[0] == "-c").unwrap()[1];
+    let envelope = resume_envelope_arguments(launch);
     assert!(
-        argv.contains(
+        envelope[5].contains(
             "wsl -d Ubuntu --cd \"/home/u/proj\" -- bash -lc \"copilot --resume abc-123\""
         ),
         "expected in-distro resume; argv: {argv}"
     );
-    // The loading banner keeps the short session id and also names the
-    // distro for WSL rows.
-    assert!(
-        argv.contains("Resuming copilot session abc-123 in Ubuntu (WSL)"),
-        "expected distro-named WSL banner; argv: {argv}"
+    assert_eq!(
+        &envelope[..3],
+        ["intellterm-resume-v1", "wsl:Ubuntu:copilot", "abc-123"]
     );
+    assert_eq!(envelope[3], "/home/u/proj");
+    assert!(!launch.contains("echo "));
     // WSL rows must not also pass the Windows `-d <cwd>` flag.
     assert!(
         !argv.contains(" -d /home"),

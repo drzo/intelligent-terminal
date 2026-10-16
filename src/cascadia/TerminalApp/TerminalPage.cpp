@@ -15684,8 +15684,39 @@ namespace winrt::TerminalApp::implementation
             std::wstring_view{ profileAgentId });
         const auto nativeAgentProvider = !profileProvider.empty() ?
                                              winrt::hstring{ profileProvider } :
-                                             newTerminalArgs ? newTerminalArgs.NativeAgentProviderId() : winrt::hstring{};
+                                         newTerminalArgs ? newTerminalArgs.NativeAgentProviderId() :
+                                                           winrt::hstring{};
         const auto control = _CreateNewControlAndContent(controlSettings, connection, nativeAgentProvider);
+
+        // Bind before pane attachment can start the control/CLI. Fresh tabs
+        // have no saved SessionId; the connection owns their actual identity.
+        if (newTerminalArgs && !restoredAgent.agent.empty())
+        {
+            const auto bindingSessionId = connection.SessionId();
+            const auto& target = restoredAgent;
+            winrt::get_self<ContentManager>(_manager)->BindPaneSession(
+                bindingSessionId,
+                _PaneAgentSession{
+                    winrt::hstring{ target.sessionId },
+                    winrt::hstring{ target.agent },
+                    newTerminalArgs.Commandline(),
+                    winrt::hstring{ target.backend },
+                    winrt::hstring{ target.cwd } },
+                target.backend.starts_with(L"wsl:") ? L"wsl" : L"host",
+                target.backend.starts_with(L"wsl:") ?
+                    winrt::hstring{ ::Microsoft::Terminal::Settings::Model::AgentPaneBackend::Parse(target.backend)->wslDistro } :
+                    winrt::hstring{},
+                winrt::hstring{ target.universe });
+            // WTA subscribes after layout replay; retain its qualified birth.
+            _pendingRestoredSessionBindings.insert_or_assign(
+                bindingSessionId,
+                _PendingRestoredSessionBinding{
+                    winrt::hstring{ target.sessionId },
+                    winrt::hstring{ target.agent },
+                    target.cwd.empty() ? newTerminalArgs.StartingDirectory() : winrt::hstring{ target.cwd },
+                    winrt::hstring{ target.backend },
+                    winrt::hstring{ target.universe } });
+        }
 
         // Two kinds of pane replay their own history and must not also be
         // seeded from the saved buffer: one running an agent resume command,
@@ -15727,37 +15758,6 @@ namespace winrt::TerminalApp::implementation
             // Set the non-debug pane as active
             resultPane->ClearActive();
             original->SetActive();
-        }
-
-        // WTA starts after layout replay, so an immediate COM broadcast here
-        // is lost. Retain the binding until its helper's listener is subscribed.
-        if (hasSessionId && newTerminalArgs)
-        {
-            const auto& target = restoredAgent;
-            if (!target.agent.empty())
-            {
-                winrt::get_self<ContentManager>(_manager)->BindPaneSession(
-                    sessionId,
-                    _PaneAgentSession{
-                        winrt::hstring{ target.sessionId },
-                        winrt::hstring{ target.agent },
-                        newTerminalArgs.Commandline(),
-                        winrt::hstring{ target.backend },
-                        winrt::hstring{ target.cwd } },
-                    target.backend.starts_with(L"wsl:") ? L"wsl" : L"host",
-                    target.backend.starts_with(L"wsl:") ?
-                        winrt::hstring{ ::Microsoft::Terminal::Settings::Model::AgentPaneBackend::Parse(target.backend)->wslDistro } :
-                        winrt::hstring{},
-                    winrt::hstring{ target.universe });
-                _pendingRestoredSessionBindings.insert_or_assign(
-                    sessionId,
-                    _PendingRestoredSessionBinding{
-                        winrt::hstring{ target.sessionId },
-                        winrt::hstring{ target.agent },
-                        target.cwd.empty() ? newTerminalArgs.StartingDirectory() : winrt::hstring{ target.cwd },
-                        winrt::hstring{ target.backend },
-                        winrt::hstring{ target.universe } });
-            }
         }
 
         return resultPane;

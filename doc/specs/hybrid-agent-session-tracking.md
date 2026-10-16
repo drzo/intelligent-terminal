@@ -293,9 +293,15 @@ their existing failure and resume metadata.
 
 Helper-initiated resumes carry the selected qualified identity through optimistic
 dispatch and pane creation completion; they do not infer it from a possibly
-delayed sidebar snapshot or publish a second raw-ID dispatch. Helper-originated
+delayed sidebar snapshot or publish a second raw-ID dispatch. The new-tab command
+uses the existing `intellterm-resume-v1` envelope to carry backend, session ID,
+cwd, universe, and the trusted executable command. Terminal unwraps it and binds
+the actual new connection GUID before attaching the pane, including fresh tabs
+without a saved SessionId. Bootstrap hooks and the completion callback may arrive
+in either order without replacing the selected qualified identity.
+Helper-originated
 Host resume persistence retains the executable CMD wrapper needed by CLI shims,
-without the one-shot loading banner; native master launch commands remain
+without a loading-banner shell chain; native master launch commands remain
 unchanged. Registry-only WSL bindings use their confirmed source and distro when
 constructing the safe fallback command; missing or invalid WSL qualification
 never falls back to Host.

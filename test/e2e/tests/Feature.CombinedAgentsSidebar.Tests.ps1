@@ -2199,6 +2199,10 @@ Describe 'Feature: combined Agents sidebar' -Tag @('Feature', 'CombinedAgentsSid
                     })
                     $qualifiedOwnerIds = @($script:openedFixtureOwners.session_id) + @($neighbor.session_id, $owner.session_id)
                     $fixtureOwnerTitles = @{}
+                    if (-not $OwningTabMoveOnly -and $env:ITE2E_HISTORY_INDICATORS_ONLY -ne '1') {
+                        $qualifiedOwnerIds += $script:nativeScopeTab.session_id
+                        $fixtureOwnerTitles[$script:nativeScopeTab.session_id] = "$script:marker-open-native"
+                    }
                     foreach ($opened in $script:openedFixtureOwners) {
                         $opened.FixtureSession.AcpSessionId | Should -Match '^chat-fixture-'
                         $fixtureOwnerTitles[$opened.session_id] = $opened.title

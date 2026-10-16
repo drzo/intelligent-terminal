@@ -1682,6 +1682,44 @@ fn helper_persisted_resume_commandline(
     }
 }
 
+fn helper_resume_launch_envelope(
+    provider: &str,
+    session_id: &str,
+    location: &crate::agent_sessions::SessionLocation,
+    cwd: &str,
+    universe: Option<&str>,
+    commandline: &str,
+) -> String {
+    let backend = match location {
+        crate::agent_sessions::SessionLocation::Wsl { distro } => {
+            format!("wsl:{distro}:{provider}")
+        }
+        _ => format!("host:{provider}"),
+    };
+    let mut envelope = String::from("intellterm-resume-v1");
+    for value in [
+        backend.as_str(),
+        session_id,
+        cwd,
+        universe.unwrap_or_default(),
+        commandline,
+    ] {
+        let quoted = crate::coordinator::quote_windows_commandline_arg(value);
+        envelope.push(' ');
+        if quoted.starts_with('"') {
+            envelope.push_str(&quoted);
+        } else {
+            envelope.push('"');
+            envelope.push_str(&quoted);
+            // The canonical envelope always quotes, including bare paths
+            // whose trailing backslashes must not escape the closing quote.
+            envelope.push_str(&"\\".repeat(value.len() - value.trim_end_matches('\\').len()));
+            envelope.push('"');
+        }
+    }
+    envelope
+}
+
 /// Reverse of `CliSource::from_agent_id` — yields the lowercase CLI id
 /// used by the command-synthesis template and dispatch routing.
 /// Returns `None` for `CliSource::Unknown(_)` so each call-site retains
@@ -3660,19 +3698,6 @@ impl App {
         // need cmd.exe's PATHEXT resolution to launch from a bare name
         // (`CreateProcess` returns 0x80070002 for `.cmd` shims).
         //
-        // Loading banner (issue #135): the agent CLIs take 1–3s of
-        // Node.js cold-start + JSONL history parse before they paint
-        // anything, so the new tab was blank with no feedback. Prepend
-        // a blinking ANSI banner (`SGR 1;36;5` = bold cyan slow-blink)
-        // so the user sees immediate animated feedback in the new
-        // pane while the CLI cold-starts. The CLI's alt-screen TUI
-        // takes over once it boots and overwrites this line cleanly,
-        // so the banner leaves no residue on success. On CLI launch
-        // failure the banner stays put together with cmd.exe's error
-        // message — that's a feature, not a bug (the short id helps
-        // the user file a useful report). The trailing `\x1b[0m`
-        // reset guarantees any post-failure output isn't tinted /
-        // blinking.
         let raw_cwd_string = s.cwd.to_string_lossy().to_string();
         // Drop stale cwd so wtcli falls back to the profile default
         // rather than failing CreateProcessW with ERROR_DIRECTORY.
@@ -3690,30 +3715,17 @@ impl App {
                 "dispatch_resume: stored cwd is no longer a valid directory; falling back to profile default",
             );
         }
-        let short_key: String = key.chars().take(8).collect();
-        // Loading banner shown in the new pane while the CLI cold-starts.
-        // WSL rows also name the distro ("Resuming copilot session abc-123
-        // in Ubuntu (WSL)...") so the user can see which distro is being
-        // entered; host rows keep just the short session id. A WSL session
-        // only appears in the list because its distro was already started and
-        // scanned, so it is running at resume time — a "starting the distro…"
-        // hint would usually be wrong. (WSL2 can auto-shut-down an idle distro
-        // later, but a frequently-wrong hint is worse than none.)
-        let banner = match &s.location {
-            crate::agent_sessions::SessionLocation::Wsl { distro } => {
-                format!("Resuming {cli_id} session {short_key} in {distro} (WSL)...")
-            }
-            crate::agent_sessions::SessionLocation::Host => {
-                format!("Resuming {cli_id} session {short_key}...")
-            }
-            crate::agent_sessions::SessionLocation::Unknown => return,
-        };
-        // Keep Linux cwd metadata out of cmd.exe expansion for Antigravity.
-        let launch_commandline = if direct_wsl_resume {
-            commandline.clone()
-        } else {
-            format!("cmd /c echo \x1b[2;37m{banner}\x1b[0m && {commandline}")
-        };
+        // Prebind the selected identity before bootstrap hooks can arrive.
+        // The callback remains an idempotent confirmation, not launch authority.
+        let persisted_commandline = helper_persisted_resume_commandline(&s.location, &commandline);
+        let launch_commandline = helper_resume_launch_envelope(
+            cli_id,
+            &key,
+            &s.location,
+            &raw_cwd_string,
+            resume_universe.as_deref(),
+            &persisted_commandline,
+        );
         let mut argv = vec![
             "new-tab".to_string(),
             "--agent-provider".to_string(),
@@ -3755,7 +3767,7 @@ impl App {
         let cb_key = key.clone();
         let cb_location = s.location.clone();
         let cb_universe = resume_universe;
-        let cb_commandline = helper_persisted_resume_commandline(&s.location, &commandline);
+        let cb_commandline = persisted_commandline;
         let cb_cwd = s.cwd.to_string_lossy().into_owned();
         let event_tx = self.agent_event_tx.clone();
         let on_pane_id: Option<Box<dyn FnOnce(String) + Send + 'static>> =

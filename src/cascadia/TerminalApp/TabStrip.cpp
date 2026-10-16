@@ -2290,6 +2290,7 @@ namespace winrt::TerminalApp::implementation
         {
             if (button == HistoryHeaderButton())
             {
+                bool restoreHeadingFocus = false;
                 if (!button.IsChecked().Value() && XamlRoot())
                 {
                     auto focused = WUX::Input::FocusManager::GetFocusedElement(XamlRoot()).try_as<DependencyObject>();
@@ -2300,7 +2301,7 @@ namespace winrt::TerminalApp::implementation
                             const auto item = row.Content().try_as<TerminalApp::TabStripHistoryItem>();
                             if (item && ItemsList().ContainerFromItem(item) == row)
                             {
-                                button.Focus(FocusState::Keyboard);
+                                restoreHeadingFocus = true;
                             }
                             break;
                         }
@@ -2309,6 +2310,13 @@ namespace winrt::TerminalApp::implementation
                 }
                 _historyExpanded = button.IsChecked().Value();
                 _updateHistoryVisualState();
+                if (restoreHeadingFocus)
+                {
+                    // Removing the focused row can move focus again during
+                    // ListView layout. Focus the surviving heading afterwards.
+                    ItemsList().UpdateLayout();
+                    button.Focus(FocusState::Keyboard);
+                }
             }
         }
     }
