@@ -36,7 +36,16 @@ pub fn classify(record: &serde_json::Value, key: &AgentKey) -> Vec<SessionEvent>
             key: key.clone(),
             tool_name: String::new(),
         }],
-        "assistant.turn_end" => vec![SessionEvent::ToolCompleted { key: key.clone() }],
+        "assistant.turn_end" => vec![match record
+            .get("timestamp")
+            .and_then(crate::session_permissions::timestamp_ms)
+        {
+            Some(at_ms) => SessionEvent::Permission {
+                key: key.clone(),
+                update: crate::session_permissions::PermissionUpdate::TurnEnded { at_ms },
+            },
+            None => SessionEvent::ToolCompleted { key: key.clone() },
+        }],
         "permission.requested" | "permission.completed" => {
             let request_id = record
                 .get("data")
@@ -57,9 +66,12 @@ pub fn classify(record: &serde_json::Value, key: &AgentKey) -> Vec<SessionEvent>
             let (Some(request_id), Some(at_ms)) = (request_id, at_ms) else {
                 tracing::debug!(target: "session_watcher", kind, "Copilot permission record lacks correlation metadata");
                 return if kind == "permission.requested" {
-                    vec![SessionEvent::Notification {
+                    vec![SessionEvent::Permission {
                         key: key.clone(),
-                        message: reason,
+                        update: crate::session_permissions::PermissionUpdate::Uncorrelated {
+                            message: reason,
+                            at_ms,
+                        },
                     }]
                 } else {
                     Vec::new()
@@ -154,9 +166,12 @@ mod tests {
         let out = classify(&r, &"sess-1".to_string());
         assert_eq!(
             out,
-            vec![SessionEvent::Notification {
+            vec![SessionEvent::Permission {
                 key: "sess-1".to_string(),
-                message: "run git log".to_string()
+                update: crate::session_permissions::PermissionUpdate::Uncorrelated {
+                    message: "run git log".to_string(),
+                    at_ms: None,
+                }
             }]
         );
     }
@@ -168,7 +183,7 @@ mod tests {
         let out = classify(&r, &"sess-1".to_string());
         assert!(matches!(
             out.as_slice(),
-            [SessionEvent::Notification { message, .. }] if message == "permission requested"
+            [SessionEvent::Permission { update: crate::session_permissions::PermissionUpdate::Uncorrelated { message, .. }, .. }] if message == "permission requested"
         ));
     }
 
@@ -258,6 +273,22 @@ mod tests {
             out,
             vec![SessionEvent::ToolCompleted {
                 key: "sess-1".to_string()
+            }]
+        );
+    }
+
+    #[test]
+    fn permission_turn_end_preserves_source_time() {
+        let record = serde_json::json!({
+            "type": "assistant.turn_end",
+            "timestamp": 1000,
+            "data": { "turnId": "old" },
+        });
+        assert_eq!(
+            classify(&record, &"session".into()),
+            vec![SessionEvent::Permission {
+                key: "session".into(),
+                update: crate::session_permissions::PermissionUpdate::TurnEnded { at_ms: 1000 },
             }]
         );
     }

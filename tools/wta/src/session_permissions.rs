@@ -3,6 +3,13 @@ use std::collections::{HashMap, HashSet};
 
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum PermissionUpdate {
+    TurnEnded {
+        at_ms: u64,
+    },
+    Uncorrelated {
+        message: String,
+        at_ms: Option<u64>,
+    },
     Prompt {
         message: String,
         at_ms: Option<u64>,
@@ -21,6 +28,7 @@ pub enum PermissionUpdate {
 pub(crate) enum PermissionActivity {
     Waiting(String),
     Working,
+    Idle,
 }
 
 #[derive(Default)]
@@ -29,6 +37,8 @@ pub(crate) struct PermissionWaits {
     completed: HashSet<String>,
     owns_attention: bool,
     prompt_at_ms: Option<u64>,
+    prompt_message: Option<String>,
+    uncorrelated: Option<(Option<u64>, String)>,
     completed_at_ms: Option<u64>,
     stopped_at_ms: Option<u64>,
 }
@@ -46,6 +56,21 @@ impl PermissionWaits {
             return None;
         }
         match update {
+            PermissionUpdate::TurnEnded { at_ms } => Some(match self.stop(Some(at_ms)) {
+                Some(message) => PermissionActivity::Waiting(message),
+                None => PermissionActivity::Idle,
+            }),
+            PermissionUpdate::Uncorrelated { message, at_ms } => {
+                if at_ms.is_some_and(|at| self.stopped_at_ms.is_some_and(|stop| at <= stop)) {
+                    return None;
+                }
+                self.uncorrelated = Some((at_ms, message.clone()));
+                if *status == AgentStatus::Attention && !self.owns_attention {
+                    return None;
+                }
+                self.owns_attention = true;
+                Some(PermissionActivity::Waiting(message))
+            }
             PermissionUpdate::Prompt { message, at_ms } => {
                 // COM hook delivery may trail the matching file completion.
                 if at_ms.is_some_and(|at| {
@@ -60,8 +85,15 @@ impl PermissionWaits {
                 if *status == AgentStatus::Attention && !self.owns_attention {
                     return None;
                 }
+                if self
+                    .prompt_at_ms
+                    .is_some_and(|known| at_ms.is_none_or(|at| at < known))
+                {
+                    return None;
+                }
                 self.owns_attention = true;
                 self.prompt_at_ms = at_ms;
+                self.prompt_message = Some(message.clone());
                 Some(PermissionActivity::Waiting(message))
             }
             PermissionUpdate::Requested {
@@ -80,8 +112,17 @@ impl PermissionWaits {
                     return None;
                 }
                 self.owns_attention = true;
-                self.prompt_at_ms = Some(self.prompt_at_ms.unwrap_or(0).max(at_ms));
-                Some(PermissionActivity::Waiting(message))
+                if self.prompt_at_ms.is_none_or(|known| at_ms >= known) {
+                    self.prompt_at_ms = Some(at_ms);
+                    self.prompt_message = Some(message.clone());
+                }
+                Some(PermissionActivity::Waiting(
+                    self.uncorrelated
+                        .as_ref()
+                        .map(|(_, reason)| reason.clone())
+                        .or_else(|| self.prompt_message.clone())
+                        .unwrap_or(message),
+                ))
             }
             PermissionUpdate::Completed { request_id, at_ms } => {
                 let (requested_at, _) = self.pending.get(&request_id)?;
@@ -96,14 +137,19 @@ impl PermissionWaits {
                 if !self.owns_attention || *status != AgentStatus::Attention {
                     return None;
                 }
-                if let Some(message) = self.pending_message() {
+                if let Some(message) = self
+                    .uncorrelated
+                    .as_ref()
+                    .map(|(_, message)| message.clone())
+                    .or_else(|| self.pending_message())
+                {
                     return Some(PermissionActivity::Waiting(message));
                 }
                 if self
                     .prompt_at_ms
                     .is_some_and(|prompt| prompt > completed_at)
                 {
-                    return None;
+                    return self.prompt_message.clone().map(PermissionActivity::Waiting);
                 }
                 self.other_attention();
                 Some(PermissionActivity::Working)
@@ -114,10 +160,16 @@ impl PermissionWaits {
     pub(crate) fn other_attention(&mut self) {
         self.owns_attention = false;
         self.prompt_at_ms = None;
+        self.prompt_message = None;
     }
 
     pub(crate) fn working(&mut self) -> Option<String> {
-        let pending = self.pending_message();
+        let pending = self
+            .uncorrelated
+            .as_ref()
+            .map(|(_, message)| message.clone())
+            .or_else(|| self.pending_message())
+            .or_else(|| self.prompt_message.clone());
         self.owns_attention = pending.is_some();
         if pending.is_none() {
             self.prompt_at_ms = None;
@@ -125,11 +177,36 @@ impl PermissionWaits {
         pending
     }
 
-    pub(crate) fn stop(&mut self, at_ms: u64) {
-        self.pending.clear();
+    pub(crate) fn stop(&mut self, at_ms: Option<u64>) -> Option<String> {
+        // Legacy untimed boundaries clear current waits without inventing a
+        // source-time cutoff from the receiver's wall clock.
+        self.pending
+            .retain(|_, (at, _)| at_ms.is_some_and(|stop| *at > stop));
         self.completed.clear();
-        self.other_attention();
-        self.stopped_at_ms = Some(self.stopped_at_ms.unwrap_or(0).max(at_ms));
+        if !self
+            .prompt_at_ms
+            .is_some_and(|at| at_ms.is_some_and(|stop| at > stop))
+        {
+            self.prompt_at_ms = None;
+            self.prompt_message = None;
+        }
+        if !self.uncorrelated.as_ref().is_some_and(|(at, _)| {
+            at.is_some_and(|at| at_ms.is_some_and(|stop| at > stop))
+                || (at.is_none() && (!self.pending.is_empty() || self.prompt_at_ms.is_some()))
+        }) {
+            self.uncorrelated = None;
+        }
+        if let Some(at) = at_ms {
+            self.stopped_at_ms = Some(self.stopped_at_ms.unwrap_or(0).max(at));
+        }
+        let pending = self
+            .uncorrelated
+            .as_ref()
+            .map(|(_, message)| message.clone())
+            .or_else(|| self.pending_message())
+            .or_else(|| self.prompt_message.clone());
+        self.owns_attention = pending.is_some();
+        pending
     }
 
     fn pending_message(&self) -> Option<String> {
@@ -180,6 +257,79 @@ mod tests {
             waits.apply(complete("second", 40), &AgentStatus::Attention),
             Some(PermissionActivity::Working)
         ));
+    }
+
+    #[test]
+    fn delayed_prompt_cannot_replace_a_newer_wait() {
+        for delayed_at in [Some(10), None] {
+            let mut waits = PermissionWaits::default();
+            waits.apply(request("A", 10), &AgentStatus::Working);
+            waits.apply(
+                PermissionUpdate::Prompt {
+                    message: "B".into(),
+                    at_ms: Some(30),
+                },
+                &AgentStatus::Attention,
+            );
+            assert!(waits
+                .apply(
+                    PermissionUpdate::Prompt {
+                        message: "A".into(),
+                        at_ms: delayed_at,
+                    },
+                    &AgentStatus::Attention
+                )
+                .is_none());
+            assert!(matches!(
+                waits.apply(complete("A", 20), &AgentStatus::Attention),
+                Some(PermissionActivity::Waiting(message)) if message == "B"
+            ));
+            waits.apply(request("B", 30), &AgentStatus::Attention);
+            assert!(matches!(
+                waits.apply(complete("B", 40), &AgentStatus::Attention),
+                Some(PermissionActivity::Working)
+            ));
+        }
+    }
+
+    #[test]
+    fn uncorrelated_wait_survives_other_completion_and_tool_start() {
+        for at_ms in [Some(15), None] {
+            let mut waits = PermissionWaits::default();
+            waits.apply(request("A", 10), &AgentStatus::Working);
+            waits.apply(
+                PermissionUpdate::Uncorrelated {
+                    message: "B".into(),
+                    at_ms,
+                },
+                &AgentStatus::Attention,
+            );
+            assert!(matches!(
+                waits.apply(complete("A", 20), &AgentStatus::Attention),
+                Some(PermissionActivity::Waiting(message)) if message == "B"
+            ));
+            assert_eq!(waits.working().as_deref(), Some("B"));
+            assert!(waits.stop(Some(30)).is_none());
+        }
+    }
+
+    #[test]
+    fn source_turn_boundary_keeps_newer_waits_and_legacy_has_no_cutoff() {
+        let mut waits = PermissionWaits::default();
+        waits.stop(Some(1000));
+        assert!(matches!(
+            waits.apply(request("new", 1200), &AgentStatus::Working),
+            Some(PermissionActivity::Waiting(_))
+        ));
+        assert_eq!(waits.stop(Some(1000)).as_deref(), Some("new"));
+        waits.stop(None);
+        assert!(matches!(
+            waits.apply(request("next", 1300), &AgentStatus::Idle),
+            Some(PermissionActivity::Waiting(_))
+        ));
+        assert!(waits
+            .apply(request("old", 900), &AgentStatus::Attention)
+            .is_none());
     }
 
     #[test]
@@ -250,7 +400,7 @@ mod tests {
     fn late_permission_records_cannot_restart_a_finished_turn() {
         let mut waits = PermissionWaits::default();
         waits.apply(request("approval", 10), &AgentStatus::Working);
-        waits.stop(30);
+        waits.stop(Some(30));
         assert!(waits
             .apply(complete("approval", 20), &AgentStatus::Idle)
             .is_none());

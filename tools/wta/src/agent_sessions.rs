@@ -812,10 +812,7 @@ impl AgentSessionRegistry {
             SessionEvent::ToolCompleted { key } => {
                 if let Some(entry) = self.sessions.get_mut(&key) {
                     if entry.cli_source == CliSource::Copilot {
-                        self.permissions
-                            .entry(key)
-                            .or_default()
-                            .stop(crate::session_registry::now_ms());
+                        self.permissions.entry(key).or_default().stop(None);
                     }
                     // Demote to Idle when this completion resolves an active
                     // wait. Two cases produce Attention:
@@ -867,6 +864,11 @@ impl AgentSessionRegistry {
                         Some(crate::session_permissions::PermissionActivity::Working) => {
                             entry.status = AgentStatus::Working;
                             entry.attention_reason = None;
+                        }
+                        Some(crate::session_permissions::PermissionActivity::Idle) => {
+                            entry.status = AgentStatus::Idle;
+                            entry.attention_reason = None;
+                            entry.current_tool = None;
                         }
                         None => return,
                     }
@@ -959,7 +961,7 @@ impl AgentSessionRegistry {
                     is_agent_pane_session && pane_still_live && reason_keeps_session_alive;
                 if let Some(entry) = self.sessions.get_mut(&key) {
                     if let Some(waits) = self.permissions.get_mut(&key) {
-                        waits.stop(crate::session_registry::now_ms());
+                        waits.stop(None);
                     }
                     if keep_idle {
                         entry.status = AgentStatus::Idle;
@@ -996,7 +998,7 @@ impl AgentSessionRegistry {
             } => {
                 if let Some(key) = self.active_by_pane.get(&pane_session_id).cloned() {
                     if let Some(waits) = self.permissions.get_mut(&key) {
-                        waits.stop(crate::session_registry::now_ms());
+                        waits.stop(None);
                     }
                     if let Some(entry) = self.sessions.get_mut(&key) {
                         // Idempotent for the same reason as master's reducer:

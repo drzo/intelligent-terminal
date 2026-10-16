@@ -2712,7 +2712,7 @@ fn apply_event_locked(state: &mut RegistryState, ev: SessionEvent) -> bool {
                 return false;
             }
             if entry.cli_source == Some(CliSource::Copilot) {
-                state.permissions.entry(identity).or_default().stop(now);
+                state.permissions.entry(identity).or_default().stop(None);
             }
             if matches!(
                 entry.status,
@@ -2775,6 +2775,11 @@ fn apply_event_locked(state: &mut RegistryState, ev: SessionEvent) -> bool {
                 Some(crate::session_permissions::PermissionActivity::Working) => {
                     entry.status = Some(AgentStatus::Working);
                     entry.attention_reason = None;
+                }
+                Some(crate::session_permissions::PermissionActivity::Idle) => {
+                    entry.status = Some(AgentStatus::Idle);
+                    entry.attention_reason = None;
+                    entry.current_tool = None;
                 }
                 None => return false,
             }
@@ -2868,7 +2873,7 @@ fn apply_event_locked(state: &mut RegistryState, ev: SessionEvent) -> bool {
                 return false;
             };
             if let Some(waits) = state.permissions.get_mut(&identity) {
-                waits.stop(now);
+                waits.stop(None);
             }
             if is_agent_pane_session && pane_still_live && reason_keeps_session_alive {
                 entry.status = Some(AgentStatus::Idle);
@@ -2928,7 +2933,7 @@ fn apply_event_locked(state: &mut RegistryState, ev: SessionEvent) -> bool {
                 return false;
             }
             if let Some(waits) = state.permissions.get_mut(&sid) {
-                waits.stop(now);
+                waits.stop(None);
             }
             entry.status = Some(AgentStatus::Error);
             entry.last_error = Some(reason);
@@ -4519,7 +4524,10 @@ mod tests {
                 AgentStatus::Working,
             ),
             (
-                SessionEvent::ToolCompleted { key: key.clone() },
+                SessionEvent::Permission {
+                    key: key.clone(),
+                    update: PermissionUpdate::TurnEnded { at_ms: 40 },
+                },
                 AgentStatus::Idle,
             ),
             (
@@ -4533,9 +4541,53 @@ mod tests {
                 },
                 AgentStatus::Idle,
             ),
+            (
+                SessionEvent::Permission {
+                    key: key.clone(),
+                    update: PermissionUpdate::TurnEnded { at_ms: 1000 },
+                },
+                AgentStatus::Idle,
+            ),
+            (
+                SessionEvent::ToolStarting {
+                    key: key.clone(),
+                    tool_name: "prompt".into(),
+                },
+                AgentStatus::Working,
+            ),
+            (
+                SessionEvent::Permission {
+                    key: key.clone(),
+                    update: PermissionUpdate::Requested {
+                        request_id: "next".into(),
+                        message: "next".into(),
+                        at_ms: 1200,
+                    },
+                },
+                AgentStatus::Attention,
+            ),
+            (
+                SessionEvent::Permission {
+                    key: key.clone(),
+                    update: PermissionUpdate::TurnEnded { at_ms: 1000 },
+                },
+                AgentStatus::Attention,
+            ),
+            (
+                SessionEvent::Permission {
+                    key: key.clone(),
+                    update: PermissionUpdate::Completed {
+                        request_id: "next".into(),
+                        at_ms: 1400,
+                    },
+                },
+                AgentStatus::Working,
+            ),
         ] {
             helper.apply(event.clone());
-            reg.apply_event(event).await;
+            let wire = serde_json::to_value(SessionHookParams::from(&event)).unwrap();
+            let transported: SessionHookParams = serde_json::from_value(wire).unwrap();
+            reg.apply_event(transported.into()).await;
             let local = helper.get(&key).unwrap();
             let master = reg.lookup(&sid).await.unwrap();
             assert_eq!(local.status, expected);

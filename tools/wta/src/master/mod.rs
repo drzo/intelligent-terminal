@@ -8960,14 +8960,15 @@ async fn apply_watcher_event(
     let sid = acp::schema::v1::SessionId::new(emitted.key.clone());
 
     // Copilot has a permission-prompt hook but no matching completion hook.
-    // Admit only correlated permission facts for a uniquely bound native host
+    // Admit only permission facts for a uniquely bound native host
     // session; ordinary watcher activity must still defer to the hooks.
     if emitted.cli == crate::agent_sessions::CliSource::Copilot
         && matches!(
             &emitted.event,
             crate::agent_sessions::SessionEvent::Permission {
                 update: crate::session_permissions::PermissionUpdate::Requested { .. }
-                    | crate::session_permissions::PermissionUpdate::Completed { .. },
+                    | crate::session_permissions::PermissionUpdate::Completed { .. }
+                    | crate::session_permissions::PermissionUpdate::Uncorrelated { .. },
                 ..
             }
         )

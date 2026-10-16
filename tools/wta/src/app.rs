@@ -738,7 +738,18 @@ pub fn plan_agent_event(
             plan.events.clear();
             return plan;
         }
-        "agent.stop" | "agent.subagent.stop" => SessionEvent::ToolCompleted { key },
+        "agent.stop" | "agent.subagent.stop" => match payload
+            .get("timestamp")
+            .and_then(crate::session_permissions::timestamp_ms)
+        {
+            Some(at_ms) if *cli_source == crate::agent_sessions::CliSource::Copilot => {
+                SessionEvent::Permission {
+                    key,
+                    update: crate::session_permissions::PermissionUpdate::TurnEnded { at_ms },
+                }
+            }
+            _ => SessionEvent::ToolCompleted { key },
+        },
         "agent.notification" => {
             // Background work and idle reminders do not block the owning session.
             // Drop them rather than resetting activity: a pending approval may

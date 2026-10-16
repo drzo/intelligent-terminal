@@ -17802,6 +17802,217 @@ async fn hook_owned_copilot_permission_completion_resumes_activity() {
 }
 
 #[tokio::test]
+async fn hook_owned_copilot_transcript_turn_end_does_not_end_prompt() {
+    use crate::agent_sessions::{AgentStatus, CliSource};
+
+    let state = make_state();
+    let key = "hook-owned-turn-boundary";
+    let sid = SessionId::new(key);
+    handle_master_wt_event(
+        &state,
+        serde_json::json!({
+            "method": "agent_event",
+            "params": {
+                "event": "agent.prompt.submit",
+                "cli_source": "copilot",
+                "agent_session_id": key,
+                "pane_id": "owner",
+                "payload": {},
+            },
+        }),
+    )
+    .await;
+    for event in crate::session_watcher::classify_copilot::classify(
+        &serde_json::json!({"type": "assistant.turn_end", "timestamp": 1000}),
+        &key.to_string(),
+    ) {
+        apply_watcher_event(
+            &state,
+            crate::session_watcher::Emitted {
+                cli: CliSource::Copilot,
+                key: key.into(),
+                event,
+            },
+        )
+        .await;
+    }
+    assert_eq!(
+        state.registry.lookup(&sid).await.unwrap().status,
+        Some(AgentStatus::Working),
+        "a transcript model-turn boundary is not the full hook-owned prompt's end"
+    );
+    handle_master_wt_event(
+        &state,
+        serde_json::json!({
+            "method": "agent_event",
+            "params": {
+                "event": "agent.stop",
+                "cli_source": "copilot",
+                "agent_session_id": key,
+                "pane_id": "owner",
+                "payload": {"timestamp": 1100},
+            },
+        }),
+    )
+    .await;
+    assert_eq!(
+        state.registry.lookup(&sid).await.unwrap().status,
+        Some(AgentStatus::Idle)
+    );
+}
+
+#[tokio::test]
+async fn permission_watcher_consecutive_turns_are_independent_of_append_batching() {
+    use crate::agent_sessions::{AgentStatus, CliSource, SessionEvent};
+    use std::io::Write;
+
+    let root = std::env::current_dir()
+        .unwrap()
+        .join("target")
+        .join(format!("permission-watcher-{}", uuid::Uuid::new_v4()));
+    let key = "consecutive-turns";
+    let dir = root.join("session-state").join(key);
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("events.jsonl");
+    let records = [
+        serde_json::json!({"type":"assistant.turn_start", "timestamp":100}),
+        serde_json::json!({"type":"permission.requested", "timestamp":200,
+            "data":{"requestId":"first", "permissionRequest":{"intention":"first"}}}),
+        serde_json::json!({"type":"assistant.turn_end", "timestamp":1000}),
+        serde_json::json!({"type":"assistant.turn_start", "timestamp":1100}),
+        serde_json::json!({"type":"permission.requested", "timestamp":1200,
+            "data":{"requestId":"second", "permissionRequest":{"intention":"second"}}}),
+    ];
+    for split in [false, true] {
+        let state = make_state();
+        let sid = SessionId::new(key);
+        handle_session_born_bound(
+            &state,
+            SessionEvent::SessionStarted {
+                key: key.into(),
+                cli_source: CliSource::Copilot,
+                pane_session_id: "owner".into(),
+                cwd: PathBuf::from("C:\\repo"),
+                title: "test".into(),
+            },
+            None,
+        )
+        .await
+        .unwrap();
+        std::fs::write(&path, []).unwrap();
+        let mut progress = HashMap::new();
+        let mut file = std::fs::OpenOptions::new()
+            .append(true)
+            .open(&path)
+            .unwrap();
+        for record in &records {
+            writeln!(file, "{record}").unwrap();
+            file.flush().unwrap();
+            if split {
+                for event in crate::session_watcher::process_change(&path, &mut progress) {
+                    apply_watcher_event(&state, event).await;
+                }
+            }
+        }
+        drop(file);
+        for event in crate::session_watcher::process_change(&path, &mut progress) {
+            apply_watcher_event(&state, event).await;
+        }
+        let row = state.registry.lookup(&sid).await.unwrap();
+        assert_eq!(row.status, Some(AgentStatus::Attention), "split={split}");
+        assert_eq!(
+            row.attention_reason.as_deref(),
+            Some("second"),
+            "split={split}"
+        );
+        handle_master_wt_event(
+            &state,
+            serde_json::json!({
+                "method":"agent_event", "params": {
+                    "event":"agent.stop", "cli_source":"copilot",
+                    "agent_session_id":key, "pane_id":"owner",
+                    "payload":{"timestamp":1000}
+                }
+            }),
+        )
+        .await;
+        let row = state.registry.lookup(&sid).await.unwrap();
+        assert_eq!(row.status, Some(AgentStatus::Attention), "split={split}");
+        assert_eq!(row.attention_reason.as_deref(), Some("second"));
+        assert!(crate::session_watcher::process_change(&path, &mut progress).is_empty());
+    }
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+#[tokio::test]
+async fn permission_watcher_rejects_ambiguous_session_identity() {
+    use crate::agent_sessions::{AgentStatus, CliSource, SessionEvent, SessionLocation};
+    use crate::session_permissions::PermissionUpdate;
+    use crate::session_registry::SessionInfo;
+
+    for (cli, location, universe) in [
+        (CliSource::Claude, SessionLocation::Host, None),
+        (
+            CliSource::Copilot,
+            SessionLocation::Wsl {
+                distro: "Ubuntu".into(),
+            },
+            None,
+        ),
+        (
+            CliSource::Copilot,
+            SessionLocation::Host,
+            Some("other".into()),
+        ),
+    ] {
+        let state = make_state();
+        let key = "ambiguous-permission";
+        let sid = SessionId::new(key);
+        let mut row = SessionInfo::new(sid.clone(), PathBuf::from("C:\\repo"));
+        row.cli_source = Some(CliSource::Copilot);
+        row.provider_id = Some("copilot".into());
+        row.location = SessionLocation::Host;
+        row.status = Some(AgentStatus::Working);
+        row.pane_session_id = Some("owner".into());
+        state.registry.upsert(row.clone()).await;
+        row.provider_id = cli.canonical_provider_id();
+        row.cli_source = Some(cli);
+        row.location = location;
+        row.session_universe = universe;
+        state.registry.upsert(row).await;
+        state.hook_owned.lock().await.insert(sid.clone());
+        assert!(state.registry.lookup(&sid).await.is_none());
+        let before = state.registry.snapshot().await;
+        for update in [
+            PermissionUpdate::Requested {
+                request_id: "approval".into(),
+                message: "should not appear".into(),
+                at_ms: 10,
+            },
+            PermissionUpdate::Uncorrelated {
+                message: "should not appear".into(),
+                at_ms: None,
+            },
+            PermissionUpdate::TurnEnded { at_ms: 20 },
+        ] {
+            apply_watcher_event(
+                &state,
+                crate::session_watcher::Emitted {
+                    cli: CliSource::Copilot,
+                    key: key.into(),
+                    event: SessionEvent::Permission {
+                        key: key.into(),
+                        update,
+                    },
+                },
+            )
+            .await;
+            assert_eq!(state.registry.snapshot().await, before);
+        }
+    }
+}
+
+#[tokio::test]
 async fn permission_watcher_cannot_update_non_native_or_unbound_sessions() {
     use crate::agent_sessions::{AgentStatus, CliSource, SessionLocation, SessionOrigin};
     use crate::session_permissions::PermissionUpdate;
@@ -17867,23 +18078,104 @@ async fn permission_watcher_cannot_update_non_native_or_unbound_sessions() {
             state.hook_owned.lock().await.insert(sid.clone());
         }
         let before = state.registry.snapshot().await;
-        apply_watcher_event(
-            &state,
-            crate::session_watcher::Emitted {
-                cli: CliSource::Copilot,
-                key: "excluded-permission".into(),
-                event: crate::agent_sessions::SessionEvent::Permission {
+        for update in [
+            PermissionUpdate::Requested {
+                request_id: "approval".into(),
+                message: "should not appear".into(),
+                at_ms: 10,
+            },
+            PermissionUpdate::Uncorrelated {
+                message: "should not appear".into(),
+                at_ms: None,
+            },
+        ] {
+            apply_watcher_event(
+                &state,
+                crate::session_watcher::Emitted {
+                    cli: CliSource::Copilot,
                     key: "excluded-permission".into(),
-                    update: PermissionUpdate::Requested {
-                        request_id: "approval".into(),
-                        message: "should not appear".into(),
-                        at_ms: 10,
+                    event: crate::agent_sessions::SessionEvent::Permission {
+                        key: "excluded-permission".into(),
+                        update,
                     },
                 },
-            },
+            )
+            .await;
+            assert_eq!(state.registry.snapshot().await, before);
+        }
+    }
+}
+
+#[tokio::test]
+async fn hook_owned_uncorrelated_permission_survives_parallel_completion() {
+    use crate::agent_sessions::{AgentStatus, CliSource};
+    for incomplete in [
+        serde_json::json!({"type":"permission.requested", "timestamp":15, "data": {
+            "permissionRequest":{"intention":"B"}
+        }}),
+        serde_json::json!({"type":"permission.requested", "data": {
+            "requestId":"B", "permissionRequest":{"intention":"B"}
+        }}),
+    ] {
+        let state = make_state();
+        let key = "uncorrelated";
+        let sid = SessionId::new(key);
+        handle_master_wt_event(
+            &state,
+            serde_json::json!({
+                "method":"agent_event", "params": {
+                    "event":"agent.prompt.submit", "cli_source":"copilot",
+                    "agent_session_id":key, "pane_id":"owner", "payload":{}
+                }
+            }),
         )
         .await;
-        assert_eq!(state.registry.snapshot().await, before);
+        for record in [
+            serde_json::json!({"type":"permission.requested", "timestamp":10,
+                "data":{"requestId":"A","permissionRequest":{"intention":"A"}}}),
+            incomplete,
+            serde_json::json!({"type":"permission.completed", "timestamp":20,
+                "data":{"requestId":"A"}}),
+        ] {
+            for event in crate::session_watcher::classify_copilot::classify(&record, &key.into()) {
+                apply_watcher_event(
+                    &state,
+                    crate::session_watcher::Emitted {
+                        cli: CliSource::Copilot,
+                        key: key.into(),
+                        event,
+                    },
+                )
+                .await;
+            }
+        }
+        handle_master_wt_event(
+            &state,
+            serde_json::json!({
+                "method":"agent_event", "params": {
+                    "event":"agent.prompt.submit", "cli_source":"copilot",
+                    "agent_session_id":key, "pane_id":"owner", "payload":{}
+                }
+            }),
+        )
+        .await;
+        let row = state.registry.lookup(&sid).await.unwrap();
+        assert_eq!(row.status, Some(AgentStatus::Attention));
+        assert_eq!(row.attention_reason.as_deref(), Some("B"));
+        handle_master_wt_event(
+            &state,
+            serde_json::json!({
+                "method":"agent_event", "params": {
+                    "event":"agent.stop", "cli_source":"copilot",
+                    "agent_session_id":key, "pane_id":"owner", "payload":{"timestamp":30}
+                }
+            }),
+        )
+        .await;
+        assert_eq!(
+            state.registry.lookup(&sid).await.unwrap().status,
+            Some(AgentStatus::Idle)
+        );
     }
 }
 

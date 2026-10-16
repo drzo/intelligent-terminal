@@ -140,6 +140,16 @@ agent-pane, WSL, external, or ambiguous row. Requests are matched by `requestId`
 the final completion resumes Working only if the current wait still belongs to
 those approvals. Other questions and unknown notifications remain Attention.
 Transcript and hook timestamps reject late prompts and completed-turn records.
+Turn-end cutoffs use the source timestamp, never the receive wall clock, so
+batched delivery cannot discard the next turn's newer approval. Legacy untimed
+stops still clear current waits without creating a timestamp cutoff.
+Transcript turn boundaries remain suppressed for hook-owned sessions: those
+model turns must not end a full prompt before its real `agent.stop` hook.
+Requests missing an ID or timestamp remain explicit, uncorrelated permission
+waits under the same admission guards. Another request's completion or a tool
+start cannot resolve them; an authoritative turn boundary clears them.
+The newest known hook prompt timestamp and reason survive delayed older or
+untimed prompts. Generic watcher notifications are not admitted by this exception.
 The exception does not transfer ownership or admit ordinary watcher activity,
 and avoids restoring costly per-tool command hooks.
 
