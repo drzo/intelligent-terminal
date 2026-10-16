@@ -17747,6 +17747,80 @@ async fn restored_birth_preserves_universe_without_mutating_colliding_row() {
 }
 
 #[tokio::test]
+async fn qualified_hooks_helper_pane_queue_preserves_owner_through_master() {
+    use crate::agent_sessions::{AgentStatus, CliSource, SessionEvent, SessionLocation};
+    use crate::session_registry::{SessionIdentity, SessionInfo, WtaExtRequest};
+    let pane = "abcdefab-1234-5678-9abc-defabcdefabc";
+    let incoming_pane = "{ABCDEFAB-1234-5678-9ABC-DEFABCDEFABC}";
+    for closed in [false, true] {
+        for replace_owner in [false, true] {
+            let state = make_state();
+            let mut old = SessionInfo::new(
+                acp::schema::v1::SessionId::new("queued-owner-a"),
+                std::path::PathBuf::from("C:\\repo"),
+            );
+            old.provider_id = Some("copilot".into());
+            old.cli_source = Some(CliSource::Copilot);
+            old.location = SessionLocation::Host;
+            old.session_universe = Some("selected-home".into());
+            old.status = Some(AgentStatus::Working);
+            old.pane_session_id = Some(pane.into());
+            state.registry.upsert(old.clone()).await;
+            let identity = SessionIdentity::from_info(&old);
+            let event = if closed {
+                SessionEvent::PaneClosed {
+                    pane_session_id: incoming_pane.into(),
+                }
+            } else {
+                SessionEvent::ConnectionFailed {
+                    pane_session_id: incoming_pane.into(),
+                    reason: "queued failure".into(),
+                }
+            };
+            let queued =
+                crate::app::helper_queued_session_hook(vec![old.clone()], event.clone()).unwrap();
+            assert_eq!(queued.scope.identity.as_ref(), Some(&identity));
+            assert_eq!(queued.scope.pane_session_id.as_deref(), Some(incoming_pane));
+            let wire = crate::session_registry::build_scoped_session_hook_request(
+                &queued.event,
+                &queued.scope,
+            );
+            let WtaExtRequest::SessionHook(parsed) =
+                crate::session_registry::parse_ext_request(wire)
+            else {
+                panic!("helper hook must parse");
+            };
+            assert_eq!(parsed.event, event);
+            assert_eq!(parsed.scope, queued.scope);
+            let mut current = old;
+            if replace_owner {
+                current.session_id = acp::schema::v1::SessionId::new("replacement-owner-b");
+                state.registry.upsert(current.clone()).await;
+            }
+            let current_identity = SessionIdentity::from_info(&current);
+            handle_scoped_session_hook(&state, parsed).await.unwrap();
+            let after = state
+                .registry
+                .lookup_identity(&current_identity)
+                .await
+                .unwrap();
+            if replace_owner {
+                assert_eq!(after, current, "delayed A hook must not mutate B");
+            } else {
+                assert_eq!(
+                    after.status,
+                    Some(if closed {
+                        AgentStatus::Ended
+                    } else {
+                        AgentStatus::Error
+                    })
+                );
+            }
+        }
+    }
+}
+
+#[tokio::test]
 async fn qualified_master_ingress_pane_hooks_preserve_replacement_owner() {
     use crate::agent_sessions::{AgentStatus, CliSource, SessionEvent, SessionLocation};
     use crate::session_registry::{
@@ -19235,10 +19309,7 @@ async fn master_opencode_unbind_preserves_live_server_session_and_rejects_stale_
     .await;
     handle_master_wt_event(
         &other,
-        server(
-            "agent.session.end",
-            serde_json::json!({"pane_owner":false}),
-        ),
+        server("agent.session.end", serde_json::json!({"pane_owner":false})),
     )
     .await;
     assert_eq!(

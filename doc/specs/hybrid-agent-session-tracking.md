@@ -222,7 +222,10 @@ identity must agree with the event SID and any supplied scope. Legacy events
 remain valid when their matching identity is unique. Ambiguity is rejected and
 logged, not interpreted as an absent row that should be inserted as Host/default.
 Helper queues preserve a uniquely resolved snapshot identity instead of choosing
-arbitrarily among same-SID stores.
+arbitrarily among same-SID stores. Pane-only close and connection-failure hooks
+resolve that identity using the normalized pane ID before queueing, so a delayed
+hook cannot terminate or fail a replacement owner. Missing or ambiguous snapshot
+ownership is logged and the pane-only hook is not queued.
 
 CLI resume rejects unsupported alternate universes before creating a pane or
 marking/binding a session, both in Sidebar History and the helper picker. An empty

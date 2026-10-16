@@ -3185,6 +3185,10 @@ impl App {
                 | SessionEvent::SessionStopped { key, .. }
                 | SessionEvent::ResumeDispatched { key }
                 | SessionEvent::ResumeFailed { key, .. } => (Some(key.as_str()), None),
+                SessionEvent::PaneClosed { pane_session_id }
+                | SessionEvent::ConnectionFailed {
+                    pane_session_id, ..
+                } => (None, Some(pane_session_id.as_str())),
                 _ => (None, None),
             };
             let mut candidates = self
@@ -3192,7 +3196,7 @@ impl App {
                 .values()
                 .filter_map(|tab| tab.agents_view.snapshot.as_ref())
                 .flatten()
-                .filter(|row| key.is_some_and(|key| row.session_id.0.as_ref() == key))
+                .filter(|row| key.map_or(pane.is_some(), |key| row.session_id.0.as_ref() == key))
                 .filter(|row| {
                     pane.is_none_or(|pane| {
                         row.pane_session_id.as_deref().is_some_and(|owner| {
@@ -3209,6 +3213,12 @@ impl App {
             } else {
                 None
             };
+            // Pane-only events must not resolve a different owner after queueing.
+            // Missing or ambiguous snapshot ownership cannot safely use legacy routing.
+            if key.is_none() && pane.is_some() && identity.is_none() {
+                tracing::warn!(target: "session_hook", "ignored pane hook without a unique qualified snapshot owner");
+                return;
+            }
             let mut scope = crate::session_registry::SessionHookScope {
                 identity,
                 pane_session_id: pane.map(str::to_owned),
@@ -8094,3 +8104,6 @@ mod agent_markdown_tests;
 #[cfg(test)]
 #[path = "app_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+pub(crate) use tests::helper_queued_session_hook;

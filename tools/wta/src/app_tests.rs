@@ -2240,6 +2240,15 @@ fn helper_still_publishes_events_it_originates() {
         cwd: PathBuf::from("/work"),
         title: "t".into(),
     });
+    let mut row = crate::session_registry::SessionInfo::new(
+        agent_client_protocol::schema::v1::SessionId::new("shell-sid"),
+        PathBuf::from("/work"),
+    );
+    row.cli_source = Some(CliSource::Gemini);
+    row.provider_id = Some("gemini".into());
+    row.location = SessionLocation::Host;
+    row.pane_session_id = Some(pane.into());
+    app.current_tab_mut().agents_view.snapshot = Some(vec![row]);
 
     app.handle_event(AppEvent::WtEvent {
         method: "vt_sequence".to_string(),
@@ -2502,6 +2511,54 @@ fn qualified_hooks_helper_queue_preserves_identity_for_tool_and_end() {
         };
         assert_eq!(parsed.scope.identity, Some(identity.clone()));
         assert_eq!(parsed.event, update.event);
+    }
+}
+
+pub(crate) fn helper_queued_session_hook(
+    rows: Vec<crate::session_registry::SessionInfo>,
+    event: crate::agent_sessions::SessionEvent,
+) -> Option<crate::session_registry::SessionHookUpdate> {
+    let mut app = test_app();
+    let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+    app.set_session_hook_tx(tx);
+    app.current_tab_mut().agents_view.snapshot = Some(rows);
+    app.publish_session_hook(event);
+    rx.try_recv().ok()
+}
+
+#[test]
+fn qualified_hooks_helper_pane_queue_requires_unique_owner() {
+    use crate::agent_sessions::{CliSource, SessionEvent};
+    use crate::session_registry::SessionInfo;
+    let mut row = SessionInfo::new(
+        agent_client_protocol::schema::v1::SessionId::new("pane-owner"),
+        std::path::PathBuf::from("C:\\repo"),
+    );
+    row.cli_source = Some(CliSource::Copilot);
+    row.location = SessionLocation::Host;
+    row.pane_session_id = Some("pane".into());
+    row.provider_id = Some("copilot".into());
+    let mut other = row.clone();
+    other.session_universe = Some("other-home".into());
+    let mut unqualified = row.clone();
+    unqualified.provider_id = None;
+    for event in [
+        SessionEvent::PaneClosed {
+            pane_session_id: "PANE".into(),
+        },
+        SessionEvent::ConnectionFailed {
+            pane_session_id: "PANE".into(),
+            reason: "failed".into(),
+        },
+    ] {
+        for rows in [
+            vec![],
+            vec![unqualified.clone()],
+            vec![row.clone(), other.clone()],
+        ] {
+            assert!(helper_queued_session_hook(rows, event.clone()).is_none());
+        }
+        assert!(helper_queued_session_hook(vec![row.clone(), row.clone()], event).is_some());
     }
 }
 
