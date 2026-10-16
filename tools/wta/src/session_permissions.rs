@@ -76,6 +76,11 @@ impl PermissionWaits {
                 if at_ms.is_some_and(|at| self.stopped_at_ms.is_some_and(|stop| at <= stop)) {
                     return None;
                 }
+                if self.uncorrelated.as_ref().is_some_and(|(known, _)| {
+                    known.is_some_and(|known| at_ms.is_none_or(|at| at < known))
+                }) {
+                    return None;
+                }
                 self.uncorrelated = Some((at_ms, message.clone()));
                 if *status == AgentStatus::Attention && !self.owns_attention {
                     return None;
@@ -274,6 +279,43 @@ mod tests {
             waits.apply(complete("second", 40), &AgentStatus::Attention),
             Some(PermissionActivity::Working)
         ));
+    }
+
+    #[test]
+    fn uncorrelated_permission_evidence_cannot_regress() {
+        for delayed_at in [None, Some(10)] {
+            let mut waits = PermissionWaits::default();
+            waits.apply(
+                PermissionUpdate::Uncorrelated {
+                    message: "newer approval".into(),
+                    at_ms: Some(30),
+                },
+                &AgentStatus::Working,
+            );
+            assert!(waits
+                .apply(
+                    PermissionUpdate::Uncorrelated {
+                        message: "delayed approval".into(),
+                        at_ms: delayed_at,
+                    },
+                    &AgentStatus::Attention,
+                )
+                .is_none());
+            assert!(matches!(
+                waits.apply(
+                    PermissionUpdate::TurnEnded { at_ms: 20 },
+                    &AgentStatus::Attention,
+                ),
+                Some(PermissionActivity::Waiting(message)) if message == "newer approval"
+            ));
+            assert!(matches!(
+                waits.apply(
+                    PermissionUpdate::TurnEnded { at_ms: 40 },
+                    &AgentStatus::Attention,
+                ),
+                Some(PermissionActivity::Idle)
+            ));
+        }
     }
 
     #[test]

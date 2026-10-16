@@ -18247,6 +18247,54 @@ async fn copilot_background_notifications_do_not_mutate_master_registry() {
 /// helper's pipe. One `agent_event` for an unseen session must create the row,
 /// apply the reported transition, and claim hook ownership in one pass.
 #[tokio::test]
+async fn wsl_hooks_preserve_permission_evidence_across_location_refreshes() {
+    use crate::agent_sessions::{AgentStatus, SessionLocation};
+
+    let state = make_state();
+    let key = "wsl-permission-evidence";
+    let sid = SessionId::new(key);
+    for (event, timestamp, expected) in [
+        ("agent.notification", 1200, AgentStatus::Attention),
+        ("agent.stop", 1000, AgentStatus::Attention),
+        ("agent.stop", 1400, AgentStatus::Idle),
+        ("agent.notification", 1300, AgentStatus::Idle),
+    ] {
+        handle_master_wt_event(
+            &state,
+            serde_json::json!({
+                "method": "agent_event",
+                "params": {
+                    "event": event,
+                    "cli_source": "copilot",
+                    "agent_session_id": key,
+                    "pane_id": "wsl-owner",
+                    "wsl_distro": "Ubuntu",
+                    "payload": {
+                        "cwd": "/repo",
+                        "timestamp": timestamp,
+                        "notificationType": "permission_prompt",
+                        "message": "pending approval",
+                    },
+                },
+            }),
+        )
+        .await;
+        let row = state.registry.lookup(&sid).await.unwrap();
+        assert_eq!(row.status, Some(expected.clone()), "{event}({timestamp})");
+        assert_eq!(
+            row.location,
+            SessionLocation::Wsl {
+                distro: "Ubuntu".into()
+            }
+        );
+        assert_eq!(row.pane_session_id.as_deref(), Some("wsl-owner"));
+        if expected == AgentStatus::Attention {
+            assert_eq!(row.attention_reason.as_deref(), Some("pending approval"));
+        }
+    }
+}
+
+#[tokio::test]
 async fn antigravity_wsl_hook_keeps_its_execution_source() {
     let state = make_state();
     let sid = acp::schema::v1::SessionId::new("antigravity-wsl-hook");

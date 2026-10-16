@@ -1939,14 +1939,23 @@ impl SessionRegistry for InMemoryRegistry {
         let Some(identity) = unique_identity_for_raw(&guard, sid) else {
             return false;
         };
+        if guard
+            .sessions
+            .get(&identity)
+            .is_some_and(|entry| entry.location == location)
+        {
+            return false;
+        }
+        let permissions = guard.permissions.remove(&identity);
         let Some(mut entry) = remove_identity_locked(&mut guard, &identity) else {
             return false;
         };
-        if entry.location == location {
-            upsert_locked(&mut guard, entry);
-            return false;
-        }
         entry.location = location;
+        if let Some(permissions) = permissions {
+            guard
+                .permissions
+                .insert(SessionIdentity::from_info(&entry), permissions);
+        }
         upsert_locked(&mut guard, entry);
         true
     }

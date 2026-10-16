@@ -152,6 +152,8 @@ waits under the same admission guards. Another request's completion or a tool
 start cannot resolve them; an authoritative turn boundary clears them.
 The newest known hook prompt timestamp and reason survive delayed older or
 untimed prompts. Generic watcher notifications are not admitted by this exception.
+Uncorrelated waits also preserve their newest known timestamp and reason.
+Location refreshes retain permission evidence and rekey it with the same session.
 The exception does not transfer ownership or admit ordinary watcher activity,
 and avoids restoring costly per-tool command hooks.
 
