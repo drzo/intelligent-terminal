@@ -13837,6 +13837,12 @@ async fn sidebar_history_startup_retry_recovers_without_respawning_healthy_agent
                 assert_eq!(
                     crate::session_registry::parse_sessions_list_response(&snapshot.0)
                         .unwrap()
+                        .history_failed_agents,
+                    ["copilot"]
+                );
+                assert_eq!(
+                    crate::session_registry::parse_sessions_list_response(&snapshot.0)
+                        .unwrap()
                         .sessions
                         .len(),
                     1
@@ -13853,6 +13859,8 @@ async fn sidebar_history_startup_retry_recovers_without_respawning_healthy_agent
                     .await
                 );
                 assert_eq!(failed_attempts.load(Ordering::SeqCst), 1);
+                publish_history_sync_status(&state).await;
+                assert_eq!(state.history_status.borrow().failed_agents, ["copilot"]);
                 tokio::time::advance(std::time::Duration::from_secs(5)).await;
                 assert!(
                     refresh_host_history_agents_with(
@@ -13870,6 +13878,7 @@ async fn sidebar_history_startup_retry_recovers_without_respawning_healthy_agent
                 );
                 assert!(state.history_discovery_retries.lock().await.is_empty());
                 assert!(state.history_discovery_errors.lock().await.is_empty());
+                assert!(state.history_status.borrow().failed_agents.is_empty());
                 assert_eq!(state.registry.snapshot().await.len(), 1 + history_ids.len());
                 assert_eq!(failed_attempts.load(Ordering::SeqCst), 2);
                 assert_eq!(healthy_spawns.load(Ordering::SeqCst), 0);
@@ -13941,8 +13950,13 @@ async fn sidebar_history_startup_retry_uses_capped_backoff_without_explicit_over
                 );
                 assert_eq!(attempts.load(Ordering::SeqCst), index + 1);
                 assert_eq!(
-                    state.history_discovery_errors.lock().await.get(&key),
-                    Some(&HistoryRefreshFailure::Other)
+                    state
+                        .history_discovery_errors
+                        .lock()
+                        .await
+                        .get(&key)
+                        .map(|failure| failure.kind),
+                    Some(HistoryRefreshFailure::Other)
                 );
                 tokio::time::advance(std::time::Duration::from_secs(1)).await;
             }
@@ -13988,11 +14002,13 @@ async fn sidebar_history_startup_retry_rechecks_policy_and_drops_ineligible_fail
                     .lock()
                     .await
                     .insert(key.clone(), HistoryRefreshState::default());
-                state
-                    .history_discovery_errors
-                    .lock()
-                    .await
-                    .insert(key, HistoryRefreshFailure::Other);
+                state.history_discovery_errors.lock().await.insert(
+                    key,
+                    HistoryDiscoveryFailure {
+                        provider_id: Some("copilot".into()),
+                        kind: HistoryRefreshFailure::Other,
+                    },
+                );
                 publish_history_sync_status(&state).await;
                 assert_eq!(
                     state.history_status.borrow().status,
@@ -16265,11 +16281,13 @@ async fn history_refresh_discovery_requests_during_a_pass_run_another_pass() {
             request_host_history_refresh(&state);
             status.changed().await.unwrap();
             assert_eq!(state.history_discovery_state.load(Ordering::Acquire), 1);
-            state
-                .history_discovery_errors
-                .lock()
-                .await
-                .insert("first-pass-marker".into(), HistoryRefreshFailure::Other);
+            state.history_discovery_errors.lock().await.insert(
+                "first-pass-marker".into(),
+                HistoryDiscoveryFailure {
+                    provider_id: None,
+                    kind: HistoryRefreshFailure::Other,
+                },
+            );
             request_host_history_refresh(&state);
             request_host_history_refresh(&state);
             assert_eq!(state.history_discovery_state.load(Ordering::Acquire), 3);
@@ -16426,8 +16444,9 @@ async fn history_refresh_timeout_kind_distinguishes_mixed_failures_and_recovery(
                     .history_discovery_errors
                     .lock()
                     .await
-                    .get(&timeout_agent.cmd_key),
-                Some(&HistoryRefreshFailure::Timeout)
+                    .get(&timeout_agent.cmd_key)
+                    .map(|failure| failure.kind),
+                Some(HistoryRefreshFailure::Timeout)
             );
             assert_eq!(state.registry.snapshot().await, [retained.clone()]);
             let response = handle_sessions_list(&state, None, &Default::default())
@@ -16437,6 +16456,7 @@ async fn history_refresh_timeout_kind_distinguishes_mixed_failures_and_recovery(
                 crate::session_registry::parse_sessions_list_response(&response.0).unwrap();
             assert_eq!(snapshot.history_status, Some(HistoryLoadStatus::Error));
             assert_eq!(snapshot.history_error_kind, Some(HistoryErrorKind::Timeout));
+            assert_eq!(snapshot.history_failed_agents, ["copilot"]);
             let resume =
                 refresh_agent_history(&state, &timeout_agent, HistoryRefreshTrigger::Immediate);
             tokio::pin!(resume);
@@ -16506,6 +16526,7 @@ async fn history_refresh_timeout_kind_distinguishes_mixed_failures_and_recovery(
                 HistorySyncStatus {
                     status: HistoryLoadStatus::Error,
                     error_kind: None,
+                    failed_agents: vec!["copilot".into(), "custom:local".into()],
                 }
             );
             assert!(
@@ -16514,11 +16535,13 @@ async fn history_refresh_timeout_kind_distinguishes_mixed_failures_and_recovery(
             );
             assert!(changes.try_recv().is_err());
 
-            state
-                .history_discovery_errors
-                .lock()
-                .await
-                .insert("initialization".into(), HistoryRefreshFailure::Other);
+            state.history_discovery_errors.lock().await.insert(
+                "initialization".into(),
+                HistoryDiscoveryFailure {
+                    provider_id: None,
+                    kind: HistoryRefreshFailure::Other,
+                },
+            );
             tokio::time::advance(HISTORY_REFRESH_INTERVAL).await;
             let refresh =
                 refresh_agent_history(&state, &other_agent, HistoryRefreshTrigger::Immediate);
@@ -16531,6 +16554,11 @@ async fn history_refresh_timeout_kind_distinguishes_mixed_failures_and_recovery(
                     .unwrap();
             };
             assert_eq!(tokio::join!(refresh, reply).0, Some(0));
+            assert_eq!(state.history_status.borrow().failed_agents, ["copilot"]);
+            assert!(
+                changes.try_recv().is_ok(),
+                "recovering one provider must notify even if the aggregate error kind is unchanged"
+            );
             assert_eq!(
                 state.history_status.borrow().error_kind,
                 None,
@@ -16560,6 +16588,7 @@ async fn history_refresh_timeout_kind_distinguishes_mixed_failures_and_recovery(
                 HistorySyncStatus {
                     status: HistoryLoadStatus::Ready,
                     error_kind: None,
+                    failed_agents: Vec::new(),
                 }
             );
             assert!(state.history_discovery_errors.lock().await.is_empty());

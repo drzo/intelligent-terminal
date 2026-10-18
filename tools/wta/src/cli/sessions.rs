@@ -660,9 +660,11 @@ mod tests {
                 ],
                 history_status: Some(status),
                 history_error_kind: None,
+                history_failed_agents: vec!["copilot".into()],
             };
             filter_snapshot(&mut snapshot, OriginFilter::ShellOnly);
             assert_eq!(snapshot.history_status, Some(status));
+            assert_eq!(snapshot.history_failed_agents, ["copilot"]);
             assert_eq!(snapshot.sessions.len(), 2);
             assert_eq!(snapshot.sessions[0].session_id.0.as_ref(), "newer");
             assert_eq!(snapshot.sessions[1].session_id.0.as_ref(), "older");

@@ -574,6 +574,8 @@ namespace TerminalAppLocalTests
         TEST_METHOD(VerticalTabHistoryMasterUnavailableDeadlineResets);
         TEST_METHOD(VerticalTabHistoryLoadingRefreshesUntilReady);
         TEST_METHOD(VerticalTabHistoryLoadingAndErrorsKeepRows);
+        TEST_METHOD(VerticalTabHistoryNamesFailedAgentsUntilRecovery);
+        TEST_METHOD(VerticalTabHistoryRejectsMalformedFailedAgents);
         TEST_METHOD(VerticalTabHistoryTimeoutKeepsRowsWithoutError);
         TEST_METHOD(VerticalTabHistoryInitialTimeoutKeepsLoading);
         TEST_METHOD(VerticalTabHistoryTelemetryWaitsForReady);
@@ -10464,6 +10466,80 @@ namespace TerminalAppLocalTests
             page->_CompleteSidebarHistoryRefresh(generation, page->_ParseSidebarHistorySnapshot(R"({"sessions":[],"history_status":"ready"})"));
             VERIFY_IS_FALSE(strip->HasHistoryItems());
             VERIFY_ARE_EQUAL(0u, page->_tabStrip.HistoryItems().Size());
+        });
+    }
+
+    void TabTests::VerticalTabHistoryNamesFailedAgentsUntilRecovery()
+    {
+        auto page = _commonSetup(nullptr, nullptr, std::nullopt, true);
+        TestOnUIThread([&]() {
+            using Page = winrt::TerminalApp::implementation::TerminalPage;
+            const auto strip = winrt::get_self<winrt::TerminalApp::implementation::TabStrip>(page->_tabStrip);
+            page->_tabStrip.HistoryActive(true);
+            const auto generation = page->_historyRequestGeneration;
+            const auto resources = winrt::Windows::ApplicationModel::Resources::Core::ResourceManager::Current()
+                                       .MainResourceMap()
+                                       .GetSubtree(L"TerminalApp/Resources");
+            const auto message = resources.GetValue(L"VerticalTabsHistoryLoadError").ValueAsString();
+            page->_CompleteSidebarHistoryRefresh(generation, page->_ParseSidebarHistorySnapshot(
+                                                                 R"({"history_status":"error","history_failed_agents":["claude","antigravity"],
+                    "sessions":[{"session_id":"available","provider_id":"copilot","title":"Available session","location":"Host","status":"Historical"}]})"));
+            VERIFY_ARE_EQUAL(winrt::hstring{ std::wstring{ message } + L"\nClaude, Google Antigravity" }, strip->HistoryMessage().Text());
+            VERIFY_ARE_EQUAL(Visibility::Visible, strip->HistoryMessage().Visibility());
+            VERIFY_IS_FALSE(page->_tabStrip.HistoryLoading());
+            const auto item = page->_tabStrip.HistoryItems().GetAt(0);
+            VERIFY_IS_TRUE(strip->ItemsList().IsItemClickEnabled());
+
+            for (auto attempt = 0; attempt < 2; ++attempt)
+            {
+                page->_CompleteSidebarHistoryRefresh(generation, page->_ParseSidebarHistorySnapshot(R"({"history_status":"error","history_error_kind":"timeout","history_failed_agents":["antigravity"],"sessions":[]})"));
+                VERIFY_ARE_EQUAL(winrt::hstring{ std::wstring{ message } + L"\nGoogle Antigravity" }, strip->HistoryMessage().Text());
+                VERIFY_IS_TRUE(page->_tabStrip.HistoryItems().GetAt(0) == item);
+                VERIFY_IS_TRUE(strip->ItemsList().IsItemClickEnabled());
+            }
+
+            Page::_SidebarHistorySnapshot transportTimeout;
+            transportTimeout.state = Page::_SidebarHistorySnapshot::State::Timeout;
+            page->_CompleteSidebarHistoryRefresh(generation, transportTimeout);
+            page->_CompleteSidebarHistoryRefresh(generation, page->_ParseSidebarHistorySnapshot(R"({"history_status":"loading","history_failed_agents":[],"sessions":[]})"));
+            VERIFY_ARE_EQUAL(winrt::hstring{ std::wstring{ message } + L"\nGoogle Antigravity" }, strip->HistoryMessage().Text());
+
+            page->_historyRefreshInFlight = true;
+            page->_RequestSidebarHistoryRefresh(true);
+            page->_historyRefreshInFlight = false;
+            page->_historyRefreshPending = false;
+            VERIFY_ARE_EQUAL(Visibility::Visible, strip->HistoryMessage().Visibility());
+            VERIFY_ARE_EQUAL(winrt::hstring{ std::wstring{ message } + L"\nGoogle Antigravity" }, strip->HistoryMessage().Text());
+            const auto currentGeneration = page->_historyRequestGeneration;
+            page->_CompleteSidebarHistoryRefresh(currentGeneration, page->_ParseSidebarHistorySnapshot(R"({"history_status":"error","history_failed_agents":["custom:local"],"sessions":[]})"));
+            VERIFY_ARE_EQUAL(winrt::hstring{ std::wstring{ message } + L"\ncustom:local" }, strip->HistoryMessage().Text());
+
+            page->_CompleteSidebarHistoryRefresh(currentGeneration, page->_ParseSidebarHistorySnapshot(R"({"history_status":"ready","history_failed_agents":[],"sessions":[]})"));
+            VERIFY_IS_TRUE(page->_tabStrip.HistoryError().empty());
+            VERIFY_IS_TRUE(page->_historyFailedAgents.empty());
+            VERIFY_ARE_EQUAL(0u, page->_tabStrip.HistoryItems().Size());
+            VERIFY_ARE_EQUAL(resources.GetValue(L"VerticalTabsHistoryEmpty").ValueAsString(), strip->HistoryMessage().Text());
+
+            page->_CompleteSidebarHistoryRefresh(currentGeneration, page->_ParseSidebarHistorySnapshot(R"({"history_status":"error","history_error_kind":"timeout","history_failed_agents":["copilot"],"sessions":[]})"));
+            VERIFY_IS_FALSE(page->_tabStrip.HistoryLoading());
+            VERIFY_ARE_EQUAL(Visibility::Visible, strip->HistoryMessage().Visibility());
+            VERIFY_ARE_EQUAL(winrt::hstring{ std::wstring{ message } + L"\nGitHub Copilot" }, strip->HistoryMessage().Text());
+        });
+    }
+
+    void TabTests::VerticalTabHistoryRejectsMalformedFailedAgents()
+    {
+        TestOnUIThread([&]() {
+            using Page = winrt::TerminalApp::implementation::TerminalPage;
+            for (const auto failedAgents : { R"(null)", R"("copilot")", R"([42])", R"([""])", R"(["   "])" })
+            {
+                const auto response = std::string{ R"({"history_status":"error","sessions":[],"history_failed_agents":)" } + failedAgents + "}";
+                const auto snapshot = Page::_ParseSidebarHistorySnapshot(response);
+                VERIFY_IS_TRUE(snapshot.state == Page::_SidebarHistorySnapshot::State::InvalidResponse);
+            }
+            const auto legacy = Page::_ParseSidebarHistorySnapshot(R"({"history_status":"error","sessions":[]})");
+            VERIFY_IS_TRUE(legacy.state == Page::_SidebarHistorySnapshot::State::Error);
+            VERIFY_IS_FALSE(legacy.failedAgents.has_value());
         });
     }
 

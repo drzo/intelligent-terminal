@@ -439,6 +439,8 @@ pub struct SessionsListResponse {
     pub history_status: Option<HistoryLoadStatus>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub history_error_kind: Option<HistoryErrorKind>,
+    #[serde(default)]
+    pub history_failed_agents: Vec<String>,
 }
 
 #[derive(Debug, Clone, Copy, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
@@ -623,11 +625,13 @@ pub fn build_sessions_list_response(
     sessions: Vec<SessionInfo>,
     history_status: Option<HistoryLoadStatus>,
     history_error_kind: Option<HistoryErrorKind>,
+    history_failed_agents: Vec<String>,
 ) -> Box<serde_json::value::RawValue> {
     let response = SessionsListResponse {
         sessions,
         history_status,
         history_error_kind,
+        history_failed_agents,
     };
     serde_json::value::to_raw_value(&response)
         .expect("SessionsListResponse serialization is infallible for owned data")
@@ -4363,7 +4367,7 @@ mod tests {
             born_bound_pane: false,
             cwd_evidence: CwdEvidence::default(),
         };
-        let raw = build_sessions_list_response(vec![row.clone()], None, None);
+        let raw = build_sessions_list_response(vec![row.clone()], None, None, Vec::new());
         let parsed = parse_sessions_list_response(&raw).expect("response parses");
         assert_eq!(parsed.sessions, vec![row]);
     }
@@ -5685,6 +5689,7 @@ mod tests {
             sessions: vec![info.clone()],
             history_status: Some(HistoryLoadStatus::Ready),
             history_error_kind: None,
+            history_failed_agents: Vec::new(),
         };
         let raw = serde_json::value::to_raw_value(&resp).unwrap();
         let parsed = parse_sessions_list_response(&raw).unwrap();
@@ -5699,7 +5704,7 @@ mod tests {
             (HistoryLoadStatus::Ready, "ready"),
             (HistoryLoadStatus::Error, "error"),
         ] {
-            let raw = build_sessions_list_response(Vec::new(), Some(status), None);
+            let raw = build_sessions_list_response(Vec::new(), Some(status), None, Vec::new());
             let json: serde_json::Value = serde_json::from_str(raw.get()).unwrap();
             assert_eq!(json["history_status"], wire);
             let parsed = parse_sessions_list_response(&raw).unwrap();
@@ -5722,12 +5727,14 @@ mod tests {
             Vec::new(),
             Some(HistoryLoadStatus::Error),
             Some(HistoryErrorKind::Timeout),
+            vec!["copilot".into(), "custom:local".into()],
         );
         let json: serde_json::Value = serde_json::from_str(raw.get()).unwrap();
         assert_eq!(json["history_status"], "error");
         assert_eq!(json["history_error_kind"], "timeout");
         let parsed = parse_sessions_list_response(&raw).unwrap();
         assert_eq!(parsed.history_error_kind, Some(HistoryErrorKind::Timeout));
+        assert_eq!(parsed.history_failed_agents, ["copilot", "custom:local"]);
 
         #[derive(serde::Deserialize)]
         struct LegacyResponse {
@@ -5750,7 +5757,12 @@ mod tests {
                 None
             );
         }
-        let raw = build_sessions_list_response(Vec::new(), Some(HistoryLoadStatus::Ready), None);
+        let raw = build_sessions_list_response(
+            Vec::new(),
+            Some(HistoryLoadStatus::Ready),
+            None,
+            Vec::new(),
+        );
         let json: serde_json::Value = serde_json::from_str(raw.get()).unwrap();
         assert!(json.get("history_error_kind").is_none());
         let unknown = serde_json::value::RawValue::from_string(

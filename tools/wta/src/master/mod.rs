@@ -629,7 +629,7 @@ struct MasterStateInner {
     pub(crate) agents: Mutex<HashMap<AgentCmdKey, AgentCell>>,
     history_refresh: Arc<Mutex<()>>,
     history_discovery_state: std::sync::atomic::AtomicU8,
-    history_discovery_errors: Mutex<HashMap<AgentCmdKey, HistoryRefreshFailure>>,
+    history_discovery_errors: Mutex<HashMap<AgentCmdKey, HistoryDiscoveryFailure>>,
     history_discovery_retries: Mutex<HashMap<AgentCmdKey, HistoryRefreshState>>,
     history_queries: Mutex<HashMap<AgentCmdKey, Arc<Mutex<HistoryRefreshState>>>>,
     history_status: watch::Sender<HistorySyncStatus>,
@@ -1887,10 +1887,17 @@ enum HistoryRefreshFailure {
     Other,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct HistoryDiscoveryFailure {
+    provider_id: Option<String>,
+    kind: HistoryRefreshFailure,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
 struct HistorySyncStatus {
     status: crate::session_registry::HistoryLoadStatus,
     error_kind: Option<crate::session_registry::HistoryErrorKind>,
+    failed_agents: Vec<String>,
 }
 
 impl From<crate::session_registry::HistoryLoadStatus> for HistorySyncStatus {
@@ -1898,6 +1905,7 @@ impl From<crate::session_registry::HistoryLoadStatus> for HistorySyncStatus {
         Self {
             status,
             error_kind: None,
+            failed_agents: Vec::new(),
         }
     }
 }
@@ -5790,7 +5798,6 @@ async fn get_or_spawn_agent(
         }
     })
     .await?;
-    state.history_discovery_errors.lock().await.remove(&key);
     state.history_discovery_retries.lock().await.remove(&key);
     Ok(agent)
 }
@@ -7568,7 +7575,7 @@ async fn refresh_agent_history(
             }
             Err(failure) => {
                 if let Some(previous) = discovery_errors.get_mut(&agent.cmd_key) {
-                    *previous = failure;
+                    previous.kind = failure;
                 }
             }
         }
@@ -7608,7 +7615,7 @@ async fn publish_history_sync_status(state: &MasterStateInner) -> bool {
         .lock()
         .await
         .values()
-        .copied()
+        .cloned()
         .collect();
     let agents: Vec<_> = state
         .agents
@@ -7619,24 +7626,34 @@ async fn publish_history_sync_status(state: &MasterStateInner) -> bool {
         .collect();
     for agent in agents {
         if let Some(failure) = *agent.history_refresh.failure.lock().await {
-            failures.push(failure);
+            failures.push(HistoryDiscoveryFailure {
+                provider_id: Some(agent.resolved_agent_id.clone()),
+                kind: failure,
+            });
         }
     }
     let status = history_sync_status(&failures);
-    state.history_status.send_replace(status) != status
+    state.history_status.send_replace(status.clone()) != status
 }
 
-fn history_sync_status(failures: &[HistoryRefreshFailure]) -> HistorySyncStatus {
+fn history_sync_status(failures: &[HistoryDiscoveryFailure]) -> HistorySyncStatus {
     use crate::session_registry::{HistoryErrorKind, HistoryLoadStatus};
     if failures.is_empty() {
         return HistoryLoadStatus::Ready.into();
     }
+    let mut failed_agents: Vec<_> = failures
+        .iter()
+        .filter_map(|failure| failure.provider_id.clone())
+        .collect();
+    failed_agents.sort_unstable();
+    failed_agents.dedup();
     HistorySyncStatus {
         status: HistoryLoadStatus::Error,
         error_kind: failures
             .iter()
-            .all(|failure| *failure == HistoryRefreshFailure::Timeout)
+            .all(|failure| failure.kind == HistoryRefreshFailure::Timeout)
             .then_some(HistoryErrorKind::Timeout),
+        failed_agents,
     }
 }
 
@@ -7787,7 +7804,10 @@ where
                 .history_discovery_errors
                 .lock()
                 .await
-                .insert(key, HistoryRefreshFailure::Other);
+                .insert(key, HistoryDiscoveryFailure {
+                    provider_id: Some(agent_id.to_string()),
+                    kind: HistoryRefreshFailure::Other,
+                });
             return false;
         }
         let agent = match initialize(command, agent_id.to_string()).await {
@@ -7798,7 +7818,10 @@ where
                 let delay = retry.record_failure();
                 retry.next_refresh_at = Some(tokio::time::Instant::now() + delay);
                 drop(retries);
-                state.history_discovery_errors.lock().await.insert(key, HistoryRefreshFailure::Other);
+                state.history_discovery_errors.lock().await.insert(key, HistoryDiscoveryFailure {
+                    provider_id: Some(agent_id.to_string()),
+                    kind: HistoryRefreshFailure::Other,
+                });
                 tracing::warn!(
                     target: "master_history",
                     agent_id,
@@ -7816,7 +7839,10 @@ where
         }
         if refresh_agent_history(state, &agent, trigger).await.is_none() {
             let failure = agent.history_refresh.failure.lock().await.unwrap_or(HistoryRefreshFailure::Other);
-            state.history_discovery_errors.lock().await.insert(agent.cmd_key.clone(), failure);
+            state.history_discovery_errors.lock().await.insert(agent.cmd_key.clone(), HistoryDiscoveryFailure {
+                provider_id: Some(agent.resolved_agent_id.clone()),
+                kind: failure,
+            });
             tracing::warn!(target: "master_history", agent_id, "could not load agent history");
             return false;
         }
@@ -7864,7 +7890,6 @@ fn request_host_history_discovery(state: &Arc<MasterStateInner>) {
             state
                 .history_discovery_state
                 .fetch_and(!2, Ordering::AcqRel);
-            state.history_discovery_errors.lock().await.clear();
             let allowed_ids = state.allowed_agent_ids.clone();
             let discovery = tokio::task::spawn_blocking(move || {
                 let npx_available = crate::agent_check::host_npx_available();
@@ -7892,14 +7917,23 @@ fn request_host_history_discovery(state: &Arc<MasterStateInner>) {
                         .lock()
                         .await
                         .retain(|key, _| eligible_keys.contains(key));
-                    refresh_host_history_agents(&state, &agent_ids).await;
-                }
-                Err(error) => {
+                    // Retrying is not recovery: retain eligible failures until
+                    // that provider's session/list actually succeeds.
                     state
                         .history_discovery_errors
                         .lock()
                         .await
-                        .insert("host-discovery".into(), HistoryRefreshFailure::Other);
+                        .retain(|key, _| eligible_keys.contains(key));
+                    refresh_host_history_agents(&state, &agent_ids).await;
+                }
+                Err(error) => {
+                    state.history_discovery_errors.lock().await.insert(
+                        "host-discovery".into(),
+                        HistoryDiscoveryFailure {
+                            provider_id: None,
+                            kind: HistoryRefreshFailure::Other,
+                        },
+                    );
                     tracing::error!(target: "master_history", %error, "host agent availability check failed");
                 }
             }
@@ -7968,7 +8002,7 @@ where
 
     // Read readiness first so a refresh cannot pair an old empty snapshot with
     // its newly published Ready status.
-    let history_status = *state.history_status.borrow();
+    let history_status = state.history_status.borrow().clone();
     let snapshot = state.registry.snapshot().await;
     let mut candidates: std::collections::HashMap<_, _> = snapshot
         .iter()
@@ -8091,6 +8125,7 @@ where
         sessions,
         Some(history_status.status),
         history_status.error_kind,
+        history_status.failed_agents,
     );
     Ok(acp::schema::v1::ExtResponse::new(raw.into()))
 }

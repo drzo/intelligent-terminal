@@ -371,6 +371,7 @@ namespace winrt::TerminalApp::implementation
         std::chrono::seconds _historyRetryDelay{ 0 };
         std::chrono::steady_clock::time_point _historyNextRefresh{};
         std::optional<std::chrono::steady_clock::time_point> _historyMasterUnavailableSince;
+        std::vector<std::string> _historyFailedAgents;
         bool _tabDragReorderAuthorized{ false };
         Windows::Foundation::IInspectable _tabDragSelectedItem{ nullptr };
         winrt::weak_ref<Tab> _pendingPinTab;
@@ -1083,6 +1084,7 @@ namespace winrt::TerminalApp::implementation
             };
             State state{ State::Error };
             std::vector<TerminalApp::TabStripHistoryItem> items;
+            std::optional<std::vector<std::string>> failedAgents;
         };
         static _SidebarHistorySnapshot _ParseSidebarHistorySnapshot(const std::string& output, uint64_t currentWindowId = 0);
         static _SidebarHistorySnapshot _ParseSidebarHistoryFailure(const std::string& output);

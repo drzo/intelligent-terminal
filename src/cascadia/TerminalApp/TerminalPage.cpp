@@ -6843,7 +6843,10 @@ namespace winrt::TerminalApp::implementation
             _historyMasterRecoveryTimer.Stop();
         }
         // Expire the UI without releasing ownership of a capture that is still running.
-        winrt::get_self<implementation::TabStrip>(_tabStrip)->HistoryRefreshError(RS_(L"VerticalTabsHistoryLoadError"));
+        if (_historyFailedAgents.empty())
+        {
+            winrt::get_self<implementation::TabStrip>(_tabStrip)->HistoryRefreshError(RS_(L"VerticalTabsHistoryLoadError"));
+        }
         _tabStrip.HistoryLoading(false);
         if (_historyRefreshTimer)
         {
@@ -6883,8 +6886,11 @@ namespace winrt::TerminalApp::implementation
             _historyRetryDelay = std::chrono::seconds{ 0 };
             _historyNextRefresh = {};
             _tabStrip.HistoryError(L"");
-            winrt::get_self<implementation::TabStrip>(_tabStrip)->HistoryRefreshError(L"");
-            _tabStrip.HistoryLoading(!winrt::get_self<implementation::TabStrip>(_tabStrip)->HasHistoryItems());
+            if (_historyFailedAgents.empty())
+            {
+                winrt::get_self<implementation::TabStrip>(_tabStrip)->HistoryRefreshError(L"");
+            }
+            _tabStrip.HistoryLoading(_historyFailedAgents.empty() && !winrt::get_self<implementation::TabStrip>(_tabStrip)->HasHistoryItems());
         }
         else
         {
@@ -7079,10 +7085,24 @@ namespace winrt::TerminalApp::implementation
         if (!Json::parseFromStream(builder, json, &response, &errors) ||
             !response.isObject() || !response["sessions"].isArray() ||
             !response["history_status"].isString() ||
-            (!response["history_error_kind"].isNull() && !response["history_error_kind"].isString()))
+            (!response["history_error_kind"].isNull() && !response["history_error_kind"].isString()) ||
+            (response.isMember("history_failed_agents") && !response["history_failed_agents"].isArray()))
         {
             _agentPaneLog("invalid sidebar history snapshot: " + errors);
             return snapshot;
+        }
+        if (response.isMember("history_failed_agents"))
+        {
+            snapshot.failedAgents.emplace();
+            for (const auto& agent : response["history_failed_agents"])
+            {
+                if (!agent.isString() || agent.asString().find_first_not_of(" \t\r\n") == std::string::npos)
+                {
+                    _agentPaneLog("invalid sidebar history failed agent");
+                    return snapshot;
+                }
+                snapshot.failedAgents->emplace_back(agent.asString());
+            }
         }
         const auto historyStatus = response["history_status"].asString();
         if (historyStatus == "loading")
@@ -7403,7 +7423,33 @@ namespace winrt::TerminalApp::implementation
         {
             strip->CommitHistorySnapshot(std::move(snapshot.items), snapshot.state == State::Ready);
         }
-        if (snapshot.state == State::Error)
+        if (snapshot.state == State::Ready)
+        {
+            _historyFailedAgents.clear();
+        }
+        else if ((snapshot.state == State::Error || snapshot.state == State::Timeout) && snapshot.failedAgents)
+        {
+            _historyFailedAgents = std::move(*snapshot.failedAgents);
+        }
+        if (!_historyFailedAgents.empty())
+        {
+            namespace Registry = ::Microsoft::Terminal::Settings::Model::AgentRegistry;
+            std::wstring names;
+            for (const auto& agent : _historyFailedAgents)
+            {
+                const auto id = winrt::to_hstring(agent);
+                const auto builtin = std::ranges::find_if(Registry::BuiltinAcpAgents, [&](const auto& candidate) {
+                    return Registry::AgentIdEquals(candidate.id, id);
+                });
+                if (!names.empty())
+                {
+                    names.append(L", ");
+                }
+                names.append(builtin != Registry::BuiltinAcpAgents.end() ? builtin->displayName : std::wstring_view{ id });
+            }
+            strip->HistoryRefreshError(winrt::hstring{ fmt::format(FMT_COMPILE(L"{}\n{}"), RS_(L"VerticalTabsHistoryLoadError"), names) });
+        }
+        else if (snapshot.state == State::Error)
         {
             strip->HistoryRefreshError(RS_(L"VerticalTabsHistoryLoadError"));
         }
@@ -7433,7 +7479,7 @@ namespace winrt::TerminalApp::implementation
             _historyRetryDelay = std::chrono::seconds{ 0 };
             _historyNextRefresh = {};
         }
-        _tabStrip.HistoryLoading((snapshot.state == State::Loading || snapshot.state == State::Timeout || snapshot.state == State::MasterUnavailable) && !strip->HasHistoryItems());
+        _tabStrip.HistoryLoading(_historyFailedAgents.empty() && (snapshot.state == State::Loading || snapshot.state == State::Timeout || snapshot.state == State::MasterUnavailable) && !strip->HasHistoryItems());
         strip->TryCompleteAgentFilterTelemetry();
         if (_historyRefreshPending)
         {
