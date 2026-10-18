@@ -8,9 +8,13 @@ setup.title.sign_in: "Sínigh isteach riachtanach"
 # Cuirtear %{agent} in ionad ainm taispeána an ghníomhaire ag am rite.
 setup.subtitle.copilot_missing: "Níl do ghníomhaire \"%{agent}\" suiteáilte. Lean na céimeanna thíos chun é a shuiteáil. Chun gníomhairí a athrú, téigh go Teirminéal Cliste Settings > Agent."
 setup.subtitle.agent_missing: "Níl do ghníomhaire \"%{agent}\" suiteáilte. Athshuiteáil de láimh é, ansin bain triail eile as. Chun gníomhairí a athrú, téigh go Teirminéal Cliste Settings > Agent."
-setup.subtitle.copilot_auth: "Teastaíonn fíordheimhniú ó do ghníomhaire \"%{agent}\". Lean na céimeanna thíos chun síniú isteach. Chun gníomhairí a athrú, téigh go Teirminéal Cliste Settings > Agent."
-setup.subtitle.agent_auth: "Teastaíonn fíordheimhniú ó do ghníomhaire \"%{agent}\". Sínigh isteach tríd an ngníomhaire, ansin roghnaigh \"Tá mé sínithe isteach\" thíos. Chun gníomhairí a athrú, téigh go Teirminéal Cliste Settings > Agent."
+setup.subtitle.authentication_required: "Teastaíonn fíordheimhniú ó do ghníomhaire \"%{agent}\"."  # Shared AI-agent auth intro; %{agent} is the display name. May stand alone; when available, a space and flow-specific guidance follow.
+setup.auth.sign_in: "Lean na céimeanna thíos chun síniú isteach."  # Shared guidance for device login and initial protocol SignIn; follows the auth intro.
+setup.auth.external_sign_in: "Sínigh isteach tríd an ngníomhaire, ansin roghnaigh \"Tá mé sínithe isteach\" thíos."  # External-agent sign-in, then the setup.option.retry_auth confirmation; follows the auth intro.
+setup.auth.select_method: "Roghnaigh modh sínithe isteach chun leanúint ar aghaidh anseo."  # Shown only inside the actual sign-in method picker; follows the auth intro.
+setup.auth.switch_agent: "Chun gníomhairí a athrú, téigh go Teirminéal Cliste Settings > Agent."  # Shared auth guidance; "Agent" names the selector on the Settings "Agents" page, not the navigation label. {Locked="Settings","Agent"}
 setup.subtitle.connection_failed: "Níorbh fhéidir %{agent} a thosú."
+setup.subtitle.acp_missing: "Níl freastalaí ACP %{agent} suiteáilte. Suiteálfar go huathoibríoch é."  # Shown when the ordinary CLI exists but its separate ACP server is missing. %{agent} is the AI agent display name. {Locked="ACP"}
 
 # {Locked=qps-ploc,qps-ploca,qps-plocm}
 
@@ -22,6 +26,7 @@ setup.option.retry_auth: "Tá mé sínithe isteach — bain triail eile as ceang
 setup.option.retry_connection: "Bain triail eile as ceangal"
 setup.status.installing: "Á shuiteáil..."
 setup.status.installing_copilot_cli: "GitHub Copilot CLI á shuiteáil"
+setup.status.installing_acp: "ACP %{agent} á shuiteáil"  # Busy status while downloading and preparing the separate ACP server; %{agent} is the AI agent display name. {Locked="ACP"}
 setup.status.connecting_agent: "Ag ceangal le %{agent}"
 setup.status.install_failed: "Theip ar shuiteáil: "
 setup.status.installing_winget: " Á shuiteáil trí winget..."
@@ -43,6 +48,11 @@ auth.enterprise_domain_label: "  Fearann Enterprise: "
 auth.enterprise_hint_footer: "  Enter = sínigh isteach · Esc = github.com"  # {Locked="Enter","Esc","github.com"}
 auth.login_failed_help_enterprise: "  Brúigh Enter chun triail a bhaint as arís, nó Esc le haghaidh github.com. Cúiseanna coitianta: fearann mílitrithe nó nach féidir a bhaint amach, cód imithe in éag, nó gan rochtain Copilot ar an óstach sin."  # {Locked="Enter","Esc","github.com","Copilot"}
 auth.login_failed_help_default: "  Brúigh Enter chun triail a bhaint as arís, nó Esc chun dul siar."  # {Locked="Enter","Esc"}
+auth.browser_wait_hint: "Críochnaigh an síniú isteach i do bhrabhsálaí. Brúigh Esc chun an fanacht a chealú."  # Browser sign-in progress; Esc cancels waiting. {Locked="Esc"}
+auth.browser_link_hint: "Níor osclaíodh an brabhsálaí? Úsáid an nasc sínithe isteach seo. O: oscail · Y: cóipeáil."  # Manual fallback for the current sign-in URL; keyboard actions. {Locked="O","Y"}
+auth.browser_open_failed: "Níorbh fhéidir an brabhsálaí a oscailt. Oscail an nasc sínithe isteach de láimh."  # Keep waiting for authorization after the default browser fails.
+auth.browser_copy_failed: "Níorbh fhéidir an nasc sínithe isteach a chóipeáil. Roghnaigh é agus cóipeáil é de láimh."  # Clipboard failure; the displayed current sign-in URL remains usable.
+auth.failure_wait_timeout: "Níor críochnaíodh an síniú isteach in am. Bain triail eile as nuair atá tú réidh."  # Sign-in wait timeout; the user can retry later.
 
 # ── Amharc comhrá (src/ui/chat.rs) ──────────────────────────────────────────────
 chat.activity_thinking: "Ag smaoineamh…"
@@ -116,6 +126,7 @@ agent.install.launch_failed: "Theip ar winget a sheoladh: %{error}"
 agent.install.winget_exited: "D'fhág winget gan choinne: %{error}"
 agent.install.winget_failed_code: "Theip ar shuiteáil winget (cód scoir %{code})"
 agent.install.unsupported: "Ní thacaítear le suiteáil uathoibríoch le haghaidh %{agent}"
+agent.install.acp_failed: "Níorbh fhéidir freastalaí ACP %{agent} a shuiteáil: %{error}"  # Installation failure; %{agent} is the AI agent display name and %{error} is a diagnostic description. {Locked="ACP"}
 agent.custom.auth_hint: "Cinntigh go bhfuil %{name} suiteáilte agus ar do PATH."  # {Locked="PATH"}
 
 # ── Amharc gníomhairí (src/ui/agents_view.rs) ─────────────────────────────────
@@ -297,10 +308,4 @@ system.yolo_disable_pending: "níor dheimhnigh soláthraí an ghníomhaire staid
 system.provider_command_blocked_by_policy: "%{command}: Tá ceadú uathoibríoch díchumasaithe ag polasaí d’eagraíochta."  # {Locked="%{command}"} Shown when AllowAutomaticApproval blocks a provider-advertised privileged command.
 system.model_unknown: "Samhail anaithnid %{model} — clóscríobh /model chun an liosta atá ar fáil a fheiceáil."  # {Locked="%{model}","/model"}
 
-setup.subtitle.protocol_auth: "Teastaíonn fíordheimhniú ó do ghníomhaire \"%{agent}\". Roghnaigh modh sínithe isteach chun leanúint ar aghaidh anseo."  # AI-agent sign-in methods; %{agent} is the agent display name.
-auth.browser_wait_hint: "Críochnaigh an síniú isteach i do bhrabhsálaí. Brúigh Esc chun an fanacht a chealú."  # Browser sign-in progress; Esc cancels waiting. {Locked="Esc"}
-auth.browser_link_hint: "Níor osclaíodh an brabhsálaí? Úsáid an nasc sínithe isteach seo. O: oscail · Y: cóipeáil."  # Manual fallback for the current sign-in URL; keyboard actions. {Locked="O","Y"}
-auth.browser_open_failed: "Níorbh fhéidir an brabhsálaí a oscailt. Oscail an nasc sínithe isteach de láimh."  # Keep waiting for authorization after the default browser fails.
-auth.browser_copy_failed: "Níorbh fhéidir an nasc sínithe isteach a chóipeáil. Roghnaigh é agus cóipeáil é de láimh."  # Clipboard failure; the displayed current sign-in URL remains usable.
-auth.failure_wait_timeout: "Níor críochnaíodh an síniú isteach in am. Bain triail eile as nuair atá tú réidh."  # Sign-in wait timeout; the user can retry later.
 setup.subtitle.wsl_agent_missing: "Níorbh fhéidir linn \"%{agent}\" a aimsiú i dtimpeallacht logála isteach %{distro}. Seiceáil suiteáil, PATH agus próifíl bhlaoisce an úsáideora Linux seo, ansin bain triail eile as."  # WSL login-shell detection; %{agent} is the agent display name, %{distro} is the Linux distribution name. {Locked="PATH"}

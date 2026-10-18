@@ -417,6 +417,7 @@ pub async fn preflight_agent_in_source(
     let status = crate::agent_check::check_agent_in_source(agent_id, source).await;
     PreflightResult {
         agent_id: agent_id.to_string(),
+        acp_bootstrap_available: status.acp_bootstrap_available(),
         display_name: status.display_name,
         cli_status: if status.cli_found {
             CheckStatus::Passed
@@ -502,6 +503,7 @@ pub const CONSUMED_PAYLOAD_KEYS: &[&str] = &[
     "tool_input",
     "message",
     "notification_type",
+    "notificationType",
     "reason",
     "error",
     "pane_owner",
@@ -539,7 +541,8 @@ pub struct AgentEventFacts {
 #[derive(Debug, Default)]
 pub struct AgentEventPlan {
     /// Session events to apply, in emit order. Empty when the hook is
-    /// deliberately ignored (tool completions, `idle_prompt` notifications).
+    /// deliberately ignored (informational notifications and other providers'
+    /// tool completions).
     pub events: Vec<crate::agent_sessions::SessionEvent>,
     /// Set when a real `agent.session.started` should supersede any
     /// `pane:`-keyed placeholder previously minted for this pane.
@@ -725,31 +728,37 @@ pub fn plan_agent_event(
             key,
             tool_name: "prompt".to_string(),
         },
-        // Tool completion does NOT end the turn. Copilot and Gemini fire a
-        // `tool.finished` per tool — often several per turn, in parallel
-        // batches — but the agent keeps working until it emits `agent.stop`.
-        // Mapping each completion to `ToolCompleted` made multi-tool turns
-        // flicker to Idle and sit there during the agent's between-tool
-        // thinking. The arm stays so an older installed bundle that still
-        // emits them is ignored rather than mis-routed.
-        "agent.tool.completed" | "agent.tool.finished" | "agent.tool.failed" => {
-            plan.events.clear();
-            return plan;
+        // Successful Copilot tool returns resume activity, not Idle. Other providers
+        // retain the legacy no-op; agent.stop still owns the turn-end transition.
+        "agent.tool.completed" | "agent.tool.finished" => {
+            if *cli_source == crate::agent_sessions::CliSource::Copilot {
+                SessionEvent::ToolReturned { key }
+            } else {
+                plan.events.clear();
+                return plan;
+            }
         }
         "agent.stop" | "agent.subagent.stop" => SessionEvent::ToolCompleted { key },
         "agent.notification" => {
-            // Claude's `Notification` hook covers two cases. `permission_prompt`
-            // is genuinely Attention: nothing proceeds until the user acts.
-            // `idle_prompt` fires *after* `agent.stop` already moved the row to
-            // Idle, so treating it as Attention would park every session at
-            // "waiting for your input" between turns. Unknown types stay
-            // Attention on purpose — over-reporting costs a stale badge the
-            // next event clears, under-reporting loses a permission request.
+            // Background work and idle reminders do not block the owning session.
+            // Drop them rather than resetting activity: a pending approval may
+            // still need Attention. Unknown types stay visible as Attention.
             let notification_type = payload
                 .get("notification_type")
                 .and_then(|v| v.as_str())
+                .filter(|value| !value.is_empty())
+                .or_else(|| payload.get("notificationType").and_then(|v| v.as_str()))
                 .unwrap_or("");
-            if notification_type == "idle_prompt" {
+            if notification_type == "idle_prompt"
+                || (matches!(cli_source, crate::agent_sessions::CliSource::Copilot)
+                    && matches!(
+                        notification_type,
+                        "shell_completed"
+                            | "shell_detached_completed"
+                            | "agent_completed"
+                            | "agent_idle"
+                    ))
+            {
                 plan.events.clear();
                 return plan;
             }
@@ -2581,7 +2590,13 @@ impl App {
             .filter(|profile| {
                 (!self.host_agent_allowlist_present
                     || self.allowed_agent_ids.iter().any(|id| id == profile.id))
-                    && crate::agent_check::find_acp_exe(profile.id).is_some()
+                    && (crate::agent_check::find_acp_exe(profile.id).is_some()
+                        || (profile.id == crate::agent_registry::ANTIGRAVITY_AGENT_ID
+                            && crate::agent_check::check_host_agent_availability(
+                                profile.id,
+                                crate::agent_check::host_npx_available(),
+                            )
+                            .acp_bootstrap_available))
             })
             .map(|profile| {
                 let source = crate::agent_source::AgentSource::Host;
@@ -4220,7 +4235,11 @@ impl App {
         self.notify_confirmed_agent_available(agent_id);
         self.initial_startup_presentation_eligible = false;
         self.initial_transport_superseded = true;
-        self.update_deferred_acp_agent(agent_id);
+        // Custom providers already carry their resolved command; a registry
+        // lookup of custom:<name> cannot reconstruct it.
+        if !agent_id.starts_with("custom:") {
+            self.update_deferred_acp_agent(agent_id);
+        }
         self.state = ConnectionState::Connecting(t!("connection.reconnecting").into_owned());
         self.preflight_setup_active = false;
         if let Some(setup) = self.setup.as_mut() {
@@ -4431,7 +4450,8 @@ impl App {
         let current_status = if matches!(
             self.current_agent_source,
             crate::agent_source::AgentSource::Wsl { .. }
-        ) {
+        ) && !result.acp_bootstrap_available
+        {
             None
         } else {
             Some(crate::agent_check::AgentStatus {
@@ -4441,31 +4461,34 @@ impl App {
                 cli_path: result.cli_path.clone(),
                 install_hint: result.install_hint.clone(),
                 auth_hint: result.auth_hint.clone(),
-                auto_installable: result.agent_id.eq_ignore_ascii_case("copilot"),
+                auto_installable: result.agent_id.eq_ignore_ascii_case("copilot")
+                    || result.acp_bootstrap_available,
             })
         };
         let options = build_setup_options(&reason, current_status.as_ref());
         let title = reason.title().to_string();
-        let subtitle =
-            if let crate::agent_source::AgentSource::Wsl { distro } = &self.current_agent_source {
-                t!(
-                    "setup.subtitle.wsl_agent_missing",
-                    agent = &result.display_name,
-                    distro = distro
-                )
-                .into_owned()
-            } else if current_status
-                .as_ref()
-                .is_some_and(crate::agent_check::AgentStatus::can_auto_install)
-            {
-                t!(
-                    "setup.subtitle.copilot_missing",
-                    agent = &result.display_name
-                )
-                .into_owned()
-            } else {
-                t!("setup.subtitle.agent_missing", agent = &result.display_name).into_owned()
-            };
+        let subtitle = if result.acp_bootstrap_available {
+            t!("setup.subtitle.acp_missing", agent = &result.display_name).into_owned()
+        } else if let crate::agent_source::AgentSource::Wsl { distro } = &self.current_agent_source
+        {
+            t!(
+                "setup.subtitle.wsl_agent_missing",
+                agent = &result.display_name,
+                distro = distro
+            )
+            .into_owned()
+        } else if current_status
+            .as_ref()
+            .is_some_and(crate::agent_check::AgentStatus::can_auto_install)
+        {
+            t!(
+                "setup.subtitle.copilot_missing",
+                agent = &result.display_name
+            )
+            .into_owned()
+        } else {
+            t!("setup.subtitle.agent_missing", agent = &result.display_name).into_owned()
+        };
         self.mode = AppMode::Setup;
         self.preflight_setup_active = true;
         self.setup = Some(SetupState {
@@ -4487,6 +4510,16 @@ impl App {
         };
         let profile = crate::agent_registry::lookup_profile(&agent_id);
         let reason = SetupReason::AgentError;
+        let (auth_options, _) = self.authentication_setup_presentation(&agent_id);
+        let can_sign_in = agent_id != "copilot"
+            && auth_options
+                .iter()
+                .any(|option| matches!(option, SetupOption::SignIn { .. }));
+        let subtitle = t!(
+            "setup.subtitle.connection_failed",
+            agent = profile.display_name
+        )
+        .into_owned();
         self.mode = AppMode::Setup;
         self.state = ConnectionState::Disconnected;
         self.auth = None;
@@ -4494,7 +4527,8 @@ impl App {
             reason: reason.clone(),
             selected_index: 0,
             preflight: PreflightResult {
-                agent_id: profile.id.to_string(),
+                agent_id,
+                acp_bootstrap_available: false,
                 display_name: profile.display_name.to_string(),
                 cli_status: CheckStatus::Passed,
                 cli_path: None,
@@ -4507,30 +4541,66 @@ impl App {
                 kind: SetupFailureKind::Connection,
                 message,
             },
-            options: if !self.acp_auth_methods.is_empty()
-                && (matches!(
-                    profile.acp_auth_flow,
-                    crate::agent_registry::AcpAuthFlow::InProtocol
-                ) || self.current_agent_id.starts_with("custom:"))
-            {
-                vec![
-                    SetupOption::SignIn {
-                        agent_id: self.current_agent_id.clone(),
-                        display_name: profile.display_name.into(),
-                    },
-                    SetupOption::ChooseAgentSource,
-                ]
+            options: if can_sign_in {
+                auth_options
             } else {
                 vec![SetupOption::RetryConnection, SetupOption::ChooseAgentSource]
             },
             title: reason.title(),
-            subtitle: t!(
-                "setup.subtitle.connection_failed",
-                agent = profile.display_name
-            )
-            .into_owned(),
+            subtitle: if can_sign_in {
+                format!(
+                    "{subtitle} {} {}",
+                    t!("setup.auth.sign_in"),
+                    t!("setup.auth.switch_agent")
+                )
+            } else {
+                subtitle
+            },
         });
         self.publish_agent_status();
+    }
+
+    fn has_usable_acp_authentication_methods(&self) -> bool {
+        self.acp_auth_methods
+            .iter()
+            .any(|method| !method.id().0.is_empty())
+    }
+
+    fn authentication_setup_presentation(&self, agent_id: &str) -> (Vec<SetupOption>, String) {
+        let profile = crate::agent_registry::lookup_profile_by_id(agent_id);
+        let protocol_auth = matches!(
+            profile.acp_auth_flow,
+            crate::agent_registry::AcpAuthFlow::InProtocol
+        ) || agent_id.starts_with("custom:");
+        let (option, instructions) = if agent_id == "copilot"
+            || (protocol_auth && self.has_usable_acp_authentication_methods())
+        {
+            (
+                SetupOption::SignIn {
+                    agent_id: agent_id.to_string(),
+                    display_name: profile.display_name.to_string(),
+                },
+                Some(t!("setup.auth.sign_in").into_owned()),
+            )
+        } else if protocol_auth {
+            (SetupOption::RetryConnection, None)
+        } else {
+            (
+                SetupOption::Retry,
+                Some(t!("setup.auth.external_sign_in").into_owned()),
+            )
+        };
+        let introduction = t!(
+            "setup.subtitle.authentication_required",
+            agent = profile.display_name
+        )
+        .into_owned();
+        let subtitle = match instructions {
+            Some(instructions) => format!("{introduction} {instructions}"),
+            None => introduction,
+        };
+        let subtitle = format!("{subtitle} {}", t!("setup.auth.switch_agent"));
+        (vec![option, SetupOption::ChooseAgentSource], subtitle)
     }
 
     pub fn set_event_tx(&mut self, tx: mpsc::UnboundedSender<AppEvent>) {
@@ -4709,8 +4779,15 @@ impl App {
             setup.selected_index = 0;
             setup.phase = SetupPhase::Ready;
             setup.title = t!("setup.title.sign_in").into_owned();
-            setup.subtitle =
-                t!("setup.subtitle.protocol_auth", agent = profile.display_name).into_owned();
+            setup.subtitle = format!(
+                "{} {} {}",
+                t!(
+                    "setup.subtitle.authentication_required",
+                    agent = profile.display_name
+                ),
+                t!("setup.auth.select_method"),
+                t!("setup.auth.switch_agent"),
+            );
         }
     }
 
@@ -5063,6 +5140,10 @@ impl App {
                 if let Some(ref setup) = self.setup {
                     let agent_id = setup.preflight.agent_id.clone();
                     if !agent_id.is_empty() {
+                        if agent_id.starts_with("custom:") {
+                            self.reconnect_confirmed_available_agent(&agent_id);
+                            return;
+                        }
                         if matches!(
                             self.current_agent_source,
                             crate::agent_source::AgentSource::Wsl { .. }
@@ -5099,6 +5180,21 @@ impl App {
     }
 
     pub(crate) fn start_agent_install(&mut self, agent_id: String) {
+        if self.host_agent_allowlist_present
+            && !self
+                .allowed_agent_ids
+                .iter()
+                .any(|allowed| allowed.eq_ignore_ascii_case(&agent_id))
+        {
+            tracing::warn!(target: "agent_install", agent = %agent_id, "policy blocked agent installation");
+            if let Some(setup) = self.setup.as_mut() {
+                setup.phase = SetupPhase::Failed {
+                    kind: SetupFailureKind::Install,
+                    message: t!("setup.title.not_available").into_owned(),
+                };
+            }
+            return;
+        }
         if self.setup.as_ref().is_some_and(SetupState::is_busy) {
             return;
         }
@@ -5115,10 +5211,12 @@ impl App {
             binding_generation: self.agent_binding_generation,
             agent_source: self.current_agent_source.clone(),
         });
+        let source = self.current_agent_source.clone();
         if let Some(ref tx) = self.event_tx {
             let tx = tx.clone();
             tokio::task::spawn_local(async move {
-                let result = crate::agent_check::install(&agent_id, |_line| {}).await;
+                let result =
+                    crate::agent_check::install_in_source(&agent_id, &source, |_line| {}).await;
                 tracing::info!(agent = %agent_id, ?result, "agent install completed");
                 let _ = tx.send(AppEvent::AgentInstallComplete {
                     request_id,
@@ -5137,8 +5235,13 @@ impl App {
         }
     }
 
-    pub(crate) fn try_start_fre_auto_install(&mut self) -> bool {
-        if !self.auto_install_selected_agent || self.pending_agent_install.is_some() {
+    pub(crate) fn try_start_automatic_agent_install(&mut self) -> bool {
+        let bootstrap_acp = self
+            .current_agent_id
+            .eq_ignore_ascii_case(crate::agent_registry::ANTIGRAVITY_AGENT_ID);
+        if (!self.auto_install_selected_agent && !bootstrap_acp)
+            || self.pending_agent_install.is_some()
+        {
             return false;
         }
         let install_agent = self.setup.as_ref().and_then(|setup| {
@@ -5147,7 +5250,12 @@ impl App {
             }
             setup.options.iter().find_map(|option| match option {
                 SetupOption::Install { agent_id, .. }
-                    if agent_id.eq_ignore_ascii_case("copilot") =>
+                    if (self.auto_install_selected_agent
+                        && agent_id.eq_ignore_ascii_case("copilot"))
+                        || (bootstrap_acp
+                            && agent_id.eq_ignore_ascii_case(
+                                crate::agent_registry::ANTIGRAVITY_AGENT_ID,
+                            )) =>
                 {
                     Some(agent_id.clone())
                 }
@@ -5637,12 +5745,11 @@ impl App {
     fn show_signin_setup_screen(&mut self, agent_id: String) {
         tracing::info!("show_signin_setup_screen: agent_id={}", agent_id);
         let profile = crate::agent_registry::lookup_profile(&agent_id);
-        let reason = SetupReason::AgentError;
         let is_wsl_source = matches!(
             self.current_agent_source,
             crate::agent_source::AgentSource::Wsl { .. }
         );
-        let agent_status = if is_wsl_source {
+        let agent_status = if is_wsl_source || agent_id.starts_with("custom:") {
             crate::agent_check::AgentStatus {
                 id: profile.id.to_string(),
                 display_name: profile.display_name.to_string(),
@@ -5655,29 +5762,44 @@ impl App {
         } else {
             crate::agent_check::check_agent(profile.id)
         };
-        let options = if is_wsl_source {
-            build_setup_options(&reason, None)
-        } else {
-            build_setup_options(&reason, Some(&agent_status))
-        };
+        self.show_signin_setup_screen_with_status(&agent_id, agent_status);
+    }
+
+    fn show_signin_setup_screen_with_status(
+        &mut self,
+        agent_id: &str,
+        agent_status: crate::agent_check::AgentStatus,
+    ) {
         self.mode = AppMode::Setup;
         self.state = ConnectionState::Disconnected;
         self.auth = None;
+        self.current_tab_mut()
+            .retain_current_messages(|message| !matches!(message, ChatMessage::Error(_)));
+        if !agent_status.cli_found {
+            self.show_preflight_setup(PreflightResult {
+                agent_id: agent_id.to_string(),
+                acp_bootstrap_available: agent_status.acp_bootstrap_available(),
+                display_name: agent_status.display_name,
+                cli_status: CheckStatus::Failed(t!("agent.status.not_found").into_owned()),
+                cli_path: agent_status.cli_path,
+                auth_status: CheckStatus::Skipped,
+                install_hint: agent_status.install_hint,
+                install_url: String::new(),
+                auth_hint: agent_status.auth_hint,
+            });
+            return;
+        }
+        let profile = crate::agent_registry::lookup_profile_by_id(agent_id);
+        let (options, subtitle) = self.authentication_setup_presentation(agent_id);
         self.setup = Some(SetupState {
-            reason,
+            reason: SetupReason::AgentError,
             selected_index: 0,
             preflight: PreflightResult {
-                agent_id: profile.id.to_string(),
+                agent_id: agent_id.to_string(),
+                acp_bootstrap_available: false,
                 display_name: profile.display_name.to_string(),
-                // Reflect the CLI's real presence (we just computed
-                // `agent_status`) instead of hard-coding "found" — on the
-                // dead-man fallback the CLI may genuinely be the problem.
-                cli_status: if agent_status.cli_found {
-                    CheckStatus::Passed
-                } else {
-                    CheckStatus::Failed(t!("agent.status.not_found").into_owned())
-                },
-                cli_path: agent_status.cli_path.clone(),
+                cli_status: CheckStatus::Passed,
+                cli_path: agent_status.cli_path,
                 auth_status: CheckStatus::Failed(t!("system.authentication_failed").into_owned()),
                 install_hint: profile.install_hint.to_string(),
                 install_url: String::new(),
@@ -5686,14 +5808,8 @@ impl App {
             phase: SetupPhase::Ready,
             options,
             title: t!("setup.title.sign_in").into_owned(),
-            subtitle: if profile.id == "copilot" {
-                t!("setup.subtitle.copilot_auth", agent = profile.display_name).into_owned()
-            } else {
-                t!("setup.subtitle.agent_auth", agent = profile.display_name).into_owned()
-            },
+            subtitle,
         });
-        let tab = self.current_tab_mut();
-        tab.retain_current_messages(|m| !matches!(m, ChatMessage::Error(_)));
     }
 
     // Keep the existing agent_paste_text wire event compatible with packaged Terminal.

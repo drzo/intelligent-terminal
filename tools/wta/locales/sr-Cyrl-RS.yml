@@ -8,9 +8,13 @@ setup.title.sign_in: "Потребна је пријава"
 # %{agent} is replaced with the agent display name at runtime.
 setup.subtitle.copilot_missing: "Ваш агент \"%{agent}\" није инсталиран. Пратите кораке испод да бисте га инсталирали. За промену агента идите у Интелигентни Терминал Settings > Agent."
 setup.subtitle.agent_missing: "Ваш агент \"%{agent}\" није инсталиран. Поново га ручно инсталирајте, па покушајте поново. За промену агента идите у Интелигентни Терминал Settings > Agent."
-setup.subtitle.copilot_auth: "Ваш агент \"%{agent}\" захтева аутентификацију. Пратите кораке испод да бисте се пријавили. За промену агента идите у Интелигентни Терминал Settings > Agent."
-setup.subtitle.agent_auth: "Ваш агент \"%{agent}\" захтева аутентификацију. Пријавите се преко агента, па изаберите \"Пријавио/ла сам се\" испод. За промену агента идите у Интелигентни Терминал Settings > Agent."
+setup.subtitle.authentication_required: "Ваш агент \"%{agent}\" захтева аутентификацију."  # Shared AI-agent auth intro; %{agent} is the display name. May stand alone; when available, a space and flow-specific guidance follow.
+setup.auth.sign_in: "Пратите кораке испод да бисте се пријавили."  # Shared guidance for device login and initial protocol SignIn; follows the auth intro.
+setup.auth.external_sign_in: "Пријавите се преко агента, па изаберите \"Пријавио/ла сам се\" испод."  # External-agent sign-in, then the setup.option.retry_auth confirmation; follows the auth intro.
+setup.auth.select_method: "Изаберите начин пријављивања да бисте наставили овде."  # Shown only inside the actual sign-in method picker; follows the auth intro.
+setup.auth.switch_agent: "За промену агента идите у Интелигентни Терминал Settings > Agent."  # Shared auth guidance; "Agent" names the selector on the Settings "Agents" page, not the navigation label. {Locked="Settings","Agent"}
 setup.subtitle.connection_failed: "Нисмо могли да покренемо %{agent}."
+setup.subtitle.acp_missing: "ACP сервер за %{agent} није инсталиран. Биће аутоматски инсталиран."  # Shown when the ordinary CLI exists but its separate ACP server is missing. %{agent} is the AI agent display name. {Locked="ACP"}
 
 # {Locked=qps-ploc,qps-ploca,qps-plocm}
 
@@ -22,6 +26,7 @@ setup.option.retry_auth: "Пријавио/ла сам се — покушај �
 setup.option.retry_connection: "Покушај поново да се повежеш"
 setup.status.installing: "Инсталирање..."
 setup.status.installing_copilot_cli: "Инсталирање GitHub Copilot CLI"
+setup.status.installing_acp: "Инсталирање ACP-а за %{agent}"  # Busy status while downloading and preparing the separate ACP server; %{agent} is the AI agent display name. {Locked="ACP"}
 setup.status.connecting_agent: "Повезивање са %{agent}"
 setup.status.install_failed: "Инсталација није успела: "
 setup.status.installing_winget: " Инсталирање преко winget..."
@@ -43,6 +48,11 @@ auth.enterprise_domain_label: "  Домен GitHub Enterprise: "
 auth.enterprise_hint_footer: "  Enter за пријављивање · Esc за github.com"  # {Locked="Enter","Esc","github.com"}
 auth.login_failed_help_enterprise: "  Притисните Enter да бисте покушали поново или Esc за github.com. Уобичајени узроци: погрешно унет или недоступан домен, истекао код или нема приступа Copilot на том хосту."  # {Locked="Enter","Esc","github.com","Copilot"}
 auth.login_failed_help_default: "  Притисните Enter да бисте покушали поново или Esc за повратак."  # {Locked="Enter","Esc"}
+auth.browser_wait_hint: "Довршите пријављивање у прегледачу. Притисните Esc да откажете чекање."  # Browser sign-in progress; Esc cancels waiting. {Locked="Esc"}
+auth.browser_link_hint: "Прегледач се није отворио? Користите ову везу за пријављивање. O: отвори · Y: копирај."  # Manual fallback for the current sign-in URL; keyboard actions. {Locked="O","Y"}
+auth.browser_open_failed: "Није могуће отворити прегледач. Ручно отворите везу за пријављивање."  # Keep waiting for authorization after the default browser fails.
+auth.browser_copy_failed: "Није могуће копирати везу за пријављивање. Ручно је изаберите и копирајте."  # Clipboard failure; the displayed current sign-in URL remains usable.
+auth.failure_wait_timeout: "Пријављивање није завршено на време. Покушајте поново када будете спремни."  # Sign-in wait timeout; the user can retry later.
 
 # ── Chat view (src/ui/chat.rs) ──────────────────────────────────────────────
 chat.activity_thinking: "Размишљам…"
@@ -125,6 +135,7 @@ agent.install.launch_failed: "Покретање winget није успело: %
 agent.install.winget_exited: "winget се неочекивано затворио: %{error}"
 agent.install.winget_failed_code: "winget install није успео (излазни код %{code})"
 agent.install.unsupported: "Аутоматска инсталација није подржана за %{agent}"
+agent.install.acp_failed: "Инсталирање ACP сервера за %{agent} није успело: %{error}"  # Installation failure; %{agent} is the AI agent display name and %{error} is a diagnostic description. {Locked="ACP"}
 agent.custom.auth_hint: "Проверите да је %{name} инсталиран и да се налази у PATH."  # {Locked="PATH"}
 
 # ── Agents view (src/ui/agents_view.rs) ─────────────────────────────────────
@@ -298,10 +309,4 @@ system.yolo_disable_pending: "добављач није потврдио зах�
 system.provider_command_blocked_by_policy: "%{command}: Аутоматско одобравање је онемогућено политиком ваше организације."  # {Locked="%{command}"} Shown when AllowAutomaticApproval blocks a provider-advertised privileged command.
 system.model_unknown: "Непознат модел %{model} — унесите /model да видите доступну листу."  # {Locked="%{model}","/model"}
 
-setup.subtitle.protocol_auth: "Ваш агент \"%{agent}\" захтева аутентификацију. Изаберите начин пријављивања да бисте наставили овде."  # AI-agent sign-in methods; %{agent} is the agent display name.
-auth.browser_wait_hint: "Довршите пријављивање у прегледачу. Притисните Esc да откажете чекање."  # Browser sign-in progress; Esc cancels waiting. {Locked="Esc"}
-auth.browser_link_hint: "Прегледач се није отворио? Користите ову везу за пријављивање. O: отвори · Y: копирај."  # Manual fallback for the current sign-in URL; keyboard actions. {Locked="O","Y"}
-auth.browser_open_failed: "Није могуће отворити прегледач. Ручно отворите везу за пријављивање."  # Keep waiting for authorization after the default browser fails.
-auth.browser_copy_failed: "Није могуће копирати везу за пријављивање. Ручно је изаберите и копирајте."  # Clipboard failure; the displayed current sign-in URL remains usable.
-auth.failure_wait_timeout: "Пријављивање није завршено на време. Покушајте поново када будете спремни."  # Sign-in wait timeout; the user can retry later.
 setup.subtitle.wsl_agent_missing: "Нисмо могли да пронађемо \"%{agent}\" у окружењу за пријављивање дистрибуције %{distro}. Проверите инсталацију, PATH и профил љуске овог Linux корисника, а затим покушајте поново."  # WSL login-shell detection; %{agent} is the agent display name, %{distro} is the Linux distribution name. {Locked="PATH"}

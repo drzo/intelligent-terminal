@@ -8,9 +8,13 @@ setup.title.sign_in: "साइन इन आवश्यक"
 # %{agent} रनटायमाक एजेंटाचें डिस्प्ले नांव घालतात.
 setup.subtitle.copilot_missing: "तुमचो एजेंट \"%{agent}\" इन्स्टॉल जावंक ना. ताका इन्स्टॉल करपाक सकयल दिल्ल्या पावलांक अनुसरण करात. एजेंट बदलपाक इंटेलिजंट टर्मिनल Settings > Agent कडेन वचात."
 setup.subtitle.agent_missing: "तुमचो एजेंट \"%{agent}\" इन्स्टॉल जावंक ना. उपकार करून ताका हातान परतून इन्स्टॉल करात, मागीर परतून यत्न करात. एजेंट बदलपाक इंटेलिजंट टर्मिनल Settings > Agent कडेन वचात."
-setup.subtitle.copilot_auth: "तुमच्या एजेंट \"%{agent}\" क प्रमाणीकरण जाय. साइन इन करपाक सकयल दिल्ल्या पावलांक अनुसरण करात. एजेंट बदलपाक इंटेलिजंट टर्मिनल Settings > Agent कडेन वचात."
-setup.subtitle.agent_auth: "तुमच्या एजंट \"%{agent}\" खातीर प्रमाणीकरण जाय. उपकार करून एजंट वरवीं सायन इन करात, मागीर सकल \"म्हणें सायन इन केलां\" वेंचात. एजंट बदलपाक इंटेलिजंट टर्मिनल Settings > Agent कडेन वचात."
+setup.subtitle.authentication_required: "तुमच्या एजेंट \"%{agent}\" खातीर प्रमाणीकरण जाय."  # Shared AI-agent auth intro; %{agent} is the display name. May stand alone; when available, a space and flow-specific guidance follow.
+setup.auth.sign_in: "साइन इन करपाक सकयल दिल्ल्या पावलांक अनुसरण करात."  # Shared guidance for device login and initial protocol SignIn; follows the auth intro.
+setup.auth.external_sign_in: "उपकार करून एजेंट वरवीं साइन इन करात, मागीर सकल \"म्हणें सायन इन केलां\" वेंचात."  # External-agent sign-in, then the setup.option.retry_auth confirmation; follows the auth intro.
+setup.auth.select_method: "हांगा फुडें वचपाक साइन इन करपाची पद्दत वेंचात."  # Shown only inside the actual sign-in method picker; follows the auth intro.
+setup.auth.switch_agent: "एजेंट बदलपाक इंटेलिजंट टर्मिनल Settings > Agent कडेन वचात."  # Shared auth guidance; "Agent" names the selector on the Settings "Agents" page, not the navigation label. {Locked="Settings","Agent"}
 setup.subtitle.connection_failed: "%{agent} सुरू करपाक आमकां जमलें ना."
+setup.subtitle.acp_missing: "%{agent} खातीर ACP सर्व्हर इन्स्टॉल जावंक ना. तो आपशींच इन्स्टॉल जातलो."  # Shown when the ordinary CLI exists but its separate ACP server is missing. %{agent} is the AI agent display name. {Locked="ACP"}
 
 # {Locked=qps-ploc,qps-ploca,qps-plocm}
 
@@ -22,6 +26,7 @@ setup.option.retry_auth: "म्हणें सायन इन केलां
 setup.option.retry_connection: "परत जोडपाक यत्न करात"
 setup.status.installing: "इन्स्टॉल जाता..."
 setup.status.installing_copilot_cli: "GitHub Copilot CLI इन्स्टॉल जाता"
+setup.status.installing_acp: "%{agent} खातीर ACP इन्स्टॉल जाता"  # Busy status while downloading and preparing the separate ACP server; %{agent} is the AI agent display name. {Locked="ACP"}
 setup.status.connecting_agent: "%{agent} कडेन जोडटा"
 setup.status.install_failed: "इन्स्टॉल अपेशी: "
 setup.status.installing_winget: " winget वरवीं इन्स्टॉल जाता..."
@@ -43,6 +48,11 @@ auth.enterprise_domain_label: "  Enterprise डोमेन: "
 auth.enterprise_hint_footer: "  सायन इन करपाक Enter · github.com खातीर Esc"  # {Locked="Enter","Esc","github.com"}
 auth.login_failed_help_enterprise: "  परत यत्न करपाक Enter दामात, वा github.com खातीर Esc. सामान्य कारणां: चुकीन टायप केल्लो वा पोचूंक न येवपी डोमेन, मुदत सोंपिल्लो कोड, वा त्या होस्टार Copilot प्रवेश नासप."  # {Locked="Enter","Esc","github.com","Copilot"}
 auth.login_failed_help_default: "  परत यत्न करपाक Enter दामात, वा फाटीं वचपाक Esc."  # {Locked="Enter","Esc"}
+auth.browser_wait_hint: "तुमच्या ब्राउझरांत साइन इन पुराय करात. वाट पळोवप रद्द करपाक Esc दामात."  # Browser sign-in progress; Esc cancels waiting. {Locked="Esc"}
+auth.browser_link_hint: "ब्राउझर उगडलो ना? साइन इन करपाखातीर ही लिंक वापरात. O: उगडात · Y: प्रत काडात."  # Manual fallback for the current sign-in URL; keyboard actions. {Locked="O","Y"}
+auth.browser_open_failed: "ब्राउझर उगडपाक शक्य जालें ना. साइन इन करपाची लिंक तुमीच उगडात."  # Keep waiting for authorization after the default browser fails.
+auth.browser_copy_failed: "साइन इन करपाच्या लिंकाची प्रत काडपाक शक्य जालें ना. ती वेंचून तुमीच प्रत काडात."  # Clipboard failure; the displayed current sign-in URL remains usable.
+auth.failure_wait_timeout: "साइन इन वेळार पुराय जालें ना. तुमी तयार जातकच परत यत्न करात."  # Sign-in wait timeout; the user can retry later.
 
 # ── चॅट दृश्य (src/ui/chat.rs) ──────────────────────────────────────────────
 chat.activity_thinking: "विचार करता…"
@@ -129,6 +139,7 @@ agent.install.launch_failed: "winget सुरू करपाक अपेश�
 agent.install.winget_exited: "winget अनपेक्षित रितीन बंद जालें: %{error}"
 agent.install.winget_failed_code: "winget इन्स्टॉल अपेशी (एक्झिट कोड %{code})"
 agent.install.unsupported: "%{agent} खातीर आपशीं इन्स्टॉल समर्थित ना"
+agent.install.acp_failed: "%{agent} खातीर ACP सर्व्हर इन्स्टॉल करपाक जमलें ना: %{error}"  # Installation failure; %{agent} is the AI agent display name and %{error} is a diagnostic description. {Locked="ACP"}
 agent.custom.auth_hint: "%{name} इन्स्टॉल आसा आनी तुमच्या PATH चेर आसा हें खात्री करात."  # {Locked="PATH"}
 
 # ── एजेंट दृश्य (src/ui/agents_view.rs) ─────────────────────────────────────
@@ -299,10 +310,4 @@ system.yolo_disable_pending: "एजंट प्रदात्यान वि
 system.provider_command_blocked_by_policy: "%{command}: तुमच्या संघटनेच्या धोरणान स्वयंचलित मान्यताय बंद केल्या आसात."  # {Locked="%{command}"} Shown when AllowAutomaticApproval blocks a provider-advertised privileged command.
 system.model_unknown: "अज्ञात मॉडेल %{model} — उपलब्ध वळेरी पळोवपाक /model टायप करात."  # {Locked="%{model}","/model"}
 
-setup.subtitle.protocol_auth: "तुमच्या एजंट \"%{agent}\" खातीर प्रमाणीकरण जाय. हांगा फुडें वचपाक साइन इन करपाची पद्दत वेंचात."  # AI-agent sign-in methods; %{agent} is the agent display name.
-auth.browser_wait_hint: "तुमच्या ब्राउझरांत साइन इन पुराय करात. वाट पळोवप रद्द करपाक Esc दामात."  # Browser sign-in progress; Esc cancels waiting. {Locked="Esc"}
-auth.browser_link_hint: "ब्राउझर उगडलो ना? साइन इन करपाखातीर ही लिंक वापरात. O: उगडात · Y: प्रत काडात."  # Manual fallback for the current sign-in URL; keyboard actions. {Locked="O","Y"}
-auth.browser_open_failed: "ब्राउझर उगडपाक शक्य जालें ना. साइन इन करपाची लिंक तुमीच उगडात."  # Keep waiting for authorization after the default browser fails.
-auth.browser_copy_failed: "साइन इन करपाच्या लिंकाची प्रत काडपाक शक्य जालें ना. ती वेंचून तुमीच प्रत काडात."  # Clipboard failure; the displayed current sign-in URL remains usable.
-auth.failure_wait_timeout: "साइन इन वेळार पुराय जालें ना. तुमी तयार जातकच परत यत्न करात."  # Sign-in wait timeout; the user can retry later.
 setup.subtitle.wsl_agent_missing: "%{distro} च्या लॉगिन वातावरणांत \"%{agent}\" मेळ्ळो ना. ह्या Linux वापरप्याचें इन्स्टॉलेशन, PATH आनी शेल प्रोफायल तपासात, मागीर परत यत्न करात."  # WSL login-shell detection; %{agent} is the agent display name, %{distro} is the Linux distribution name. {Locked="PATH"}
