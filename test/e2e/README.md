@@ -79,6 +79,13 @@ Feature fixtures with their own inactive-package prerequisite retain that gate,
 as listed below. Combined sidebar additionally records a fresh inactivity
 observation after shared cleanup for its existing recovery checks.
 
+OpenCode hook lifecycle fixtures require a harness-owned disposable Terminal
+instance and its master. Ending a fixture session or closing only its pane does
+not remove the resumable registry row. Never extract the row-producing cases
+and run them against an existing user instance: deleting their temporary
+directories would leave broken resume entries. Complete the normal owned-process
+teardown before accepting fixture cleanup.
+
 The `tests/` folder implements the `[E2E]` items from
 `doc/release-check-list.md` that are automatable on one machine. Copilot drives
 the baseline suites, while the agent matrix covers other installed and

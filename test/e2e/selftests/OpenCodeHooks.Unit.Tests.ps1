@@ -4,6 +4,12 @@ BeforeAll {
     Import-Module (Join-Path $PSScriptRoot '..\ItE2E\ItE2E.psd1') -Force
     $suite = [Management.Automation.Language.Parser]::ParseFile(
         (Join-Path $PSScriptRoot '..\tests\Feature.OpenCodeHookLifecycle.Tests.ps1'), [ref]$null, [ref]$null)
+    $ownershipGuard = $suite.Find({
+        param($node)
+        $node -is [Management.Automation.Language.FunctionDefinitionAst] -and
+            $node.Name -eq 'Assert-DisposableHookFixture'
+    }, $true)
+    . ([scriptblock]::Create($ownershipGuard.Extent.Text))
     $script:nativeCases = @{}
     foreach ($command in $suite.FindAll({
         param($node)
@@ -41,6 +47,48 @@ BeforeAll {
 }
 
 Describe 'Unit: OpenCode hook live-test isolation' -Tag 'Unit' {
+    It 'refuses an existing user instance before injecting <Case>' -TestCases @(
+        @{ Case = 'OpenCode hook entrypoints deliver lifecycle to WTA' },
+        @{ Case = 'OpenCode hook suppression prevents ghost sessions' }
+    ) {
+        param($Case)
+        $previousApp = $script:app
+        $previousNode = $script:node
+        try {
+            $script:app = [pscustomobject]@{ Pid = 123; Launched = $false }
+            $script:node = 'fixture-node.exe'
+            { & $script:nativeCases[$Case] } | Should -Throw '*harness-owned disposable Terminal*'
+        }
+        finally {
+            $script:app = $previousApp
+            $script:node = $previousNode
+        }
+    }
+
+    It 'does not treat a launched flag without a creation-owned process as disposable' {
+        $app = [pscustomobject]@{ Pid = 123; Launched = $true }
+        Mock Get-Process { throw 'An unproven process must not be inspected or adopted' }
+        { Assert-DisposableHookFixture $app } | Should -Throw '*harness-owned disposable Terminal*'
+        Should -Invoke Get-Process -Times 0 -Exactly
+    }
+
+    It 'rejects a recycled process before allowing hook injection' {
+        $start = [DateTime]'2026-01-01T00:00:00Z'
+        $app = [pscustomobject]@{
+            Pid = 123
+            Launched = $true
+            InstallLocation = $TestDrive
+            OwnedProcess = [pscustomobject]@{ Id = 123; HasExited = $false; StartTime = $start }
+        }
+        Mock Get-Process {
+            [pscustomobject]@{
+                StartTime = $start.AddSeconds(1)
+                Path = Join-Path $TestDrive 'WindowsTerminal.exe'
+            }
+        }
+        { Assert-DisposableHookFixture $app } | Should -Throw '*harness-owned disposable Terminal*'
+    }
+
     It 'restores all V2 plugin files after the V1 installer removes them' {
         $previousConfig = $env:XDG_CONFIG_HOME
         $previousApp = $script:app

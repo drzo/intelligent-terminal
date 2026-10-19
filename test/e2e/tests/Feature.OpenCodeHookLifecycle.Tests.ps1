@@ -61,6 +61,21 @@ Describe 'Feature: packaged OpenCode hook lifecycle' -Tag 'Feature', 'OpenCodeHo
         }
         $script:listener = Start-WtEventListener -App $script:app -WaitForReady -ExistingOnly
 
+        function Assert-DisposableHookFixture($App) {
+            $message = 'OpenCode hook fixtures require a harness-owned disposable Terminal instance; fixture rows remain resumable until its master exits.'
+            if (-not $App -or -not $App.PSObject.Properties['Launched'] -or -not $App.Launched -or
+                -not $App.PSObject.Properties['OwnedProcess'] -or -not $App.OwnedProcess) {
+                throw $message
+            }
+            $owned = $App.OwnedProcess
+            if ($owned.HasExited -or $owned.Id -ne $App.Pid) { throw $message }
+            $current = Get-Process -Id $App.Pid -ErrorAction Stop
+            if ($current.StartTime -ne $owned.StartTime -or
+                $current.Path -ine (Join-Path $App.InstallLocation 'WindowsTerminal.exe')) {
+                throw $message
+            }
+        }
+
         function Read-HookSessions {
             $result = Invoke-Wta -App $script:app -Arguments @(
                 'sessions', 'list', '--master', $script:pipe, '--json', '--include-status', '--origin', 'all'
@@ -161,6 +176,7 @@ Describe 'Feature: packaged OpenCode hook lifecycle' -Tag 'Feature', 'OpenCodeHo
             Set-ItResult -Skipped -Because 'Node.js is not installed for controlled SDK inputs'
             return
         }
+        Assert-DisposableHookFixture $script:app
         foreach ($mode in @('v1', 'v2')) {
             $driver = Start-HookDriver $mode
             $id = "ite2e-opencode-$mode-$([guid]::NewGuid().ToString('N'))"
@@ -212,6 +228,7 @@ Describe 'Feature: packaged OpenCode hook lifecycle' -Tag 'Feature', 'OpenCodeHo
             Set-ItResult -Skipped -Because 'Node.js is not installed for controlled SDK inputs'
             return
         }
+        Assert-DisposableHookFixture $script:app
         $driver = Start-HookDriver 'v2'
         $prefix = "ite2e-opencode-negative-$([guid]::NewGuid().ToString('N'))"
         $root = "$prefix-root"
@@ -393,6 +410,7 @@ Describe 'Feature: packaged OpenCode hook lifecycle' -Tag 'Feature', 'OpenCodeHo
             $start.Environment.Remove('OPENCODE_SERVER_PASSWORD') | Out-Null
             $start.Environment.Remove('OPENCODE_SERVER_USERNAME') | Out-Null
         }
+        Assert-DisposableHookFixture $script:app
         $server = [Diagnostics.Process]::Start($start)
         $null = $server.Handle
         $stdout = $server.StandardOutput.ReadToEndAsync()
