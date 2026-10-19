@@ -1793,7 +1793,7 @@ namespace winrt::Microsoft::Terminal::Settings::Editor::implementation
         }
 
         const auto acpModel = _GlobalSettings.AcpModel();
-        return ::Microsoft::Terminal::AcpModels::BuildAgentCommandLine(
+        return ::Microsoft::Terminal::AcpModels::BuildProbeCommandLine(
             std::wstring_view{ acpAgent },
             std::wstring_view{ acpModel });
     }

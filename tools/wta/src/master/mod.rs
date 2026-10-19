@@ -104,6 +104,32 @@ enum ProviderBinding {
 }
 
 impl ProviderBinding {
+    fn admission_binding_key(&self) -> String {
+        use sha2::{Digest, Sha256};
+        let inherited;
+        let (selection, config) = match self {
+            Self::Native => return "native".to_string(),
+            Self::LegacyEnvironment => {
+                inherited = crate::custom_model_provider::Config::shared_from_env();
+                ("legacy", &inherited)
+            }
+            Self::Custom { selection_id, config, .. } => (selection_id.as_str(), config),
+        };
+        let mut digest = Sha256::new();
+        for field in [
+            selection,
+            config.base_url.as_str(),
+            config.model.as_str(),
+            config.credential_id.as_deref().unwrap_or(""),
+            config.credential_resource,
+        ] {
+            digest.update((field.len() as u64).to_le_bytes());
+            digest.update(field.as_bytes());
+        }
+        digest.update([u8::from(config.api_key_required), u8::from(config.credential_id.is_some())]);
+        format!("binding:{:x}", digest.finalize())
+    }
+
     fn pool_key(&self) -> String {
         match self {
             Self::LegacyEnvironment => "legacy".to_string(),
@@ -1867,6 +1893,21 @@ fn agent_cmd_key_with_provider(
     )
 }
 
+fn agent_admission_key_with_provider(
+    command: &str,
+    agent_id: Option<&str>,
+    source: &crate::agent_source::AgentSource,
+    provider_binding: &ProviderBinding,
+) -> String {
+    crate::agent_lifecycle::agent_key(
+        command,
+        agent_id,
+        source,
+        &provider_binding.admission_binding_key(),
+        provider_binding.is_model_scoped(),
+    )
+}
+
 #[derive(Default)]
 struct AgentHistoryRefresh {
     gate: Arc<Mutex<HistoryRefreshState>>,
@@ -1905,6 +1946,7 @@ struct HistoryRefreshState {
     next_refresh_at: Option<tokio::time::Instant>,
     failures: u32,
     startup_exhausted: bool,
+    retry_epoch: u64,
     last_count: Option<usize>,
     query: history::HistoryQuery,
     owner: Option<AgentInstanceId>,
@@ -1912,6 +1954,15 @@ struct HistoryRefreshState {
 }
 
 impl HistoryRefreshState {
+    fn observe_retry_epoch(&mut self, epoch: u64) {
+        if epoch > self.retry_epoch {
+            self.retry_epoch = epoch;
+            self.startup_exhausted = false;
+            self.failures = 0;
+            self.next_refresh_at = None;
+        }
+    }
+
     fn record_failure(&mut self) -> std::time::Duration {
         self.failures = self.failures.saturating_add(1).min(5);
         std::time::Duration::from_secs((5u64 << (self.failures - 1)).min(60))
@@ -3464,7 +3515,7 @@ impl HelperHandler {
         })?;
 
         if wta_meta.startup_intent.as_deref() == Some("retry") {
-            let key = agent_cmd_key_with_provider(
+            let key = agent_admission_key_with_provider(
                 &agent_cmd,
                 agent_id.as_deref(),
                 &agent_source,
@@ -3475,8 +3526,6 @@ impl HelperHandler {
                 .retry(&key)
                 .await
                 .map_err(|error| helper_initialize_error(HelperInitializeFailure::AgentStartup, &error))?;
-            self.state.history_discovery_retries.lock().await.remove(&key);
-            self.state.history_discovery_errors.lock().await.remove(&key);
         }
         let agent = self
             .get_or_initialize_agent(|| {
@@ -5712,9 +5761,23 @@ async fn remove_agent_cell_if_current(
     }
 }
 
+#[cfg(test)]
 async fn acquire_agent_from_pool<F, Fut>(
     state: &Arc<MasterStateInner>,
     key: &AgentCmdKey,
+    initialize: F,
+) -> Result<Arc<AgentCli>>
+where
+    F: FnMut(AgentCell) -> Fut,
+    Fut: Future<Output = Result<Arc<AgentCli>>>,
+{
+    acquire_agent_from_pool_with_admission(state, key, key, initialize).await
+}
+
+async fn acquire_agent_from_pool_with_admission<F, Fut>(
+    state: &Arc<MasterStateInner>,
+    key: &AgentCmdKey,
+    admission_key: &str,
     mut initialize: F,
 ) -> Result<Arc<AgentCli>>
 where
@@ -5748,7 +5811,7 @@ where
                 }
 
                 let mut retirement = AgentInitializationRetirement::new(state, Arc::clone(&cell));
-                let mut startup = state.startup_registry.lock(key).await?;
+                let mut startup = state.startup_registry.lock(admission_key).await?;
                 if !agent_cell_is_current(state, key, &cell).await {
                     return Err(anyhow!(RetiredAgentCell));
                 }
@@ -5818,8 +5881,9 @@ async fn get_or_spawn_agent(
     supplied_cloud_models: Vec<crate::app::AcpModelInfo>,
 ) -> Result<Arc<AgentCli>> {
     let key = agent_cmd_key_with_provider(agent_cmd, agent_id, source, &provider_binding);
+    let admission_key = agent_admission_key_with_provider(agent_cmd, agent_id, source, &provider_binding);
     let initialization_key = key.clone();
-    let agent = acquire_agent_from_pool(state, &key, move |cell| {
+    let agent = acquire_agent_from_pool_with_admission(state, &key, &admission_key, move |cell| {
         let key = initialization_key.clone();
         let provider_binding = provider_binding.clone();
         let supplied_cloud_models = supplied_cloud_models.clone();
@@ -6204,10 +6268,11 @@ async fn spawn_one_agent(
         let state = Arc::clone(state);
         let cell = Arc::clone(cell);
         let key = key.clone();
+        let admission_key = agent_admission_key_with_provider(agent_cmd, agent_id, source, provider_binding);
         tokio::task::spawn_local(async move {
             let status = child.wait().await;
             if let Err(error) = &status {
-                match state.startup_registry.lock(&key).await {
+                match state.startup_registry.lock(&admission_key).await {
                     Ok(startup) => {
                         let failure = startup.failed(
                             anyhow!("ACP runtime cleanup failed: {error:#}")
@@ -7857,6 +7922,17 @@ where
             Some(agent_id),
             &crate::agent_source::AgentSource::Host,
         );
+        let epoch = match state.startup_registry.retry_epoch(&key).await {
+            Ok(epoch) => epoch,
+            Err(error) => {
+                tracing::warn!(target: "master_history", agent_id, %error, "could not read startup retry epoch");
+                state.history_discovery_errors.lock().await.insert(key, HistoryRefreshFailure::Other);
+                return false;
+            }
+        };
+        if let Some(retry) = state.history_discovery_retries.lock().await.get_mut(&key) {
+            retry.observe_retry_epoch(epoch);
+        }
         if state
                 .history_discovery_retries
                 .lock()
@@ -7874,8 +7950,21 @@ where
         let agent = match initialize(command, agent_id.to_string()).await {
             Ok(agent) => agent,
             Err(error) => {
+                let lease = match state.startup_registry.lock(&key).await {
+                    Ok(lease) => lease,
+                    Err(epoch_error) => {
+                        tracing::warn!(target: "master_history", agent_id, error = %epoch_error, "could not validate startup failure epoch");
+                        return false;
+                    }
+                };
+                let failure_epoch = error.downcast_ref::<crate::agent_lifecycle::StartupFailure>()
+                    .map_or(epoch, |failure| failure.retry_epoch);
                 let mut retries = state.history_discovery_retries.lock().await;
                 let retry = retries.entry(key.clone()).or_default();
+                retry.observe_retry_epoch(lease.retry_epoch());
+                if failure_epoch < retry.retry_epoch {
+                    return false;
+                }
                 retry.startup_exhausted =
                     error.is::<crate::agent_lifecycle::StartupLimitReached>()
                         || error.is::<crate::agent_lifecycle::StartupCleanupUnconfirmed>();
@@ -7918,6 +8007,22 @@ fn request_host_history_refresh(state: &Arc<MasterStateInner>) {
 
 async fn retry_failed_host_history_discovery(state: &Arc<MasterStateInner>) {
     use std::sync::atomic::Ordering;
+    let stopped: Vec<_> = state.history_discovery_retries.lock().await.iter()
+        .filter(|(_, retry)| retry.startup_exhausted)
+        .map(|(key, _)| key.clone())
+        .collect();
+    for key in stopped {
+        match state.startup_registry.retry_epoch(&key).await {
+            Ok(epoch) => {
+                if let Some(retry) = state.history_discovery_retries.lock().await.get_mut(&key) {
+                    retry.observe_retry_epoch(epoch);
+                }
+            }
+            Err(error) => {
+                tracing::warn!(target: "master_history", %error, "could not observe explicit startup retry");
+            }
+        }
+    }
     if state.history_discovery_state.load(Ordering::Acquire) == 0
         && state
             .history_discovery_retries

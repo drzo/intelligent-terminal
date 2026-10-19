@@ -18,6 +18,18 @@ use tokio::sync::{Mutex as AsyncMutex, OwnedMutexGuard};
 
 pub(crate) const MAX_STARTUP_ATTEMPTS: usize = 3;
 pub(crate) const INITIALIZE_TIMEOUT: Duration = Duration::from_secs(60);
+pub(crate) const ADMISSION_TIMEOUT: Duration = Duration::from_secs(300);
+// Allow the install locks, download and two WSL file transfers before ACP
+// initialization. The helper's outer deadline also bounds stalled preparation.
+const PREPARATION_WAIT_BUDGET: Duration = Duration::from_secs(1200);
+const STARTUP_CLEANUP_BUDGET: Duration = Duration::from_secs(60);
+// Explicit retry admission and subsequent startup admission are separate waits.
+pub(crate) const HELPER_STARTUP_TIMEOUT: Duration = Duration::from_secs(
+    2 * ADMISSION_TIMEOUT.as_secs()
+        + PREPARATION_WAIT_BUDGET.as_secs()
+        + INITIALIZE_TIMEOUT.as_secs()
+        + STARTUP_CLEANUP_BUDGET.as_secs(),
+);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -69,12 +81,17 @@ impl std::error::Error for DependencyPrepared {}
 pub(crate) fn diagnose_stderr(lines: &[String]) -> Option<StartupReason> {
     lines
         .iter()
-        .any(|line| line.to_ascii_lowercase().contains("application control policy has blocked"))
+        .any(|line| {
+            line.to_ascii_lowercase()
+                .contains("application control policy has blocked")
+        })
         .then_some(StartupReason::OperatingSystemPolicy)
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) struct StartupFailure {
+    #[serde(default)]
+    pub retry_epoch: u64,
     pub phase: StartupPhase,
     pub reason: StartupReason,
     pub attempts: usize,
@@ -114,6 +131,7 @@ impl StartupFailure {
                 }
             });
         Self {
+            retry_epoch: 0,
             phase: error
                 .downcast_ref::<StartupPhase>()
                 .copied()
@@ -222,6 +240,8 @@ impl std::error::Error for StartupCleanupUnconfirmed {}
 struct StartupState {
     attempts: usize,
     #[serde(default)]
+    retry_epoch: u64,
+    #[serde(default)]
     last_failure: Option<StartupFailure>,
     #[serde(default)]
     cleanup_failed: bool,
@@ -266,10 +286,12 @@ impl StartupRegistry {
                 .unwrap_or_else(std::sync::PoisonError::into_inner);
             Arc::clone(states.entry(key.to_string()).or_default())
         };
-        let mut state = state.lock_owned().await;
+        let deadline = tokio::time::Instant::now() + ADMISSION_TIMEOUT;
+        let mut state = tokio::time::timeout_at(deadline, state.lock_owned())
+            .await
+            .context("another ACP startup operation is still in progress")?;
         let file = if let Some(directory) = &self.directory {
             let path = directory.join(format!("{:x}.json", Sha256::digest(key.as_bytes())));
-            let deadline = tokio::time::Instant::now() + Duration::from_secs(300);
             loop {
                 let path = path.clone();
                 let opened = tokio::task::spawn_blocking(move || open_startup_state(path))
@@ -301,9 +323,18 @@ impl StartupRegistry {
     pub(crate) async fn retry(&self, key: &str) -> Result<()> {
         let mut lease = self.lock(key).await?;
         lease.ensure_cleanup()?;
+        lease.state.retry_epoch = lease
+            .state
+            .retry_epoch
+            .checked_add(1)
+            .context("ACP startup retry epoch exhausted")?;
         lease.state.attempts = 0;
         lease.state.last_failure = None;
         lease.save()
+    }
+
+    pub(crate) async fn retry_epoch(&self, key: &str) -> Result<u64> {
+        Ok(self.lock(key).await?.retry_epoch())
     }
 }
 
@@ -370,6 +401,10 @@ pub(crate) struct StartupLease {
 }
 
 impl StartupLease {
+    pub(crate) fn retry_epoch(&self) -> u64 {
+        self.state.retry_epoch
+    }
+
     fn ensure_cleanup(&self) -> Result<()> {
         if self.state.cleanup_failed {
             return Err(match &self.state.last_failure {
@@ -433,12 +468,13 @@ impl StartupLease {
     }
 
     pub(crate) fn failed(mut self, error: anyhow::Error) -> anyhow::Error {
-        let failure = StartupFailure::from_error(
+        let mut failure = StartupFailure::from_error(
             &error,
             self.attempt_number,
             self.dependency_present.then_some(true),
             self.startup_verified,
         );
+        failure.retry_epoch = self.retry_epoch();
         let mut error = error.context(failure.clone());
         if failure.phase == StartupPhase::Cleanup {
             self.state.cleanup_failed = true;
@@ -463,6 +499,27 @@ impl StartupLease {
 mod tests {
     use super::*;
 
+    #[tokio::test(start_paused = true)]
+    async fn helper_wait_allows_queued_initialization_but_remains_bounded() {
+        let result = tokio::time::timeout(HELPER_STARTUP_TIMEOUT, async {
+            tokio::time::sleep(ADMISSION_TIMEOUT).await;
+            tokio::time::sleep(INITIALIZE_TIMEOUT).await;
+        })
+        .await;
+        assert!(result.is_ok());
+        assert!(
+            tokio::time::timeout(HELPER_STARTUP_TIMEOUT, std::future::pending::<()>(),)
+                .await
+                .is_err()
+        );
+        assert!(tokio::time::timeout(
+            INITIALIZE_TIMEOUT,
+            tokio::time::sleep(INITIALIZE_TIMEOUT + Duration::from_secs(1)),
+        )
+        .await
+        .is_err());
+    }
+
     #[tokio::test]
     async fn retry_opens_one_new_bounded_cycle_without_changing_another_target() {
         let registry = StartupRegistry::default();
@@ -472,6 +529,8 @@ mod tests {
         assert!(registry.lock("host:one").await.unwrap().begin().is_err());
         registry.lock("wsl:one").await.unwrap().begin().unwrap();
         registry.retry("host:one").await.unwrap();
+        assert_eq!(registry.retry_epoch("host:one").await.unwrap(), 1);
+        assert_eq!(registry.retry_epoch("wsl:one").await.unwrap(), 0);
         for _ in 0..MAX_STARTUP_ATTEMPTS {
             registry.lock("host:one").await.unwrap().begin().unwrap();
         }
@@ -486,6 +545,7 @@ mod tests {
         let mut ready = registry.lock("ready").await.unwrap();
         ready.begin().unwrap();
         ready.succeeded().unwrap();
+        assert_eq!(ready.retry_epoch(), 0);
         drop(ready);
         assert_eq!(registry.lock("ready").await.unwrap().state.attempts, 0);
         assert_eq!(registry.lock("failed").await.unwrap().state.attempts, 1);
@@ -511,10 +571,28 @@ mod tests {
             registry.lock("same-target").await.unwrap().begin().unwrap();
         }
         assert!(second.lock("same-target").await.unwrap().begin().is_err());
+        assert_eq!(first.retry_epoch("same-target").await.unwrap(), 0);
         second.retry("same-target").await.unwrap();
+        assert_eq!(first.retry_epoch("same-target").await.unwrap(), 1);
         first.lock("same-target").await.unwrap().begin().unwrap();
         drop((first, second));
         std::fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[tokio::test]
+    async fn failure_carries_the_explicit_retry_epoch() {
+        let registry = StartupRegistry::default();
+        registry.retry("one").await.unwrap();
+        let mut startup = registry.lock("one").await.unwrap();
+        startup.begin().unwrap();
+        let error = startup.failed(anyhow::anyhow!("controlled failure"));
+        assert_eq!(
+            error.downcast_ref::<StartupFailure>().unwrap().retry_epoch,
+            1
+        );
+        assert_eq!(registry.retry_epoch("one").await.unwrap(), 1);
+        let old: StartupState = serde_json::from_str(r#"{"attempts":3}"#).unwrap();
+        assert_eq!(old.retry_epoch, 0);
     }
 
     #[tokio::test]
@@ -530,6 +608,7 @@ mod tests {
         );
         assert!(registry.lock("blocked").await.unwrap().begin().is_err());
         assert!(registry.retry("blocked").await.is_err());
+        assert_eq!(registry.retry_epoch("blocked").await.unwrap(), 0);
         registry.lock("healthy").await.unwrap().begin().unwrap();
     }
 }

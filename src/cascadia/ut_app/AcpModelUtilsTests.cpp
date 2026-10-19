@@ -26,7 +26,8 @@ namespace TerminalAppUnitTests
         TEST_METHOD(LiveModelSwitchRequiresKnownSupportedAgent);
         TEST_METHOD(HostCatalogStatusRejectsSameAgentFromWsl);
         TEST_METHOD(RejectsInvalidCatalogShapes);
-        TEST_METHOD(StartupFailurePreservesDiagnosticsWithoutBecomingACatalog);
+        TEST_METHOD(StartupFailurePreservesDiagnosticsWithoutBecomingModelCatalog);
+        TEST_METHOD(ProbeCommandsMatchRuntimeLaunchIdentity);
         TEST_METHOD(ParsesAndNormalizesCatalog);
         TEST_METHOD(ParsesCatalogValue);
         TEST_METHOD(ExcludesCustomSelectionIdsOnRequest);
@@ -84,7 +85,17 @@ namespace TerminalAppUnitTests
         VERIFY_ARE_EQUAL(std::wstring{ L"other-agent" }, BuildAgentCommandLine(L"other-agent"));
     }
 
-    void AcpModelUtilsTests::StartupFailurePreservesDiagnosticsWithoutBecomingACatalog()
+    void AcpModelUtilsTests::ProbeCommandsMatchRuntimeLaunchIdentity()
+    {
+        for (const auto agent : { L"copilot", L"claude", L"codex", L"opencode", L"antigravity" })
+        {
+            VERIFY_ARE_EQUAL(BuildAgentCommandLine(agent), BuildProbeCommandLine(agent, L"selected-model"));
+        }
+        VERIFY_ARE_EQUAL(std::wstring{ L"gemini --acp --model selected-model" }, BuildProbeCommandLine(L"gemini", L"selected-model"));
+        VERIFY_ARE_EQUAL(std::wstring{ L"custom-command --model meaningful" }, BuildProbeCommandLine(L"custom-command --model meaningful"));
+    }
+
+    void AcpModelUtilsTests::StartupFailurePreservesDiagnosticsWithoutBecomingModelCatalog()
     {
         const std::string payload = R"({
             "dependency_present": true,

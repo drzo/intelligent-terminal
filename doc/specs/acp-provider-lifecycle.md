@@ -111,9 +111,18 @@ configuration and unrelated terminal data out of public status payloads.
 The package-private `acp-startup` ledger uses an exclusive per-target file lease
 so master startup and independent model-probe processes serialize their attempts.
 Targets include the authoritative agent identity, execution source, command and
-provider binding. Ledger directories are scoped to the WTA executable identity,
+a restart-stable digest of effective provider binding fields. Process-local pool
+generations are not used as persistent admission identities. Ledger directories are scoped to the WTA executable identity,
 so installing a different build does not inherit an obsolete startup failure.
 An explicit retry does not override an unconfirmed cleanup failure.
+It advances a persisted retry epoch; stopped discovery/history workers observe
+that epoch without ordinary refresh resetting the budget. Results from an older
+epoch cannot stop a newer retry cycle.
+
+The provider's initialize deadline is separate from the helper's overall startup
+deadline, which also includes bounded admission, preparation and cleanup waits.
+Receipt acquisition and post-initialize retirement keep process ownership and
+the admission lease until cleanup is confirmed or quarantined.
 
 Windows ACP children inherit critical-error reporting instead of a native loader
 dialog. This changes error presentation only: Application Control enforcement,

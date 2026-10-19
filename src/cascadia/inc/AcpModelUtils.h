@@ -156,6 +156,17 @@ namespace Microsoft::Terminal::AcpModels
         return commandLine;
     }
 
+    inline std::wstring BuildProbeCommandLine(
+        const std::wstring_view agentId,
+        const std::optional<std::wstring_view> model = std::nullopt,
+        const bool runsInWsl = false)
+    {
+        return BuildAgentCommandLine(
+            agentId,
+            ::Microsoft::Terminal::Settings::Model::AgentRegistry::SupportsLiveModelSwitch(agentId) ? std::nullopt : model,
+            runsInWsl);
+    }
+
     namespace details
     {
         inline bool IsBlank(const std::string_view value)
