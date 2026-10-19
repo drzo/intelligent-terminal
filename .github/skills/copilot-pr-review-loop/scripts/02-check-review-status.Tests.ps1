@@ -69,6 +69,13 @@ The latest XAML fix and related live Sidebar scenarios still lack successful run
 
 Review effort: Balanced
 '@
+        $script:noIssuesBody = @'
+<!-- ccr-overview-v2 -->
+
+### Needs a closer look
+
+**No open issues**
+'@
     }
 
     It 'Recognizes only supported zero-comment summaries: <Body>' -TestCases @(
@@ -188,5 +195,56 @@ The change is narrowly scoped, reuses the existing cached ACP listing, and is ba
         $status.NoNewComments | Should -BeTrue
         $status.CopilotPending | Should -BeTrue
         $status.Converged | Should -BeFalse
+    }
+
+    It 'Recognizes the current no-open-issues summary with <Suffix>' -Tag 'Structured' -TestCases @(
+        @{ Suffix = '' }
+        @{ Suffix = ' ' + [char]::ConvertFromUtf32(0x1F389) }
+    ) {
+        param($Suffix)
+        $status = Invoke-StatusFixture -Body ($script:noIssuesBody + $Suffix)
+        $status.NoNewComments | Should -BeTrue
+        $status.Converged | Should -BeTrue
+    }
+
+    It 'Accepts current no-open-issues with only known resolved history' -Tag 'Structured' {
+        $body = $script:noIssuesBody + "`n<details><summary><strong>7 resolved since last review</strong></summary><img alt='High severity' />#discussion_r123</details>"
+        (Invoke-StatusFixture -Body $body).Converged | Should -BeTrue
+    }
+
+    It 'Rejects unsupported no-open-issues summaries: <Body>' -Tag 'Structured' -TestCases @(
+        @{ Body = '**No open issues**' }
+        @{ Body = "<!-- ccr-overview-v2 -->`nExample: **No open issues**" }
+        @{ Body = "<!-- ccr-overview-v2 -->`n> **No open issues**" }
+        @{ Body = "<!-- ccr-overview-v2 -->`n" + '```' + "`n**No open issues**`n" + '```' }
+        @{ Body = "> <!-- ccr-overview-v2 -->`n**No open issues**" }
+        @{ Body = "<!-- ccr-overview-v2 -->`n**No open issues** yet" }
+    ) {
+        param($Body)
+        (Invoke-StatusFixture -Body $Body).Converged | Should -BeFalse
+    }
+
+    It 'Rejects contradictory current summaries: <Contradiction>' -Tag 'Structured' -TestCases @(
+        @{ Contradiction = '**Findings:** 1' }
+        @{ Contradiction = '**Comments generated:** 1 new' }
+        @{ Contradiction = '**1 open issue**' }
+        @{ Contradiction = '2 unresolved issues' }
+        @{ Contradiction = '<details><summary>Previously missed (1)</summary>bug</details>' }
+        @{ Contradiction = '<details><summary>Other findings</summary>bug</details>' }
+        @{ Contradiction = '[Bug](#discussion_r123)' }
+        @{ Contradiction = '<details><summary><strong>1 resolved since last review</strong></summary>1 open issue</details>' }
+    ) {
+        param($Contradiction)
+        $status = Invoke-StatusFixture -Body ($script:noIssuesBody + "`n" + $Contradiction)
+        $status.NoNewComments | Should -BeFalse
+        $status.Converged | Should -BeFalse
+    }
+
+    It 'Keeps stale-head, unanswered-thread and pending-review gates for current summaries' -Tag 'Structured' {
+        $stale = Invoke-StatusFixture -Body $script:noIssuesBody -ReviewSha stale-head
+        $stale.NoNewComments | Should -BeTrue
+        $stale.Converged | Should -BeFalse
+        (Invoke-StatusFixture -Body $script:noIssuesBody -LastAuthor copilot-pull-request-reviewer).Converged | Should -BeFalse
+        (Invoke-StatusFixture -Body $script:noIssuesBody -Pending).Converged | Should -BeFalse
     }
 }

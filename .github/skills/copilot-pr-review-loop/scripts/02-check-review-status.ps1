@@ -21,7 +21,8 @@
       - ReviewAtHead       : true iff latest Copilot review's commit.oid == HeadOid
       - NoNewComments      : true iff the latest review body matches
                              a legacy zero-comment summary or current
-                             "Findings: None" / "Comments generated: 0 new",
+                             "Findings: None" / "Comments generated: 0 new" /
+                             overview-v2 "No open issues",
                              with every present structured summary zero
                              and no remaining actionable finding; an explicit
                              "0 open findings" permits only known resolved sections
@@ -149,14 +150,19 @@ function Test-CopilotReviewHasNoNewFindings {
         $line
     }
     $summary = ($summaryLines -join "`n") -replace '\*\*', ''
-    $fields = [regex]::Matches($summary, '(?im)^[ \t]*(?:[-+*][ \t]+)?(?:Findings:[ \t]*(?<count>None|\d+)\b|Comments generated:[ \t]*(?<count>\d+)[ \t]+new\b|(?<openCount>\d+)[ \t]+open[ \t]+findings?\b)(?<tail>[^\r\n]*)$')
+    $isOverviewV2 = $summary -match '(?m)^[ \t]*<!-- ccr-overview-v2 -->[ \t]*$'
+    $fields = [regex]::Matches($summary, '(?im)^[ \t]*(?:[-+*][ \t]+)?(?:Findings:[ \t]*(?<count>None|\d+)\b|Comments generated:[ \t]*(?<count>\d+)[ \t]+new\b|(?<openCount>\d+)[ \t]+open[ \t]+findings?\b|(?<noOpenIssues>No open issues)\b)(?<tail>[^\r\n]*)$')
     # Every explicit summary constrains the result; none can override another.
     foreach ($field in $fields) {
+        if ($field.Groups['noOpenIssues'].Success) {
+            if (-not $isOverviewV2 -or $field.Groups['tail'].Value.Trim() -notmatch '^(?:\uD83C\uDF89)?$') { return $false }
+            continue
+        }
         $count = if ($field.Groups['openCount'].Success) { $field.Groups['openCount'].Value } else { $field.Groups['count'].Value }
         if ($count -notmatch '^(?:None|0+)$' -or $field.Groups['tail'].Value.Trim()) { return $false }
     }
     # Only a known, non-nested resolved section may hide historical finding links.
-    $findingPattern = '(?i)\b[1-9]\d*\s+(?:open|new|unresolved)\s+findings?\b|Previously missed\s*\(0*[1-9]\d*\)|\b(?:critical|high|medium|low)(?: severity)?(?:\s+|:\s*)(?:unresolved|open)\b|\b(?:unresolved|open)(?:\s+|:\s*)(?:critical|high|medium|low)\b'
+    $findingPattern = '(?i)\b[1-9]\d*\s+(?:open|new|unresolved)\s+(?:findings?|issues?)\b|Previously missed\s*\(0*[1-9]\d*\)|\b(?:critical|high|medium|low)(?: severity)?(?:\s+|:\s*)(?:unresolved|open)\b|\b(?:unresolved|open)(?:\s+|:\s*)(?:critical|high|medium|low)\b'
     $withoutResolved = $summary
     $resolvedSections = [regex]::Matches($summary,
         '(?is)<details\b[^>]*>\s*<summary>\s*<strong>\d+ resolved since last review</strong>\s*</summary>(?:(?!</?details\b).)*</details\s*>')
@@ -169,7 +175,7 @@ function Test-CopilotReviewHasNoNewFindings {
     $summaryText = [regex]::Replace($withoutResolved, '<[^>]+>', ' ')
     if ($withoutResolved -match '(?i)alt=["''](?:critical|high|medium|low) severity["'']|#discussion_r\d+' -or
         $summaryText -match $findingPattern) { return $false }
-    if (@($fields | Where-Object { $_.Groups['openCount'].Success }).Count -gt 0 -and
+    if (@($fields | Where-Object { $_.Groups['openCount'].Success -or $_.Groups['noOpenIssues'].Success }).Count -gt 0 -and
         $withoutResolved -match '(?i)<(?:details|summary)\b') { return $false }
     if ($fields.Count -gt 0) { return $true }
     return $summary -match '(?i)generated no new comments|generated\s+0\s+comments'
