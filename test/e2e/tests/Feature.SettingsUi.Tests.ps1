@@ -35,9 +35,9 @@ Describe 'Feature §1/§6 Settings editor UI (opened via Ctrl+, accelerator)' -T
         $startupTasks = @($manifest.SelectNodes("//*[local-name()='StartupTask' and @TaskId='StartTerminalOnLoginTask']"))
         $startupLabel = Get-WtReswTextRegex -Key 'Globals_StartOnUserLogin.Header'
         $startupLabel | Should -Not -BeNullOrEmpty
-        $launchModeLabel = Get-WtReswTextRegex -Key 'Globals_LaunchModeSetting.Text'
-        $launchModeLabel | Should -Not -BeNullOrEmpty
-        (Get-UiTree -App $script:app -Depth 20) | Should -Match $launchModeLabel -Because 'Startup must render before checking optional settings'
+        $defaultProfileLabel = Get-WtReswTextRegex -Key 'Globals_DefaultProfile.Header'
+        $defaultProfileLabel | Should -Not -BeNullOrEmpty
+        (Get-UiTree -App $script:app -Depth 20) | Should -Match $defaultProfileLabel -Because 'Startup must render before checking optional settings'
         $shown = Test-Until -TimeoutSec 3 -IntervalSec 0.5 -Condition {
             (Get-UiTree -App $script:app -Depth 20) -match $startupLabel
         }
