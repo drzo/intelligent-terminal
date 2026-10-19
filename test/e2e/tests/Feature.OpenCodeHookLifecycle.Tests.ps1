@@ -174,6 +174,20 @@ Describe 'Feature: packaged OpenCode hook lifecycle' -Tag 'Feature', 'OpenCodeHo
             } | Should -BeTrue
             Send-HookAction $driver @{ action = 'prompt'; id = $id }
             (Assert-HookState $id 'Working' 'agent.prompt.submit').title | Should -Be "Renamed $mode"
+            if ($mode -eq 'v2') {
+                Send-HookAction $driver @{ action = 'home' }
+                Send-HookAction $driver @{ action = 'view'; id = $id }
+                Assert-HookState $id 'Working' 'agent.session.start' | Out-Null
+                Send-HookAction $driver @{ action = 'home' }
+                Wait-Until -TimeoutSec 15 -Because 'Home releases the working session without ending its task' -Condition {
+                    Read-HookSessions | Where-Object { $_.session_id -eq $id -and $_.status -eq 'Working' -and -not $_.pane_session_id }
+                } | Should -Not -BeNullOrEmpty
+                Send-HookAction $driver @{ action = 'event'; type = 'session.execution.succeeded'; data = @{ sessionID = $id } }
+                Send-HookAction $driver @{ action = 'view'; id = $id }
+                Assert-HookState $id 'Idle' 'agent.stop' | Out-Null
+                Send-HookAction $driver @{ action = 'prompt'; id = $id }
+                Assert-HookState $id 'Working' 'agent.prompt.submit' | Out-Null
+            }
             Send-HookAction $driver @{ action = 'tool'; id = $id; tool = 'question'; args = @{ questions = @('Continue?') } }
             Assert-HookState $id 'Attention' 'agent.tool.starting' | Out-Null
             Send-HookAction $driver @{ action = 'event'; type = 'question.asked'; data = @{ sessionID = $id } }

@@ -79,6 +79,11 @@ try {
         route = { type: "session", sessionID: request.id }
         handlers.get("session.viewed")?.({ data: { sessionID: request.id } })
         break
+      case "home":
+        if (mode !== "v2") throw new Error("Returning home requires V2")
+        route = { type: "home" }
+        handlers.get("session.viewed")?.({ data: {} })
+        break
       case "prompt":
         if (mode === "v2") await sdk.prompt(request.id)
         else await hooks["chat.message"]({ sessionID: request.id })
