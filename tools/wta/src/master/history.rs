@@ -335,7 +335,6 @@ mod tests {
             assert!(query.poll(Some(&target), &cancelled).await.is_err());
         }
         assert!(query.startup_stopped);
-        query.retry_startup();
         assert!(query.poll(Some(&target), &cancelled).await.is_err());
         assert!(query.startup_stopped);
         target.startup_registry.retry(&key).await.unwrap();
@@ -646,10 +645,6 @@ impl HistoryQuery {
 
     pub fn in_flight(&self) -> bool {
         self.pending.is_some()
-    }
-
-    pub fn retry_startup(&mut self) {
-        // Only a newer explicit registry retry can reopen startup admission.
     }
 
     fn observe_startup_failure(&mut self, failed_epoch: u64, registry_epoch: u64) {

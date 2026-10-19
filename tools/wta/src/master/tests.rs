@@ -13550,6 +13550,90 @@ async fn sidebar_history_control_initialize_skips_agent_and_restricts_surface() 
     assert!(state.agents.lock().await.is_empty());
 }
 
+#[tokio::test(start_paused = true)]
+async fn helper_retry_initialize_completes_while_history_is_pending() {
+    tokio::task::LocalSet::new()
+        .run_until(async {
+            let mut state = make_state();
+            Arc::get_mut(&mut state).unwrap().default_agent_cmd =
+                format!("wta-test-retry-no-spawn-{}.exe", uuid::Uuid::new_v4());
+            let (mut agent, mut requests) =
+                controlled_history_agent("copilot", crate::agent_source::AgentSource::Host);
+            Arc::get_mut(&mut agent).unwrap().cmd_key = agent_cmd_key(
+                &state.default_agent_cmd,
+                state.default_agent_id.as_deref(),
+                &agent.source,
+            );
+            add_test_agent_to_pool(&state, &agent).await;
+            let (notif_tx, _notif_rx) = mpsc::channel(NOTIF_CHANNEL_CAPACITY);
+            let handler = HelperHandler {
+                helper_id: HelperId(7002),
+                agent: empty_agent_cell(),
+                state: Arc::clone(&state),
+                replacement_gate: Arc::new(Mutex::new(())),
+                notif_tx,
+                agent_side_slot: Arc::new(OnceLock::new()),
+            };
+            let refresh_state = Arc::clone(&state);
+            let refresh_agent = Arc::clone(&agent);
+            let refresh = tokio::task::spawn_local(async move {
+                refresh_agent_history(
+                    &refresh_state,
+                    &refresh_agent,
+                    HistoryRefreshTrigger::Immediate,
+                )
+                .await
+            });
+            let reply = requests.recv().await.expect("history RPC must be pending");
+            assert!(agent.history_refresh.gate.try_lock().is_err());
+
+            let mut request =
+                acp::schema::v1::InitializeRequest::new(acp::schema::ProtocolVersion::V1);
+            crate::session_registry::inject_wta_meta(
+                &mut request.meta,
+                &crate::session_registry::WtaMeta {
+                    provider_binding: Some("default".to_string()),
+                    startup_intent: Some("retry".to_string()),
+                    ..Default::default()
+                },
+            );
+            let initialized = tokio::time::timeout(
+                std::time::Duration::from_secs(1),
+                handler.initialize(request),
+            )
+            .await;
+            assert!(
+                agent.history_refresh.gate.try_lock().is_err(),
+                "the independent history response has not been released"
+            );
+            reply
+                .send(Ok(vec![history_row(
+                    "retained-history",
+                    "Retained history",
+                )]))
+                .unwrap();
+            assert_eq!(refresh.await.unwrap(), Some(1));
+            initialized
+                .expect("helper retry must not wait for an independent history response")
+                .expect("the resident healthy agent must remain reusable");
+            assert!(Arc::ptr_eq(handler.agent.get().unwrap(), &agent));
+            assert!(agent
+                .bound_helpers
+                .lock()
+                .await
+                .contains(&handler.helper_id));
+            let key = agent_admission_key_with_provider(
+                &state.default_agent_cmd,
+                state.default_agent_id.as_deref(),
+                &agent.source,
+                &ProviderBinding::Native,
+            );
+            assert_eq!(state.startup_registry.retry_epoch(&key).await.unwrap(), 1);
+            assert_eq!(state.agents.lock().await.len(), 1);
+        })
+        .await;
+}
+
 #[test]
 fn sidebar_history_discovery_checks_policy_before_installation() {
     let allowed = HashSet::from(["copilot".to_string(), "codex".to_string()]);
@@ -14023,7 +14107,6 @@ async fn dedicated_history_startup_stops_after_three_failures_and_accepts_explic
     assert!(state.startup_registry.lock(&key).await.unwrap().begin().is_err());
     assert!(query.poll(Some(&target), &cancelled).await.is_err());
     state.startup_registry.retry(&key).await.unwrap();
-    query.retry_startup();
     assert!(query.poll(Some(&target), &cancelled).await.is_err());
     state.startup_registry.lock(&key).await.unwrap().begin().unwrap();
 }

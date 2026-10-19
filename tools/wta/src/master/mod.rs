@@ -3551,9 +3551,6 @@ impl HelperHandler {
                 );
                 helper_initialize_error(HelperInitializeFailure::AgentStartup, &e)
             })?;
-        if wta_meta.startup_intent.as_deref() == Some("retry") {
-            agent.history_refresh.gate.lock().await.query.retry_startup();
-        }
         let session_mcp_available = if agent
             .cached_init_resp
             .agent_capabilities
