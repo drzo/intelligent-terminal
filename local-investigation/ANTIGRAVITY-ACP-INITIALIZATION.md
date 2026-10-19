@@ -1,4 +1,4 @@
-# Antigravity ACP initialization failure storm: investigation only
+# Antigravity ACP initialization failure storm: investigation and implementation
 
 ## Feature Metadata
 
@@ -27,21 +27,44 @@
 - External issue: `google-antigravity/antigravity-cli#921`.
 - Evidence root: `artifacts\antigravity-acp-init-storm-20261019` in the dev
   worktree. This directory is ignored.
-- Refactor publishable commit: none yet; the urgent hotfix is tracked separately
-  below.
-- Current refactor publish head: `f643ba403f3c2050b0012ec1a5e31924fee918d8`.
+- Refactor product commits on dev:
+  `b8253d73af5f6a79d3ed1b688400de61884fb89b` and
+  `1920ba30909b78480fc1b2a1e9a4c2ffb0cd786a`.
+- Direct cherry-picks on publish:
+  `7301970aa3c40dfd07e1f3a71f541ab19d5b7912` and
+  `1b0961026720dedb9debe3293141abf2f0993197`.
+- Current refactor publish head: `1b0961026720dedb9debe3293141abf2f0993197`.
+- Refactor PR: `microsoft/intelligent-terminal#1180`.
+- Current implementation base: `f643ba403f3c2050b0012ec1a5e31924fee918d8`.
+  A final fetch confirmed that this is still `origin/main` and an ancestor of
+  the publish head.
 - Original dirty worktree: `C:\ado\intelligent-terminal`, left untouched.
 
 ## Current Stage
 
-2026-10-19: implementation and focused validation are complete. Product commit
-`b8253d73af5f6a79d3ed1b688400de61884fb89b` was directly cherry-picked onto the
-clean publish branch as `7301970aa3c40dfd07e1f3a71f541ab19d5b7912`.
-Exact-publish validation and the PR are in progress. Product changes include the
+2026-10-19 UTC: implementation, both review rounds, exact-publish package
+validation and real enterprise expected-failure acceptance are complete.
+Current publish head is `1b0961026720dedb9debe3293141abf2f0993197`; PR #1180
+is now ready for review and still needs human approval and remote-gate
+disposition. Its ready event started fresh performance, accessibility, security
+and localization runs. The prior accessibility agent timed out after 15 minutes;
+normal workflow concurrency cancelled its older native-smoke build.
+The local full Rust suite is not green because two clipboard setup failures
+also reproduce on unchanged main. The review helper's old no-comments parser
+does not recognize the new review format, so its `Converged=false` output is
+preserved rather than overridden. Next: await the fresh remote gates, triage any
+new findings, and record final remote heads without changing any safeguards.
+Read-only monitor: performance run `39313413985`, accessibility `39313414119`,
+security `39313414048`, localization `39313413952`.
+
+Product changes include the
 provider adapter registry, shared persisted three-attempt admission, owned
 Windows/WSL process cleanup, one-shot installation verification, structured safe
 startup diagnostics, explicit helper/Settings retry, and localized Settings
-errors that leave selection enabled.
+errors that leave selection enabled. Review fixes add stable cross-restart
+binding digests, persisted explicit-retry epochs, a separate overall helper
+deadline, cancellation-safe history receipt ownership and post-initialize
+cleanup quarantine.
 
 Key evidence:
 
@@ -60,16 +83,36 @@ Key evidence:
 - `gui-candidate-004c`: four packaged lifecycle cases passed with zero skips.
   Both screenshots were inspected; the error/explicit retry and recovered model
   picker are visible without assertion dialogs or onboarding overlays.
-- `cpp-startup-parser-tests.log`: all 16 AcpModelUtilsTests passed.
+- `publish-validation\e2e quote's workspace`: final reviewed-head E2E passed
+  four cases with zero failures/skips, using paths with spaces and an apostrophe.
+  The fresh `startup-failed.png` and `startup-recovered.png` were inspected:
+  readable failure panel, enabled agent selection, visible retry and recovered
+  model picker; no assertion dialog, onboarding overlay or clipped main UI.
+- `tests\review-round-one-cpp.log`: all 17 AcpModelUtilsTests passed. The dev
+  product and test trees are identical to the final publish head.
 - `settings-localization.json`: 93 checks passed across all 18 RESW locales.
 - `all-startup-regressions.log`: 26 startup-focused tests passed.
 - `history-lifecycle-budget.log`: 23 history tests passed; one opt-in live
   provider test was not invoked by that filter.
-- `process-ownership-wsl.log`: the explicit Ubuntu-24.04 process-group test passed.
-- Latest full Rust validation encountered the two existing clipboard setup
-  failures. `clipboard-baseline-control.log` reproduced the identical failures
-  with the unchanged main test binary. This is an environment limitation, not a
-  passing full-suite result; no test was weakened or skipped.
+- `publish-validation\review-head-real-wsl.log`: explicit Ubuntu-24.04
+  process-group recovery/host-exit cleanup passed at the final publish head.
+- `publish-validation\review-head-cli-integration.log`: CLI machine-readable
+  missing-master failure contract passed at the final publish head.
+- `publish-validation\review-head-clippy.log`: all-target Clippy passed at the
+  final publish head, with repository warnings.
+- `publish-validation\review-head-full-unit.log`: 2,901 passed, two failed,
+  five existing opt-in cases ignored. `tests\clipboard-baseline-control.log`
+  reproduced the identical clipboard setup failures with the unchanged main
+  test binary. This is an environment limitation, not a passing full-suite
+  result; no test was weakened or skipped.
+- `publish-validation\enterprise-antigravity-review\assertions.json`: final
+  installed package reported one attempted/created ACP process, dependency
+  present, startup unverified, OS-policy failure, selectable provider, no native
+  dialogs, no owned survivors and no remaining ACP processes.
+- `reports\release-full-review-head.md` and
+  `reports\release-incremental-review-head.md`: C450-C453 all checked.
+  The aggregate count includes existing checked items; only four E2E cases were
+  newly run.
 
 Normal Dev registration was blocked by the OS activatable-class collector.
 Validation uses the isolated PFN
@@ -103,7 +146,8 @@ Windows jobs and WSL process groups now share the formerly history-only
 containment implementation. The first implementation slice passed all 2883
 WTA unit tests and one CLI integration test; the existing opt-in WSL process
 cleanup test also passed against Ubuntu-24.04 with no provider/model request.
-Next: shared startup admission/retry and installation verification regressions.
+The next slice at that stage was shared startup admission/retry and installation
+verification regressions; those are now implemented and validated above.
 
 ### Completed urgent minimal hotfix
 
@@ -163,8 +207,8 @@ were subsequently removed after verifying their exact paths, creation instants,
 and absence of reparse points. The pinned installer cache and diagnostic
 evidence remain available under the ignored evidence root.
 
-No product fix or regression test has been written. After the requested
-reproduction succeeded, the optional full C++ package build was stopped through
+At that investigation stop, no product fix or regression test had been written.
+After the requested reproduction succeeded, the optional full C++ package build was stopped through
 its exact tool session, `antigravity-terminal-build-restored`, rather than
 continuing into a GUI deployment. Its partial output was not deployed. The
 verified reproduction uses the exact-main WTA binary, not a newly launched
@@ -318,8 +362,51 @@ Intelligent Terminal startup
 | Dialog cleanup | Acknowledge only errors naming this run's extraction paths | Passed; three queued dialogs removed, CSRSS untouched |
 | Temporary extraction cleanup | Exact recorded paths, creation instants and reparse-point checks | Passed; three owned directories removed |
 | Exact GUI package | Baseline package build after missing NuGet restore | Deliberately stopped after bounded reproduction; not passed, deployed or launched |
-| Focused GREEN/full suites | Not applicable: no implementation authorized | Not run |
-| Exact publish fix validation | Not applicable: publish remains baseline | Not run |
+| Focused GREEN | Startup, history, native parser and process ownership regressions | Passed; review regressions included in final-head full units |
+| Full Rust units | `cargo test --locked --target x86_64-pc-windows-msvc --manifest-path tools\wta\Cargo.toml --bin wta` at `1b096102` | 2,901 passed; two baseline clipboard setup failures; five opt-in ignored |
+| CLI integration | Same Cargo target/manifest with `--test sessions_cli` | One passed at final head |
+| Real WSL ownership | Same Cargo target/manifest with `--bin wta history_wsl_group_reclaims_owned_work_on_recovery_and_host_exit -- --ignored --nocapture`, `WTA_TEST_WSL_DISTRO=Ubuntu-24.04` | One passed at final head; no model request |
+| Native parser/model tests | `TE.exe Terminal.App.Unit.Tests.dll /name:*AcpModelUtilsTests*` | 17 passed on source-equivalent dev review commit |
+| Static analysis | `cargo clippy --locked --target x86_64-pc-windows-msvc --manifest-path tools\wta\Cargo.toml --all-targets` | Passed at final head; existing warnings |
+| Packaged E2E | `Invoke-Pester -Configuration $config`, `Feature.AcpLifecycle.Tests.ps1`, explicit PFN/App/WTA hashes | Four passed; zero failures/skips; final-head screenshots inspected |
+| Real enterprise installation check | Private package CLI alias, bounded local runner, no model request | Expected failure contract passed; one launch, selectable, zero dialogs/survivors |
+| Release report mapping | `New-ReleaseReport.ps1` and `Update-ReleaseReport.ps1` against final XML | C450-C453 checked in both reports |
+
+### Exact Publish Identity
+
+- Source commit: `1b0961026720dedb9debe3293141abf2f0993197`.
+- Package: `IntelligentTerminal.Worktree.acplife261019_rd9vj3e6a2mbr`,
+  version `0.8.0.16`.
+- Installed immutable layout:
+  `C:\ado\intelligent-terminal-private-layouts\acplife261019\publish-review-006`.
+- Build: `MSBuild.exe OpenConsole.slnx /t:Terminal\CascadiaPackage /p:Configuration=Debug /p:Platform=x64 /p:WindowsTerminalBranding=Dev /p:AppxSymbolPackageEnabled=false /p:CL_MPCount=2 /m:4 /v:minimal /nologo`.
+- Build/deployment journal: `private-package\publish-review-006-journal.json`.
+- Receipt: `private-package\publish-review-006-deployed.json`.
+- `WindowsTerminal.exe` SHA-256:
+  `252925FE5289B2E7D13535B7C081527973ADD377239A4C370AF8A09323A4CADA`.
+- `TerminalApp.dll` SHA-256:
+  `6D5A577A26CDF46F1C83358B4CDCEDC7E09B92BB72D7F64A57905B060794D21F`.
+- `wta.exe` SHA-256:
+  `F600D200BB268B756D85FB2CE69B478890CD353C7089B6BA47836726BC5633CA`.
+- The receipt explicitly records dirty identity-only build inputs. Normal
+  manifest, window-class prefix and protocol CLSID originals were restored
+  byte-exact afterward; the publish worktree is clean.
+- The dev harness supplies test source and its local-only COM-registration
+  correction; it does not substitute a dev WTA or Terminal binary.
+- Package aliases are execution reparse entries. The bounded runner hashes the
+  installed binary and verifies the launched process image instead of trying to
+  hash the zero-length alias.
+- Final source-package check:
+  `publish-validation\final-package-staging-identity.json` independently compares
+  actual MSBuild staging in `src\cascadia\CascadiaPackage\bin\x64\Debug`, all three
+  immutable MSIX entries and installed binaries with the receipt hashes.
+  Every comparison passed. MSIX SHA-256:
+  `7791CD5E25F30486468D1DD5568A77121C9C8D9EC3E4F49555C881BC3B5A31BB`.
+- Do not confuse that staging directory with its stale `AppX` subdirectory from
+  the earlier hotfix. The latter was not installed or used for this acceptance.
+  Later Cargo test/build commands regenerated the mutable Cargo `wta.exe` at
+  the same source head. That later output was not deployed; acceptance remains
+  pinned to the F600D200 binary in the matching MSIX/staging/installed layout.
 
 ## Implementation Record
 
@@ -327,6 +414,20 @@ At implementation approval, no product changes had been made. Provider settings,
 enterprise policy and authentication remain protected. Local-only diagnostic
 orchestration and this investigation record remain separate from publishable
 product code, tests and documentation.
+
+The implementation now shares provider preparation, typed failure reporting,
+startup admission and cleanup policy across runtime, history and model probes.
+Each persistent target has at most three automatic failed starts; successful
+initialize resets failures, explicit retry begins a new epoch, and an
+unconfirmed cleanup failure blocks replacement. Pool-generation counters are
+not persistent target identities. A queued helper has a conservative 1,920s
+overall bound, while the provider initialize timer remains 60s.
+
+Installation verification performs one initialize-only exchange and cleanup.
+Settings reuses initialization for model discovery, preserves agent selection
+on failure, and offers explicit retry. Native loader UI suppression does not
+change enterprise policy enforcement. No ordinary Antigravity npm CLI is
+installed, and #1173's unsolicited-background-startup exclusion remains intact.
 
 ## Confirmed Findings
 
@@ -525,19 +626,54 @@ and the adjacent log. No product implementation preceded this RED check.
 
 ## Evidence Limits
 
-- This is an exact-main binary reproduction through the real automatic master
+- The initial RED is an exact-main binary reproduction through the real automatic master
   discovery and process-launch path, not a mocked agent or injected state.
-- This is not an end-to-end launch of a newly built GUI package. The optional
-  package build was deliberately stopped after the mechanism was reproduced.
+- That first bounded RED was not a newly built GUI launch. Later validation
+  includes clean baseline GUI RED and final-head private-package GREEN.
 - The isolated installer command exercises the same production preparation
   code, but the bounded master run reused that freshly installed managed pair.
 - No assertion is made that the reporter had exactly 417 ACP processes.
-- No corrective behavior or proposed fix has been validated or implemented.
+- Real acceptance proves safe failure handling under the existing enterprise
+  policy, not successful Antigravity operation despite that policy.
+- The first packaged acceptance sampling attempt did not see child PIDs in the
+  outer observer's Job. Its artifact remains failed, not relabeled. The final
+  oracle combines the product process-creation event, structured attempt count,
+  actual launched image/hash and absence of survivors/dialogs.
+- Two unchanged-baseline clipboard tests still fail; full local Rust validation
+  must not be reported as wholly green.
 
 ## Review Triage
 
-No review requested. No remediation decision made. Findings must be discussed
-after reproduction before changing product behavior.
+Round one: review `5575932105`, `2026-10-19T18:28:23Z`, publish head
+`7301970aa3c40dfd07e1f3a71f541ab19d5b7912`.
+All findings were accepted and fixed in dev `1920ba309...`, directly cherry-picked
+and pushed as publish `1b0961026720dedb9debe3293141abf2f0993197`.
+
+| Finding | Resolution | Evidence |
+| --- | --- | --- |
+| Fixture paths with spaces | Encoded PowerShell fixture command preserves arguments, including apostrophes | Final E2E in `e2e quote's workspace`, four passed |
+| Probe/runtime target mismatch | Built-in live-model launch identity matches runtime; launch-selected models stay distinguished | Native parser/model tests 17 passed; Rust identity tests pass |
+| External explicit retry leaves stopped workers closed | Persisted retry epochs reopen discovery/history and reject stale-cycle failures | Full Rust review regression log |
+| Custom target identity changes after restart | Stable binding digest replaces process-local generation in admission keys | Full Rust review regression log |
+| Helper timeout includes admission waiting | Separate overall helper bound covers queue/preparation/initialize/cleanup; initialize remains 60s | Deadline and admission regression tests |
+| Cancelled WSL receipt can lose process ownership | Retain the process/lease before awaiting receipt acquisition | Rust cancellation regressions and final real WSL cleanup test |
+| History post-initialize cleanup failure is not global | Retain registry/key and persist quarantine after successful initialization | Rust history cleanup-quarantine regressions |
+| Two spelling findings | Rename the model-catalog test identifier | Remote spelling checks pass |
+
+Every first-round thread has a pushed-SHA reply and is resolved. Final cleanup
+found no outdated unresolved Copilot threads.
+
+Round two: review `5576610223`, `2026-10-19T19:25:32Z`, exact current publish
+head `1b0961026720dedb9debe3293141abf2f0993197`. It reports "No open issues",
+seven prior correctness findings resolved, and no suppressed findings.
+The review still requests human attention to interprocess accounting and
+Windows/WSL cleanup. Its statement that exact-head validation is pending came
+from the older PR body; the evidence above now supplies that validation.
+
+The legacy helper's `NoNewComments` regex does not match `ccr-overview-v2`;
+`ReviewAtHead=true`, zero open threads, and `Converged=false` are recorded
+without overriding the check. Remaining open gates are human approval, fresh
+ready-event remote checks and the explicit local clipboard limitation.
 
 ## Local-Only Evidence Inventory
 
@@ -556,8 +692,21 @@ after reproduction before changing product behavior.
 | Final dialog cleanup | `master-default-error-mode-001\dialog-cleanup.json` under evidence root | Three queued dialogs acknowledged; no system process termination |
 | Extraction cleanup | `master-default-error-mode-001\extraction-cleanup.json` under evidence root | Only the three identity-verified temporary directories removed |
 | Runtime log | `runtime-state\IntelligentTerminal\logs\wta-main_master.2026-10-19.log` under evidence root | Source-real startup, retry timestamps and initialization failures |
+| Clean GUI RED | `gui-clean-red` under evidence root | Baseline selection remains enabled but startup error UI is absent |
+| Final package receipt/journal | `private-package\publish-review-006-{deployed,journal}.json` | Final publish source, identity substitutions, immutable installed layout and binary hashes |
+| Identity restoration | `private-package\review-006-identity-restored.json` | Only the three known private identity inputs restored byte-exact |
+| Final artifact identity | `publish-validation\final-package-staging-identity.json` | Actual MSBuild staging, immutable MSIX entries and installed binaries all match; stale AppX and later Cargo outputs are not substituted |
+| Final GUI/protocol/process E2E | `publish-validation\e2e quote's workspace\results.xml` and its capture subdirectory | Four real packaged boundaries, quoted paths, fresh failure/recovery screenshots |
+| Final E2E/report assertions | `publish-validation\final-e2e-report-assertions.json` | Four passes, zero failures/skips, visual inspection and C450-C453 |
+| Native tests | `tests\review-round-one-cpp.log` | 17 parser/model tests; product/test source equivalence verified |
+| Final unit/CLI/WSL/Clippy | `publish-validation\review-head-{full-unit,cli-integration,real-wsl,clippy}.{log,json}` | Exact publish head and individual outcomes; full-unit exit 101 is retained |
+| Clipboard baseline controls | `tests\clipboard-baseline-control.log`, `tests\clipboard-environment-recheck.log` | Same two setup failures on unchanged baseline |
+| Enterprise final acceptance | `publish-validation\enterprise-antigravity-review\assertions.json` | Final installed WTA hash, one attempt/creation event, OS-policy reason, zero dialogs/survivors |
+| Earlier sampling-oracle failure | `publish-validation\enterprise-antigravity` | Outer observer Job did not enumerate ACP children; not a passing artifact |
+| Final release reports | `reports\release-{full,incremental}-review-head.md` | C450-C453 checked from final four-case XML; no claim that every aggregate check was rerun |
+| Remote accessibility evidence | `publish-validation\ci-accessibility-review-round-two` | Immutable generated-agent artifact; current job annotation says 15-minute timeout |
 
-## Completion Checklist For This Phase
+## Completed Investigation Checklist
 
 - [x] Fetch latest main and record exact source.
 - [x] Create independent dev/publish branches without changing the dirty worktree.
@@ -568,3 +717,22 @@ after reproduction before changing product behavior.
 - [x] Verify runtime cleanup and preservation of unrelated state.
 - [x] Record confirmed findings separately from hypotheses.
 - [x] Stop for discussion without implementation.
+
+## Implementation And Publication Checklist
+
+- [x] Preserve the merged #1173 emergency background-startup guard.
+- [x] Common lifecycle/adapters, three-attempt admission and owned cleanup.
+- [x] Installation-time initialize-only verification, errors and retained selection.
+- [x] Deterministic RED/GREEN, native parser and review regressions.
+- [x] Separate product commits from dev-only orchestration and evidence.
+- [x] Push dev then directly cherry-picked publish product commits.
+- [x] Build/deploy final publish product source with documented private identity.
+- [x] Verify final installed binary identity and real packaged E2E.
+- [x] Inspect fresh final-head failure/recovery screenshots.
+- [x] Verify real enterprise safe-failure behavior and real WSL containment.
+- [x] Credit C450-C453 in full and incremental release reports.
+- [x] Address every first-round finding; current-head second review has no open issues.
+- [ ] Fully green local Rust suite: blocked by two unchanged-baseline clipboard setup failures.
+- [ ] Green remote gates: fresh ready-event runs are pending/running.
+- [ ] Human merge approval.
+- [ ] Push final dev-only handoff/runner update and confirm remote heads.

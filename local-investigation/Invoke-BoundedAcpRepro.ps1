@@ -2,6 +2,7 @@
 param(
     [Parameter(Mandatory)][ValidateSet('Direct', 'Master', 'Install')][string]$Mode,
     [Parameter(Mandatory)][string]$Executable,
+    [string]$IdentityExecutable,
     [Parameter(Mandatory)][string]$OutputDirectory,
     [Parameter(Mandatory)][string]$LocalStateRoot,
     [ValidateRange(1, 180)][int]$Seconds = 15,
@@ -15,6 +16,8 @@ if (Test-Path -LiteralPath $OutputDirectory) {
     throw 'Use a fresh output directory for each reproduction.'
 }
 $Executable = (Resolve-Path -LiteralPath $Executable).Path
+if (-not $IdentityExecutable) { $IdentityExecutable = $Executable }
+$IdentityExecutable = (Resolve-Path -LiteralPath $IdentityExecutable).Path
 New-Item -ItemType Directory -Path $OutputDirectory | Out-Null
 New-Item -ItemType Directory -Path $LocalStateRoot -Force | Out-Null
 $OutputDirectory = (Resolve-Path -LiteralPath $OutputDirectory).Path
@@ -236,7 +239,8 @@ $receipt = [ordered]@{
     status = 'running'
     started = (Get-Date).ToString('o')
     executable = $Executable
-    sha256 = (Get-FileHash -LiteralPath $Executable).Hash
+    identityExecutable = $IdentityExecutable
+    sha256 = (Get-FileHash -LiteralPath $IdentityExecutable).Hash
     arguments = $arguments
     budgetSeconds = $Seconds
     hardJobProcessLimit = 20
@@ -257,6 +261,10 @@ $clock = [Diagnostics.Stopwatch]::StartNew()
 try {
     $process = [BoundedAcpProcess]::new($Executable, $arguments, $OutputDirectory, [bool]$DefaultErrorMode)
     $receipt.rootPid = $process.Pid
+    $rootProcess = Get-CimInstance Win32_Process -Filter "ProcessId=$($process.Pid)" -ErrorAction Stop
+    if (-not $rootProcess -or $rootProcess.ExecutablePath -ne $IdentityExecutable) {
+        throw 'Launched process does not match the exact identity executable.'
+    }
     if ($Mode -eq 'Direct') {
         $initialize = '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":1,"clientCapabilities":{"terminal":true},"clientInfo":{"name":"bounded-local-reproduction","version":"1"}}}'
         $initialize | Set-Content (Join-Path $OutputDirectory 'initialize.json')
