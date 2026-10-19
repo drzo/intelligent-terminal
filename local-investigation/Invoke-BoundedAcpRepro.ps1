@@ -1,6 +1,6 @@
 [CmdletBinding()]
 param(
-    [Parameter(Mandatory)][ValidateSet('Direct', 'Master')][string]$Mode,
+    [Parameter(Mandatory)][ValidateSet('Direct', 'Master', 'Install')][string]$Mode,
     [Parameter(Mandatory)][string]$Executable,
     [Parameter(Mandatory)][string]$OutputDirectory,
     [Parameter(Mandatory)][string]$LocalStateRoot,
@@ -99,6 +99,8 @@ public sealed class BoundedAcpProcess : IDisposable
     static extern bool TerminateProcess(IntPtr process, uint exitCode);
     [DllImport("kernel32.dll", SetLastError = true)]
     static extern bool CloseHandle(IntPtr handle);
+    [DllImport("kernel32.dll", SetLastError = true)]
+    static extern bool GetExitCodeProcess(IntPtr process, out uint exitCode);
     [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
     public static extern bool WaitNamedPipeW(string name, uint timeout);
     [DllImport("user32.dll")]
@@ -120,6 +122,7 @@ public sealed class BoundedAcpProcess : IDisposable
 
     IntPtr job, process, input;
     public uint Pid { get; private set; }
+    public uint ExitCode { get { uint code; Check(GetExitCodeProcess(process, out code)); return code; } }
     static void Check(bool result) { if (!result) throw new Win32Exception(Marshal.GetLastWin32Error()); }
     static void Close(ref IntPtr handle) { if (handle != IntPtr.Zero && handle != new IntPtr(-1)) { CloseHandle(handle); handle = IntPtr.Zero; } }
 
@@ -225,6 +228,8 @@ public sealed class BoundedAcpProcess : IDisposable
 $pipe = '\\.\pipe\wta-antigravity-repro-' + [guid]::NewGuid().ToString('D')
 $arguments = if ($Mode -eq 'Master') {
     '--master "' + $pipe + '" --agent agy_acp_server.exe --agent-id antigravity --allowed-agent-ids antigravity --no-session-management'
+} elseif ($Mode -eq 'Install') {
+    'install-acp --agent-id antigravity --retry-startup'
 } else { '' }
 $receipt = [ordered]@{
     phase = $Mode
@@ -313,11 +318,12 @@ try {
         if ($ids.Count -ge 16) { $receipt.stopReason = 'Safety process threshold'; break }
         $attempts = @($seen.Values | Where-Object { $_.name -eq 'agy_acp_server.exe' -and $_.parentPid -eq $process.Pid })
         if ($Mode -eq 'Master' -and $attempts.Count -ge 6) { $receipt.stopReason = 'Six ACP attempts observed'; break }
-        if ($Mode -eq 'Direct' -and $ids.Count -eq 0) { $receipt.stopReason = 'Provider exited'; break }
+        if ($Mode -ne 'Master' -and $ids.Count -eq 0) { $receipt.stopReason = 'Process exited'; break }
         Start-Sleep -Milliseconds 500
     }
     if (-not $receipt.Contains('stopReason')) { $receipt.stopReason = 'Bounded observation elapsed' }
     $receipt.aliveBeforeCleanup = @($process.ProcessIds())
+    $receipt.processExitCode = $process.ExitCode
     $receipt.status = 'observed'
 } catch {
     $receipt.status = 'failed'

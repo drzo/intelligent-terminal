@@ -5,8 +5,9 @@
 - Date: 2026-10-19.
 - Summary: investigate automatic Antigravity ACP preparation followed by repeated
   initialization failures, native error dialogs, and accumulating processes.
-- User-visible goal: reproduce and explain the reported startup failure, then
-  stop for discussion before choosing or implementing a fix.
+- User-visible goal: prevent every provider's failed ACP startup from causing
+  unbounded retries or retained descendants, using common lifecycle policy and
+  provider-specific preparation adapters.
 - Base: `origin/main`, fetched on 2026-10-19;
   `a73ca6b8aa76acec1568465a445f59e8409725f8`.
 - Base commit timestamp: 2026-10-19 10:34:31 +08:00.
@@ -17,20 +18,136 @@
   `dev/xiaomgao/antigravity-acp-init-storm-20261019-publish`.
 - Publish worktree:
   `C:\ado\intelligent-terminal-antigravity-acp-init-storm-20261019-publish`.
-- Dev/publish remote: `origin` (`microsoft/intelligent-terminal`); branches are
-  local only. No push, PR, or product commit is requested in this phase.
+- Dev/publish remote: `origin` (`microsoft/intelligent-terminal`). At 12:08:35
+  +08:00 on 2026-10-19, the user approved implementation through a merge-ready
+  PR. Push dev first, then the independently validated publish head. Do not
+  merge the PR.
 - Related product PR: `microsoft/intelligent-terminal#1155`, merged as
   `ccdf84589cfc4d2d63af750c4050ea94565f767f` on 2026-10-16.
 - External issue: `google-antigravity/antigravity-cli#921`.
 - Evidence root: `artifacts\antigravity-acp-init-storm-20261019` in the dev
   worktree. This directory is ignored.
-- Current publishable commit: none; implementation is explicitly out of scope.
-- Current publish head: `a73ca6b8aa76acec1568465a445f59e8409725f8`.
+- Refactor publishable commit: none yet; the urgent hotfix is tracked separately
+  below.
+- Current refactor publish head: `f643ba403f3c2050b0012ec1a5e31924fee918d8`.
 - Original dirty worktree: `C:\ado\intelligent-terminal`, left untouched.
 
 ## Current Stage
 
-2026-10-19: investigation complete; paused for discussion before implementation.
+2026-10-19: implementation and focused validation are complete. Product commit
+`b8253d73af5f6a79d3ed1b688400de61884fb89b` was directly cherry-picked onto the
+clean publish branch as `7301970aa3c40dfd07e1f3a71f541ab19d5b7912`.
+Exact-publish validation and the PR are in progress. Product changes include the
+provider adapter registry, shared persisted three-attempt admission, owned
+Windows/WSL process cleanup, one-shot installation verification, structured safe
+startup diagnostics, explicit helper/Settings retry, and localized Settings
+errors that leave selection enabled.
+
+Key evidence:
+
+- `cross-probe-red`: two baseline CLI requests started six processes.
+- `cross-probe-green`: independent callers started only three in total.
+- `manual-retry-green`: ordinary requests remained stopped at three; explicit
+  retry started exactly one recovered provider and returned its model.
+- `install-verification-red`: baseline installation reported success without a
+  startup result.
+- `install-verification-green`: real signed Antigravity ACP in this enterprise
+  environment remained installed/selectable, reported
+  `operating_system_policy`, attempted one initialize, and left zero owned
+  processes or native dialogs.
+- `gui-clean-red`: baseline selection remained enabled, but no startup error UI
+  appeared after the actual failed probe.
+- `gui-candidate-004c`: four packaged lifecycle cases passed with zero skips.
+  Both screenshots were inspected; the error/explicit retry and recovered model
+  picker are visible without assertion dialogs or onboarding overlays.
+- `cpp-startup-parser-tests.log`: all 16 AcpModelUtilsTests passed.
+- `settings-localization.json`: 93 checks passed across all 18 RESW locales.
+- `all-startup-regressions.log`: 26 startup-focused tests passed.
+- `history-lifecycle-budget.log`: 23 history tests passed; one opt-in live
+  provider test was not invoked by that filter.
+- `process-ownership-wsl.log`: the explicit Ubuntu-24.04 process-group test passed.
+- Latest full Rust validation encountered the two existing clipboard setup
+  failures. `clipboard-baseline-control.log` reproduced the identical failures
+  with the unchanged main test binary. This is an environment limitation, not a
+  passing full-suite result; no test was weakened or skipped.
+
+Normal Dev registration was blocked by the OS activatable-class collector.
+Validation uses the isolated PFN
+`IntelligentTerminal.Worktree.acplife261019_rd9vj3e6a2mbr`, protocol CLSID
+`5e300f1b-09f9-41c5-a12b-e3550345b709`, and immutable layouts under
+`C:\ado\intelligent-terminal-private-layouts\acplife261019`.
+The normal Dev/Store packages and current-chat process were not removed or stopped.
+
+Two local-only validation corrections must stay out of the feature commit:
+the private manifest needs the normal disabled `StartTerminalOnLoginTask`
+declaration to avoid a Settings assertion, and the local harness proves exclusive
+private COM registration through ClassIndex when unrelated stale package
+registrations have no readable manifest. The check still rejects other owners
+and classic COM collisions. Temporary MainPage HRESULT instrumentation was
+removed and its original byte hash verified. Private branding substitutions
+have been restored in both worktrees; their originals and the validated private
+manifest are retained in `private-package`.
+
+### Implementation start
+
+2026-10-19: refactoring resumed after #1173 merged. The implementation baseline
+is `f643ba403f3c2050b0012ec1a5e31924fee918d8`, including #1169 and #1173.
+The dev merge commit is `b0e2c56f0bc548a9a474b3910f880e7a36f4b263`; the original
+publish worktree is back on the refactor publish branch and fast-forwarded to
+the same main baseline. The three pending refactor files were preserved
+byte-for-byte during the merge.
+
+The descendant regression was RED again on this latest baseline, then GREEN
+after introducing shared `AgentProcess` ownership across master and probes.
+Windows jobs and WSL process groups now share the formerly history-only
+containment implementation. The first implementation slice passed all 2883
+WTA unit tests and one CLI integration test; the existing opt-in WSL process
+cleanup test also passed against Ubuntu-24.04 with no provider/model request.
+Next: shared startup admission/retry and installation verification regressions.
+
+### Completed urgent minimal hotfix
+
+2026-10-19: the user prioritized an urgent minimal hotfix before the lifecycle
+refactor. PR `microsoft/intelligent-terminal#1173` is published from
+`dev/xiaomgao/antigravity-background-startup-hotfix-20261019`, commit
+`03752d353e3b22985cbbd625bc97175bcb6d704e`. Copilot reviewed this exact head and
+reported no open findings, recommending approval; its review is COMMENTED, not
+the required human approval. At publication, remote merge gates were blocked: the Native
+WinUI Accessibility Review agent failed in "Prepare trusted accessibility
+evidence" with "Directory does not exist: /tmp/gh-aw/mcp-logs" (exit 2), and human
+review was required. This workflow failure
+was recorded on the PR; no unrelated workflow changes were added to the hotfix.
+The user subsequently merged #1173 at 13:33 +08:00 as
+`f643ba403f3c2050b0012ec1a5e31924fee918d8`. The hotfix branch is preserved, but
+the publish worktree has been switched back to the refactor publish branch.
+
+The minimal change excludes Antigravity from automatic sidebar history startup
+before availability probing, using the existing Gemini behavior. Explicit
+selection/configured use and availability reporting remain supported. It does
+not include lifecycle refactoring, general retry limits, descendant cleanup, or
+installation-time verification.
+
+An offline private npm fixture produced ordinary `agy`, `agy.cmd`, and `agy.ps1`
+launchers. Baseline marked ACP bootstrap available, downloaded the real pinned
+ACP distribution, and launched ACP twice in 60 seconds. Both npm-only and
+already-cached scenarios produced zero ACP starts on the hotfix over 50 seconds.
+Both were repeated against the exact committed binary:
+`368283ED6BF9E975CB7C1B63A9865831C34791EDD6A20A2EABFF2E983EABE1C5`.
+The full WTA run passed 2882 unit tests plus one CLI integration test, with five
+existing opt-in tests ignored. Evidence is under the `hotfix` subdirectory of
+the evidence root.
+
+The refactor's documentation and descendant regression were preserved in this
+dev worktree; no refactor code was included in the hotfix PR.
+
+2026-10-19 12:08 +08:00: implementation was authorized. Baseline remains
+`a73ca6b8aa76acec1568465a445f59e8409725f8` after a fresh fetch. The user was
+unavailable for the package selector form; use its recommended Dev default for
+unshipped-code validation, explicitly pinned, never Store or Auto.
+
+### Completed investigation
+
+2026-10-19: investigation completed before implementation approval.
 RED reproduced with the unchanged latest-main WTA
 master and real signed ACP 1.4.0. The 180-second native-dialog run produced three
 automatic ACP attempts, the reporter's exact Bad Image / ucrtbase.dll /
@@ -69,8 +186,12 @@ Terminal GUI package.
 - Determine whether retry timing and process cleanup explain the accumulation.
 - Preserve the current chat, existing app instances, settings, authentication,
   provider configuration, and enterprise security controls.
-- Stop after reproduction and evidence handoff. Do not implement a fix, add a
-  product regression test, or start a review/fix loop in this phase.
+- Implement the approved common lifecycle contract, deterministic regression
+  coverage and release metadata; validate exact publish binaries and prepare
+  the PR with reviewed evidence.
+- Include the subsequently approved installation-time startup check in the
+  common lifecycle. Preserve the agent's selectability when installation
+  succeeds but the check fails.
 
 ## Preserved Invariants And Guardrails
 
@@ -202,9 +323,10 @@ Intelligent Terminal startup
 
 ## Implementation Record
 
-No product implementation, tests, registry entries, provider settings, enterprise
-policy, or authentication changes are authorized or made. Local-only diagnostic
-orchestration and this investigation record are separate from the publish tree.
+At implementation approval, no product changes had been made. Provider settings,
+enterprise policy and authentication remain protected. Local-only diagnostic
+orchestration and this investigation record remain separate from publishable
+product code, tests and documentation.
 
 ## Confirmed Findings
 
@@ -318,15 +440,88 @@ regardless of cause, not only Antigravity's enterprise DLL block:
   effective retry limit and continue creating processes after it is exhausted.
 - Promptly clean up the failed attempt's ACP process tree.
 - Preserve other agents and successful sessions while containing that failure.
-- Three attempts is a candidate limit, not an approved implementation decision.
-  Distinguish three total attempts from an initial attempt plus three retries.
-- Implementation remains explicitly paused. No behavior-changing edit is
-  authorized by this investigation record.
+- Use three total automatic startup attempts, including the first, for the
+  approved implementation. Do not interpret this as three additional retries.
+- Implementation was approved after the architecture discussion at 12:08:35
+  +08:00. The installation-time startup check was subsequently approved, with
+  installed providers remaining selectable after verification failure. Both
+  belong to the refactor currently paused behind the urgent hotfix.
 
 Before implementation, agree on the attempt-count definition, retry-budget
 scope/reset conditions, and explicit manual-retry behavior. Those decisions must
 cover background discovery, foreground/helper startup, and other relevant ACP
 startup entry points without killing unrelated sessions or shared providers.
+
+### Approved implementation contract
+
+- Separate executable/dependency detection, preparation, process creation,
+  protocol initialization, authentication, and session readiness.
+- Reuse the existing agent metadata and usage-style provider adapter boundary.
+  Provider adapters supply detection/preparation/launch differences; common code
+  owns retry admission, timeouts, failure recording, and process-tree lifetime.
+- Automatic requests for the same effective provider/source/launch configuration
+  must share the three-attempt limit. Refresh and pane selection do not create a
+  fresh failure budget. An explicit retry is a distinct user action.
+- Cleanup is a barrier, not best effort: do not launch a replacement while the
+  previous attempt's owned tree is still alive or its exit is unconfirmed.
+- Keep session-local protocol/authentication failures distinct from failed
+  provider-process startup, preserving healthy shared sessions.
+- Preserve safe structured failure phase/reason/attempt metadata across WTA
+  boundaries without forwarding credentials or raw provider configuration.
+- Keep detection side-effect-free and preparation idempotent; never treat an
+  already-installed but blocked executable as an instruction to reinstall it.
+- Proposed first RED checks: repeatedly request failing startup beyond three
+  attempts; fail a launcher that leaves a descendant; verify healthy sibling
+  providers are unaffected and ordinary refresh cannot reset admission.
+
+### Installation-time startup check: investigation and approval
+
+The user asked about one startup attempt after installation, explicitly as a
+proposal rather than an implementation decision, then approved including it in
+this PR. The clarification concerns user-side latency/resources, not development
+cost. The approved design keeps an installed agent selectable after failed
+verification, allowing explicit agent-pane retry.
+
+- The existing background connection already runs prepare, spawn and initialize.
+  Settings runs dependency preparation followed by its model probe. The helper
+  install-completion handler reconnects after detecting the prepared executable.
+  The standalone `install-acp` command itself only prepares the dependency.
+- An initialize-only check does not submit a model prompt. ACP initialization
+  negotiates protocol/capabilities; provider-specific initialization may still
+  perform filesystem or network work, so it cannot be promised to have zero
+  external activity for every provider.
+- Local observed preparation took approximately 27 seconds. The blocked
+  Antigravity executable reached DLL loading after approximately 20 seconds;
+  a native error dialog then held startup until the 60-second initialize
+  deadline. These are failure-environment measurements, not successful startup
+  benchmarks for all providers.
+- Reusing the normal first startup adds no duplicate cold launch. A disposable
+  post-install probe followed by a second normal startup adds a complete extra
+  launch and cleanup cycle.
+- If selected later, report "installed, startup check failed" separately from
+  installation failure and authentication requirements. A check must be bounded,
+  own its entire process tree, and participate in the shared startup budget.
+- A successful installation-time check never removes runtime retry/cleanup
+  protections. The approved check is one bounded attempt and does not submit a
+  model prompt or initiate login.
+- Do not collapse check failure into `AgentInstallOutcome::Failed`: preparation,
+  verification, selectability and live connection state are independent facts.
+- Selection remains gated by policy, not by a cached successful initialization.
+  A failed check must not hide the provider or revert the user's selection.
+- The publishable contract is recorded in
+  `doc\specs\acp-provider-lifecycle.md`.
+
+### First deterministic RED
+
+`failed_acp_startup_reclaims_the_owned_descendant_before_returning` compiled and
+failed at the expected behavioral oracle on the unchanged startup implementation:
+the direct child was stopped, but the owned descendant remained live when
+cleanup returned. The independent test safety job reclaimed all fixture
+processes before the RED assertion. The run reported 0 passed, 1 failed,
+2887 filtered out; exit 101.
+
+Evidence: `artifacts\antigravity-acp-init-storm-20261019\tests\owned-descendant-red.json`
+and the adjacent log. No product implementation preceded this RED check.
 
 ## Evidence Limits
 

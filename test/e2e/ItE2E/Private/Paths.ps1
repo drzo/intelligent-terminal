@@ -63,11 +63,49 @@ function Get-ItWorktreePackageInfo {
     if ($guid -eq [guid]::Empty -or $clsid -in $script:ItBrandClsids.Values) {
         throw 'Private protocol CLSID must be unique, not an ordinary brand CLSID.'
     }
+    $catalogVerified = $false
+    $unreadableManifests = 0
     foreach ($other in @(Get-AppxPackage -ErrorAction Stop | Where-Object PackageFullName -CNE $Package.PackageFullName)) {
-        $otherManifest = Get-AppxPackageManifest -Package $other.PackageFullName -ErrorAction Stop
+        try {
+            if (-not $other.InstallLocation) { throw 'Package has no manifest location.' }
+            $otherManifest = Get-AppxPackageManifest -Package $other.PackageFullName -ErrorAction Stop
+        }
+        catch {
+            $unreadableManifests++
+            if ($catalogVerified) { continue }
+            # Sparse/stale registrations may have no manifest. Do not skip the
+            # uniqueness check: require the actual COM catalog to name only us.
+            $owners = [Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
+            foreach ($catalog in @(
+                'Registry::HKEY_LOCAL_MACHINE\SOFTWARE\Classes\PackagedCom\ClassIndex',
+                'Registry::HKEY_CURRENT_USER\Software\Classes\PackagedCom\ClassIndex'
+            )) {
+                $registration = Join-Path $catalog $clsid
+                if (Test-Path -LiteralPath $registration -ErrorAction Stop) {
+                    $key = Get-Item -LiteralPath $registration -ErrorAction Stop
+                    foreach ($owner in $key.GetSubKeyNames()) { [void]$owners.Add($owner) }
+                }
+            }
+            if ($owners.Count -ne 1 -or -not $owners.Contains($Package.PackageFullName)) {
+                throw 'An unreadable package manifest prevents proving exclusive private COM ownership.'
+            }
+            foreach ($classic in @(
+                "Registry::HKEY_LOCAL_MACHINE\SOFTWARE\Classes\CLSID\$clsid",
+                "Registry::HKEY_CURRENT_USER\Software\Classes\CLSID\$clsid"
+            )) {
+                if (Test-Path -LiteralPath $classic -ErrorAction Stop) {
+                    throw 'Private COM identity also has an unexpected classic registration.'
+                }
+            }
+            $catalogVerified = $true
+            continue
+        }
         foreach ($class in $otherManifest.SelectNodes("//*[local-name()='Extension' and @Category='windows.comServer']//*[local-name()='Class']")) {
             if ([guid]::Parse($class.Id) -eq $guid) { throw 'Private protocol CLSID is registered by another package.' }
         }
+    }
+    if ($unreadableManifests) {
+        Write-Warning "$unreadableManifests package manifests were unavailable; exact private COM ownership was verified through ClassIndex."
     }
     foreach ($binary in @('WindowsTerminal.exe', 'wtai.exe', 'wtcli.exe', 'wta.exe', 'TerminalApp.dll')) {
         if (-not $Package.InstallLocation -or
