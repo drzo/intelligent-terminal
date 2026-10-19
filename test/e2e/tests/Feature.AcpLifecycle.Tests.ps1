@@ -40,7 +40,9 @@ Describe 'Feature: ACP provider lifecycle' -Tag 'Feature', 'AcpLifecycle' {
         $script:requests = Join-Path $script:evidence 'requests.log'
         $script:control = Join-Path $script:evidence 'startup.json'
         @{ mode = 'fail' } | ConvertTo-Json | Set-Content -LiteralPath $script:control
-        $command = "pwsh.exe -NoLogo -NoProfile -NonInteractive -File $script:fixture -LogPath $script:requests -StartupControlPath $script:control"
+        $invocation = "& '$($script:fixture.Replace("'", "''"))' -LogPath '$($script:requests.Replace("'", "''"))' -StartupControlPath '$($script:control.Replace("'", "''"))'"
+        $encoded = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($invocation))
+        $command = "pwsh.exe -NoLogo -NoProfile -NonInteractive -EncodedCommand $encoded"
         $script:environmentBefore = @{}
         foreach ($name in @('PATH', 'WT_WTCLI_PATH', 'WTCLI_PATH', 'WT_COM_CLSID')) {
             $script:environmentBefore[$name] = [Environment]::GetEnvironmentVariable($name, 'Process')
@@ -120,10 +122,12 @@ Describe 'Feature: ACP provider lifecycle' -Tag 'Feature', 'AcpLifecycle' {
             $log = Join-Path $directory 'requests.log'
             $control = Join-Path $directory 'startup.json'
             @{ mode = $Mode; spawnChild = [bool]$SpawnChild } | ConvertTo-Json | Set-Content -LiteralPath $control
+            $invocation = "& '$($script:fixture.Replace("'", "''"))' -LogPath '$($log.Replace("'", "''"))' -StartupControlPath '$($control.Replace("'", "''"))'"
+            $encoded = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($invocation))
             [pscustomobject]@{
                 Log = $log
                 Control = $control
-                Command = "pwsh.exe -NoLogo -NoProfile -NonInteractive -File $script:fixture -LogPath $log -StartupControlPath $control"
+                Command = "pwsh.exe -NoLogo -NoProfile -NonInteractive -EncodedCommand $encoded"
             }
         }
 

@@ -1073,11 +1073,78 @@ fn provider_binding_isolated_pool_keys_do_not_expose_configuration() {
     assert!(custom_key.contains("custom:provider:model-a@7"));
     assert!(!custom_key.contains("secret-endpoint"));
     assert!(!custom_key.contains("secret-credential"));
+    let mut restarted = custom.clone();
+    if let ProviderBinding::Custom { generation, .. } = &mut restarted {
+        *generation = 1;
+    }
+    assert_ne!(custom.pool_key(), restarted.pool_key());
+    assert_eq!(custom.admission_binding_key(), restarted.admission_binding_key());
+    let admission_key = custom.admission_binding_key();
+    assert!(!admission_key.contains("secret"));
+    assert!(!admission_key.contains("model-a"));
+    if let ProviderBinding::Custom { config, .. } = &mut restarted {
+        config.base_url.push_str("/changed");
+    }
+    assert_ne!(admission_key, restarted.admission_binding_key());
     assert!(
         agent_cmd_key("custom-agent --model pinned", Some("custom:local"), &source)
             .starts_with("warm:"),
         "trusted custom commands are not transient model generations"
     );
+}
+
+#[test]
+fn discovery_retry_epoch_changes_only_for_explicit_new_cycles() {
+    let mut retry = HistoryRefreshState {
+        startup_exhausted: true,
+        failures: 3,
+        ..Default::default()
+    };
+    retry.observe_retry_epoch(0);
+    assert!(retry.startup_exhausted);
+    assert_eq!(retry.failures, 3);
+    retry.observe_retry_epoch(1);
+    assert!(!retry.startup_exhausted);
+    assert_eq!(retry.failures, 0);
+    retry.record_failure();
+    retry.observe_retry_epoch(1);
+    retry.observe_retry_epoch(0);
+    assert_eq!(retry.failures, 1);
+    assert_eq!(retry.retry_epoch, 1);
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn discovery_rejects_failure_from_before_external_retry() {
+    let state = make_state();
+    let key = agent_cmd_key(
+        &crate::agent_registry::build_acp_command("copilot", None),
+        Some("copilot"),
+        &crate::agent_source::AgentSource::Host,
+    );
+    let result = refresh_host_history_agents_with(
+        &state,
+        &["copilot"],
+        HistoryRefreshTrigger::Immediate,
+        |_, _| {
+            let registry = Arc::clone(&state.startup_registry);
+            let key = key.clone();
+            async move {
+                let failure = crate::agent_lifecycle::StartupFailure::from_error(
+                    &anyhow!("old attempt"),
+                    3,
+                    None,
+                    false,
+                );
+                registry.retry(&key).await?;
+                Err::<Arc<AgentCli>, _>(failure.into())
+            }
+        },
+    ).await;
+    assert!(!result);
+    let retries = state.history_discovery_retries.lock().await;
+    assert_eq!(retries[&key].retry_epoch, 1);
+    assert_eq!(retries[&key].failures, 0);
+    assert!(retries[&key].retry_due());
 }
 
 #[tokio::test(flavor = "current_thread")]

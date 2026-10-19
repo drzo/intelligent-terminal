@@ -19,6 +19,18 @@ pub(super) struct HistoryTarget {
     pub provider: ProviderBinding,
 }
 
+impl HistoryTarget {
+    fn admission_key(&self) -> String {
+        crate::agent_lifecycle::agent_key(
+            &self.command,
+            Some(&self.agent_id),
+            &self.source,
+            &self.provider.admission_binding_key(),
+            self.provider.is_model_scoped(),
+        )
+    }
+}
+
 async fn await_history_startup(
     startup: impl std::future::Future<Output = Result<HistoryProcess>>,
     cancelled: &tokio_util::sync::CancellationToken,
@@ -132,6 +144,228 @@ mod tests {
             "dependency preparation failed"
         );
     }
+
+    fn fixture_target() -> HistoryTarget {
+        HistoryTarget {
+            startup_registry: Arc::default(),
+            command: format!("wta-missing-history-{}.exe", uuid::Uuid::new_v4()),
+            agent_id: "custom:history-ownership".into(),
+            source: crate::agent_source::AgentSource::Host,
+            provider: ProviderBinding::Native,
+        }
+    }
+
+    fn fixture_process(target: &HistoryTarget) -> HistoryProcess {
+        let (pipe, _peer) = tokio::io::duplex(1024);
+        let (read, write) = tokio::io::split(pipe);
+        let (connection, _io) = conn::spawn_client(
+            acp::Client.builder().name("history-ownership-fixture"),
+            conn::byte_streams(write.compat_write(), read.compat()),
+        );
+        let mut process = HistoryProcess::mock(connection);
+        process.startup_registry = Arc::clone(&target.startup_registry);
+        process.admission_key = target.admission_key();
+        process
+    }
+
+    #[tokio::test]
+    async fn receipt_cancellation_retains_child_and_admission_until_confirmed_stop() {
+        tokio::task::LocalSet::new()
+            .run_until(async {
+                let target = fixture_target();
+                let key = target.admission_key();
+                let mut process = fixture_process(&target);
+                let mut lease = target.startup_registry.lock(&key).await.unwrap();
+                lease.begin().unwrap();
+                process.startup = Some(lease);
+                process.initialized = false;
+                process.conn = None;
+                let mut command = tokio::process::Command::new("pwsh.exe");
+                command
+                    .args([
+                        "-NoProfile",
+                        "-Command",
+                        "[Console]::In.ReadLine() | Out-Null",
+                    ])
+                    .stdin(std::process::Stdio::piped())
+                    .stdout(std::process::Stdio::piped())
+                    .kill_on_drop(true);
+                // The normal ownership reader waits for a receipt until stdin closes.
+                // EOF avoids invoking WSL while exercising the real cancellable read.
+                process.child = Some(
+                    AgentProcess::spawn(&mut command, Some(("unused".into(), "receipt".into())))
+                        .unwrap(),
+                );
+                let pid = process.child.as_ref().unwrap().id();
+                let mut query = HistoryQuery {
+                    process: Some(process),
+                    ..Default::default()
+                };
+                let cancelled = tokio_util::sync::CancellationToken::new();
+                {
+                    let mut poll = std::pin::pin!(query.poll(Some(&target), &cancelled));
+                    std::future::poll_fn(|cx| {
+                        assert!(std::future::Future::poll(poll.as_mut(), cx).is_pending());
+                        std::task::Poll::Ready(())
+                    })
+                    .await;
+                    cancelled.cancel();
+                    assert!(poll.await.is_err());
+                }
+                let process = query.process.as_mut().unwrap();
+                assert_eq!(process.child.as_ref().unwrap().id(), pid);
+                assert!(process.startup.is_some());
+                assert!(query.recycling);
+                {
+                    let mut competing = std::pin::pin!(target.startup_registry.lock(&key));
+                    std::future::poll_fn(|cx| {
+                        assert!(std::future::Future::poll(competing.as_mut(), cx).is_pending());
+                        std::task::Poll::Ready(())
+                    })
+                    .await;
+                }
+                {
+                    let mut stop = std::pin::pin!(query.stop());
+                    std::future::poll_fn(|cx| {
+                        assert!(std::future::Future::poll(stop.as_mut(), cx).is_pending());
+                        std::task::Poll::Ready(())
+                    })
+                    .await;
+                }
+                assert!(query.process.as_ref().unwrap().startup.is_some());
+                drop(
+                    query
+                        .process
+                        .as_mut()
+                        .unwrap()
+                        .child
+                        .as_mut()
+                        .unwrap()
+                        .stdin
+                        .take(),
+                );
+                tokio::time::timeout(Duration::from_secs(20), query.stop())
+                    .await
+                    .expect("retained receipt ownership permits confirmed cleanup")
+                    .unwrap();
+                assert!(query.process.is_none());
+                target
+                    .startup_registry
+                    .lock(&key)
+                    .await
+                    .unwrap()
+                    .begin()
+                    .unwrap();
+            })
+            .await;
+    }
+
+    #[tokio::test]
+    async fn post_initialize_stop_failure_quarantines_independent_admission() {
+        tokio::task::LocalSet::new()
+            .run_until(async {
+                let target = fixture_target();
+                let key = target.admission_key();
+                let mut process = fixture_process(&target);
+                let mut startup = target.startup_registry.lock(&key).await.unwrap();
+                startup.begin().unwrap();
+                startup.succeeded().unwrap();
+                drop(startup);
+                assert!(process.initialized);
+                assert!(process.startup.is_none());
+                process.reject_stop = true;
+                let error = process.stop().await.unwrap_err();
+                assert_eq!(
+                    error
+                        .downcast_ref::<crate::agent_lifecycle::StartupFailure>()
+                        .unwrap()
+                        .phase,
+                    crate::agent_lifecycle::StartupPhase::Cleanup,
+                );
+                let registry = Arc::clone(&target.startup_registry);
+                let error = registry.lock(&key).await.unwrap().begin().unwrap_err();
+                assert!(error.is::<crate::agent_lifecycle::StartupCleanupUnconfirmed>());
+                assert!(registry.retry(&key).await.is_err());
+            })
+            .await;
+    }
+
+    #[tokio::test]
+    async fn initialization_failure_reuses_its_lease_during_cleanup() {
+        tokio::task::LocalSet::new()
+            .run_until(async {
+                let target = fixture_target();
+                let key = target.admission_key();
+                let mut process = fixture_process(&target);
+                let mut startup = target.startup_registry.lock(&key).await.unwrap();
+                startup.begin().unwrap();
+                process.startup = Some(startup);
+                process.initialized = false;
+                process.reject_stop = true;
+                let error =
+                    tokio::time::timeout(Duration::from_secs(1), process.initialize(&target))
+                        .await
+                        .expect("initialization cleanup must not reacquire its own lease")
+                        .unwrap_err();
+                assert_eq!(
+                    error
+                        .downcast_ref::<crate::agent_lifecycle::StartupFailure>()
+                        .unwrap()
+                        .phase,
+                    crate::agent_lifecycle::StartupPhase::Cleanup,
+                );
+                assert!(target
+                    .startup_registry
+                    .lock(&key)
+                    .await
+                    .unwrap()
+                    .begin()
+                    .is_err());
+            })
+            .await;
+    }
+
+    #[tokio::test]
+    async fn stopped_history_requires_a_new_registry_retry_epoch() {
+        let target = fixture_target();
+        let key = target.admission_key();
+        let cancelled = tokio_util::sync::CancellationToken::new();
+        let mut query = HistoryQuery::default();
+        for _ in 0..crate::agent_lifecycle::MAX_STARTUP_ATTEMPTS {
+            assert!(query.poll(Some(&target), &cancelled).await.is_err());
+        }
+        assert!(query.startup_stopped);
+        query.retry_startup();
+        assert!(query.poll(Some(&target), &cancelled).await.is_err());
+        assert!(query.startup_stopped);
+        target.startup_registry.retry(&key).await.unwrap();
+        assert!(query.poll(Some(&target), &cancelled).await.is_err());
+        assert!(!query.startup_stopped);
+        assert_eq!(
+            query.retry_epoch,
+            target.startup_registry.retry_epoch(&key).await.unwrap()
+        );
+    }
+
+    #[test]
+    fn stale_failure_cannot_stop_a_new_retry_epoch() {
+        let mut query = HistoryQuery::default();
+        query.observe_startup_failure(0, 1);
+        assert!(!query.startup_stopped);
+        assert_eq!(query.retry_epoch, 1);
+        query.observe_startup_failure(1, 1);
+        assert!(query.startup_stopped);
+        query.observe_startup_failure(0, 1);
+        assert!(
+            query.startup_stopped,
+            "stale failure cannot change current state"
+        );
+        query.observe_startup_failure(1, 2);
+        assert!(!query.startup_stopped);
+        query.observe_startup_failure(0, 0);
+        assert!(!query.startup_stopped);
+        assert_eq!(query.retry_epoch, 2);
+    }
 }
 
 #[derive(Default)]
@@ -167,6 +401,8 @@ impl AdaptiveWait {
 }
 
 pub(super) struct HistoryProcess {
+    startup_registry: Arc<crate::agent_lifecycle::StartupRegistry>,
+    admission_key: String,
     startup: Option<crate::agent_lifecycle::StartupLease>,
     conn: Option<conn::ClientLink>,
     child: Option<AgentProcess>,
@@ -181,13 +417,7 @@ pub(super) struct HistoryProcess {
 
 impl HistoryProcess {
     async fn spawn(target: &HistoryTarget) -> Result<Self> {
-        let key = crate::agent_lifecycle::agent_key(
-            &target.command,
-            Some(&target.agent_id),
-            &target.source,
-            &target.provider.pool_key(),
-            target.provider.is_model_scoped(),
-        );
+        let key = target.admission_key();
         let mut startup = target.startup_registry.lock(&key).await?;
         startup.begin()?;
         let prepared = crate::agent_lifecycle::providers::prepare(
@@ -216,19 +446,15 @@ impl HistoryProcess {
         if let Some(pipe) = spawned.child.stderr.take() {
             stderr.drain(pipe);
         }
-        let incoming = match spawned.child.take_stdout().await {
-            Ok(incoming) => incoming,
-            Err(error) => {
-                let cleanup = spawned.child.terminate().await
-                    .context(crate::agent_lifecycle::StartupPhase::Cleanup);
-                return Err(startup.failed(cleanup.err().unwrap_or(error)));
-            }
-        };
+        // No await after spawn: the query must own the child and admission
+        // lease before receipt acquisition can be cancelled.
         Ok(Self {
+            startup_registry: Arc::clone(&target.startup_registry),
+            admission_key: key,
             startup: Some(startup),
             conn: None,
             child: Some(spawned.child),
-            incoming: Some(incoming),
+            incoming: None,
             stderr,
             init_timeout: crate::agent_lifecycle::INITIALIZE_TIMEOUT,
             initialized: false,
@@ -241,6 +467,9 @@ impl HistoryProcess {
     async fn initialize(&mut self, target: &HistoryTarget) -> Result<()> {
         let result = async {
             let child = self.child.as_mut().ok_or_else(|| anyhow!("history child missing"))?;
+            if self.incoming.is_none() {
+                self.incoming = Some(child.take_stdout().await?);
+            }
             let outgoing = child.stdin.take().ok_or_else(|| anyhow!("history stdin missing"))?;
             let incoming = self.incoming.take().ok_or_else(|| anyhow!("history stdout missing"))?;
             // Callers include ordinary Send tasks, which do not inherit the
@@ -282,11 +511,12 @@ impl HistoryProcess {
             for line in self.stderr.mark_failed() {
                 tracing::warn!(target: "master_history", agent_id = %target.agent_id, "{line}");
             }
-            let startup = self.startup.take();
-            let cleanup = self.stop().await
-                .context(crate::agent_lifecycle::StartupPhase::Cleanup);
+            // Keep an initialization lease in self across cleanup awaits.
+            // Reacquiring it here would deadlock, and a local would be lost
+            // if retirement cancels cleanup.
+            let cleanup = self.cleanup().await;
             let error = cleanup.err().unwrap_or(error);
-            return Err(match startup {
+            return Err(match self.startup.take() {
                 Some(startup) => startup.failed(error),
                 None => error,
             });
@@ -301,22 +531,42 @@ impl HistoryProcess {
     }
 
     async fn stop(&mut self) -> Result<()> {
-        #[cfg(test)]
-        if self.reject_stop {
-            return Err(anyhow!("fixture cannot confirm process exit"));
+        let result = self.cleanup().await;
+        let startup = self.startup.take();
+        match result {
+            Ok(()) => Ok(()),
+            Err(error) => Err(match startup {
+                Some(startup) => startup.failed(error),
+                None => error,
+            }),
         }
-        if let Some(child) = &mut self.child {
-            child.terminate().await?;
+    }
+
+    async fn cleanup(&mut self) -> Result<()> {
+        if self.startup.is_none() {
+            self.startup = Some(self.startup_registry.lock(&self.admission_key).await?);
         }
-        if let Some(conn) = &self.conn {
-            conn.shutdown();
+        let result: Result<()> = async {
+            #[cfg(test)]
+            if self.reject_stop {
+                return Err(anyhow!("fixture cannot confirm process exit"));
+            }
+            if let Some(child) = &mut self.child {
+                child.terminate().await?;
+            }
+            if let Some(conn) = &self.conn {
+                conn.shutdown();
+            }
+            if let Some(io) = self.io.take() {
+                io.abort();
+                let _ = io.await;
+            }
+            Ok(())
         }
-        if let Some(io) = self.io.take() {
-            io.abort();
-            let _ = io.await;
-        }
-        self.startup = None;
-        Ok(())
+        .await;
+        result
+            .context(crate::agent_lifecycle::StartupPhase::Cleanup)
+            .context(crate::agent_lifecycle::StartupCleanupUnconfirmed)
     }
 
     fn ended(&mut self) -> Result<bool> {
@@ -333,6 +583,8 @@ impl HistoryProcess {
     #[cfg(test)]
     pub(super) fn mock(conn: conn::ClientLink) -> Self {
         Self {
+            startup_registry: Arc::default(),
+            admission_key: "history-fixture".into(),
             startup: None,
             conn: Some(conn),
             child: None,
@@ -370,6 +622,7 @@ pub(super) struct HistoryQuery {
     recycling: bool,
     wait: AdaptiveWait,
     startup_stopped: bool,
+    retry_epoch: u64,
 }
 
 impl HistoryQuery {
@@ -396,7 +649,20 @@ impl HistoryQuery {
     }
 
     pub fn retry_startup(&mut self) {
-        self.startup_stopped = false;
+        // Only a newer explicit registry retry can reopen startup admission.
+    }
+
+    fn observe_startup_failure(&mut self, failed_epoch: u64, registry_epoch: u64) {
+        let retried = registry_epoch > self.retry_epoch;
+        self.retry_epoch = self.retry_epoch.max(registry_epoch);
+        if failed_epoch < self.retry_epoch {
+            if retried {
+                self.startup_stopped = false;
+            }
+            return;
+        }
+        self.startup_stopped = true;
+        self.retry_epoch = self.retry_epoch.max(failed_epoch);
     }
 
     pub async fn stop(&mut self) -> Result<()> {
@@ -429,7 +695,27 @@ impl HistoryQuery {
                 if error.is::<crate::agent_lifecycle::StartupLimitReached>()
                     || error.is::<crate::agent_lifecycle::StartupCleanupUnconfirmed>()
                 {
-                    self.startup_stopped = true;
+                    let failed_epoch = error
+                        .downcast_ref::<crate::agent_lifecycle::StartupFailure>()
+                        .map(|failure| failure.retry_epoch)
+                        .unwrap_or(self.retry_epoch);
+                    let registry_epoch = if let Some(target) = target {
+                        match target
+                            .startup_registry
+                            .retry_epoch(&target.admission_key())
+                            .await
+                        {
+                            Ok(epoch) => epoch,
+                            Err(epoch_error) => {
+                                tracing::warn!(target: "master_history", error = %epoch_error,
+                                    "could not read history startup retry epoch");
+                                self.retry_epoch
+                            }
+                        }
+                    } else {
+                        self.retry_epoch
+                    };
+                    self.observe_startup_failure(failed_epoch, registry_epoch);
                 }
                 self.wait.fast_successes = 0;
                 tracing::warn!(target: "master_history",
@@ -447,7 +733,18 @@ impl HistoryQuery {
     ) -> Result<std::result::Result<acp::schema::v1::ListSessionsResponse, HistoryRefreshFailure>>
     {
         if self.startup_stopped {
-            return Ok(Err(HistoryRefreshFailure::Other));
+            let Some(target) = target else {
+                return Ok(Err(HistoryRefreshFailure::Other));
+            };
+            let epoch = target
+                .startup_registry
+                .retry_epoch(&target.admission_key())
+                .await?;
+            if epoch <= self.retry_epoch {
+                return Ok(Err(HistoryRefreshFailure::Other));
+            }
+            self.retry_epoch = epoch;
+            self.startup_stopped = false;
         }
         if self.recycling {
             self.stop().await?;
@@ -472,6 +769,13 @@ impl HistoryQuery {
                 )
                 .await?,
             );
+            if let Some(startup) = self
+                .process
+                .as_ref()
+                .and_then(|process| process.startup.as_ref())
+            {
+                self.retry_epoch = self.retry_epoch.max(startup.retry_epoch());
+            }
         }
         if let Some(process) = self.process.as_mut().filter(|process| !process.initialized) {
             self.recycling = true;

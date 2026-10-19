@@ -38,6 +38,12 @@ pub(crate) async fn start_probe(
     let mut spawned =
         super::spawn::spawn_agent_process_for_source(command, None, agent_id, source, environment)
             .context(StartupPhase::Spawn)?;
+    tracing::info!(
+        target: "acp_startup",
+        pid = ?spawned.child.id(),
+        source = source.kind(),
+        "ACP startup process created"
+    );
     let stderr = AgentStderrLog::new(spawned.label().to_string());
     let stderr_task = spawned.child.stderr.take().map(|pipe| stderr.drain(pipe));
     let result: Result<_> = async {
