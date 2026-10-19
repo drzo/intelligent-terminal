@@ -37,6 +37,9 @@ Describe 'Feature: ACP provider lifecycle' -Tag 'Feature', 'AcpLifecycle' {
         $script:evidence = Join-Path $artifactRoot ("acp-lifecycle-" + [guid]::NewGuid().ToString('N'))
         New-Item -ItemType Directory -Path $script:evidence -Force | Out-Null
         $script:fixture = (Resolve-Path (Join-Path $PSScriptRoot '..\fixtures\Mock-AcpChatAgent.ps1')).Path
+        [xml]$resources = Get-Content -LiteralPath (Join-Path $PSScriptRoot '..\..\..\src\cascadia\TerminalSettingsEditor\Resources\en-US\Resources.resw') -Raw
+        $script:expectedStartupError = $resources.SelectSingleNode("/root/data[@name='AIAgents_AcpStartupFailed.Text']/value").InnerText
+        $script:expectedStartupError | Should -Not -BeNullOrEmpty
         $script:requests = Join-Path $script:evidence 'requests.log'
         $script:control = Join-Path $script:evidence 'startup.json'
         @{ mode = 'fail' } | ConvertTo-Json | Set-Content -LiteralPath $script:control
@@ -210,6 +213,21 @@ Describe 'Feature: ACP provider lifecycle' -Tag 'Feature', 'AcpLifecycle' {
             Should -BeTrue -Because 'Settings must show startup failure rather than silently leaving an empty model list'
         Test-UiElementEnabled -App $script:app -Selector RetryAcpSetup |
             Should -BeTrue -Because 'the user must be able to explicitly retry the selected provider'
+        $root = [Windows.Automation.AutomationElement]::FromHandle([IntPtr][long]$script:app.Hwnd)
+        $failure = $root.FindFirst(
+            [Windows.Automation.TreeScope]::Descendants,
+            [Windows.Automation.PropertyCondition]::new(
+                [Windows.Automation.AutomationElement]::AutomationIdProperty, 'AcpSetupFailure'))
+        $messages = @($failure.FindAll(
+            [Windows.Automation.TreeScope]::Descendants,
+            [Windows.Automation.PropertyCondition]::new(
+                [Windows.Automation.AutomationElement]::ControlTypeProperty,
+                [Windows.Automation.ControlType]::Text)
+        ) | Where-Object { -not $_.Current.IsOffscreen } | ForEach-Object { $_.Current.Name })
+        $messages | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $script:evidence 'startup-accessible-text.json')
+        $messages | Should -Contain $script:expectedStartupError -Because 'the accessible primary error must remain fully localized, without appended protocol diagnostics'
+        @($messages | Where-Object { $_ -match '\[[a-z_]+ / [a-z_]+; \d+/\d+;' }).Count |
+            Should -Be 0 -Because 'raw startup diagnostics belong in logs, not the primary error announcement'
 
         @{ mode = 'ready' } | ConvertTo-Json | Set-Content -LiteralPath $script:control
         Invoke-UiElement -App $script:app -Selector RetryAcpSetup | Out-Null

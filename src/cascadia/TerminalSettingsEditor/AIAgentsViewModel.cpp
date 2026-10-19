@@ -1924,25 +1924,26 @@ namespace winrt::Microsoft::Terminal::Settings::Editor::implementation
                                   startupFailure && startupFailure->phase == "cleanup" ?
                                       L"AIAgents_AcpCleanupFailed/Text" :
                                       L"AIAgents_AcpStartupFailed/Text";
-            std::wstring text{ GetLibraryResourceString(resource) };
+            _acpPreparationErrorText = GetLibraryResourceString(resource);
             if (startupFailure)
             {
-                text.append(L"\n[")
-                    .append(winrt::to_hstring(startupFailure->phase))
-                    .append(L" / ")
-                    .append(winrt::to_hstring(startupFailure->reason))
-                    .append(L"; ")
-                    .append(std::to_wstring(startupFailure->attempts))
-                    .append(L"/")
-                    .append(std::to_wstring(startupFailure->maxAttempts))
-                    .append(L"; ")
-                    .append(winrt::to_hstring(startupFailure->diagnosticId))
-                    .append(L"]");
+                LOG_HR_MSG(E_FAIL,
+                           "ACP setup failed (completed=%d, exit=%lu, phase=%hs, reason=%hs, attempts=%u/%u, diagnosticId=%hs)",
+                           probe.completed,
+                           probe.exitCode,
+                           startupFailure->phase.c_str(),
+                           startupFailure->reason.c_str(),
+                           startupFailure->attempts,
+                           startupFailure->maxAttempts,
+                           startupFailure->diagnosticId.c_str());
             }
-            _acpPreparationErrorText = winrt::hstring{ text };
-            LOG_HR_MSG(E_FAIL, "ACP setup failed (completed=%d, exit=%lu)", probe.completed, probe.exitCode);
+            else
+            {
+                LOG_HR_MSG(E_FAIL, "ACP setup failed (completed=%d, exit=%lu)", probe.completed, probe.exitCode);
+            }
         }
-        _NotifyChanges(L"IsAcpPreparing", L"AcpPreparationFailed", L"AcpPreparationErrorText");
+        // InfoBar announces its message when it opens, not when the message changes.
+        _NotifyChanges(L"IsAcpPreparing", L"AcpPreparationErrorText", L"AcpPreparationFailed");
         const auto probeSucceeded = catalog && !parsed.empty();
         TraceLoggingWrite(
             g_hTerminalSettingsEditorProvider,
