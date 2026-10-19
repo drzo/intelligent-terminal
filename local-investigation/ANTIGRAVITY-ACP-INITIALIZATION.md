@@ -67,10 +67,22 @@ MSBuild staging, immutable MSIX and installed hashes match, including the
 changed Settings Editor DLL. Both source worktrees' private identity inputs
 were restored; publish is clean.
 
-New-head Copilot review is in flight (verified by the request script), and
-current-head remote gates/human approval remain pending. Earlier failed review
-executions are not waived. Manual Narrator timing across all three failure
-phases remains unclaimed.
+New-head Copilot review `5578063661`, submitted `2026-10-19T21:35:28Z` at
+`ba61c2929c3494d380fe2aca30ce83989884afe3`, reports no open issues and no
+suppressed findings. It is COMMENTED, not human approval. Current-head remote
+checks have all finished: security, localization, spelling, CLA and Native
+Axe.Windows smoke passed. The native source-review workflow still failed its
+report publication-policy validation, and the performance worker timed out
+without a summary. Their exact-run artifacts were inspected; native findings
+are empty, while performance findings remain unknown because the assessment
+did not complete.
+
+Current stage is blocked handoff, not merge-ready. GitHub reports a mergeable
+diff but `BLOCKED` / `REVIEW_REQUIRED`. No further demonstrated product defect
+remains from the completed reviews. Review execution/report failures and human
+approval need disposition outside this product patch. Manual Narrator/keyboard
+timing and contrast/theme/scaling requests remain unclaimed. No test/review
+safeguard was weakened, and no validation command remains running.
 
 ### Previous accepted head, before the accessibility follow-up
 
@@ -762,8 +774,32 @@ content rather than equating failed publication with no findings.
   startup-failure content and retry, not audible screen-reader output.
 - LOW informational item: all 18 locale resources were already translated;
   no resource values/comments needed changing.
-- Current-head Copilot review is in flight. Do not reuse the prior head's
-  convergence or remote outcomes as new-head proof.
+- Current-head Copilot review `5578063661` at `ba61c2929...`,
+  `2026-10-19T21:35:28Z`, has no open issues or suppressed findings. It requests
+  final human scrutiny of interprocess accounting, process cleanup and Narrator
+  validation; those are review requests, not newly identified defects. The
+  legacy helper still reports `Converged=false` for its unrecognized overview
+  format. No prior-head remote outcome is reused as new-head proof.
+
+Final current-head gate disposition, after `2026-10-19T22:09:31Z`:
+
+| Gate | Result | Evidence |
+| --- | --- | --- |
+| Copilot code review | No open/suppressed defects, COMMENTED | Review `5578063661`, exact `ba61c2929` |
+| Security | Passed | Run `39327823493`, completed `21:40:00Z` |
+| Localization | Passed | Run `39327823671`, completed `21:59:34Z` |
+| Spelling and CLA | Passed | Current-head check rollup in `publish-validation\final-pr-gates.json` |
+| Native Axe.Windows smoke | Passed at current head | Job `118325185862`, completed `22:09:31Z` |
+| Native source review | Failed report publication-policy validation, exit 2 | Run `39327823686`; artifact `12224505501` has empty findings/dismissed/patch arrays, but was not accepted for publication |
+| Performance review | Incomplete: 15-minute timeout and missing summary | Controller `39327823591`, worker `39327883500`, artifact `12223514546`; empty output is not a no-findings verdict |
+| Human approval | Required | GitHub `MERGEABLE` diff with `BLOCKED` / `REVIEW_REQUIRED` |
+
+The final native smoke was awaited to completion in dedicated shell
+`acp-final-native-watch`; its exit 1 describes the overall failed workflow, not
+the successful smoke job. The native structured artifact also asks for manual
+Narrator/keyboard and contrast/theme/scaling verification. The local real UIA
+test and separate successful native smoke supply their actual evidence only;
+they do not claim audible Narrator or unexecuted visual matrices.
 
 ## Local-Only Evidence Inventory
 
@@ -805,6 +841,10 @@ content rather than equating failed publication with no findings.
 | Final enterprise acceptance | `publish-validation\a11y-enterprise-antigravity-verified` | Exact D47311B1 installed WTA, one real OS-policy failure/start, selectable, no dialogs/survivors |
 | Preserved log-oracle failure | `publish-validation\a11y-enterprise-antigravity\oracle-failure.json` | Initial observer incorrectly selected wta-probe instead of install-acp's wta-cli log; retained as failed, then a fresh bounded run used the correct log |
 | Final accessibility release reports | `reports\release-{full,incremental}-a11y-final.md` | C450-C453 checked from the latest exact-package four-case XML |
+| Final current-head gates | `publish-validation\final-pr-gates.json`, `final-native-run.json`, `final-native-watch.log` | All current-head runs terminal; native smoke passed, source report/performance failed, human review required |
+| Curated unpublished-review inspections | `publish-validation\final-review-evidence` | Byte-exact copied monitor/inspection records with digest receipt; native findings empty, performance incomplete |
+| Original monitor evidence | `C:\ado\intelligent-terminal\artifacts\review-monitor\pr1180-ba61c2929-214119` | Ignored raw artifacts retained; only inert report data inspected, no logged commands executed |
+| Accessibility-head remote proof | `publish-validation\a11y-final-remote-heads.json` | Dev evidence `57cfcace0...` and publish `ba61c2929...` matched remote heads before the final gate-note commit |
 
 ## Completed Investigation Checklist
 
@@ -834,7 +874,8 @@ content rather than equating failed publication with no findings.
 - [x] Address every first-round finding; second review at `1b096102` has no open issues.
 - [x] Recover, fix and revalidate the unpublished native HIGH finding with real UIA RED/GREEN.
 - [ ] Fully green local Rust suite: blocked by two unchanged-baseline clipboard setup failures.
-- [ ] New-head code review and green remote gates; prior performance/report failures are not waived.
+- [x] Current-head Copilot review has no open or suppressed defects.
+- [ ] All remote gates green: source-review publication and performance execution remain failed.
 - [ ] Human merge approval.
 - [x] Push dev-only handoff/runner update and confirm remote heads (`b845d887b...`).
-- [ ] Publish the final new-head review/gate disposition.
+- [x] Record final current-head review/gate disposition without claiming merge readiness.
