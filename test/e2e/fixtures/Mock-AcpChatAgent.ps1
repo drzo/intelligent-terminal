@@ -3,6 +3,7 @@ param(
     [string]$ReleasePromptPath,
     [string]$HistoryPath,
     [string]$HistoryControlPath,
+    [string]$StartupControlPath,
     [switch]$SupportsImages
 )
 
@@ -34,6 +35,10 @@ function Complete-HistoryRequest {
     $history = Get-Content -LiteralPath $HistoryPath -Raw | ConvertFrom-Json -AsHashtable
     Send-AcpMessage @{ jsonrpc = '2.0'; id = $Request.id; result = @{ sessions = @($history.sessions) } }
     Write-FixtureLog -Message "list-complete|$([DateTimeOffset]::UtcNow.ToString('o'))|$($Request.id)"
+}
+
+if ($StartupControlPath) {
+    Write-FixtureLog -Message "start|$([DateTimeOffset]::UtcNow.ToString('o'))"
 }
 
 $pendingPrompt = $null
@@ -79,14 +84,38 @@ while ($true) {
     }
     if ($null -eq $line) { break }
     $request = $line | ConvertFrom-Json
+    if ($StartupControlPath) { Write-FixtureLog -Message "method|$($request.method)" }
     switch ($request.method) {
         'initialize' {
+            if ($HistoryPath -or $StartupControlPath) {
+                Write-FixtureLog -Message "initialize|$([DateTimeOffset]::UtcNow.ToString('o'))"
+            }
+            if ($StartupControlPath) {
+                $startup = Get-Content -LiteralPath $StartupControlPath -Raw |
+                    ConvertFrom-Json -AsHashtable
+                if ($startup.mode -notin @('ready', 'fail')) {
+                    throw 'startup control must select ready or fail'
+                }
+                if ($startup.mode -eq 'fail') {
+                    if ($startup.spawnChild) {
+                        $program = [Diagnostics.Process]::GetCurrentProcess().MainModule.FileName
+                        $child = Start-Process -FilePath $program -ArgumentList @(
+                            '-NoLogo', '-NoProfile', '-NonInteractive', '-Command', 'Start-Sleep -Seconds 120'
+                        ) -WindowStyle Hidden -PassThru
+                        Write-FixtureLog -Message "child|$($child.Id)|$($child.StartTime.ToUniversalTime().Ticks)|$($child.Path)"
+                    }
+                    Send-AcpMessage @{
+                        jsonrpc = '2.0'; id = $request.id
+                        error = @{ code = -32603; message = 'Controlled ACP initialization failure' }
+                    }
+                    exit 23
+                }
+            }
             $capabilities = if ($SupportsImages) {
                 @{ promptCapabilities = @{ image = $true } }
             } else { @{} }
             if ($HistoryPath) {
                 $capabilities.sessionCapabilities = @{ list = @{}; close = @{} }
-                Write-FixtureLog -Message "initialize|$([DateTimeOffset]::UtcNow.ToString('o'))"
             }
             Send-AcpMessage @{
                 jsonrpc = '2.0'
@@ -103,11 +132,21 @@ while ($true) {
         }
         'session/new' {
             $sessionCounter++
-            if ($HistoryPath) { Write-FixtureLog -Message "new|$([DateTimeOffset]::UtcNow.ToString('o'))|chat-fixture-$PID-$sessionCounter" }
+            if ($HistoryPath -or $StartupControlPath) { Write-FixtureLog -Message "new|$([DateTimeOffset]::UtcNow.ToString('o'))|chat-fixture-$PID-$sessionCounter" }
+            $result = @{ sessionId = "chat-fixture-$PID-$sessionCounter" }
+            if ($StartupControlPath) {
+                $result.configOptions = @(
+                    @{
+                        id = 'model'; name = 'Model'; category = 'model'; type = 'select'
+                        currentValue = 'lifecycle-fixture-model'
+                        options = @(@{ value = 'lifecycle-fixture-model'; name = 'Lifecycle Fixture Model' })
+                    }
+                )
+            }
             Send-AcpMessage @{
                 jsonrpc = '2.0'
                 id = $request.id
-                result = @{ sessionId = "chat-fixture-$PID-$sessionCounter" }
+                result = $result
             }
         }
         'session/list' {

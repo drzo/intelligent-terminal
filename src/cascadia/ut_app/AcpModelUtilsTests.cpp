@@ -26,6 +26,7 @@ namespace TerminalAppUnitTests
         TEST_METHOD(LiveModelSwitchRequiresKnownSupportedAgent);
         TEST_METHOD(HostCatalogStatusRejectsSameAgentFromWsl);
         TEST_METHOD(RejectsInvalidCatalogShapes);
+        TEST_METHOD(StartupFailurePreservesDiagnosticsWithoutBecomingACatalog);
         TEST_METHOD(ParsesAndNormalizesCatalog);
         TEST_METHOD(ParsesCatalogValue);
         TEST_METHOD(ExcludesCustomSelectionIdsOnRequest);
@@ -81,6 +82,34 @@ namespace TerminalAppUnitTests
         VERIFY_ARE_EQUAL(std::wstring{ L"gemini --acp" }, BuildAgentCommandLine(L"gemini"));
         VERIFY_ARE_EQUAL(std::wstring{ L"opencode acp" }, BuildAgentCommandLine(L"opencode"));
         VERIFY_ARE_EQUAL(std::wstring{ L"other-agent" }, BuildAgentCommandLine(L"other-agent"));
+    }
+
+    void AcpModelUtilsTests::StartupFailurePreservesDiagnosticsWithoutBecomingACatalog()
+    {
+        const std::string payload = R"({
+            "dependency_present": true,
+            "startup_verified": false,
+            "available_models": [{"id":"must-not-be-used"}],
+            "startup_failure": {
+                "phase":"initialize",
+                "reason":"operating_system_policy",
+                "attempts":1,
+                "max_attempts":3,
+                "startup_verified":false,
+                "diagnostic_id":"3ce3c25f-7982-4240-a46f-3697eec05ca3",
+                "message":"untrusted provider detail"
+            }
+        })";
+        const auto failure = ParseStartupFailure(payload);
+        VERIFY_IS_TRUE(failure.has_value());
+        VERIFY_ARE_EQUAL(std::string{ "initialize" }, failure->phase);
+        VERIFY_ARE_EQUAL(std::string{ "operating_system_policy" }, failure->reason);
+        VERIFY_ARE_EQUAL(uint32_t{ 1 }, failure->attempts);
+        VERIFY_ARE_EQUAL(uint32_t{ 3 }, failure->maxAttempts);
+        VERIFY_IS_FALSE(failure->startupVerified);
+        VERIFY_IS_FALSE(ParseModelCatalog(std::string_view{ payload }).has_value());
+        VERIFY_IS_FALSE(ParseStartupFailure(R"({"startup_failure":{"phase":"initialize"}})").has_value());
+        VERIFY_IS_FALSE(ParseStartupFailure(R"({"available_models":[]})").has_value());
     }
 
     void AcpModelUtilsTests::AppendsSupportedModelFlags()

@@ -3083,15 +3083,23 @@ Alt+Shift+/ 输入提示词；Alt+Shift+B 不带初始提示词启动。</value>
     <comment>Description of the reply-formatting toggle, shared by Settings and first-run setup. Only AI agent replies are formatted; live text stays literal. Stopped replies include completed, canceled, or failed responses. History means saved conversations, not shell command history.</comment>
   </data>
   <data name="AIAgents_AcpPreparing.Text" xml:space="preserve">
-    <value>正在安装智能体的 ACP 服务器...</value>
-    <comment>Progress shown in AI Agents Settings while preparing a separately distributed Agent Client Protocol server. This does not install the ordinary agent CLI or sign in. {Locked="ACP"}</comment>
+    <value>正在准备并检查 ACP 连接...</value>
+    <comment>Progress shown while preparing required ACP dependencies and checking the connection. Does not sign in or send a model prompt. {Locked="ACP"}</comment>
   </data>
   <data name="AIAgents_AcpPreparationFailed.Text" xml:space="preserve">
     <value>无法安装智能体的 ACP 服务器。请检查网络和安装情况，然后重试。</value>
     <comment>Error shown in AI Agents Settings when the separate Agent Client Protocol server cannot be prepared. The adjacent button retries installation. {Locked="ACP"}</comment>
   </data>
+  <data name="AIAgents_AcpStartupFailed.Text" xml:space="preserve">
+    <value>无法启动 ACP 连接。你仍然可以选择此智能体，并从智能体窗格重试。</value>
+    <comment>Shown when ACP startup fails. The selected agent stays available and the user can explicitly retry. {Locked="ACP"}</comment>
+  </data>
+  <data name="AIAgents_AcpCleanupFailed.Text" xml:space="preserve">
+    <value>无法确认 ACP 进程已清理完毕。已停止自动启动。</value>
+    <comment>Shown when the previous ACP process tree could not be confirmed stopped. Automatic startup must not continue. {Locked="ACP"}</comment>
+  </data>
   <data name="AIAgents_RetryAcpPreparation.Content" xml:space="preserve">
     <value>重试</value>
-    <comment>Button in AI Agents Settings that retries preparation of the separately distributed ACP server after installation failed.</comment>
+    <comment>Button in AI Agents Settings that explicitly retries ACP setup after a failure without changing the selected agent. {Locked="ACP"}</comment>
   </data>
 </root>

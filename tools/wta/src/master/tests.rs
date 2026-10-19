@@ -617,12 +617,9 @@ fn helper_initialize_errors_do_not_expose_provider_credentials() {
         );
         assert!(!visible.contains(CREDENTIAL_RESOURCE));
         assert!(!visible.contains(CREDENTIAL_ID));
+        let detail = crate::protocol::acp::client::acp_error_detail(&protocol_error);
         assert!(
-            protocol_error
-                .data
-                .as_ref()
-                .and_then(serde_json::Value::as_str)
-                .is_some_and(|detail| !detail.trim().is_empty() && detail.contains("try again")),
+            !detail.trim().is_empty() && detail.contains("try again"),
             "helper-visible error detail must remain actionable: {visible}"
         );
     }
@@ -1355,6 +1352,49 @@ async fn concurrent_helper_initialization_publishes_only_the_winning_agent() {
 }
 
 #[tokio::test(flavor = "current_thread")]
+async fn failed_pool_generations_share_three_attempts_without_retiring_healthy_agents() {
+    tokio::task::LocalSet::new()
+        .run_until(async {
+            use std::sync::atomic::{AtomicUsize, Ordering};
+
+            let state = make_state();
+            let failed_key = "warm:bounded-startup".to_string();
+            let healthy_key = "warm:healthy-provider".to_string();
+            let healthy = unbound_test_agent(&healthy_key);
+            let retained = acquire_agent_from_pool(&state, &healthy_key, |_| {
+                let healthy = Arc::clone(&healthy);
+                async move { Ok(healthy) }
+            })
+            .await
+            .unwrap();
+            let attempts = AtomicUsize::new(0);
+
+            for _ in 0..8 {
+                let result = acquire_agent_from_pool(&state, &failed_key, |_| {
+                    attempts.fetch_add(1, Ordering::SeqCst);
+                    async { Err(anyhow!("fixture initialization failed")) }
+                })
+                .await;
+                assert!(result.is_err());
+            }
+
+            assert_eq!(
+                attempts.load(Ordering::SeqCst),
+                3,
+                "replacing a failed pool cell must not reset the shared startup budget"
+            );
+            let reused = acquire_agent_from_pool(&state, &healthy_key, |_| async {
+                panic!("a failed provider must not restart its healthy sibling")
+            })
+            .await
+            .unwrap();
+            assert!(Arc::ptr_eq(&retained, &reused));
+            assert!(state.agents.lock().await.get(&failed_key).is_none());
+        })
+        .await;
+}
+
+#[tokio::test(flavor = "current_thread")]
 async fn failed_pool_generation_wakes_waiters_into_a_fresh_cell() {
     tokio::task::LocalSet::new()
         .run_until(async {
@@ -1885,6 +1925,7 @@ fn make_state_with_retirement_pending_timeout(
     retirement_pending_timeout: std::time::Duration,
 ) -> Arc<MasterStateInner> {
     Arc::new(MasterStateInner {
+        startup_registry: Arc::new(crate::agent_lifecycle::StartupRegistry::default()),
         session_lifecycle_gates: Mutex::new(SessionLifecycleGateTable::default()),
         session_to_helper: Mutex::new(LiveRouteTable::default()),
         session_mcp_endpoints: session_mcp::Endpoints::new("http://127.0.0.1:1/mcp".to_string()),
@@ -12843,6 +12884,7 @@ impl crate::shell::wt_channel::WtChannel for MockWtChannel {
 
 fn make_state_with_wt(wt: Arc<dyn crate::shell::wt_channel::WtChannel>) -> Arc<MasterStateInner> {
     Arc::new(MasterStateInner {
+        startup_registry: Arc::new(crate::agent_lifecycle::StartupRegistry::default()),
         session_lifecycle_gates: Mutex::new(SessionLifecycleGateTable::default()),
         session_to_helper: Mutex::new(LiveRouteTable::default()),
         session_mcp_endpoints: session_mcp::Endpoints::new("http://127.0.0.1:1/mcp".to_string()),
@@ -13891,7 +13933,91 @@ async fn sidebar_history_startup_retry_recovers_without_respawning_healthy_agent
 }
 
 #[tokio::test(start_paused = true)]
-async fn sidebar_history_startup_retry_uses_capped_backoff_without_explicit_override() {
+async fn dedicated_history_startup_stops_after_three_failures_and_accepts_explicit_retry() {
+    let state = make_state();
+    let target = history::HistoryTarget {
+        startup_registry: Arc::clone(&state.startup_registry),
+        command: format!("wta-missing-history-{}.exe", uuid::Uuid::new_v4()),
+        agent_id: "custom:history-failure".to_string(),
+        source: crate::agent_source::AgentSource::Host,
+        provider: ProviderBinding::Native,
+    };
+    let key = agent_cmd_key_with_provider(
+        &target.command,
+        Some(&target.agent_id),
+        &target.source,
+        &target.provider,
+    );
+    let cancelled = tokio_util::sync::CancellationToken::new();
+    let mut query = history::HistoryQuery::default();
+    for _ in 0..3 {
+        assert!(query.poll(Some(&target), &cancelled).await.is_err());
+    }
+    assert!(state.startup_registry.lock(&key).await.unwrap().begin().is_err());
+    assert!(query.poll(Some(&target), &cancelled).await.is_err());
+    state.startup_registry.retry(&key).await.unwrap();
+    query.retry_startup();
+    assert!(query.poll(Some(&target), &cancelled).await.is_err());
+    state.startup_registry.lock(&key).await.unwrap().begin().unwrap();
+}
+
+#[tokio::test(start_paused = true)]
+async fn sidebar_history_stops_scheduling_an_exhausted_startup_target() {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    tokio::task::LocalSet::new()
+        .run_until(async {
+            let state = make_state();
+            let key = agent_cmd_key(
+                &crate::agent_registry::build_acp_command("copilot", None),
+                Some("copilot"),
+                &crate::agent_source::AgentSource::Host,
+            );
+            let calls = AtomicUsize::new(0);
+            let initialize = |_: String, _: String| {
+                calls.fetch_add(1, Ordering::SeqCst);
+                let state = Arc::clone(&state);
+                let key = key.clone();
+                async move {
+                    acquire_agent_from_pool(&state, &key, |_| async {
+                        Err(anyhow!("controlled startup failure"))
+                    })
+                    .await
+                }
+            };
+            for _ in 0..3 {
+                assert!(
+                    !refresh_host_history_agents_with(
+                        &state,
+                        &["copilot"],
+                        HistoryRefreshTrigger::Periodic,
+                        &initialize,
+                    )
+                    .await
+                );
+                tokio::time::advance(std::time::Duration::from_secs(120)).await;
+            }
+            assert!(
+                !state.history_discovery_retries.lock().await[&key].retry_due(),
+                "a saturated startup budget must not remain on the background retry timer"
+            );
+            for trigger in [HistoryRefreshTrigger::Periodic, HistoryRefreshTrigger::Immediate] {
+                assert!(
+                    !refresh_host_history_agents_with(
+                        &state,
+                        &["copilot"],
+                        trigger,
+                        &initialize,
+                    )
+                    .await
+                );
+            }
+            assert_eq!(calls.load(Ordering::SeqCst), 3);
+        })
+        .await;
+}
+
+#[tokio::test(start_paused = true)]
+async fn sidebar_history_startup_retry_stops_after_three_failures_without_implicit_override() {
     use std::sync::atomic::{AtomicUsize, Ordering};
     tokio::task::LocalSet::new()
         .run_until(async {
@@ -13906,7 +14032,7 @@ async fn sidebar_history_startup_retry_uses_capped_backoff_without_explicit_over
                 Some("copilot"),
                 &crate::agent_source::AgentSource::Host,
             );
-            for (index, delay) in [5, 10, 20, 40, 60, 60].into_iter().enumerate() {
+            for (index, delay) in [5, 10].into_iter().enumerate() {
                 assert!(
                     !refresh_host_history_agents_with(
                         &state,
@@ -13957,6 +14083,7 @@ async fn sidebar_history_startup_retry_uses_capped_backoff_without_explicit_over
                 )
                 .await
             );
+            tokio::time::advance(std::time::Duration::from_secs(3600)).await;
             assert!(
                 !refresh_host_history_agents_with(
                     &state,
@@ -13966,7 +14093,7 @@ async fn sidebar_history_startup_retry_uses_capped_backoff_without_explicit_over
                 )
                 .await
             );
-            assert_eq!(attempts.load(Ordering::SeqCst), 7);
+            assert_eq!(attempts.load(Ordering::SeqCst), 3);
         })
         .await;
 }
@@ -15655,6 +15782,7 @@ while ($null -ne ($line=[Console]::In.ReadLine())) {{
                 .history_refresh
                 .target
                 .set(history::HistoryTarget {
+                    startup_registry: Arc::clone(&state.startup_registry),
                     command: format!(
                         "pwsh.exe -NoProfile -EncodedCommand {}",
                         crate::osc52::base64_encode(&utf16)
@@ -15773,6 +15901,7 @@ while ($null -ne ($line=[Console]::In.ReadLine())) {{
                 .history_refresh
                 .target
                 .set(history::HistoryTarget {
+                    startup_registry: Arc::clone(&state.startup_registry),
                     command: format!(
                         "pwsh.exe -NoProfile -EncodedCommand {}",
                         crate::osc52::base64_encode(&utf16)
@@ -16012,6 +16141,7 @@ async fn history_refresh_live_copilot_readonly_connection_can_be_recycled() {
                 .history_refresh
                 .target
                 .set(history::HistoryTarget {
+                    startup_registry: Arc::clone(&state.startup_registry),
                     command: format!(
                         "{} --no-auto-update",
                         crate::agent_registry::build_acp_command("copilot", None)

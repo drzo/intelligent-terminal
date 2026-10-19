@@ -42,6 +42,7 @@ impl HandshakeStage {
 /// `message` / `detail` payloads are carried only for display and logging.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum AgentFailure {
+    Startup(crate::agent_lifecycle::StartupFailure),
     /// The agent needs sign-in (`ErrorCode::AuthRequired` / -32000, or the
     /// transitional non-compliant-auth shim). Routes to the sign-in screen.
     AuthRequired { message: String },
@@ -69,6 +70,24 @@ pub enum AgentFailure {
 }
 
 impl AgentFailure {
+    pub(crate) fn from_initialize_error(error: &acp::Error) -> Self {
+        if let Some(failure) = error
+            .data
+            .as_ref()
+            .and_then(|data| data.get("startup"))
+            .and_then(|data| serde_json::from_value::<crate::agent_lifecycle::StartupFailure>(data.clone()).ok())
+            .filter(|failure| {
+                failure.max_attempts == crate::agent_lifecycle::MAX_STARTUP_ATTEMPTS
+                    && failure.attempts <= failure.max_attempts
+            })
+        {
+            return Self::Startup(failure);
+        }
+        Self::HandshakeFailed {
+            stage: HandshakeStage::Initialize,
+            detail: super::client::acp_error_detail(error),
+        }
+    }
     /// Classify a typed ACP JSON-RPC error by its `code`.
     ///
     /// Matching is numeric so it is independent of which `unstable_*` Cargo
@@ -95,6 +114,11 @@ impl AgentFailure {
     /// True if this failure should route the user to the sign-in screen.
     pub fn is_auth(&self) -> bool {
         matches!(self, AgentFailure::AuthRequired { .. })
+            || matches!(
+                self,
+                AgentFailure::Startup(failure)
+                    if failure.reason == crate::agent_lifecycle::StartupReason::AuthenticationRequired
+            )
     }
 
     /// True if the user-initiated cancel — the handler shows nothing for it.
@@ -114,6 +138,7 @@ impl AgentFailure {
     /// Short, stable class label for structured logging (`target=failure`).
     pub fn class(&self) -> &'static str {
         match self {
+            AgentFailure::Startup(_) => "startup_failed",
             AgentFailure::AuthRequired { .. } => "auth_required",
             AgentFailure::HandshakeFailed { .. } => "handshake_failed",
             AgentFailure::ResourceGone { .. } => "resource_gone",
@@ -126,6 +151,7 @@ impl AgentFailure {
 impl fmt::Display for AgentFailure {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            AgentFailure::Startup(failure) => failure.fmt(f),
             AgentFailure::AuthRequired { message } => {
                 write!(f, "authentication required: {message}")
             }

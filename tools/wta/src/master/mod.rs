@@ -522,6 +522,7 @@ impl SessionLifecycleGate {
 /// notifications from the agent CLI) and each helper's `acp::Agent`
 /// impl (receives requests from one helper).
 struct MasterStateInner {
+    startup_registry: Arc<crate::agent_lifecycle::StartupRegistry>,
     /// Weak cache of lifecycle gates. Qualified operations share a raw-ID
     /// read barrier and take an instance-specific mutex, so equal raw IDs from
     /// different agent processes can proceed independently. Legacy raw-ID
@@ -1857,15 +1858,12 @@ fn agent_cmd_key_with_provider(
     source: &crate::agent_source::AgentSource,
     provider_binding: &ProviderBinding,
 ) -> AgentCmdKey {
-    let lifecycle =
-        if requested_model_is_explicit(command, agent_id) || provider_binding.is_model_scoped() {
-            "model:"
-        } else {
-            "warm:"
-        };
-    format!(
-        "{lifecycle}{:?}",
-        (source, agent_id, command, provider_binding.pool_key())
+    crate::agent_lifecycle::agent_key(
+        command,
+        agent_id,
+        source,
+        &provider_binding.pool_key(),
+        provider_binding.is_model_scoped(),
     )
 }
 
@@ -1906,6 +1904,7 @@ impl From<crate::session_registry::HistoryLoadStatus> for HistorySyncStatus {
 struct HistoryRefreshState {
     next_refresh_at: Option<tokio::time::Instant>,
     failures: u32,
+    startup_exhausted: bool,
     last_count: Option<usize>,
     query: history::HistoryQuery,
     owner: Option<AgentInstanceId>,
@@ -1919,7 +1918,7 @@ impl HistoryRefreshState {
     }
 
     fn retry_due(&self) -> bool {
-        self.next_refresh_at
+        !self.startup_exhausted && self.next_refresh_at
             .is_none_or(|at| at <= tokio::time::Instant::now())
     }
 }
@@ -3340,6 +3339,18 @@ impl HelperHandler {
             }
             None => false,
         };
+        if requested_control && wta_meta.startup_intent.is_some() {
+            return Err(acp::Error::invalid_request().data(
+                "history control clients cannot request agent startup",
+            ));
+        }
+        if wta_meta
+            .startup_intent
+            .as_deref()
+            .is_some_and(|intent| intent != "retry")
+        {
+            return Err(acp::Error::invalid_params().data("unsupported startup intent"));
+        }
         {
             let mut roles = self.state.helper_roles.lock().await;
             match (roles.get(&self.helper_id).copied(), requested_control) {
@@ -3452,6 +3463,21 @@ impl HelperHandler {
             helper_initialize_error(HelperInitializeFailure::ProviderResolution, &error)
         })?;
 
+        if wta_meta.startup_intent.as_deref() == Some("retry") {
+            let key = agent_cmd_key_with_provider(
+                &agent_cmd,
+                agent_id.as_deref(),
+                &agent_source,
+                &provider_binding,
+            );
+            self.state
+                .startup_registry
+                .retry(&key)
+                .await
+                .map_err(|error| helper_initialize_error(HelperInitializeFailure::AgentStartup, &error))?;
+            self.state.history_discovery_retries.lock().await.remove(&key);
+            self.state.history_discovery_errors.lock().await.remove(&key);
+        }
         let agent = self
             .get_or_initialize_agent(|| {
                 get_or_spawn_agent(
@@ -3476,6 +3502,9 @@ impl HelperHandler {
                 );
                 helper_initialize_error(HelperInitializeFailure::AgentStartup, &e)
             })?;
+        if wta_meta.startup_intent.as_deref() == Some("retry") {
+            agent.history_refresh.gate.lock().await.query.retry_startup();
+        }
         let session_mcp_available = if agent
             .cached_init_resp
             .agent_capabilities
@@ -5077,6 +5106,7 @@ async fn run_master_loop(config: MasterConfig, pipe_name: String) -> Result<()> 
             .context("read master session MCP HTTP endpoint")?
     );
     let inner = Arc::new(MasterStateInner {
+        startup_registry: Arc::new(crate::agent_lifecycle::StartupRegistry::runtime()?),
         session_lifecycle_gates: Mutex::new(SessionLifecycleGateTable::default()),
         session_to_helper: Mutex::new(LiveRouteTable::default()),
         session_mcp_endpoints: session_mcp::Endpoints::new(session_mcp_endpoint),
@@ -5353,7 +5383,7 @@ enum HelperInitializeFailure {
 
 fn helper_initialize_error(
     failure: HelperInitializeFailure,
-    _internal_error: &anyhow::Error,
+    internal_error: &anyhow::Error,
 ) -> acp::Error {
     let detail = match failure {
         HelperInitializeFailure::ProviderResolution => {
@@ -5363,7 +5393,19 @@ fn helper_initialize_error(
             "Unable to start the selected AI agent. Verify the agent installation and model provider settings, then try again."
         }
     };
-    acp::Error::internal_error().data(serde_json::json!(detail))
+    let data = match failure {
+        HelperInitializeFailure::ProviderResolution => serde_json::json!(detail),
+        HelperInitializeFailure::AgentStartup => serde_json::json!({
+            "message": detail,
+            "startup": crate::agent_lifecycle::StartupFailure::from_error(
+                internal_error,
+                0,
+                None,
+                false,
+            )
+        }),
+    };
+    acp::Error::new(-32603, detail).data(data)
 }
 
 /// Decide which agent command the master will spawn for a helper, given
@@ -5562,20 +5604,6 @@ fn update_custom_model_generation(
     Ok(generation)
 }
 
-fn requested_model_is_explicit(agent_cmd: &str, agent_id: Option<&str>) -> bool {
-    let resolved_agent_id =
-        agent_id.unwrap_or_else(|| crate::agent_registry::resolve_agent_id_from_cmd(agent_cmd));
-    if !crate::agent_registry::is_known_id(resolved_agent_id)
-        || crate::agent_registry::supports_live_model_switch(resolved_agent_id)
-    {
-        return false;
-    }
-    let profile = crate::agent_registry::lookup_profile_by_id(resolved_agent_id);
-    let tokens = crate::coordinator::split_windows_commandline(agent_cmd);
-    let args: Vec<&str> = tokens.iter().skip(1).map(String::as_str).collect();
-    crate::agent_registry::extract_model_from_args(&args, profile).is_some()
-}
-
 /// Get the agent CLI for `agent_cmd`, spawning + initializing it on
 /// first use and reusing it thereafter. Two helpers racing the same
 /// new agent serialize on the per-key `OnceCell`; helpers for different
@@ -5720,7 +5748,27 @@ where
                 }
 
                 let mut retirement = AgentInitializationRetirement::new(state, Arc::clone(&cell));
-                match initialize(Arc::clone(&cell)).await {
+                let mut startup = state.startup_registry.lock(key).await?;
+                if !agent_cell_is_current(state, key, &cell).await {
+                    return Err(anyhow!(RetiredAgentCell));
+                }
+                let result = match startup.begin() {
+                    Ok(()) => match initialize(Arc::clone(&cell)).await {
+                        Ok(agent) => {
+                            match startup.succeeded() {
+                                Ok(()) => Ok(agent),
+                                Err(error) => {
+                                    agent.conn.shutdown();
+                                    retire_agent_history(&agent).await;
+                                    Err(error)
+                                }
+                            }
+                        }
+                        Err(error) => Err(startup.failed(error)),
+                    },
+                    Err(error) => Err(error),
+                };
+                match result {
                     Ok(agent) => {
                         retirement.disarm();
                         Ok(agent)
@@ -5885,7 +5933,9 @@ async fn spawn_one_agent(
     };
     let telemetry_model_source =
         provider_binding.telemetry_model_source(&resolved_agent_id, source);
-    if let Err(error) = crate::antigravity_acp::prepare(agent_cmd, agent_id, source).await {
+    let prepared = match crate::agent_lifecycle::providers::prepare(agent_cmd, agent_id, source).await {
+        Ok(prepared) => prepared,
+        Err(error) => {
         crate::telemetry::log_agent_cold_start_complete(
             &resolved_agent_id,
             source_kind,
@@ -5893,8 +5943,17 @@ async fn spawn_one_agent(
             false,
             "DependencyInstallFailed",
         );
-        return Err(error).context("failed to prepare the agent's ACP dependency");
-    }
+            return Err(error).context(crate::agent_lifecycle::StartupPhase::Preparation);
+        }
+    };
+    let startup_error = |error: anyhow::Error, phase| {
+        let error = error.context(phase);
+        if prepared.outcome == crate::agent_lifecycle::providers::PreparationOutcome::Ready {
+            error.context(crate::agent_lifecycle::DependencyPrepared)
+        } else {
+            error
+        }
+    };
     let mut spawn_result = match spawn_agent_process_for_source_with_provider(
         agent_cmd,
         None,
@@ -5912,7 +5971,7 @@ async fn spawn_one_agent(
                 false,
                 "SpawnFailed",
             );
-            return Err(error).with_context(|| format!("failed to spawn agent CLI: {agent_cmd}"));
+            return Err(startup_error(error, crate::agent_lifecycle::StartupPhase::Spawn));
         }
     };
     tracing::info!(
@@ -5928,11 +5987,7 @@ async fn spawn_one_agent(
         .stdin
         .take()
         .ok_or_else(|| anyhow!("agent CLI child has no stdin"))?;
-    let stdout = spawn_result
-        .child
-        .stdout
-        .take()
-        .ok_or_else(|| anyhow!("agent CLI child has no stdout"))?;
+    let process_stop = spawn_result.child.stop_token();
     // Routine stderr stays at debug because it may contain prompt / file
     // content. Pre-initialize stderr is buffered and promoted to warning only
     // if startup fails, so release logs retain package-manager diagnostics.
@@ -5942,6 +5997,13 @@ async fn spawn_one_agent(
         .stderr
         .take()
         .map(|stderr| stderr_log.drain(stderr));
+    let stdout = match spawn_result.child.take_stdout().await {
+        Ok(stdout) => stdout,
+        Err(error) => {
+            let cleanup = spawn_result.child.terminate().await;
+            return Err(cleanup.err().unwrap_or(error));
+        }
+    };
 
     let client = MasterClient {
         state: Arc::clone(state),
@@ -6043,32 +6105,25 @@ async fn spawn_one_agent(
         conn::byte_streams(stdin.compat_write(), stdout.compat()),
     );
 
-    // I/O-loop driver + reaper. This task drives the ACP connection's
-    // I/O, so it MUST run before `initialize` (below) — initialize can't
-    // make progress otherwise. When the loop ends (clean shutdown, pipe
-    // error, or because we killed the child on an init failure) master can
-    // no longer talk to this CLI, so the agent is dropped from the pool.
-    // On the init-failure path that removes the empty `OnceCell` entry so
-    // the next helper retries cleanly instead of reusing a dead slot.
+    // Drive I/O before initialize, but leave retirement to confirmed process
+    // cleanup. Removing the slot here could race its still-live descendants.
     {
-        let state = Arc::clone(state);
-        let cell = Arc::clone(cell);
         let key = key.clone();
         tokio::task::spawn_local(async move {
             match handle_io.await {
                 Ok(()) => tracing::info!(
                     target: "master",
                     agent = %key,
-                    "agent CLI ACP I/O loop ended cleanly — removing from pool"
+                    "agent CLI ACP I/O loop ended cleanly — stopping its process"
                 ),
                 Err(e) => tracing::error!(
                     target: "master",
                     agent = %key,
                     error = %e,
-                    "agent CLI ACP I/O loop ended with error — removing from pool"
+                    "agent CLI ACP I/O loop ended with error — stopping its process"
                 ),
             }
-            reap_agent(&state, &key, &cell, instance_id).await;
+            process_stop.cancel();
         });
     }
 
@@ -6096,7 +6151,7 @@ async fn spawn_one_agent(
             // backstop when `child` drops at return.
             let stderr = stderr_log
                 .finish_failed_startup(&mut child, stderr_task)
-                .await;
+                .await?;
             crate::telemetry::log_agent_cold_start_complete(
                 &resolved_agent_id,
                 source_kind,
@@ -6104,16 +6159,21 @@ async fn spawn_one_agent(
                 false,
                 "InitializeFailed",
             );
-            return Err(anyhow!(
-                "ACP initialize failed for {}: {e}{}",
+            let error = anyhow::Error::new(e).context(format!(
+                "ACP initialize failed for {}{}",
                 describe_agent_target(agent_cmd, source),
                 format_startup_stderr(&stderr)
             ));
+            let error = match crate::agent_lifecycle::diagnose_stderr(&stderr) {
+                Some(reason) => error.context(reason),
+                None => error,
+            };
+            return Err(startup_error(error, crate::agent_lifecycle::StartupPhase::Initialize));
         }
         Err(_) => {
             let stderr = stderr_log
                 .finish_failed_startup(&mut child, stderr_task)
-                .await;
+                .await?;
             crate::telemetry::log_agent_cold_start_complete(
                 &resolved_agent_id,
                 source_kind,
@@ -6121,11 +6181,12 @@ async fn spawn_one_agent(
                 false,
                 "Timeout",
             );
-            return Err(anyhow!(
+            return Err(startup_error(anyhow!(
                 "ACP initialize timed out after {init_timeout_secs}s — agent CLI {} did not respond{}",
                 describe_agent_target(agent_cmd, source),
                 format_startup_stderr(&stderr)
-            ));
+            ).context(crate::agent_lifecycle::StartupReason::TimedOut),
+                crate::agent_lifecycle::StartupPhase::Initialize));
         }
     };
     crate::telemetry::log_agent_cold_start_complete(
@@ -6145,6 +6206,22 @@ async fn spawn_one_agent(
         let key = key.clone();
         tokio::task::spawn_local(async move {
             let status = child.wait().await;
+            if let Err(error) = &status {
+                match state.startup_registry.lock(&key).await {
+                    Ok(startup) => {
+                        let failure = startup.failed(
+                            anyhow!("ACP runtime cleanup failed: {error:#}")
+                                .context(crate::agent_lifecycle::StartupPhase::Cleanup),
+                        );
+                        tracing::error!(target: "master", agent = %key, %failure,
+                            "replacement blocked after unconfirmed ACP cleanup");
+                    }
+                    Err(error) => {
+                        tracing::error!(target: "master", agent = %key, %error,
+                            "failed to record unconfirmed ACP cleanup");
+                    }
+                }
+            }
             tracing::error!(
                 target: "master",
                 agent = %key,
@@ -6209,6 +6286,7 @@ async fn spawn_one_agent(
         .history_refresh
         .target
         .set(history::HistoryTarget {
+            startup_registry: Arc::clone(&state.startup_registry),
             command: agent_cmd.to_string(),
             agent_id: resolved_agent_id.clone(),
             source: source.clone(),
@@ -7798,7 +7876,12 @@ where
             Err(error) => {
                 let mut retries = state.history_discovery_retries.lock().await;
                 let retry = retries.entry(key.clone()).or_default();
+                retry.startup_exhausted =
+                    error.is::<crate::agent_lifecycle::StartupLimitReached>()
+                        || error.is::<crate::agent_lifecycle::StartupCleanupUnconfirmed>();
                 let delay = retry.record_failure();
+                retry.startup_exhausted |=
+                    retry.failures as usize >= crate::agent_lifecycle::MAX_STARTUP_ATTEMPTS;
                 retry.next_refresh_at = Some(tokio::time::Instant::now() + delay);
                 drop(retries);
                 state.history_discovery_errors.lock().await.insert(key, HistoryRefreshFailure::Other);

@@ -5,6 +5,8 @@
 
 #include <algorithm>
 #include <cctype>
+#include <cstdint>
+#include <iterator>
 #include <memory>
 #include <optional>
 #include <string>
@@ -35,6 +37,63 @@ namespace Microsoft::Terminal::AcpModels
     {
         bool excludeCustomSelectionIds{ false };
     };
+
+    struct StartupFailure
+    {
+        std::string phase;
+        std::string reason;
+        uint32_t attempts{};
+        uint32_t maxAttempts{};
+        bool startupVerified{};
+        std::string diagnosticId;
+    };
+
+    inline std::optional<StartupFailure> ParseStartupFailure(const std::string_view payload)
+    {
+        Json::Value root;
+        Json::CharReaderBuilder builder;
+        const std::unique_ptr<Json::CharReader> reader{ builder.newCharReader() };
+        std::string errors;
+        if (!reader->parse(payload.data(), payload.data() + payload.size(), &root, &errors) ||
+            !root.isObject() || !root["startup_failure"].isObject())
+        {
+            return std::nullopt;
+        }
+        const auto& failure = root["startup_failure"];
+        if (!failure["phase"].isString() || !failure["reason"].isString() ||
+            !failure["attempts"].isUInt() || !failure["max_attempts"].isUInt() ||
+            !failure["startup_verified"].isBool() || !failure["diagnostic_id"].isString())
+        {
+            return std::nullopt;
+        }
+        StartupFailure parsed{
+            failure["phase"].asString(),
+            failure["reason"].asString(),
+            failure["attempts"].asUInt(),
+            failure["max_attempts"].asUInt(),
+            failure["startup_verified"].asBool(),
+            failure["diagnostic_id"].asString(),
+        };
+        constexpr std::string_view phases[]{ "preparation", "spawn", "initialize", "session", "cleanup" };
+        constexpr std::string_view reasons[]{ "failed", "timed_out", "authentication_required", "operating_system_policy", "retry_limit_reached" };
+        if (std::ranges::find(phases, parsed.phase) == std::end(phases) ||
+            std::ranges::find(reasons, parsed.reason) == std::end(reasons) ||
+            parsed.maxAttempts != 3 || parsed.attempts > parsed.maxAttempts ||
+            parsed.diagnosticId.size() != 36)
+        {
+            return std::nullopt;
+        }
+        for (size_t index = 0; index < parsed.diagnosticId.size(); ++index)
+        {
+            const auto ch = static_cast<unsigned char>(parsed.diagnosticId[index]);
+            const auto separator = index == 8 || index == 13 || index == 18 || index == 23;
+            if ((separator && ch != '-') || (!separator && !std::isxdigit(ch)))
+            {
+                return std::nullopt;
+            }
+        }
+        return parsed;
+    }
 
     inline bool StatusUsesHostCatalog(const Json::Value& status)
     {
@@ -112,6 +171,7 @@ namespace Microsoft::Terminal::AcpModels
         const ParseOptions options = {})
     {
         if (!root.isObject() ||
+            (root.isMember("startup_failure") && !root["startup_failure"].isNull()) ||
             !root.isMember("available_models") ||
             !root["available_models"].isArray())
         {

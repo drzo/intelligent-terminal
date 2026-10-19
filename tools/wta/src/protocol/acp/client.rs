@@ -660,7 +660,7 @@ fn acp_log(msg: &str) {
     tracing::debug!(target: "acp", "{}", msg);
 }
 
-fn acp_error_detail(error: &acp::Error) -> String {
+pub(crate) fn acp_error_detail(error: &acp::Error) -> String {
     error
         .data
         .as_ref()
@@ -3040,6 +3040,7 @@ pub async fn run_acp_client_over_pipe(
     shell_mgr: Arc<ShellManager>,
     wt_connected: bool,
     post_login_reconnect: bool,
+    retry_startup: bool,
     requested_authentication: Option<
         crate::protocol::acp::authentication::AcpAuthenticationAttempt,
     >,
@@ -3371,6 +3372,8 @@ pub async fn run_acp_client_over_pipe(
                 },
                 cloud_models_source: (!supplied_cloud_models.is_empty())
                     .then(|| "helper".to_string()),
+                startup_intent: (retry_startup || post_login_reconnect)
+                    .then(|| "retry".to_string()),
                 ..Default::default()
             },
         );
@@ -3400,10 +3403,7 @@ pub async fn run_acp_client_over_pipe(
                 error = %e,
                 "ACP initialize over master pipe failed"
             );
-            anyhow::Error::new(AgentFailure::HandshakeFailed {
-                stage: HandshakeStage::Initialize,
-                detail: acp_error_detail(&e),
-            })
+            anyhow::Error::new(AgentFailure::from_initialize_error(&e))
             .context("initialize over master pipe failed")
         })?;
     let wta_meta = crate::session_registry::extract_wta_meta(&mut init_resp.meta);
