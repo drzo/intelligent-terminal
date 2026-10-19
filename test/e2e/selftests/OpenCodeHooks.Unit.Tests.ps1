@@ -38,12 +38,69 @@ BeforeAll {
     }
     $bridge = [Management.Automation.Language.Parser]::ParseFile(
         (Join-Path $PSScriptRoot '..\tests\Feature.OpenCodeHookBridge.Tests.ps1'), [ref]$null, [ref]$null)
+    $bridgeCleanup = $bridge.Find({
+        param($node)
+        $node -is [Management.Automation.Language.CommandAst] -and $node.GetCommandName() -eq 'AfterAll'
+    }, $true)
+    $script:bridgeAfterAll = $bridgeCleanup.CommandElements[1].ScriptBlock.GetScriptBlock()
     $events = $bridge.Find({
         param($node)
         $node -is [Management.Automation.Language.CommandAst] -and $node.GetCommandName() -eq 'Get-WtEvents' -and
             $node.Extent.Text -match 'agent\.session\.start'
     }, $true)
     $script:bridgePredicate = $events.CommandElements[-1].ScriptBlock.GetScriptBlock()
+}
+
+Describe 'Unit: OpenCode bridge teardown' -Tag 'Unit' {
+    BeforeAll {
+        function opencode { throw 'The real OpenCode CLI must never run in teardown selftests' }
+    }
+
+    BeforeEach {
+        $script:previousBridgeApp = $script:app
+        $script:previousBridgeSession = $script:fixtureSessionId
+        $script:previousBridgeDir = $script:fixtureDir
+        $script:previousBridgeExitCode = $global:LASTEXITCODE
+        $script:app = [pscustomobject]@{ Pid = 123 }
+        $script:fixtureSessionId = 'fixture-session'
+        $script:fixtureDir = 'fixture-directory'
+        Mock opencode { $global:LASTEXITCODE = 0 }
+        Mock Test-Path { $true } -ParameterFilter { $Path -eq 'fixture-directory' }
+        Mock Remove-Item {} -ParameterFilter { $LiteralPath -eq 'fixture-directory' }
+        Mock Stop-Terminal {}
+    }
+
+    AfterEach {
+        $script:app = $script:previousBridgeApp
+        $script:fixtureSessionId = $script:previousBridgeSession
+        $script:fixtureDir = $script:previousBridgeDir
+        $global:LASTEXITCODE = $script:previousBridgeExitCode
+    }
+
+    It 'stops Terminal and surfaces a failed fixture session removal' {
+        Mock opencode { $global:LASTEXITCODE = 1 }
+        { & $script:bridgeAfterAll } | Should -Throw '*only the fixture session should be removed*'
+        Should -Invoke Stop-Terminal -Times 1 -Exactly -ParameterFilter { $App -eq $script:app }
+        Should -Invoke Remove-Item -Times 0 -Exactly -ParameterFilter { $LiteralPath -eq 'fixture-directory' }
+    }
+
+    It 'stops Terminal and preserves a fixture directory cleanup failure' {
+        Mock Remove-Item { throw 'Fixture directory cleanup failed' } -ParameterFilter { $LiteralPath -eq 'fixture-directory' }
+        { & $script:bridgeAfterAll } | Should -Throw '*Fixture directory cleanup failed*'
+        Should -Invoke Stop-Terminal -Times 1 -Exactly -ParameterFilter { $App -eq $script:app }
+    }
+
+    It 'preserves successful cleanup with fixture session present: <HasSession>' -TestCases @(
+        @{ HasSession = $true },
+        @{ HasSession = $false }
+    ) {
+        param($HasSession)
+        if (-not $HasSession) { $script:fixtureSessionId = $null }
+        { & $script:bridgeAfterAll } | Should -Not -Throw
+        Should -Invoke opencode -Times ([int]$HasSession) -Exactly
+        Should -Invoke Remove-Item -Times 1 -Exactly -ParameterFilter { $LiteralPath -eq 'fixture-directory' -and $Recurse -and $Force }
+        Should -Invoke Stop-Terminal -Times 1 -Exactly -ParameterFilter { $App -eq $script:app }
+    }
 }
 
 Describe 'Unit: OpenCode hook live-test isolation' -Tag 'Unit' {

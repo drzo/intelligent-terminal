@@ -74,15 +74,19 @@ Describe 'Feature §8 OpenCode hook bridge' -Tag 'Feature' -Skip:(-not $script:R
     }
 
     AfterAll {
-        if ($script:fixtureSessionId) {
-            $null = & opencode api session.remove --param "sessionID=$script:fixtureSessionId" --data (
-                @{ location = @{ directory = $script:fixtureDir } } | ConvertTo-Json -Compress)
-            $LASTEXITCODE | Should -Be 0 -Because 'only the fixture session should be removed'
+        try {
+            if ($script:fixtureSessionId) {
+                $null = & opencode api session.remove --param "sessionID=$script:fixtureSessionId" --data (
+                    @{ location = @{ directory = $script:fixtureDir } } | ConvertTo-Json -Compress)
+                $LASTEXITCODE | Should -Be 0 -Because 'only the fixture session should be removed'
+            }
+            if ($script:fixtureDir -and (Test-Path $script:fixtureDir)) {
+                Remove-Item -LiteralPath $script:fixtureDir -Recurse -Force
+            }
         }
-        if ($script:fixtureDir -and (Test-Path $script:fixtureDir)) {
-            Remove-Item -LiteralPath $script:fixtureDir -Recurse -Force
+        finally {
+            if ($script:app) { Stop-Terminal -App $script:app }
         }
-        if ($script:app) { Stop-Terminal -App $script:app }
     }
 
     BeforeEach { if ($script:SkipReason) { Set-ItResult -Skipped -Because $script:SkipReason } }

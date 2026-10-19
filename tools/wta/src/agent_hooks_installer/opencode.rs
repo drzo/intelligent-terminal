@@ -92,24 +92,32 @@ fn detect(executable: &str) -> Result<(String, ApiVariant), String> {
 
 fn probe_version(executable: &str) -> Result<String, String> {
     use std::os::windows::process::CommandExt;
+    use windows_sys::Win32::System::Threading::{CREATE_NO_WINDOW, CREATE_SUSPENDED};
 
+    let job = ProbeJob::new()?;
     let mut child = Command::new(executable)
         .arg("--version")
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::null())
-        .creation_flags(0x0800_0000)
+        .creation_flags(CREATE_NO_WINDOW | CREATE_SUSPENDED)
         .spawn()
         .map_err(|error| format!("failed to start OpenCode --version: {error}"))?;
-    let job = match ProbeJob::new(&child) {
-        Ok(job) => job,
-        Err(error) => {
-            if let Err(cleanup) = child.kill().and_then(|()| child.wait().map(|_| ())) {
-                tracing::warn!(target: "agent_hooks", %cleanup, "failed to reclaim OpenCode version probe");
-            }
-            return Err(error);
+    if let Err(error) = job.assign(&child) {
+        // The unassigned child is still suspended and has no descendants.
+        if let Err(cleanup) = child.kill().and_then(|()| child.wait().map(|_| ())) {
+            tracing::warn!(target: "agent_hooks", %cleanup, "failed to reclaim OpenCode version probe");
         }
-    };
+        return Err(error);
+    }
+    if let Err(error) = resume_probe_child(child.id()) {
+        // Close the assigned job before waiting, even when resume failed.
+        drop(job);
+        if let Err(cleanup) = child.wait() {
+            tracing::warn!(target: "agent_hooks", %cleanup, "failed to reap OpenCode version probe");
+        }
+        return Err(error);
+    }
     let stdout = child
         .stdout
         .take()
@@ -154,10 +162,10 @@ fn probe_version(executable: &str) -> Result<String, String> {
 struct ProbeJob(windows_sys::Win32::Foundation::HANDLE);
 
 impl ProbeJob {
-    fn new(child: &std::process::Child) -> Result<Self, String> {
-        use std::os::windows::io::AsRawHandle;
+    fn new() -> Result<Self, String> {
         use windows_sys::Win32::System::JobObjects::*;
-        // This job owns only the newly spawned read-only version probe.
+        // SAFETY: the handle is immediately owned and never inherited; limits
+        // are initialized with the exact layout required by the API.
         unsafe {
             let handle = CreateJobObjectW(std::ptr::null(), std::ptr::null());
             if handle.is_null() {
@@ -175,16 +183,93 @@ impl ProbeJob {
                 (&limits as *const JOBOBJECT_EXTENDED_LIMIT_INFORMATION).cast(),
                 std::mem::size_of_val(&limits) as u32,
             ) == 0
-                || AssignProcessToJobObject(handle, child.as_raw_handle()) == 0
             {
                 return Err(format!(
-                    "failed to assign OpenCode probe job: {}",
+                    "failed to configure OpenCode probe job: {}",
                     std::io::Error::last_os_error()
                 ));
             }
             Ok(job)
         }
     }
+
+    fn assign(&self, child: &std::process::Child) -> Result<(), String> {
+        use std::os::windows::io::AsRawHandle;
+        // SAFETY: both handles remain live, and the exact child is suspended
+        // until assignment, so all shim descendants inherit the private job.
+        if unsafe {
+            windows_sys::Win32::System::JobObjects::AssignProcessToJobObject(
+                self.0,
+                child.as_raw_handle(),
+            )
+        } == 0
+        {
+            return Err(format!(
+                "failed to assign OpenCode probe job: {}",
+                std::io::Error::last_os_error()
+            ));
+        }
+        Ok(())
+    }
+}
+
+fn resume_probe_child(pid: u32) -> Result<(), String> {
+    use std::os::windows::io::{AsRawHandle, FromRawHandle, OwnedHandle};
+    use windows_sys::Win32::Foundation::INVALID_HANDLE_VALUE;
+    use windows_sys::Win32::System::Diagnostics::ToolHelp::{
+        CreateToolhelp32Snapshot, Thread32First, Thread32Next, TH32CS_SNAPTHREAD, THREADENTRY32,
+    };
+    use windows_sys::Win32::System::Threading::{
+        GetProcessIdOfThread, OpenThread, ResumeThread, THREAD_QUERY_LIMITED_INFORMATION,
+        THREAD_SUSPEND_RESUME,
+    };
+    // SAFETY: handles are immediately owned. The live suspended child retains
+    // its PID, and only its primary thread can exist before it first runs.
+    unsafe {
+        let snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPTHREAD, 0);
+        if snapshot == INVALID_HANDLE_VALUE {
+            return Err(format!(
+                "failed to snapshot OpenCode probe thread: {}",
+                std::io::Error::last_os_error()
+            ));
+        }
+        let snapshot = OwnedHandle::from_raw_handle(snapshot);
+        let mut entry = THREADENTRY32 {
+            dwSize: std::mem::size_of::<THREADENTRY32>() as u32,
+            ..Default::default()
+        };
+        let mut found = Thread32First(snapshot.as_raw_handle(), &mut entry);
+        while found != 0 {
+            if entry.th32OwnerProcessID == pid {
+                let thread = OpenThread(
+                    THREAD_SUSPEND_RESUME | THREAD_QUERY_LIMITED_INFORMATION,
+                    0,
+                    entry.th32ThreadID,
+                );
+                if thread.is_null() {
+                    return Err(format!(
+                        "failed to open OpenCode probe thread: {}",
+                        std::io::Error::last_os_error()
+                    ));
+                }
+                let thread = OwnedHandle::from_raw_handle(thread);
+                // Recheck the opened handle, not just the snapshot's thread
+                // ID, which could be reused if the child was externally killed.
+                if GetProcessIdOfThread(thread.as_raw_handle()) != pid {
+                    return Err("OpenCode probe thread no longer belongs to its child".into());
+                }
+                if ResumeThread(thread.as_raw_handle()) == u32::MAX {
+                    return Err(format!(
+                        "failed to resume OpenCode probe thread: {}",
+                        std::io::Error::last_os_error()
+                    ));
+                }
+                return Ok(());
+            }
+            found = Thread32Next(snapshot.as_raw_handle(), &mut entry);
+        }
+    }
+    Err("OpenCode suspended probe has no primary thread".into())
 }
 
 impl Drop for ProbeJob {
@@ -781,12 +866,72 @@ mod tests {
 
     #[test]
     fn version_probe_runs_the_resolved_shim_and_bounds_its_descendants() {
-        let fixture = Fixture::new();
+        use std::os::windows::io::{AsRawHandle, FromRawHandle, OwnedHandle};
+        use windows_sys::Win32::Foundation::{WAIT_OBJECT_0, WAIT_TIMEOUT};
+        use windows_sys::Win32::System::Threading::{
+            OpenProcess, WaitForSingleObject, PROCESS_SYNCHRONIZE,
+        };
+        let fixture = Fixture(
+            Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("target")
+                .join(format!("wta-opencode-probe-{}", uuid::Uuid::new_v4())),
+        );
+        fs::create_dir_all(&fixture.0).unwrap();
         let executable = fixture.0.join("opencode with spaces.cmd");
         fs::write(&executable, "@echo off\r\necho 2.0.10-beta.1\r\n").unwrap();
         assert_eq!(
             detect(executable.to_str().unwrap()).unwrap().1,
             ApiVariant::V2
+        );
+        let pid_file = fixture.0.join("descendant.pid");
+        let release = fixture.0.join("release");
+        fs::write(&executable, format!(
+            "@echo off\r\nstart \"\" /b powershell.exe -NoProfile -NonInteractive -Command \"$PID | Set-Content -LiteralPath '{}'; Start-Sleep -Seconds 30\"\r\n:wait\r\nif not exist \"{}\" goto wait\r\necho 2.0.10\r\n",
+            pid_file.display(), release.display()
+        )).unwrap();
+        let probe = executable.clone();
+        let (sender, receiver) = std::sync::mpsc::channel();
+        let worker = std::thread::spawn(move || {
+            sender.send(probe_version(probe.to_str().unwrap())).unwrap()
+        });
+        let start = Instant::now();
+        let pid = loop {
+            if let Some(pid) = fs::read_to_string(&pid_file)
+                .ok()
+                .and_then(|value| value.trim().parse::<u32>().ok())
+            {
+                break pid;
+            }
+            assert!(
+                start.elapsed() < Duration::from_secs(4),
+                "descendant did not start"
+            );
+            std::thread::sleep(Duration::from_millis(10));
+        };
+        // SAFETY: open only the fixture child's reported PID, retain its exact
+        // process handle across cleanup, and request no mutation rights.
+        let descendant = unsafe {
+            let handle = OpenProcess(PROCESS_SYNCHRONIZE, 0, pid);
+            assert!(!handle.is_null());
+            OwnedHandle::from_raw_handle(handle)
+        };
+        assert_eq!(
+            unsafe { WaitForSingleObject(descendant.as_raw_handle(), 0) },
+            WAIT_TIMEOUT
+        );
+        fs::write(&release, "").unwrap();
+        assert_eq!(
+            receiver
+                .recv_timeout(Duration::from_secs(8))
+                .unwrap()
+                .unwrap()
+                .trim(),
+            "2.0.10"
+        );
+        worker.join().unwrap();
+        assert_eq!(
+            unsafe { WaitForSingleObject(descendant.as_raw_handle(), 5000) },
+            WAIT_OBJECT_0
         );
         fs::write(&executable, "@echo off\r\npowershell.exe -NoProfile -NonInteractive -Command \"Start-Sleep -Seconds 30\"\r\n").unwrap();
         let start = Instant::now();
