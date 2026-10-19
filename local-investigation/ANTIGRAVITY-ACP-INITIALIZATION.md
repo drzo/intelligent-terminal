@@ -28,12 +28,14 @@
 - Evidence root: `artifacts\antigravity-acp-init-storm-20261019` in the dev
   worktree. This directory is ignored.
 - Refactor product commits on dev:
-  `b8253d73af5f6a79d3ed1b688400de61884fb89b` and
-  `1920ba30909b78480fc1b2a1e9a4c2ffb0cd786a`.
+  `b8253d73af5f6a79d3ed1b688400de61884fb89b`,
+  `1920ba30909b78480fc1b2a1e9a4c2ffb0cd786a` and
+  `2ef93e5bc800541858d8b3defc97b380d52fe44b`.
 - Direct cherry-picks on publish:
-  `7301970aa3c40dfd07e1f3a71f541ab19d5b7912` and
-  `1b0961026720dedb9debe3293141abf2f0993197`.
-- Current refactor publish head: `1b0961026720dedb9debe3293141abf2f0993197`.
+  `7301970aa3c40dfd07e1f3a71f541ab19d5b7912`,
+  `1b0961026720dedb9debe3293141abf2f0993197` and
+  `ba61c2929c3494d380fe2aca30ce83989884afe3`.
+- Current refactor publish head: `ba61c2929c3494d380fe2aca30ce83989884afe3`.
 - Refactor PR: `microsoft/intelligent-terminal#1180`.
 - Current implementation base: `f643ba403f3c2050b0012ec1a5e31924fee918d8`.
   A final fetch confirmed that this is still `origin/main` and an ancestor of
@@ -42,20 +44,54 @@
 
 ## Current Stage
 
-2026-10-19 UTC: implementation, both review rounds, exact-publish package
-validation and real enterprise expected-failure acceptance are complete.
-Current publish head is `1b0961026720dedb9debe3293141abf2f0993197`; PR #1180
-is now ready for review and still needs human approval and remote-gate
-disposition. Its ready event started fresh performance, accessibility, security
-and localization runs. The prior accessibility agent timed out after 15 minutes;
-normal workflow concurrency cancelled its older native-smoke build.
+2026-10-19 UTC, latest stage: the accessibility follow-up is implemented,
+validated and pushed as `ba61c2929...` after dev `2ef93e5bc...`. Recovery of the
+unpublished native report exposed a real HIGH finding despite its failed report
+contract, so work did not stop at an infrastructure-only handoff.
+The ownership hypothesis was confirmed: appending phase/reason/count/GUID data
+polluted the localized primary error, and custom InfoBar content did not use its
+standard message/action semantics.
+
+C450 was RED on the exact `1b096102`/0.8.0.16 package at the localized UIA-text
+assertion. The fix retains technical diagnostics in logs/CLI, uses localized
+InfoBar.Message plus ActionButton, and notifies the message before opening.
+The candidate and exact publish package both passed all four E2E cases, including
+quoted paths and the new UIA assertion. Exact-head native tests passed 17/17;
+full Rust remains 2,901 passed, two baseline clipboard failures, five opt-in
+ignored. The WTA subtree is unchanged from `1b096102`.
+
+Exact package 0.8.0.18, immutable layout `a11y-publish-008`, passed fresh
+enterprise acceptance with one start, OS-policy failure, selectable provider,
+zero dialogs and zero survivors. Fresh screenshots were inspected. Source,
+MSBuild staging, immutable MSIX and installed hashes match, including the
+changed Settings Editor DLL. Both source worktrees' private identity inputs
+were restored; publish is clean.
+
+New-head Copilot review is in flight (verified by the request script), and
+current-head remote gates/human approval remain pending. Earlier failed review
+executions are not waived. Manual Narrator timing across all three failure
+phases remains unclaimed.
+
+### Previous accepted head, before the accessibility follow-up
+
+2026-10-19 UTC: implementation, both Copilot code-review rounds, exact-publish
+package validation and real enterprise expected-failure acceptance are recorded.
+That publish head was `1b0961026720dedb9debe3293141abf2f0993197`; PR #1180
+is ready for review, but not merge-ready. Security and localization passed.
+Native Axe.Windows smoke at this head passed at `2026-10-19T20:21:20Z`.
+Performance review failed its original attempt and one genuine retry, both
+after the worker exceeded its existing 15-minute execution limit and failed to
+deliver a summary. The ready-event native accessibility agent failed generated
+report coverage validation; exactly one native failed-jobs retry is running.
+No further retries or workflow-limit changes are authorized by this handoff.
 The local full Rust suite is not green because two clipboard setup failures
 also reproduce on unchanged main. The review helper's old no-comments parser
 does not recognize the new review format, so its `Converged=false` output is
-preserved rather than overridden. Next: await the fresh remote gates, triage any
-new findings, and record final remote heads without changing any safeguards.
-Read-only monitor: performance run `39313413985`, accessibility `39313414119`,
-security `39313414048`, localization `39313413952`.
+preserved rather than overridden. Next: observe the already-started native
+retry to a definitive result and document the blocked gates for the merge owner.
+The gate monitor is read-only again: performance run `39313413985` attempt 2
+failed, accessibility `39313414119` attempt 2 is running, security `39313414048`
+and localization `39313413952` passed.
 
 Product changes include the
 provider adapter registry, shared persisted three-attempt admission, owned
@@ -363,31 +399,34 @@ Intelligent Terminal startup
 | Temporary extraction cleanup | Exact recorded paths, creation instants and reparse-point checks | Passed; three owned directories removed |
 | Exact GUI package | Baseline package build after missing NuGet restore | Deliberately stopped after bounded reproduction; not passed, deployed or launched |
 | Focused GREEN | Startup, history, native parser and process ownership regressions | Passed; review regressions included in final-head full units |
-| Full Rust units | `cargo test --locked --target x86_64-pc-windows-msvc --manifest-path tools\wta\Cargo.toml --bin wta` at `1b096102` | 2,901 passed; two baseline clipboard setup failures; five opt-in ignored |
-| CLI integration | Same Cargo target/manifest with `--test sessions_cli` | One passed at final head |
-| Real WSL ownership | Same Cargo target/manifest with `--bin wta history_wsl_group_reclaims_owned_work_on_recovery_and_host_exit -- --ignored --nocapture`, `WTA_TEST_WSL_DISTRO=Ubuntu-24.04` | One passed at final head; no model request |
-| Native parser/model tests | `TE.exe Terminal.App.Unit.Tests.dll /name:*AcpModelUtilsTests*` | 17 passed on source-equivalent dev review commit |
-| Static analysis | `cargo clippy --locked --target x86_64-pc-windows-msvc --manifest-path tools\wta\Cargo.toml --all-targets` | Passed at final head; existing warnings |
-| Packaged E2E | `Invoke-Pester -Configuration $config`, `Feature.AcpLifecycle.Tests.ps1`, explicit PFN/App/WTA hashes | Four passed; zero failures/skips; final-head screenshots inspected |
+| Full Rust units | `cargo test --locked --target x86_64-pc-windows-msvc --manifest-path tools\wta\Cargo.toml --bin wta` at `ba61c2929` | 2,901 passed; two baseline clipboard setup failures; five opt-in ignored |
+| CLI integration | Same Cargo target/manifest with `--test sessions_cli` | One passed at `1b096102`; WTA source remains identical at the final head |
+| Real WSL ownership | Same Cargo target/manifest with `--bin wta history_wsl_group_reclaims_owned_work_on_recovery_and_host_exit -- --ignored --nocapture`, `WTA_TEST_WSL_DISTRO=Ubuntu-24.04` | One passed at `1b096102` on unchanged WTA source; no model request |
+| Native parser/model tests | `TE.exe Terminal.App.Unit.Tests.dll /name:*AcpModelUtilsTests*` | 17 passed after rebuilding the exact `ba61c2929` solution test target |
+| Static analysis | `cargo clippy --locked --target x86_64-pc-windows-msvc --manifest-path tools\wta\Cargo.toml --all-targets` | Passed at `1b096102` on unchanged WTA source; existing warnings |
+| Localized primary error RED | Focused C450 against `1b096102`/0.8.0.16, before product edit | Expected UIA assertion failed on the appended raw diagnostic suffix |
+| Packaged E2E | `Invoke-Pester -Configuration $config`, `Feature.AcpLifecycle.Tests.ps1`, explicit PFN/App/WTA hashes | Four passed at `ba61c2929`/0.8.0.18; zero failures/skips; exact localized UIA text and fresh screenshots inspected |
 | Real enterprise installation check | Private package CLI alias, bounded local runner, no model request | Expected failure contract passed; one launch, selectable, zero dialogs/survivors |
 | Release report mapping | `New-ReleaseReport.ps1` and `Update-ReleaseReport.ps1` against final XML | C450-C453 checked in both reports |
 
 ### Exact Publish Identity
 
-- Source commit: `1b0961026720dedb9debe3293141abf2f0993197`.
+- Source commit: `ba61c2929c3494d380fe2aca30ce83989884afe3`.
 - Package: `IntelligentTerminal.Worktree.acplife261019_rd9vj3e6a2mbr`,
-  version `0.8.0.16`.
+  version `0.8.0.18`.
 - Installed immutable layout:
-  `C:\ado\intelligent-terminal-private-layouts\acplife261019\publish-review-006`.
+  `C:\ado\intelligent-terminal-private-layouts\acplife261019\a11y-publish-008`.
 - Build: `MSBuild.exe OpenConsole.slnx /t:Terminal\CascadiaPackage /p:Configuration=Debug /p:Platform=x64 /p:WindowsTerminalBranding=Dev /p:AppxSymbolPackageEnabled=false /p:CL_MPCount=2 /m:4 /v:minimal /nologo`.
-- Build/deployment journal: `private-package\publish-review-006-journal.json`.
-- Receipt: `private-package\publish-review-006-deployed.json`.
+- Build/deployment journal: `private-package\a11y-publish-008-journal.json`.
+- Receipt: `private-package\a11y-publish-008-deployed.json`.
 - `WindowsTerminal.exe` SHA-256:
-  `252925FE5289B2E7D13535B7C081527973ADD377239A4C370AF8A09323A4CADA`.
+  `55639119A8212828A25AC7DA401DC65CFBEA2F710A689E4863FBE01945836B09`.
 - `TerminalApp.dll` SHA-256:
-  `6D5A577A26CDF46F1C83358B4CDCEDC7E09B92BB72D7F64A57905B060794D21F`.
+  `FE2A922611D5B68EE53257025F3F7DD54E0AA60BDC69A325F5B7611CB54EAA5F`.
 - `wta.exe` SHA-256:
-  `F600D200BB268B756D85FB2CE69B478890CD353C7089B6BA47836726BC5633CA`.
+  `D47311B1A4EA160E02C127948807FDA80E7480175AE1DE7D851A76A5B95066E2`.
+- `Microsoft.Terminal.Settings.Editor.dll` SHA-256:
+  `557F96F955D32D2B66D7360975F4AABDF3B837B0AEB57187CCDA3D23555F0996`.
 - The receipt explicitly records dirty identity-only build inputs. Normal
   manifest, window-class prefix and protocol CLSID originals were restored
   byte-exact afterward; the publish worktree is clean.
@@ -397,16 +436,18 @@ Intelligent Terminal startup
   installed binary and verifies the launched process image instead of trying to
   hash the zero-length alias.
 - Final source-package check:
-  `publish-validation\final-package-staging-identity.json` independently compares
-  actual MSBuild staging in `src\cascadia\CascadiaPackage\bin\x64\Debug`, all three
-  immutable MSIX entries and installed binaries with the receipt hashes.
-  Every comparison passed. MSIX SHA-256:
-  `7791CD5E25F30486468D1DD5568A77121C9C8D9EC3E4F49555C881BC3B5A31BB`.
+  `publish-validation\a11y-final-package-identity.json` and
+  `publish-validation\a11y-settings-editor-identity.json` independently compare
+  actual MSBuild staging in `src\cascadia\CascadiaPackage\bin\x64\Debug`, the
+  immutable MSIX entries and installed binaries. Current explicit-target WTA
+  also matches. Every comparison passed. MSIX SHA-256:
+  `B902F74B267688BC10ADA0DE47A436D27FB3149713D8CE12B96EF532915A5264`.
 - Do not confuse that staging directory with its stale `AppX` subdirectory from
   the earlier hotfix. The latter was not installed or used for this acceptance.
-  Later Cargo test/build commands regenerated the mutable Cargo `wta.exe` at
-  the same source head. That later output was not deployed; acceptance remains
-  pinned to the F600D200 binary in the matching MSIX/staging/installed layout.
+  The earlier `1b096102` acceptance remained pinned to its F600D200 MSIX binary
+  after later Cargo commands regenerated mutable output. The final 0.8.0.18
+  acceptance instead pins D47311B1 across current Cargo output, package staging,
+  MSIX and installed layout.
 
 ## Implementation Record
 
@@ -663,7 +704,7 @@ and pushed as publish `1b0961026720dedb9debe3293141abf2f0993197`.
 Every first-round thread has a pushed-SHA reply and is resolved. Final cleanup
 found no outdated unresolved Copilot threads.
 
-Round two: review `5576610223`, `2026-10-19T19:25:32Z`, exact current publish
+Round two: review `5576610223`, `2026-10-19T19:25:32Z`, that round's exact publish
 head `1b0961026720dedb9debe3293141abf2f0993197`. It reports "No open issues",
 seven prior correctness findings resolved, and no suppressed findings.
 The review still requests human attention to interprocess accounting and
@@ -672,8 +713,57 @@ from the older PR body; the evidence above now supplies that validation.
 
 The legacy helper's `NoNewComments` regex does not match `ccr-overview-v2`;
 `ReviewAtHead=true`, zero open threads, and `Converged=false` are recorded
-without overriding the check. Remaining open gates are human approval, fresh
-ready-event remote checks and the explicit local clipboard limitation.
+without overriding the check. Remaining open gates are human approval,
+review-infrastructure failures and the explicit local clipboard limitation.
+
+Ready-event gate triage at `2026-10-19T20:27:11Z`:
+
+| Gate | Exact evidence | Disposition |
+| --- | --- | --- |
+| Security | Run `39313414048`, completed success at `19:56:16Z` | Passed; no high-confidence boundary regression or proposed repair reported |
+| Localization | Run `39313413952`, completed success at `20:10:52Z` | Passed |
+| Native smoke | Job `118274941943`, completed success at `20:21:20Z`, unchanged publish head | Passed; retain this attempt's result independently of the retry |
+| Native generated review | Run `39313414119` attempt 1, job `118269596388`, exit 2 | Blocked: `review_checks` must cite every classified changed file |
+| Native retry | One `gh run rerun 39313414119 --repo microsoft/intelligent-terminal --failed` at `20:25:34Z`; attempt 2, job `118288546700` running | Await result; retry authorization consumed |
+| Performance | Controller `39313413985` attempt 2 failed at `20:26:28Z`; fresh worker `39316696186` failed at `20:26:09Z` | Repeated 15-minute execution timeout; summary not delivered; not a completed assessment |
+
+The native unpublished report had no HIGH/MEDIUM/LOW findings or repair commits,
+but requested manual Windows/Narrator checks of error announcements, diagnostic
+suffixes and duplicate retry announcements. Because its report contract failed,
+it is not counted as a successful accessibility review. Performance's missing
+output cannot establish that unpublished findings are absent. No new inline
+findings, repair commits or publish-head changes were observed.
+
+Accessibility attempt-2 follow-up: the latest artifact (`agent`, uploaded
+`2026-10-19T20:40:24Z`) did contain a HIGH finding about raw diagnostic suffixes
+in the primary message. The earlier no-findings description above applies only
+to attempt 1. Parent retrieved the latest artifact and acted on its actual
+content rather than equating failed publication with no findings.
+
+- Accepted HIGH: localized primary text no longer appends phase/reason/count or
+  GUID data. Diagnostics remain in safe WIL logging and structured CLI output.
+  Standard InfoBar.Message/ActionButton replace custom content, and message
+  notification precedes opening.
+- RED: `publish-validation\a11y-primary-red` at prior package 0.8.0.16 failed
+  only the exact localized UIA-message assertion. The RED screenshot was
+  inspected; setup and selection were valid.
+- GREEN: candidate `a11y-candidate-007b` and final
+  `publish-validation\a11y publish quote's path` both passed all four cases.
+  Both sets of fresh screenshots were inspected. Native tests passed 17/17;
+  full exact-head Rust retained the two baseline clipboard failures.
+- First candidate compilation rejected narrow strings passed to WIL's wide
+  formatting with `%s`; corrected to `%hs`, without weakening warnings.
+  Failed `a11y-candidate-007` journal/log remains preserved.
+- Dev product commit: `2ef93e5bc800541858d8b3defc97b380d52fe44b`.
+  Direct publish cherry-pick: `ba61c2929c3494d380fe2aca30ce83989884afe3`.
+  Dev was pushed before the validated publish head.
+- MEDIUM runtime request: manual Narrator timing/uniqueness across preparation,
+  initialization and cleanup is not claimed. Automated UIA proves localized
+  startup-failure content and retry, not audible screen-reader output.
+- LOW informational item: all 18 locale resources were already translated;
+  no resource values/comments needed changing.
+- Current-head Copilot review is in flight. Do not reuse the prior head's
+  convergence or remote outcomes as new-head proof.
 
 ## Local-Only Evidence Inventory
 
@@ -704,7 +794,17 @@ ready-event remote checks and the explicit local clipboard limitation.
 | Enterprise final acceptance | `publish-validation\enterprise-antigravity-review\assertions.json` | Final installed WTA hash, one attempt/creation event, OS-policy reason, zero dialogs/survivors |
 | Earlier sampling-oracle failure | `publish-validation\enterprise-antigravity` | Outer observer Job did not enumerate ACP children; not a passing artifact |
 | Final release reports | `reports\release-{full,incremental}-review-head.md` | C450-C453 checked from final four-case XML; no claim that every aggregate check was rerun |
-| Remote accessibility evidence | `publish-validation\ci-accessibility-review-round-two` | Immutable generated-agent artifact; current job annotation says 15-minute timeout |
+| Pre-ready accessibility evidence | `publish-validation\ci-accessibility-review-round-two` | Immutable artifact for the earlier run `39308994040`; its agent timed out, and ready-event concurrency later superseded its smoke |
+| Remote-head verification | `publish-validation\final-remote-heads.json` | Dev evidence commit `b845d887b6087c424161c0ebeec4108240cb7ccb` and publish `1b096102...` matched their remote refs |
+| Latest unpublished native review | `publish-validation\ci-native-attempt-two` | Actual HIGH diagnostic-suffix finding, MEDIUM manual Narrator request and LOW translation confirmation; failed report publication did not erase the finding |
+| Accessibility RED | `publish-validation\a11y-primary-red` and `reports\release-a11y-red.md` | Old package fails exact localized UIA text; C450 correctly remains failed, not checked |
+| Accessibility candidate | `private-package\a11y-candidate-007b-*`, `publish-validation\a11y-primary-green` | First successful focused build/deployment and four-case GREEN before publication |
+| Final accessibility package | `private-package\a11y-publish-008-*`, `publish-validation\a11y-final-package-identity.json`, `a11y-settings-editor-identity.json` | Exact `ba61c2929` build and four binary identities, including the changed owner DLL |
+| Final accessible E2E | `publish-validation\a11y publish quote's path`, `a11y-final-e2e-report-assertions.json` | Four passes, quoted paths, exact localized primary UIA text, retained selection/retry, fresh inspected screenshots |
+| Final native/Rust tests | `publish-validation\a11y-publish-{native-build,native-tests,full-unit}.log` | Exact-head native 17 passed; Rust 2,901 passed plus two baseline clipboard failures |
+| Final enterprise acceptance | `publish-validation\a11y-enterprise-antigravity-verified` | Exact D47311B1 installed WTA, one real OS-policy failure/start, selectable, no dialogs/survivors |
+| Preserved log-oracle failure | `publish-validation\a11y-enterprise-antigravity\oracle-failure.json` | Initial observer incorrectly selected wta-probe instead of install-acp's wta-cli log; retained as failed, then a fresh bounded run used the correct log |
+| Final accessibility release reports | `reports\release-{full,incremental}-a11y-final.md` | C450-C453 checked from the latest exact-package four-case XML |
 
 ## Completed Investigation Checklist
 
@@ -731,8 +831,10 @@ ready-event remote checks and the explicit local clipboard limitation.
 - [x] Inspect fresh final-head failure/recovery screenshots.
 - [x] Verify real enterprise safe-failure behavior and real WSL containment.
 - [x] Credit C450-C453 in full and incremental release reports.
-- [x] Address every first-round finding; current-head second review has no open issues.
+- [x] Address every first-round finding; second review at `1b096102` has no open issues.
+- [x] Recover, fix and revalidate the unpublished native HIGH finding with real UIA RED/GREEN.
 - [ ] Fully green local Rust suite: blocked by two unchanged-baseline clipboard setup failures.
-- [ ] Green remote gates: fresh ready-event runs are pending/running.
+- [ ] New-head code review and green remote gates; prior performance/report failures are not waived.
 - [ ] Human merge approval.
-- [ ] Push final dev-only handoff/runner update and confirm remote heads.
+- [x] Push dev-only handoff/runner update and confirm remote heads (`b845d887b...`).
+- [ ] Publish the final new-head review/gate disposition.
