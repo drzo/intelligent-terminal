@@ -290,7 +290,10 @@ ownership. An evicted client cannot reclaim it merely by polling.
 
 The client reconciles snapshots every 30 seconds and on reconnect, preserving
 busy, idle, attention, error, cwd, title and deletion changes even when a signal
-was missed. Route changes and cleanup unbind the pane without deleting the
+was missed. Every successful binding also reconciles an idle snapshot, including
+returning from home or opening the session in a new TUI after execution finished
+while detached. A newer working signal still takes precedence over that snapshot.
+Route changes and cleanup unbind the pane without deleting the
 server session or cancelling execution. Detached observers still report real
 deletions, including after server restart. Server unload does not pretend that
 every client exited, and generations fence stale bind/unbind responses.

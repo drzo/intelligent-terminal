@@ -126,7 +126,9 @@ test("V2 shared tabs cannot steal two independent pane bindings or status", asyn
     await tick()
     for (const { dispose } of clients) await dispose.flush()
     for (const [index, id] of ["a", "b"].entries()) {
-      assert.deepEqual(clients[index].client.calls.map((call) => call.payload.session_id), [id])
+      const calls = clients[index].client.calls
+      assert.deepEqual(calls.filter((call) => call.topic === "agent.session.start").map((call) => call.payload.session_id), [id])
+      assert.ok(calls.every((call) => call.payload.session_id === id))
     }
     await sdk.event("session.status", { sessionID: "a", status: { type: "busy" } })
     await sdk.event("question.asked", { sessionID: "b" })

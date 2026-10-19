@@ -221,6 +221,117 @@ describe("OpenCode bundled hook behavior", { skip: process.platform !== "win32" 
     }
   })
 
+  for (const returnMode of ["same TUI", "new TUI"]) {
+    it(`replays idle completion after returning from home in the ${returnMode}`, async () => {
+      const sdk = createContext()
+      const stopServer = await plugin.setup(sdk.context)
+      const session = { id: "root", location: sdk.location }
+      const clients = []
+      function openTui() {
+        const handlers = new Map()
+        let route = { type: "session", sessionID: "root" }
+        const stop = tuiPlugin.setup({
+          location: sdk.location,
+          client: sdk.client,
+          ui: { router: { current: () => route } },
+          data: {
+            session: { get: () => session, status: () => "running" },
+            on: (name, handler) => {
+              handlers.set(name, handler)
+              return () => handlers.delete(name)
+            },
+          },
+        })
+        const client = {
+          stop,
+          view(next) {
+            route = next
+            handlers.get("session.viewed")({ data: next })
+          },
+        }
+        clients.push(client)
+        return client
+      }
+      await sdk.prompt("root")
+      const first = openTui()
+      try {
+        await new Promise(setImmediate)
+        await first.stop.flush()
+        assert.equal(calls.at(-1).topic, "agent.session.start")
+        assert.equal(calls.at(-1).payload.running, true)
+        assert.equal(calls.some((call) => call.topic === "agent.stop"), false)
+        first.view({ type: "home" })
+        await first.stop.flush()
+        assert.equal(calls.at(-1).topic, "agent.session.unbind")
+        const detached = calls.length
+        await sdk.event("session.execution.succeeded", { sessionID: "root" })
+        await new Promise(setImmediate)
+        assert.equal(calls.length, detached)
+        let returned = first
+        if (returnMode === "new TUI") {
+          await first.stop()
+          process.env.WT_SESSION = "00000000-0000-0000-0000-000000000003"
+          returned = openTui()
+        } else {
+          first.view({ type: "session", sessionID: "root" })
+        }
+        await new Promise(setImmediate)
+        await returned.stop.flush()
+        assert.deepEqual(calls.slice(detached).map((call) => call.topic), [
+          "agent.session.start", "agent.stop",
+        ])
+        assert.equal(calls.at(-2).payload.running, false)
+        assert.equal(calls.at(-1).payload.session_id, "root")
+        assert.equal(calls.at(-1).payload.pane_owner, false)
+        assert.equal(calls.some((call) => call.topic === "agent.session.end"), false)
+      } finally {
+        for (const client of clients) await client.stop()
+        await stopServer()
+      }
+    })
+  }
+
+  it("preserves newer work buffered while an idle binding is being reported", async () => {
+    const sdk = createContext()
+    const stopServer = await plugin.setup(sdk.context)
+    const session = { id: "root", location: sdk.location }
+    const entered = deferred()
+    const delivered = deferred()
+    const spawn = globalThis.Bun.spawn
+    globalThis.Bun.spawn = (options) => {
+      const child = spawn(options)
+      if (options.cmd.at(-1) !== "agent.session.start") return child
+      entered.resolve()
+      return { exited: delivered.promise }
+    }
+    const stopTui = tuiPlugin.setup({
+      location: sdk.location,
+      client: sdk.client,
+      ui: { router: { current: () => ({ type: "session", sessionID: "root" }) } },
+      data: {
+        session: { get: () => session, status: () => "idle" },
+        on: () => () => {},
+      },
+    })
+    try {
+      await entered.promise
+      await sdk.prompt("root")
+      await new Promise(setImmediate)
+      delivered.resolve(0)
+      await stopTui.flush()
+      await new Promise(setImmediate)
+      await stopTui.flush()
+      assert.deepEqual(calls.map((call) => call.topic), [
+        "agent.session.start", "agent.stop", "agent.prompt.submit",
+      ])
+      assert.equal(calls.at(-1).payload.session_id, "root")
+    } finally {
+      delivered.resolve(0)
+      await stopTui()
+      await stopServer()
+    }
+  })
+
   for (const nextRoute of ["same session", "home"]) {
     it(`reconciles an interrupted reconnect bind after switching to ${nextRoute}`, async (t) => {
       const errors = []
@@ -297,7 +408,7 @@ describe("OpenCode bundled hook behavior", { skip: process.platform !== "win32" 
           assert.equal(calls.at(-1).topic, "agent.session.end")
         } else {
           assert.equal(calls.filter((call) => call.topic === "agent.session.start").length, 2)
-          assert.equal(calls.at(-1).payload.title, "Updated")
+          assert.equal(calls.findLast((call) => call.topic === "agent.session.start").payload.title, "Updated")
         }
         assert.deepEqual(errors, [])
       } finally {
@@ -517,9 +628,9 @@ describe("OpenCode bundled hook behavior", { skip: process.platform !== "win32" 
           await stopTui.flush()
         }
         assert.deepEqual(calls.map(({ topic }) => topic), [
-          "agent.session.start", "agent.session.end", "agent.session.unbind",
+          "agent.session.start", "agent.stop", "agent.session.end", "agent.session.unbind",
         ])
-        assert.equal(calls[1].payload.pane_owner, false)
+        assert.equal(calls.find((call) => call.topic === "agent.session.end").payload.pane_owner, false)
       } finally {
         await stopTui()
         await stopServer()
@@ -815,6 +926,7 @@ describe("OpenCode bundled hook behavior", { skip: process.platform !== "win32" 
         return [topic, payload.cwd, payload.reason]
       }), [
         ["agent.session.start", directory, undefined],
+        ["agent.stop", undefined, undefined],
         ["agent.session.renamed", undefined, undefined],
         ["agent.cwd.changed", "C:\\moved", undefined],
         ["agent.session.unbind", undefined, undefined],
