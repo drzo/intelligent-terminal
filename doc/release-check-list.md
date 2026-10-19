@@ -146,7 +146,7 @@ Net effect: UT shrinks the manual matrix to "did the wiring and UI connect", not
 
 **Feature definition:** Settings is the post-FRE configuration surface for built-in agents, custom agents, model selection, pane position, autofix, and session management.
 
-- [ ] `C036` `[E2E]` **AI Agents page opens:** Settings opens the AI Agents page without layout glitches.
+- [ ] `C036` `[E2E]` **AI Agents page opens:** Settings opens the AI Agents page without layout glitches. Opening Startup also tolerates packages without a login startup task and hides the unsupported switch.
 - [ ] `C409` `[new]` `[E2E]` **Settings follows UI direction:** Arabic, Hebrew, and the mirrored test locale place navigation on the right and setting controls and Save / Discard on the left; English retains the left-to-right layout. All four language cases must pass, including navigation and both footer actions. _(E2E: `Feature.SettingsUi`.)_
 - [ ] `C037` `[UT~]` `[E2E]` **Built-in agent dropdown works:** Copilot, Claude, Codex, and Gemini entries show correct installed/available state. _(UT: registry/filter logic.)_
 - [ ] `C038` `[UT✓]` `[E2E]` **Agent pane agent save works:** Changing the agent pane provider updates future agent panes. _(UT: `BuiltInAcpAgentRoundtrips` + custom round-trip.)_
