@@ -2,16 +2,17 @@
 
 use super::*;
 use std::time::Duration;
-use tokio::io::{AsyncBufReadExt, BufReader};
+use tokio::io::BufReader;
 use tokio::time::Instant;
 
-use crate::protocol::acp::history_process::{HistoryJob, WslHistoryGroup};
+use crate::protocol::acp::process::AgentProcess;
 
 const WAIT_STEPS: [u64; 5] = [5, 10, 20, 40, 60];
 const HARD_TIMEOUT: Duration = Duration::from_secs(300);
 
 #[derive(Clone)]
 pub(super) struct HistoryTarget {
+    pub startup_registry: Arc<crate::agent_lifecycle::StartupRegistry>,
     pub command: String,
     pub agent_id: String,
     pub source: crate::agent_source::AgentSource,
@@ -166,13 +167,10 @@ impl AdaptiveWait {
 }
 
 pub(super) struct HistoryProcess {
+    startup: Option<crate::agent_lifecycle::StartupLease>,
     conn: Option<conn::ClientLink>,
-    child: Option<tokio::process::Child>,
-    job: Option<HistoryJob>,
-    wsl_group: Option<WslHistoryGroup>,
-    wsl_bootstrap: Option<(String, String)>,
+    child: Option<AgentProcess>,
     incoming: Option<BufReader<tokio::process::ChildStdout>>,
-    receipt: Vec<u8>,
     stderr: AgentStderrLog,
     init_timeout: Duration,
     initialized: bool,
@@ -183,41 +181,56 @@ pub(super) struct HistoryProcess {
 
 impl HistoryProcess {
     async fn spawn(target: &HistoryTarget) -> Result<Self> {
-        crate::antigravity_acp::prepare(&target.command, Some(&target.agent_id), &target.source)
-            .await?;
-        let mut spawned = crate::protocol::acp::spawn::spawn_history_agent_process(
+        let key = crate::agent_lifecycle::agent_key(
+            &target.command,
+            Some(&target.agent_id),
+            &target.source,
+            &target.provider.pool_key(),
+            target.provider.is_model_scoped(),
+        );
+        let mut startup = target.startup_registry.lock(&key).await?;
+        startup.begin()?;
+        let prepared = crate::agent_lifecycle::providers::prepare(
+            &target.command,
+            Some(&target.agent_id),
+            &target.source,
+        )
+        .await
+        .context(crate::agent_lifecycle::StartupPhase::Preparation);
+        match prepared {
+            Ok(prepared) => startup.prepared(prepared),
+            Err(error) => return Err(startup.failed(error)),
+        }
+        let spawned = crate::protocol::acp::spawn::spawn_history_agent_process(
             &target.command,
             &target.agent_id,
             &target.source,
             target.provider.spawn_selection(),
-        )?;
+        )
+        .context(crate::agent_lifecycle::StartupPhase::Spawn);
+        let mut spawned = match spawned {
+            Ok(spawned) => spawned,
+            Err(error) => return Err(startup.failed(error)),
+        };
         let stderr = AgentStderrLog::new(format!("history-{}", target.agent_id));
         if let Some(pipe) = spawned.child.stderr.take() {
             stderr.drain(pipe);
         }
-        let incoming = BufReader::new(
-            spawned
-                .child
-                .stdout
-                .take()
-                .ok_or_else(|| anyhow!("history stdout missing"))?,
-        );
-        let wsl_bootstrap = match (&target.source, spawned.wsl_history_marker) {
-            (crate::agent_source::AgentSource::Wsl { distro }, Some(marker)) => {
-                Some((distro.clone(), marker))
+        let incoming = match spawned.child.take_stdout().await {
+            Ok(incoming) => incoming,
+            Err(error) => {
+                let cleanup = spawned.child.terminate().await
+                    .context(crate::agent_lifecycle::StartupPhase::Cleanup);
+                return Err(startup.failed(cleanup.err().unwrap_or(error)));
             }
-            _ => None,
         };
         Ok(Self {
+            startup: Some(startup),
             conn: None,
             child: Some(spawned.child),
-            job: spawned.history_job,
-            wsl_group: None,
-            wsl_bootstrap,
             incoming: Some(incoming),
-            receipt: Vec::new(),
             stderr,
-            init_timeout: Duration::from_secs(if spawned.is_npx { 60 } else { 15 }),
+            init_timeout: crate::agent_lifecycle::INITIALIZE_TIMEOUT,
             initialized: false,
             io: None,
             #[cfg(test)]
@@ -225,34 +238,7 @@ impl HistoryProcess {
         })
     }
 
-    async fn read_wsl_receipt(&mut self) -> Result<()> {
-        if let Some((distro, marker)) = &self.wsl_bootstrap {
-            let incoming = self
-                .incoming
-                .as_mut()
-                .ok_or_else(|| anyhow!("WSL history bootstrap pipe missing"))?;
-            let count = tokio::time::timeout(
-                Duration::from_secs(15),
-                incoming.read_until(b'\n', &mut self.receipt),
-            )
-            .await
-            .context("WSL history ownership receipt timed out")??;
-            if count != 0 || !self.receipt.is_empty() {
-                self.wsl_group = Some(WslHistoryGroup::parse(
-                    distro,
-                    marker,
-                    std::str::from_utf8(&self.receipt)?,
-                )?);
-            }
-            // EOF before the trusted bootstrap prints its receipt means no
-            // agent was launched; malformed/missing live receipts fail closed.
-            self.wsl_bootstrap = None;
-        }
-        Ok(())
-    }
-
     async fn initialize(&mut self, target: &HistoryTarget) -> Result<()> {
-        self.read_wsl_receipt().await?;
         let result = async {
             let child = self.child.as_mut().ok_or_else(|| anyhow!("history child missing"))?;
             let outgoing = child.stdin.take().ok_or_else(|| anyhow!("history stdin missing"))?;
@@ -279,6 +265,10 @@ impl HistoryProcess {
                 acp::schema::v1::InitializeRequest::new(acp::schema::ProtocolVersion::V1)
                     .client_info(acp::schema::v1::Implementation::new("wta-history", env!("CARGO_PKG_VERSION"))),
             )).await.context("history ACP initialize timed out")??;
+            if let Some(startup) = &mut self.startup {
+                startup.succeeded()?;
+            }
+            self.startup = None;
             if response.agent_capabilities.session_capabilities.list.is_none() {
                 return Err(anyhow!("history ACP server does not support session/list"));
             }
@@ -292,7 +282,14 @@ impl HistoryProcess {
             for line in self.stderr.mark_failed() {
                 tracing::warn!(target: "master_history", agent_id = %target.agent_id, "{line}");
             }
-            return Err(error);
+            let startup = self.startup.take();
+            let cleanup = self.stop().await
+                .context(crate::agent_lifecycle::StartupPhase::Cleanup);
+            let error = cleanup.err().unwrap_or(error);
+            return Err(match startup {
+                Some(startup) => startup.failed(error),
+                None => error,
+            });
         }
         Ok(())
     }
@@ -308,18 +305,8 @@ impl HistoryProcess {
         if self.reject_stop {
             return Err(anyhow!("fixture cannot confirm process exit"));
         }
-        self.read_wsl_receipt().await?;
-        if let Some(group) = &self.wsl_group {
-            group.terminate().await?;
-        }
-        if let Some(job) = &self.job {
-            job.terminate().await?;
-        }
         if let Some(child) = &mut self.child {
-            tokio::time::timeout(Duration::from_secs(5), child.wait())
-                .await
-                .context("history launcher exit timed out")?
-                .context("wait for history launcher")?;
+            child.terminate().await?;
         }
         if let Some(conn) = &self.conn {
             conn.shutdown();
@@ -328,6 +315,7 @@ impl HistoryProcess {
             io.abort();
             let _ = io.await;
         }
+        self.startup = None;
         Ok(())
     }
 
@@ -345,13 +333,10 @@ impl HistoryProcess {
     #[cfg(test)]
     pub(super) fn mock(conn: conn::ClientLink) -> Self {
         Self {
+            startup: None,
             conn: Some(conn),
             child: None,
-            job: None,
-            wsl_group: None,
-            wsl_bootstrap: None,
             incoming: None,
-            receipt: Vec::new(),
             stderr: AgentStderrLog::new("history-fixture"),
             init_timeout: Duration::from_secs(15),
             initialized: true,
@@ -384,6 +369,7 @@ pub(super) struct HistoryQuery {
     pending: Option<PendingList>,
     recycling: bool,
     wait: AdaptiveWait,
+    startup_stopped: bool,
 }
 
 impl HistoryQuery {
@@ -407,6 +393,10 @@ impl HistoryQuery {
 
     pub fn in_flight(&self) -> bool {
         self.pending.is_some()
+    }
+
+    pub fn retry_startup(&mut self) {
+        self.startup_stopped = false;
     }
 
     pub async fn stop(&mut self) -> Result<()> {
@@ -436,6 +426,11 @@ impl HistoryQuery {
         match self.poll_inner(target, cancelled).await {
             Ok(result) => result,
             Err(error) => {
+                if error.is::<crate::agent_lifecycle::StartupLimitReached>()
+                    || error.is::<crate::agent_lifecycle::StartupCleanupUnconfirmed>()
+                {
+                    self.startup_stopped = true;
+                }
                 self.wait.fast_successes = 0;
                 tracing::warn!(target: "master_history",
                     pid = ?self.process.as_ref().and_then(|process| process.child.as_ref()).and_then(|child| child.id()),
@@ -451,6 +446,9 @@ impl HistoryQuery {
         cancelled: &tokio_util::sync::CancellationToken,
     ) -> Result<std::result::Result<acp::schema::v1::ListSessionsResponse, HistoryRefreshFailure>>
     {
+        if self.startup_stopped {
+            return Ok(Err(HistoryRefreshFailure::Other));
+        }
         if self.recycling {
             self.stop().await?;
         }

@@ -39,7 +39,7 @@ pub(crate) type ListOutcome = std::result::Result<Vec<acp::schema::v1::SessionIn
 /// Runs ACP I/O and the stderr drain via [`tokio::task::spawn_local`], so call
 /// this inside a tokio `LocalSet`.
 pub(crate) async fn fetch_session_list(
-    child: &mut tokio::process::Child,
+    child: &mut super::process::AgentProcess,
     client_label: &str,
     init_timeout: Duration,
     list_timeout: Duration,
@@ -49,11 +49,7 @@ pub(crate) async fn fetch_session_list(
         .take()
         .ok_or_else(|| anyhow!("agent stdin not piped"))?
         .compat_write();
-    let incoming = child
-        .stdout
-        .take()
-        .ok_or_else(|| anyhow!("agent stdout not piped"))?
-        .compat();
+    let incoming = child.take_stdout().await?.compat();
     let stderr_log = AgentStderrLog::new(client_label.to_string());
     let stderr_task = child.stderr.take().map(|stderr| stderr_log.drain(stderr));
 
@@ -78,7 +74,7 @@ pub(crate) async fn fetch_session_list(
     if matches!(init_result, Ok(Ok(_))) {
         stderr_log.mark_initialized();
     } else {
-        stderr_log.finish_failed_startup(child, stderr_task).await;
+        stderr_log.finish_failed_startup(child, stderr_task).await?;
     }
     let init_resp = init_result
         .map_err(|_| {

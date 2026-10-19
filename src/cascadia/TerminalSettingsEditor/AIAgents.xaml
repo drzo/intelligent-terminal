@@ -268,14 +268,16 @@
                            TextWrapping="Wrap" />
             </Grid>
             <muxc:InfoBar IsClosable="False"
+                          AutomationProperties.AutomationId="AcpSetupFailure"
                           IsOpen="{x:Bind ViewModel.AcpPreparationFailed, Mode=OneWay}"
                           Severity="Error"
                           Visibility="{x:Bind ViewModel.AcpPreparationFailed, Mode=OneWay}">
                 <muxc:InfoBar.Content>
                     <StackPanel Spacing="8">
-                        <TextBlock x:Uid="AIAgents_AcpPreparationFailed"
+                        <TextBlock Text="{x:Bind ViewModel.AcpPreparationErrorText, Mode=OneWay}"
                                    TextWrapping="Wrap" />
                         <Button x:Uid="AIAgents_RetryAcpPreparation"
+                                AutomationProperties.AutomationId="RetryAcpSetup"
                                 Click="{x:Bind ViewModel.RetryAcpPreparation}" />
                     </StackPanel>
                 </muxc:InfoBar.Content>

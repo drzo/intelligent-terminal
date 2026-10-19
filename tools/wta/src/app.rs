@@ -1343,6 +1343,7 @@ pub struct App {
     next_agent_install_request_id: u64,
     pending_agent_install: Option<PendingAgentInstall>,
     agent_binding_generation: u64,
+    pending_startup_retry: Option<u64>,
     pub(crate) auto_install_selected_agent: bool,
     /// Set after login completes — consumed by main loop to spawn ACP client.
     pub pending_acp_start: bool,
@@ -1761,6 +1762,7 @@ impl App {
             next_agent_install_request_id: 0,
             pending_agent_install: None,
             agent_binding_generation: 0,
+            pending_startup_retry: None,
             auto_install_selected_agent: false,
             needs_post_login_authenticate: false,
             acp_auth_methods: Vec::new(),
@@ -1969,6 +1971,8 @@ impl App {
             return;
         }
         self.pending_acp_start = false;
+        let retry_startup = self.pending_startup_retry.take()
+            == Some(self.agent_binding_generation);
         let post_login_auth = self.needs_post_login_authenticate;
         self.needs_post_login_authenticate = false;
         let requested_auth = self
@@ -2117,6 +2121,7 @@ impl App {
                             shell_mgr,
                             wt_connected,
                             post_login_auth, // only true on genuine LoginComplete reconnects
+                            retry_startup,
                             requested_auth,
                             proposal_channels,
                         )
@@ -5142,6 +5147,7 @@ impl App {
                     if !agent_id.is_empty() {
                         if agent_id.starts_with("custom:") {
                             self.reconnect_confirmed_available_agent(&agent_id);
+                            self.pending_startup_retry = Some(self.agent_binding_generation);
                             return;
                         }
                         if matches!(
@@ -5159,6 +5165,7 @@ impl App {
                             if self.deferred_acp.is_some() {
                                 self.pending_acp_start = true;
                             }
+                            self.pending_startup_retry = Some(self.agent_binding_generation);
                             return;
                         }
                         let status = crate::agent_check::recheck_agent(&agent_id);
@@ -5167,6 +5174,7 @@ impl App {
                             // Stay in Setup mode with "Connecting..." to avoid a flash
                             // of red error text in Chat if ACP fails immediately.
                             self.reconnect_confirmed_available_agent(&agent_id);
+                            self.pending_startup_retry = Some(self.agent_binding_generation);
                             // Don't clear setup yet — AgentConnected will transition to Chat,
                             // AgentError will update the Setup screen.
                         } else if let Some(setup) = self.setup.as_mut() {
