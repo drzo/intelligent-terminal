@@ -105,7 +105,6 @@ enum ProviderBinding {
 
 impl ProviderBinding {
     fn admission_binding_key(&self) -> String {
-        use sha2::{Digest, Sha256};
         let inherited;
         let (selection, config) = match self {
             Self::Native => return "native".to_string(),
@@ -113,21 +112,13 @@ impl ProviderBinding {
                 inherited = crate::custom_model_provider::Config::shared_from_env();
                 ("legacy", &inherited)
             }
-            Self::Custom { selection_id, config, .. } => (selection_id.as_str(), config),
+            Self::Custom {
+                selection_id,
+                config,
+                ..
+            } => (selection_id.as_str(), config),
         };
-        let mut digest = Sha256::new();
-        for field in [
-            selection,
-            config.base_url.as_str(),
-            config.model.as_str(),
-            config.credential_id.as_deref().unwrap_or(""),
-            config.credential_resource,
-        ] {
-            digest.update((field.len() as u64).to_le_bytes());
-            digest.update(field.as_bytes());
-        }
-        digest.update([u8::from(config.api_key_required), u8::from(config.credential_id.is_some())]);
-        format!("binding:{:x}", digest.finalize())
+        crate::agent_lifecycle::provider_binding_key(selection, config)
     }
 
     fn pool_key(&self) -> String {

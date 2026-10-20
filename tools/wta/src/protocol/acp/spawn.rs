@@ -272,10 +272,6 @@ pub(crate) struct AgentSpawn {
     pub raw_program: String,
     /// Resolved program path (post `resolve_bare_agent_name`).
     pub resolved_program: String,
-    /// True when the resolved program is an `npx` launcher. Callers
-    /// stretch their initialize timeout when this is set — first npx
-    /// run downloads the adapter package.
-    pub is_npx: bool,
     /// For npx launches, the first `@`-prefixed arg (the adapter
     /// package id, e.g. `@zed-industries/claude-code-acp`).
     pub adapter_package: Option<String>,
@@ -298,21 +294,6 @@ impl AgentSpawn {
 /// matter). `agent_id` is authoritative when supplied by the master, so a
 /// custom command whose executable happens to match a built-in agent cannot
 /// inherit that built-in's BYOK configuration.
-pub(crate) fn spawn_agent_process(
-    agent_cmd: &str,
-    cwd: Option<&Path>,
-    agent_id: Option<&str>,
-    environment_policy: ChildEnvironmentPolicy,
-) -> Result<AgentSpawn> {
-    spawn_agent_process_with_provider(
-        agent_cmd,
-        cwd,
-        agent_id,
-        environment_policy,
-        SharedProviderSelection::Inherit,
-    )
-}
-
 pub(crate) fn spawn_agent_process_with_provider(
     agent_cmd: &str,
     cwd: Option<&Path>,
@@ -475,7 +456,6 @@ fn spawn_host_agent_process(
         child,
         raw_program: raw_program.to_string(),
         resolved_program,
-        is_npx,
         adapter_package,
     })
 }
@@ -595,23 +575,6 @@ fn should_omit_optional_dependencies(agent_cmd: &str, agent_id: Option<&str>) ->
 }
 
 /// Spawn an ACP agent in the selected per-tab execution source.
-pub(crate) fn spawn_agent_process_for_source(
-    agent_cmd: &str,
-    cwd: Option<&Path>,
-    agent_id: Option<&str>,
-    source: &crate::agent_source::AgentSource,
-    environment_policy: ChildEnvironmentPolicy,
-) -> Result<AgentSpawn> {
-    spawn_agent_process_for_source_with_provider(
-        agent_cmd,
-        cwd,
-        agent_id,
-        source,
-        environment_policy,
-        SharedProviderSelection::Inherit,
-    )
-}
-
 pub(crate) fn spawn_agent_process_for_source_with_provider(
     agent_cmd: &str,
     cwd: Option<&Path>,
@@ -702,7 +665,6 @@ fn spawn_wsl_agent_process(
         child,
         raw_program,
         resolved_program: format!("wsl.exe -d {distro}"),
-        is_npx,
         adapter_package,
     })
 }
@@ -852,11 +814,12 @@ mod tests {
         };
 
         let command = r#"pwsh.exe -NoLogo -NoProfile -NonInteractive -Command $null=[Console]::ReadLine();$child=Start-Process pwsh.exe -ArgumentList '-NoProfile','-NonInteractive','-Command','Start-Sleep -Seconds 120' -WindowStyle Hidden -PassThru;[Console]::Error.WriteLine($child.Id);Start-Sleep -Seconds 120"#;
-        let mut spawned = spawn_agent_process(
+        let mut spawned = spawn_agent_process_with_provider(
             command,
             None,
             Some("custom:startup-cleanup-regression"),
             ChildEnvironmentPolicy::CleanCloudDiscovery,
+            SharedProviderSelection::Inherit,
         )
         .expect("spawn the real ACP launcher fixture");
 

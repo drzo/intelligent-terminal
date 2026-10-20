@@ -202,8 +202,18 @@ pub(crate) async fn run(command: Command, json_mode: bool) -> Result<()> {
             crate::logging::shutdown_flush();
             std::process::exit(code);
         }
-        Command::ProbeSessions { agent } => probes::run_sessions(&agent).await,
-        Command::ProbeHostSessions { agent } => probes::run_host_sessions(&agent).await,
+        Command::ProbeSessions {
+            agent,
+            retry_startup,
+        } => {
+            probes::run_sessions(&agent, retry_startup).await
+        }
+        Command::ProbeHostSessions {
+            agent,
+            retry_startup,
+        } => {
+            probes::run_host_sessions(&agent, retry_startup).await
+        }
     }
 }
 

@@ -19,15 +19,13 @@
 //! On error: non-zero exit, message on stderr, no JSON on stdout.
 
 use agent_client_protocol as acp;
-use anyhow::{anyhow, Context, Result};
+use anyhow::{Context, Result};
 use serde::Serialize;
 use std::future::Future;
 use std::time::Duration;
-use tokio_util::compat::{TokioAsyncReadCompatExt, TokioAsyncWriteCompatExt};
 
 use crate::app_contracts::AcpModelInfo;
-use crate::protocol::acp::conn;
-use crate::protocol::acp::spawn::{spawn_agent_process, AgentStderrLog, ChildEnvironmentPolicy};
+use crate::protocol::acp::spawn::ChildEnvironmentPolicy;
 
 const MODEL_PROBE_ENVIRONMENT_POLICY: ChildEnvironmentPolicy =
     ChildEnvironmentPolicy::CleanCloudDiscovery;
@@ -230,131 +228,38 @@ pub struct SessionProbeResult {
 }
 
 /// Spawn `agent_cmd`, run ACP `initialize`, then call `list_sessions`
-/// and capture the outcome. Mirrors [`probe_models`]'s spawn/initialize
-/// preamble (kept inline rather than shared so the probe stays a
-/// self-contained diagnostic).
-pub async fn probe_sessions(agent_cmd: &str) -> Result<SessionProbeResult> {
-    crate::agent_lifecycle::providers::prepare(
-        agent_cmd,
-        None,
-        &crate::agent_source::AgentSource::Host,
-    )
-    .await?;
-    let mut spawned = spawn_agent_process(
-        agent_cmd,
-        None,
-        None,
-        ChildEnvironmentPolicy::ApplySharedProvider,
-    )?;
-    tracing::debug!(
-        "session probe spawned: program={} is_npx={} pid={:?}",
-        spawned.resolved_program,
-        spawned.is_npx,
-        spawned.child.id()
-    );
-
-    let result = async {
-        let outgoing = spawned
-            .child
-            .stdin
-            .take()
-            .expect("stdin piped")
-            .compat_write();
-        let incoming = spawned.child.take_stdout().await?.compat();
-        let stderr_log = AgentStderrLog::new(spawned.label().to_string());
-        let stderr_task = spawned
-            .child
-            .stderr
-            .take()
-            .map(|stderr| stderr_log.drain(stderr));
-
-        let (conn, handle_io) = conn::spawn_client(
-            acp::Client.builder().name("wta-probe-sessions"),
-            conn::byte_streams(outgoing, incoming),
-        );
-        tokio::task::spawn_local(async move {
-            if let Err(e) = handle_io.await {
-                tracing::warn!("session probe handle_io failed: {:#}", e);
-            }
-        });
-
-        let init_timeout_secs: u64 = if spawned.is_npx { 25 } else { 10 };
-        let init_req = acp::schema::v1::InitializeRequest::new(acp::schema::ProtocolVersion::V1)
-            .client_capabilities(acp::schema::v1::ClientCapabilities::new().terminal(true))
-            .client_info(
-                acp::schema::v1::Implementation::new(
-                    "wta-probe-sessions",
-                    env!("CARGO_PKG_VERSION"),
-                )
-                .title("WTA Session Probe"),
-            );
-        let init_result = tokio::time::timeout(
-            Duration::from_secs(init_timeout_secs),
-            conn.initialize(init_req),
-        )
-        .await;
-        if matches!(init_result, Ok(Ok(_))) {
-            stderr_log.mark_initialized();
-        } else {
-            stderr_log
-                .finish_failed_startup(&mut spawned.child, stderr_task)
-                .await?;
-        }
-        let init_resp = init_result
-            .map_err(|_| {
-                anyhow!(
-                    "ACP initialize timed out after {}s during session probe (agent={})",
-                    init_timeout_secs,
-                    spawned.label()
-                )
-            })?
-            .map_err(|e| anyhow!("initialize failed: {}", e))?;
-
-        let initialize_dump = format!("{init_resp:#?}");
-
-        let list_result = tokio::time::timeout(
-            Duration::from_secs(10),
-            conn.list_sessions(acp::schema::v1::ListSessionsRequest::new()),
-        )
-        .await;
-
-        let (list_sessions_ok, list_sessions_error, sessions) = match list_result {
-            Err(_) => (
-                false,
-                Some("list_sessions timed out after 10s".to_string()),
-                Vec::new(),
-            ),
-            Ok(Err(e)) => (false, Some(format!("{e}")), Vec::new()),
-            Ok(Ok(resp)) => {
-                let sessions = resp
-                    .sessions
-                    .iter()
-                    .map(|s| ProbedSession {
-                        session_id: s.session_id.to_string(),
-                        cwd: format!("{:?}", s.cwd),
-                        title: s.title.clone(),
-                        updated_at: s.updated_at.clone(),
-                    })
-                    .collect();
-                (true, None, sessions)
-            }
-        };
-
-        Ok(SessionProbeResult {
-            initialize_dump,
-            list_sessions_ok,
-            list_sessions_error,
-            sessions,
-        })
-    }
-    .await;
-    spawned.child.terminate().await?;
-    result
+/// and capture the outcome through the shared startup/cleanup lifecycle.
+pub async fn probe_sessions(agent_cmd: &str, retry_startup: bool) -> Result<SessionProbeResult> {
+    let (initialize, listed) =
+        super::session_list::fetch_session_list(agent_cmd, retry_startup).await?;
+    let (list_sessions_ok, list_sessions_error, sessions) = match listed {
+        Ok(sessions) => (
+            true,
+            None,
+            sessions
+                .into_iter()
+                .map(|session| ProbedSession {
+                    session_id: session.session_id.to_string(),
+                    cwd: format!("{:?}", session.cwd),
+                    title: session.title,
+                    updated_at: session.updated_at,
+                })
+                .collect(),
+        ),
+        Err(error) => (false, Some(error), Vec::new()),
+    };
+    Ok(SessionProbeResult {
+        initialize_dump: format!("{initialize:#?}"),
+        list_sessions_ok,
+        list_sessions_error,
+        sessions,
+    })
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use anyhow::anyhow;
     use std::cell::Cell;
     use std::rc::Rc;
 
