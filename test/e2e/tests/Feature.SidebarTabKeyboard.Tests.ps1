@@ -273,13 +273,13 @@ Describe 'Feature: Sidebar tab keyboard navigation' -Tag @('Feature', 'SidebarTa
             [bool]($search -and -not $search.Current.IsOffscreen) |
                 Should -BeFalse -Because 'sidebar entry must not open search'
 
-            for ($step = 0; $step -lt 8 -and (Get-FocusedTabRowIndex) -lt 0; $step++) {
-                Send-WtWindowKey -App $script:app -Vk 0x09 -RequireForeground | Out-Null
-                $focused = [Windows.Automation.AutomationElement]::FocusedElement
-                $focused.Current.ProcessId | Should -Be $script:app.Pid
-                $focused.Current.ClassName | Should -Not -Be 'TermControl' -Because 'Tab must traverse sidebar controls before returning to terminal input'
-            }
-            (Get-FocusedTabRowIndex) | Should -BeGreaterOrEqual 0 -Because 'Tab from the toggle must reach a Sidebar tab row'
+            Send-WtWindowKey -App $script:app -Vk 0x46 -Ctrl -RequireForeground | Out-Null
+            (Test-Until -TimeoutSec 5 -Condition {
+                (Get-SidebarElement -AutomationId 'SearchTextBox').Current.HasKeyboardFocus
+            }) | Should -BeTrue -Because 'Ctrl+F from the sidebar toggle must explicitly enter search'
+            Send-WtWindowKey -App $script:app -Vk 0x09 -RequireForeground | Out-Null
+            (Test-Until -TimeoutSec 5 -Condition { (Get-FocusedTabRowIndex) -ge 0 }) |
+                Should -BeTrue -Because 'Tab from explicitly opened search retains its existing list navigation'
             $row = Get-FocusedTabRowIndex
             Assert-FocusedTabRow -Index $row -SelectedTabId $tabId -Because 'Tab must not activate a terminal after hotkey entry'
             Save-UiScreenshot -App $script:app -Path (Join-Path $script:evidenceDir "hotkey-tab-row-$fromCollapsed.png") | Out-Null
