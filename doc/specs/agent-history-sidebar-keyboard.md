@@ -9,6 +9,13 @@ introduction remain unchanged.
 This is not an acceptance report: build-specific results and remaining validation
 belong in the release checklist and validation evidence.
 
+The October 20, 2026 decisions in
+[Sidebar and Tab Search Shortcuts](sidebar-hotkey.md) supersede the
+Ctrl+Shift+S search-entry requirements below: sidebar entry focuses its toggle
+without activating search, and Ctrl+F is the separate application search
+shortcut. That decision record distinguishes confirmed behavior from unresolved
+boundaries; it does not claim implementation or acceptance.
+
 The scenarios below cover the left sidebar in the **vertical** tab layout. The
 sidebar and the independent **Agent Pane** are different surfaces. The sidebar
 is always **Tabs**. Its **Agents only** and **Recent agent sessions** options are
