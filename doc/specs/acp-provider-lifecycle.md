@@ -129,6 +129,9 @@ The provider's initialize deadline is separate from the helper's overall startup
 deadline, which also includes bounded admission, preparation and cleanup waits.
 Receipt acquisition and post-initialize retirement keep process ownership and
 the admission lease until cleanup is confirmed or quarantined.
+Waiting for a healthy process to exit does not hold startup admission. Once
+exit or stop is observed, its reaper holds the shared target lease through
+termination and cleanup-failure persistence before retiring the pool entry.
 
 Windows ACP children inherit critical-error reporting instead of a native loader
 dialog. This changes error presentation only: Application Control enforcement,

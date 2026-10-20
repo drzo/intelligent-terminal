@@ -208,12 +208,16 @@ impl AgentProcess {
         result.context(crate::agent_lifecycle::StartupPhase::Cleanup)
     }
 
-    pub(crate) async fn wait(&mut self) -> Result<ExitStatus> {
+    pub(crate) async fn wait_for_exit_or_stop(&mut self) -> Result<Option<ExitStatus>> {
         let stop = self.stop_requested.clone();
-        let status = tokio::select! {
-            status = self.child.wait() => Some(status.context("wait for ACP launcher")?),
-            _ = stop.cancelled() => None,
-        };
+        tokio::select! {
+            status = self.child.wait() => status.context("wait for ACP launcher").map(Some),
+            _ = stop.cancelled() => Ok(None),
+        }
+    }
+
+    pub(crate) async fn wait(&mut self) -> Result<ExitStatus> {
+        let status = self.wait_for_exit_or_stop().await?;
         self.terminate().await?;
         match status {
             Some(status) => Ok(status),
