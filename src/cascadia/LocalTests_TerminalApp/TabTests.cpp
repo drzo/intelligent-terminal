@@ -5344,7 +5344,8 @@ namespace TerminalAppLocalTests
                 "guid": "{6239a42c-1111-49a3-80bd-e8fdd045185c}",
                 "commandline": "cmd.exe"
             }]
-        })", {} };
+        })",
+                                         {} };
         winrt::com_ptr<winrt::TerminalApp::implementation::TerminalPage> page;
         _initializeTerminalPage(page, settings);
         TestOnUIThread([&]() {
