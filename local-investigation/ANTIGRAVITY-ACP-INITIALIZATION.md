@@ -38,7 +38,7 @@
   `ba61c2929c3494d380fe2aca30ce83989884afe3` and
   `7803dd855d15c52c46819288f28f8f2077779019` and
   `bde1fc453bb5e98d0f3b9555d7bef3362dae2539`.
-- Current refactor publish head: `a78568f42571fd7deb43c5425d1740f88df7fdff`.
+- Current local refactor publish head: `1f4e4d79e46dabe6cb01058a0ac47dafbfe5c524`.
 - Refactor PR: `microsoft/intelligent-terminal#1180`.
 - Current implementation base: `d2fdbd75fed3d881b069c642a6c200734dbe09a7`.
   A final fetch confirmed that this is still `origin/main` and an ancestor of
@@ -46,6 +46,45 @@
 - Original dirty worktree: `C:\ado\intelligent-terminal`, left untouched.
 
 ## Current Stage
+
+### Factual Settings errors and selectable native text
+
+The user rejected generic retry advice in Settings failure messages and asked
+for a factual failure plus native details that can be selected/copied. Dev
+`a060bfa34` / publish `1f4e4d79e` remove retry/network-remediation prose from
+installation/startup summaries across all 18 locales. The selected agent and
+explicit retry button remain available; no retry limit or cleanup logic changed.
+Native details now appear immediately in an enabled, read-only wrapping TextBox,
+not a collapsed Expander.
+
+The deployed 0.8.0.21 baseline failed the new exact factual-summary assertion
+(RED). The final 0.8.0.22 package at `factual-errors-publish-012` passes all four
+ItE2E lifecycle cases. The focused case proves read-only UIA text, partial
+selection, real guarded Ctrl+C, and Ctrl+V into a separate editable Settings
+search field. The prior clipboard data object is restored in `finally`, and
+current user settings/state/runtime files are preserved. Physical mouse drag
+automation is explicitly blocked by the existing harness and was not bypassed;
+the product uses standard TextBox mouse-selection behavior, not a custom input
+implementation.
+
+All 90 scoped localization checks pass after independent language review.
+The zh-TW installation summary now uses the established modern 智能體 term.
+Arabic keeps the existing Settings term; its pre-existing cross-component WTA
+variation was noted, not silently expanded into unrelated translation changes.
+Original encoding and bytes outside the three changed entries are preserved.
+
+Both normal and private native builds pass with baseline PRI warnings. Rust was
+not rebuilt: its source tree and explicit-target executable remain identical to
+the previously validated `a78568f42` implementation. All four installed binaries
+match the 0.8.0.22 MSIX:
+`6BED821B1EF39A3823548860A895C2B068CD810487904B92CA29F980DCB75455`.
+Evidence is under `Generated Files\acp-settings-error-copy`.
+
+Publication/review of this follow-up remains. The user also explicitly requested
+critical check-result analysis after comments are handled, with a short,
+plain-language DEV-only explanation of experimental check failures or
+inapplicable assumptions. That is tracked separately; no failing assessment
+will be declared safe merely because it is optional or experimental.
 
 ### Completed native-details implementation and review convergence
 
