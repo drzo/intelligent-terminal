@@ -140,6 +140,10 @@ throughout, so no duplicate is ever produced.
 Hook-owned sessions do not supplement hooks with transcript permission events.
 Copilot's `PostToolUse` restores Working after a successful tool return;
 `Stop` owns Idle, and late tool returns do not reactivate an Idle turn.
+While Waiting, a tool return whose source timestamp predates the newest
+waiting notification is ignored, even if its hook arrives later. Numeric Unix
+milliseconds and RFC 3339 timestamps share the same comparison; missing or
+invalid timestamps retain the existing behavior.
 This intentionally uses the latest session-level hook,
 not per-request approval correlation: a tool can remain Waiting while it runs,
 and another parallel tool's return may replace an outstanding wait. The original

@@ -325,6 +325,8 @@ pub struct AgentSession {
     pub last_error: Option<String>,
     pub current_tool: Option<String>,
     pub attention_reason: Option<String>,
+    /// Newest waiting hook's source time, not its COM delivery time.
+    pub attention_timestamp_ms: Option<u64>,
     pub log_path: Option<PathBuf>,
     /// Provenance for this session — populated for historical rows from
     /// the agent-pane origin index. See [`SessionOrigin`].
@@ -396,10 +398,12 @@ pub enum SessionEvent {
     /// A Copilot tool succeeded; the agent may continue until its Stop hook.
     ToolReturned {
         key: AgentKey,
+        timestamp_ms: Option<u64>,
     },
     Notification {
         key: AgentKey,
         message: String,
+        timestamp_ms: Option<u64>,
     },
     SessionStopped {
         key: AgentKey,
@@ -644,6 +648,7 @@ impl AgentSessionRegistry {
                                     prev.pane_session_id = None;
                                     prev.current_tool = None;
                                     prev.attention_reason = None;
+                                    prev.attention_timestamp_ms = None;
                                     prev.last_activity_at = now;
                                     tracing::info!(
                                         target: "agent_session_registry",
@@ -677,6 +682,7 @@ impl AgentSessionRegistry {
                         last_error: None,
                         current_tool: None,
                         attention_reason: None,
+                        attention_timestamp_ms: None,
                         log_path: None,
                         origin: SessionOrigin::default(),
                         location: SessionLocation::Host,
@@ -743,6 +749,7 @@ impl AgentSessionRegistry {
                     entry.status = AgentStatus::Idle;
                     entry.last_error = None;
                     entry.attention_reason = None;
+                    entry.attention_timestamp_ms = None;
                     entry.current_tool = None;
                 }
                 entry.last_activity_at = now;
@@ -797,16 +804,25 @@ impl AgentSessionRegistry {
                 }
             }
 
-            SessionEvent::ToolReturned { key } => {
+            SessionEvent::ToolReturned { key, timestamp_ms } => {
                 if let Some(entry) = self.sessions.get_mut(&key) {
                     if entry.cli_source != CliSource::Copilot
                         || !matches!(entry.status, AgentStatus::Working | AgentStatus::Attention)
                     {
                         return;
                     }
+                    if entry.status == AgentStatus::Attention
+                        && timestamp_ms
+                            .zip(entry.attention_timestamp_ms)
+                            .is_some_and(|(returned, attention)| returned < attention)
+                    {
+                        tracing::debug!(target: "agent_session_registry", key, timestamp_ms, attention_timestamp_ms = entry.attention_timestamp_ms, "ignored tool return predating waiting notification");
+                        return;
+                    }
                     entry.status = AgentStatus::Working;
                     entry.current_tool = None;
                     entry.attention_reason = None;
+                    entry.attention_timestamp_ms = None;
                     entry.last_activity_at = now;
                     self.dirty = true;
                 }
@@ -821,6 +837,7 @@ impl AgentSessionRegistry {
                     if demotable {
                         entry.status = AgentStatus::Idle;
                         entry.attention_reason = None;
+                        entry.attention_timestamp_ms = None;
                     }
                     entry.current_tool = None;
                     entry.last_activity_at = now;
@@ -828,8 +845,17 @@ impl AgentSessionRegistry {
                 }
             }
 
-            SessionEvent::Notification { key, message } => {
+            SessionEvent::Notification {
+                key,
+                message,
+                timestamp_ms,
+            } => {
                 if let Some(entry) = self.sessions.get_mut(&key) {
+                    entry.attention_timestamp_ms = if entry.status == AgentStatus::Attention {
+                        entry.attention_timestamp_ms.max(timestamp_ms)
+                    } else {
+                        timestamp_ms
+                    };
                     entry.status = AgentStatus::Attention;
                     entry.attention_reason = Some(message);
                     entry.last_activity_at = now;
@@ -930,6 +956,7 @@ impl AgentSessionRegistry {
                     }
                     entry.current_tool = None;
                     entry.attention_reason = None;
+                    entry.attention_timestamp_ms = None;
                     entry.last_activity_at = now;
                     self.dirty = true;
                 }
@@ -942,6 +969,7 @@ impl AgentSessionRegistry {
                         entry.pane_session_id = None;
                         entry.current_tool = None;
                         entry.attention_reason = None;
+                        entry.attention_timestamp_ms = None;
                         entry.last_activity_at = now;
                         self.dirty = true;
                     }
@@ -1014,6 +1042,7 @@ impl AgentSessionRegistry {
                                 prev.pane_session_id = None;
                                 prev.current_tool = None;
                                 prev.attention_reason = None;
+                                prev.attention_timestamp_ms = None;
                                 prev.last_activity_at = now;
                             }
                         }
@@ -1280,6 +1309,7 @@ impl AgentSessionRegistry {
                         entry.pane_session_id = None;
                         entry.current_tool = None;
                         entry.attention_reason = None;
+                        entry.attention_timestamp_ms = None;
                         entry.last_activity_at = now;
                         self.dirty = true;
                         tracing::info!(
@@ -1338,6 +1368,7 @@ impl AgentSessionRegistry {
         entry.status = AgentStatus::Ended;
         entry.current_tool = None;
         entry.attention_reason = None;
+        entry.attention_timestamp_ms = None;
         entry.last_activity_at = now;
         self.dirty = true;
         if let Some(pane) = pane_to_clear {
@@ -1452,6 +1483,7 @@ impl AgentSessionRegistry {
                     entry.last_activity_at = now;
                     entry.current_tool = None;
                     entry.attention_reason = None;
+                    entry.attention_timestamp_ms = None;
                     entry.last_error = None;
                     if let Some(pane) = pane_opt {
                         let pane_lc = pane_key(pane);
@@ -1576,6 +1608,7 @@ impl AgentSessionRegistry {
         self.apply(SessionEvent::Notification {
             key: "demo-claude-attention".to_string(),
             message: "Allow tool: write_file ./src/lib.rs?".to_string(),
+            timestamp_ms: None,
         });
 
         // 4. Idle — gemini waiting for next prompt
@@ -1635,6 +1668,7 @@ impl AgentSessionRegistry {
                 last_error: None,
                 current_tool: None,
                 attention_reason: None,
+                attention_timestamp_ms: None,
                 log_path: Some(PathBuf::from("~/.gemini/logs/2026-05-03-1530.log")),
                 origin: SessionOrigin::default(),
                 location: SessionLocation::Host,
@@ -1820,6 +1854,7 @@ mod tests {
         reg.apply(SessionEvent::Notification {
             key: k("s"),
             message: "approve: rm -rf foo".into(),
+            timestamp_ms: None,
         });
         assert_eq!(
             reg.sessions.get("s").unwrap().status,
@@ -1855,6 +1890,7 @@ mod tests {
         reg.apply(SessionEvent::Notification {
             key: k("s"),
             message: "approve: rm -rf foo".into(),
+            timestamp_ms: None,
         });
         let s = reg.sessions.get("s").unwrap();
         assert_eq!(s.status, AgentStatus::Attention);
@@ -2477,6 +2513,7 @@ mod tests {
             last_error: None,
             current_tool: None,
             attention_reason: None,
+            attention_timestamp_ms: None,
             log_path: None,
             origin: SessionOrigin::default(),
             location: SessionLocation::Host,
@@ -2758,6 +2795,7 @@ mod tests {
             last_error: None,
             current_tool: None,
             attention_reason: None,
+            attention_timestamp_ms: None,
             log_path: None,
             origin: SessionOrigin::default(),
             location: SessionLocation::Host,
@@ -2821,6 +2859,7 @@ mod tests {
         reg.apply(SessionEvent::Notification {
             key: k("s"),
             message: "Which folder?".into(),
+            timestamp_ms: None,
         });
         assert_eq!(
             reg.sessions.get("s").unwrap().status,
@@ -3095,6 +3134,7 @@ mod tests {
             last_error: None,
             current_tool: None,
             attention_reason: None,
+            attention_timestamp_ms: None,
             log_path: None,
             origin: SessionOrigin::Unknown,
             location: SessionLocation::Host,
@@ -3361,6 +3401,7 @@ mod tests {
             last_error: None,
             current_tool: None,
             attention_reason: None,
+            attention_timestamp_ms: None,
             log_path: None,
             origin: SessionOrigin::AgentPane,
             location: SessionLocation::Host,

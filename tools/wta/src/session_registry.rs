@@ -1044,10 +1044,14 @@ pub enum SessionHookParams {
     },
     ToolReturned {
         key: crate::agent_sessions::AgentKey,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        timestamp_ms: Option<u64>,
     },
     Notification {
         key: crate::agent_sessions::AgentKey,
         message: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        timestamp_ms: Option<u64>,
     },
     SessionStopped {
         key: crate::agent_sessions::AgentKey,
@@ -1122,10 +1126,18 @@ impl From<&crate::agent_sessions::SessionEvent> for SessionHookParams {
                 tool_name: tool_name.clone(),
             },
             SessionEvent::ToolCompleted { key } => Self::ToolCompleted { key: key.clone() },
-            SessionEvent::ToolReturned { key } => Self::ToolReturned { key: key.clone() },
-            SessionEvent::Notification { key, message } => Self::Notification {
+            SessionEvent::ToolReturned { key, timestamp_ms } => Self::ToolReturned {
+                key: key.clone(),
+                timestamp_ms: *timestamp_ms,
+            },
+            SessionEvent::Notification {
+                key,
+                message,
+                timestamp_ms,
+            } => Self::Notification {
                 key: key.clone(),
                 message: message.clone(),
+                timestamp_ms: *timestamp_ms,
             },
             SessionEvent::SessionStopped { key, reason } => Self::SessionStopped {
                 key: key.clone(),
@@ -1211,8 +1223,18 @@ impl From<SessionHookParams> for crate::agent_sessions::SessionEvent {
                 Self::ToolStarting { key, tool_name }
             }
             SessionHookParams::ToolCompleted { key } => Self::ToolCompleted { key },
-            SessionHookParams::ToolReturned { key } => Self::ToolReturned { key },
-            SessionHookParams::Notification { key, message } => Self::Notification { key, message },
+            SessionHookParams::ToolReturned { key, timestamp_ms } => {
+                Self::ToolReturned { key, timestamp_ms }
+            }
+            SessionHookParams::Notification {
+                key,
+                message,
+                timestamp_ms,
+            } => Self::Notification {
+                key,
+                message,
+                timestamp_ms,
+            },
             SessionHookParams::SessionStopped { key, reason } => {
                 Self::SessionStopped { key, reason }
             }
@@ -1403,6 +1425,8 @@ pub struct SessionInfo {
     pub current_tool: Option<String>,
     #[serde(default)]
     pub attention_reason: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub attention_timestamp_ms: Option<u64>,
     #[serde(default)]
     pub last_activity_at_ms: Option<u64>,
     #[serde(default)]
@@ -1466,6 +1490,7 @@ impl PartialEq for SessionInfo {
             && self.cli_source == other.cli_source
             && self.current_tool == other.current_tool
             && self.attention_reason == other.attention_reason
+            && self.attention_timestamp_ms == other.attention_timestamp_ms
             && self.last_activity_at_ms == other.last_activity_at_ms
             && self.origin == other.origin
             && self.last_error == other.last_error
@@ -1499,6 +1524,7 @@ impl SessionInfo {
             cli_source: None,
             current_tool: None,
             attention_reason: None,
+            attention_timestamp_ms: None,
             last_activity_at_ms: None,
             origin: None,
             last_error: None,
@@ -1558,6 +1584,7 @@ pub fn agent_session_to_session_info(s: &AgentSession) -> SessionInfo {
         cli_source: Some(s.cli_source.clone()),
         current_tool: s.current_tool.clone(),
         attention_reason: s.attention_reason.clone(),
+        attention_timestamp_ms: s.attention_timestamp_ms,
         last_activity_at_ms,
         origin: Some(s.origin.clone()),
         last_error: s.last_error.clone(),
@@ -2313,6 +2340,7 @@ fn end_entry(state: &mut RegistryState, identity: &SessionIdentity, now: u64) ->
     entry.born_bound_pane = false;
     entry.current_tool = None;
     entry.attention_reason = None;
+    entry.attention_timestamp_ms = None;
     entry.last_activity_at_ms = Some(now);
     true
 }
@@ -2539,6 +2567,7 @@ fn apply_event_locked(state: &mut RegistryState, ev: SessionEvent) -> bool {
                 entry.status = Some(AgentStatus::Idle);
                 entry.last_error = None;
                 entry.attention_reason = None;
+                entry.attention_timestamp_ms = None;
                 entry.current_tool = None;
             }
             entry.last_activity_at_ms = Some(now);
@@ -2667,7 +2696,7 @@ fn apply_event_locked(state: &mut RegistryState, ev: SessionEvent) -> bool {
             entry.last_activity_at_ms = Some(now);
             true
         }
-        SessionEvent::ToolReturned { key } => {
+        SessionEvent::ToolReturned { key, timestamp_ms } => {
             let sid = acp::schema::v1::SessionId::new(key);
             let Some(identity) = unique_identity_for_raw(state, &sid) else {
                 return false;
@@ -2683,9 +2712,18 @@ fn apply_event_locked(state: &mut RegistryState, ev: SessionEvent) -> bool {
             {
                 return false;
             }
+            if entry.status == Some(AgentStatus::Attention)
+                && timestamp_ms
+                    .zip(entry.attention_timestamp_ms)
+                    .is_some_and(|(returned, attention)| returned < attention)
+            {
+                tracing::debug!(target: "session_registry", session_id = %sid, timestamp_ms, attention_timestamp_ms = entry.attention_timestamp_ms, "ignored tool return predating waiting notification");
+                return false;
+            }
             entry.status = Some(AgentStatus::Working);
             entry.current_tool = None;
             entry.attention_reason = None;
+            entry.attention_timestamp_ms = None;
             entry.last_activity_at_ms = Some(now);
             true
         }
@@ -2713,12 +2751,17 @@ fn apply_event_locked(state: &mut RegistryState, ev: SessionEvent) -> bool {
             ) {
                 entry.status = Some(AgentStatus::Idle);
                 entry.attention_reason = None;
+                entry.attention_timestamp_ms = None;
             }
             entry.current_tool = None;
             entry.last_activity_at_ms = Some(now);
             true
         }
-        SessionEvent::Notification { key, message } => {
+        SessionEvent::Notification {
+            key,
+            message,
+            timestamp_ms,
+        } => {
             let sid = acp::schema::v1::SessionId::new(key);
             let Some(identity) = unique_identity_for_raw(state, &sid) else {
                 return false;
@@ -2736,6 +2779,11 @@ fn apply_event_locked(state: &mut RegistryState, ev: SessionEvent) -> bool {
             ) {
                 return false;
             }
+            entry.attention_timestamp_ms = if entry.status == Some(AgentStatus::Attention) {
+                entry.attention_timestamp_ms.max(timestamp_ms)
+            } else {
+                timestamp_ms
+            };
             entry.status = Some(AgentStatus::Attention);
             entry.attention_reason = Some(message);
             entry.last_activity_at_ms = Some(now);
@@ -2842,6 +2890,7 @@ fn apply_event_locked(state: &mut RegistryState, ev: SessionEvent) -> bool {
             }
             entry.current_tool = None;
             entry.attention_reason = None;
+            entry.attention_timestamp_ms = None;
             entry.last_activity_at_ms = Some(now);
             true
         }
@@ -2859,6 +2908,7 @@ fn apply_event_locked(state: &mut RegistryState, ev: SessionEvent) -> bool {
             entry.born_bound_pane = false;
             entry.current_tool = None;
             entry.attention_reason = None;
+            entry.attention_timestamp_ms = None;
             entry.last_activity_at_ms = Some(now);
             true
         }
@@ -4177,6 +4227,7 @@ mod tests {
             cli_source: Some(crate::agent_sessions::CliSource::Copilot),
             current_tool: Some("ask_user".into()),
             attention_reason: Some("Need approval".into()),
+            attention_timestamp_ms: None,
             last_activity_at_ms: Some(1717012345678),
             origin: Some(crate::agent_sessions::SessionOrigin::AgentPane),
             last_error: Some("previous failure".into()),
@@ -4355,6 +4406,7 @@ mod tests {
             cli_source: Some(crate::agent_sessions::CliSource::Claude),
             current_tool: None,
             attention_reason: None,
+            attention_timestamp_ms: None,
             last_activity_at_ms: Some(123),
             origin: Some(crate::agent_sessions::SessionOrigin::AgentPane),
             last_error: None,
@@ -4424,6 +4476,7 @@ mod tests {
         reg.apply_event(crate::agent_sessions::SessionEvent::Notification {
             key: "sid".into(),
             message: "approve?".into(),
+            timestamp_ms: None,
         })
         .await;
         let row = reg
@@ -4711,6 +4764,7 @@ mod tests {
             cli_source: Some(crate::agent_sessions::CliSource::Gemini),
             current_tool: None,
             attention_reason: None,
+            attention_timestamp_ms: None,
             last_activity_at_ms: Some(1),
             origin: Some(crate::agent_sessions::SessionOrigin::AgentPane),
             last_error: None,
@@ -5559,6 +5613,7 @@ mod tests {
             .apply_event(SessionEvent::Notification {
                 key: "ended-sid".to_string(),
                 message: "needs input".to_string(),
+                timestamp_ms: None,
             })
             .await;
         assert!(!applied);
@@ -6000,6 +6055,7 @@ mod tests {
             last_error: None,
             current_tool: None,
             attention_reason: None,
+            attention_timestamp_ms: None,
             log_path: None,
             origin: SessionOrigin::AgentPane,
             location: SessionLocation::Host,
@@ -6034,6 +6090,7 @@ mod tests {
             last_error: None,
             current_tool: None,
             attention_reason: None,
+            attention_timestamp_ms: None,
             log_path: None,
             origin: SessionOrigin::Unknown,
             location: SessionLocation::Host,
@@ -6067,10 +6124,12 @@ mod tests {
             },
             SessionEvent::ToolReturned {
                 key: "tool-returned".to_string(),
+                timestamp_ms: Some(1792473545580),
             },
             SessionEvent::Notification {
                 key: "notification".to_string(),
                 message: "waiting for input".to_string(),
+                timestamp_ms: Some(1792473545608),
             },
             SessionEvent::SessionStopped {
                 key: "session-stopped".to_string(),
@@ -6098,6 +6157,32 @@ mod tests {
             let parsed = parse_session_hook_params(&request.params)
                 .expect("session_hook request params must decode");
             assert_eq!(parsed, event);
+        }
+    }
+
+    #[test]
+    fn session_hook_timestamps_remain_optional_for_older_peers() {
+        use crate::agent_sessions::SessionEvent;
+
+        for (params, expected) in [
+            (
+                serde_json::json!({"kind": "ToolReturned", "key": "sid"}),
+                SessionEvent::ToolReturned {
+                    key: "sid".into(),
+                    timestamp_ms: None,
+                },
+            ),
+            (
+                serde_json::json!({"kind": "Notification", "key": "sid", "message": "approve"}),
+                SessionEvent::Notification {
+                    key: "sid".into(),
+                    message: "approve".into(),
+                    timestamp_ms: None,
+                },
+            ),
+        ] {
+            let wire: SessionHookParams = serde_json::from_value(params).unwrap();
+            assert_eq!(SessionEvent::from(wire), expected);
         }
     }
 
@@ -6605,6 +6690,7 @@ mod tests {
             last_error: None,
             current_tool: None,
             attention_reason: None,
+            attention_timestamp_ms: None,
             log_path: None,
             origin: SessionOrigin::Unknown,
             location: SessionLocation::Wsl {

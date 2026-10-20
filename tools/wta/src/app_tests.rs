@@ -1674,6 +1674,55 @@ fn copilot_tool_finished_keeps_working_only_agent_stop_idles() {
     );
 }
 
+#[test]
+fn copilot_stale_tool_return_preserves_helper_waiting() {
+    use crate::agent_sessions::{AgentSessionRegistry, AgentStatus};
+
+    for (timestamp, expected) in [
+        (json!("2026-10-20T05:19:05.580Z"), AgentStatus::Attention),
+        (json!(1792473545610_u64), AgentStatus::Attention),
+        (json!("2026-10-20T13:19:05.612+08:00"), AgentStatus::Working),
+        (json!(1792473545613_u64), AgentStatus::Working),
+        (serde_json::Value::Null, AgentStatus::Working),
+        (json!("invalid"), AgentStatus::Working),
+    ] {
+        let mut reg = AgentSessionRegistry::new();
+        let key = "copilot-stale-tool-return";
+        let pane = "owner";
+        let mut hook = json!({
+            "event": "agent.prompt.submit",
+            "cli_source": "copilot",
+            "agent_session_id": key,
+            "payload": {},
+        });
+        route_agent_event_to_registry(&mut reg, pane, &hook);
+        hook["event"] = json!("agent.notification");
+        for timestamp in [1792473545608_u64, 1792473545612, 1792473545609] {
+            hook["payload"] = json!({
+                "notification_type": "permission_prompt",
+                "message": "approve command",
+                "timestamp": timestamp,
+            });
+            route_agent_event_to_registry(&mut reg, pane, &hook);
+        }
+        let before = reg.get(&key.to_string()).unwrap().clone();
+        hook["event"] = json!("agent.tool.finished");
+        hook["payload"] = json!({"tool_name": "sql", "timestamp": timestamp});
+        let changed = route_agent_event_to_registry(&mut reg, pane, &hook);
+        let row = reg.get(&key.to_string()).unwrap();
+        assert_eq!(row.status, expected, "timestamp={timestamp}");
+        if expected == AgentStatus::Attention {
+            assert!(!changed);
+            assert_eq!(row.attention_reason, before.attention_reason);
+            assert_eq!(row.current_tool, before.current_tool);
+            assert_eq!(row.last_activity_at, before.last_activity_at);
+        } else {
+            assert!(changed);
+            assert!(row.attention_reason.is_none());
+        }
+    }
+}
+
 /// Counterpart guard: when the event carries a real `agent_session_id`,
 /// the fallback must NOT replace it — the explicit session id always
 /// wins over the heuristic.
@@ -1988,6 +2037,7 @@ fn copilot_background_notifications_preserve_session_activity() {
         SessionEvent::Notification {
             key: key.clone(),
             message: "Permission needed".into(),
+            timestamp_ms: None,
         },
     ] {
         for type_field in ["notificationType", "notification_type"] {
@@ -2194,6 +2244,7 @@ fn idle_prompt_does_not_demote_a_pending_permission_prompt() {
     reg.apply(SessionEvent::Notification {
         key: "claude-sid".into(),
         message: "Claude needs your permission to use Bash".into(),
+        timestamp_ms: None,
     });
     reg.take_dirty();
 
@@ -26914,6 +26965,7 @@ fn antigravity_resume_keeps_acp_and_cli_sessions_in_their_own_stores() {
             last_error: None,
             current_tool: None,
             attention_reason: None,
+            attention_timestamp_ms: None,
             log_path: None,
             origin: origin.clone(),
             location: SessionLocation::Wsl {
@@ -26983,6 +27035,7 @@ fn antigravity_wsl_cli_resume_preserves_literal_cwd_arguments() {
             last_error: None,
             current_tool: None,
             attention_reason: None,
+            attention_timestamp_ms: None,
             log_path: None,
             origin: SessionOrigin::Unknown,
             location: SessionLocation::Wsl {
@@ -27119,6 +27172,7 @@ fn enter_on_wsl_history_row_resumes_inside_distro() {
         last_error: None,
         current_tool: None,
         attention_reason: None,
+        attention_timestamp_ms: None,
         log_path: None,
         origin: SessionOrigin::Unknown,
         location: SessionLocation::Wsl {

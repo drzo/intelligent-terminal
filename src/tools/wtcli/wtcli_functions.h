@@ -98,7 +98,6 @@ namespace wtcli
         return result;
     }
 
-
     // Build the standard JSON envelope the COM server expects for an
     // `agent_event`. The caller provides the event name, an optional JSON
     // object string containing extra params, and the source pane Guid; this
@@ -188,6 +187,7 @@ namespace wtcli
         "message",
         "notification_type",
         "notificationType",
+        "timestamp",
         "reason",
         "error",
         "pane_owner",
@@ -242,6 +242,10 @@ namespace wtcli
             }
             else if (member.isBool() &&
                      (std::string_view{ key } == "pane_owner" || std::string_view{ key } == "running"))
+            {
+                reduced[key] = member;
+            }
+            else if (member.isUInt64() && std::string_view{ key } == "timestamp")
             {
                 reduced[key] = member;
             }

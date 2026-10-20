@@ -17315,6 +17315,7 @@ fn session_event_key_returns_key_for_keyed_variants() {
             SessionEvent::Notification {
                 key: "k4".into(),
                 message: "m".into(),
+                timestamp_ms: None,
             },
             Some("k4"),
         ),
@@ -17415,6 +17416,7 @@ async fn copilot_completion_hooks_resume_activity_without_file_events() {
         watcher(SessionEvent::Notification {
             key: key.into(),
             message: "file-only approval".into(),
+            timestamp_ms: None,
         }),
     )
     .await;
@@ -17482,6 +17484,58 @@ async fn copilot_completion_hooks_resume_activity_without_file_events() {
     assert_eq!(
         state.registry.lookup(&sid).await.unwrap().status,
         Some(AgentStatus::Ended)
+    );
+}
+
+#[tokio::test]
+async fn copilot_stale_tool_return_preserves_master_waiting() {
+    use crate::agent_sessions::AgentStatus;
+
+    let state = make_state();
+    let _capture = crate::wt_protocol_events::capture_test_published_events();
+    let key = "copilot-stale-tool-return";
+    let sid = SessionId::new(key);
+    let mut hook = serde_json::json!({
+        "method": "agent_event",
+        "params": {
+            "event": "agent.prompt.submit",
+            "cli_source": "copilot",
+            "agent_session_id": key,
+            "pane_id": "owner",
+            "payload": {},
+        },
+    });
+    handle_master_wt_event(&state, hook.clone()).await;
+    hook["params"]["event"] = serde_json::json!("agent.notification");
+    for timestamp in [1792473545608_u64, 1792473545612, 1792473545609] {
+        hook["params"]["payload"] = serde_json::json!({
+            "notificationType": "permission_prompt",
+            "message": "approve command",
+            "timestamp": timestamp,
+        });
+        handle_master_wt_event(&state, hook.clone()).await;
+    }
+    let before = state.registry.lookup(&sid).await.unwrap();
+    crate::wt_protocol_events::take_test_published_events();
+    hook["params"]["event"] = serde_json::json!("agent.tool.finished");
+    for timestamp in [
+        serde_json::json!("2026-10-20T05:19:05.580Z"),
+        serde_json::json!(1792473545610_u64),
+    ] {
+        hook["params"]["payload"] = serde_json::json!({"tool_name": "sql", "timestamp": timestamp});
+        handle_master_wt_event(&state, hook.clone()).await;
+        let row = state.registry.lookup(&sid).await.unwrap();
+        assert_eq!(row, before, "timestamp={timestamp}");
+        assert!(crate::wt_protocol_events::take_test_published_events().is_empty());
+    }
+    hook["params"]["payload"]["timestamp"] = serde_json::json!("2026-10-20T13:19:05.612+08:00");
+    handle_master_wt_event(&state, hook).await;
+    let row = state.registry.lookup(&sid).await.unwrap();
+    assert_eq!(row.status, Some(AgentStatus::Working));
+    assert!(row.attention_reason.is_none());
+    assert_eq!(
+        crate::wt_protocol_events::take_test_published_events().len(),
+        1
     );
 }
 
@@ -17675,6 +17729,7 @@ async fn restored_session_birth_normalizes_pane_identity_and_preserves_live_hook
                 SessionEvent::Notification {
                     key: sid.0.to_string(),
                     message: "Awaiting input".into(),
+                    timestamp_ms: None,
                 }
             } else {
                 SessionEvent::ToolStarting {
@@ -19422,6 +19477,7 @@ async fn master_com_shell_prompt_preserves_agent_panes_and_other_sequences() {
         .apply_event(SessionEvent::Notification {
             key: "protected-session".into(),
             message: "waiting for a choice".into(),
+            timestamp_ms: None,
         })
         .await;
 

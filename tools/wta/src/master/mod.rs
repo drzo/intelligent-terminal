@@ -11179,7 +11179,7 @@ fn session_event_key(event: &crate::agent_sessions::SessionEvent) -> Option<&str
         | SessionEvent::WorkingDirectoryChanged { key, .. }
         | SessionEvent::ToolStarting { key, .. }
         | SessionEvent::ToolCompleted { key }
-        | SessionEvent::ToolReturned { key }
+        | SessionEvent::ToolReturned { key, .. }
         | SessionEvent::Notification { key, .. }
         | SessionEvent::SessionStopped { key, .. }
         | SessionEvent::SessionStoppedIfOwner { key, .. }

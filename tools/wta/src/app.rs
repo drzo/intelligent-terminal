@@ -504,6 +504,7 @@ pub const CONSUMED_PAYLOAD_KEYS: &[&str] = &[
     "message",
     "notification_type",
     "notificationType",
+    "timestamp",
     "reason",
     "error",
     "pane_owner",
@@ -518,6 +519,25 @@ pub const CONSUMED_PAYLOAD_KEYS: &[&str] = &[
 /// `src/tools/wtcli/wtcli_functions.h`), so a name missing here is dropped
 /// from the degraded payload and the notification loses its question text.
 pub const CONSUMED_TOOL_INPUT_KEYS: &[&str] = &["question", "prompt", "message"];
+
+fn hook_timestamp_ms(payload: &serde_json::Value) -> Option<u64> {
+    let timestamp = payload.get("timestamp")?;
+    if timestamp.is_null() {
+        return None;
+    }
+    let parsed = timestamp.as_u64().or_else(|| {
+        crate::session_history::parse_iso_to_system_time(timestamp.as_str()?)?
+            .duration_since(std::time::UNIX_EPOCH)
+            .ok()?
+            .as_millis()
+            .try_into()
+            .ok()
+    });
+    if parsed.is_none() {
+        tracing::warn!(target: "agent_route", "invalid hook timestamp; retaining arrival-order activity recovery");
+    }
+    parsed
+}
 
 /// Registry facts the `agent_event` decision needs.
 ///
@@ -719,7 +739,11 @@ pub fn plan_agent_event(
                     .and_then(|v| v.as_str())
                     .unwrap_or("waiting for user input")
                     .to_string();
-                SessionEvent::Notification { key, message }
+                SessionEvent::Notification {
+                    key,
+                    message,
+                    timestamp_ms: None,
+                }
             } else {
                 SessionEvent::ToolStarting { key, tool_name }
             }
@@ -732,7 +756,10 @@ pub fn plan_agent_event(
         // retain the legacy no-op; agent.stop still owns the turn-end transition.
         "agent.tool.completed" | "agent.tool.finished" => {
             if *cli_source == crate::agent_sessions::CliSource::Copilot {
-                SessionEvent::ToolReturned { key }
+                SessionEvent::ToolReturned {
+                    key,
+                    timestamp_ms: hook_timestamp_ms(payload),
+                }
             } else {
                 plan.events.clear();
                 return plan;
@@ -769,6 +796,9 @@ pub fn plan_agent_event(
                     .and_then(|v| v.as_str())
                     .unwrap_or("")
                     .to_string(),
+                timestamp_ms: (*cli_source == crate::agent_sessions::CliSource::Copilot)
+                    .then(|| hook_timestamp_ms(payload))
+                    .flatten(),
             }
         }
         "agent.session.stopped" | "agent.session.end" => SessionEvent::SessionStopped {
@@ -1727,6 +1757,7 @@ pub(crate) fn session_info_to_agent_session(
         last_error: info.last_error.clone(),
         current_tool: info.current_tool.clone(),
         attention_reason: info.attention_reason.clone(),
+        attention_timestamp_ms: info.attention_timestamp_ms,
         log_path: None,
         origin,
         location: info.location.clone(),

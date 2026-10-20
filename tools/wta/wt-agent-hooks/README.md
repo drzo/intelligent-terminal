@@ -197,7 +197,11 @@ and question notifications still mark the session Attention (Waiting for input).
 **Copilot activity is hook-only once hooks own the session.** `PostToolUse`
 resumes Working (Active) after a tool succeeds; only `Stop` ends the turn as
 Idle. Late tool returns do not reactivate an Idle turn, and failed tools do not
-restore activity. This is deliberately session-level,
+restore activity. While Waiting, tool returns with source timestamps older than
+the newest waiting notification are ignored, regardless of hook delivery order.
+Both numeric Unix milliseconds and RFC 3339 timestamps are supported; missing
+or invalid timestamps preserve the existing recovery behavior.
+This is deliberately session-level,
 latest-hook behavior, not per-request approval matching. Waiting can persist for
 the whole tool run, and a parallel tool's successful return may replace another
 unanswered wait. No transcript permission events are mixed into a hook-owned
