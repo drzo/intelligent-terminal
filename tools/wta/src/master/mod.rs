@@ -6225,10 +6225,6 @@ async fn spawn_one_agent(
                 describe_agent_target(agent_cmd, source),
                 format_startup_stderr(&stderr)
             ));
-            let error = match crate::agent_lifecycle::diagnose_stderr(&stderr) {
-                Some(reason) => error.context(reason),
-                None => error,
-            };
             return Err(startup_error(error, crate::agent_lifecycle::StartupPhase::Initialize));
         }
         Err(_) => {
