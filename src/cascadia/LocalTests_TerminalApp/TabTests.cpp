@@ -707,6 +707,7 @@ namespace TerminalAppLocalTests
         TEST_METHOD(GetWindowLayoutIncludesAgentRestoreMetadata);
         TEST_METHOD(ResumedPaneIdentityPersistsWithoutHooksOrBannerParsing);
         TEST_METHOD(RestoredSessionBindingsWaitForTheirHelperSubscription);
+        TEST_METHOD(RestoredSessionBindingsWaitForMasterReadiness);
         TEST_METHOD(LateRestoredSessionBindingNotifiesAfterPaneAttachment);
         TEST_METHOD(EndedRestoredSessionDoesNotReplayItsBinding);
         TEST_METHOD(AgentRestoreRecordOutlivesTheAgentPane);
@@ -4108,6 +4109,66 @@ namespace TerminalAppLocalTests
             VERIFY_ARE_EQUAL(std::string{ "restored-second" }, births[1]["agent_session_id"].asString());
             VERIFY_IS_TRUE(page->_pendingRestoredSessionBindings.empty());
         });
+    }
+
+    void TabTests::RestoredSessionBindingsWaitForMasterReadiness()
+    {
+        using Owner = winrt::TerminalApp::implementation::SharedWta;
+        for (const auto sessionsEnabled : { true, false })
+        {
+            auto page = _restoreBindingsSetup();
+            TestOnUIThread([&]() {
+                auto& owner = Owner::Instance();
+                VERIFY_IS_FALSE(owner.IsRunning());
+                const auto originalGeneration = owner.MasterGeneration();
+                const auto restoreGeneration = wil::scope_exit([&]() {
+                    std::lock_guard lock{ owner._mtx };
+                    owner._masterGeneration = originalGeneration;
+                });
+                {
+                    std::lock_guard lock{ owner._mtx };
+                    owner._masterGeneration = 7;
+                }
+                page->_settings.GlobalSettings().AgentSessionManagementEnabled(sessionsEnabled);
+                page->_agentSnapshotRefreshInFlight = true;
+                const auto tab = page->_GetTabImpl(page->_tabs.GetAt(0));
+                const auto paneId = tab->GetActiveTerminalControl().Connection().SessionId();
+                page->_pendingRestoredSessionBindings[paneId] = { L"restored-session", L"copilot", L"C:\\repo" };
+                std::vector<Json::Value> births;
+                const auto token = page->ProtocolVtSequenceReceived([&](auto&&, const winrt::hstring& payload) {
+                    Json::Value event;
+                    Json::CharReaderBuilder reader;
+                    std::string errors;
+                    std::istringstream stream{ winrt::to_string(payload) };
+                    VERIFY_IS_TRUE(Json::parseFromStream(reader, stream, &event, &errors));
+                    if (event["method"] == "session_born_bound")
+                    {
+                        births.push_back(event["params"]);
+                    }
+                });
+                const auto revoke = wil::scope_exit([&]() { page->ProtocolVtSequenceReceived(token); });
+
+                page->_ReplayRestoredSessionBindings(tab);
+                VERIFY_IS_TRUE(births.empty());
+                VERIFY_IS_TRUE(page->_pendingRestoredSessionBindings.contains(paneId));
+                VERIFY_IS_TRUE(page->_tabsAwaitingRestoredBindings.contains(tab->StableId()));
+                VERIFY_IS_TRUE(page->_agentSnapshotRefreshPending);
+                page->_ReplayNativeAgentObservationsForReceiver(6);
+                VERIFY_IS_TRUE(births.empty());
+
+                page->_ReplayNativeAgentObservationsForReceiver(7);
+                VERIFY_ARE_EQUAL(size_t{ 1 }, births.size());
+                VERIFY_ARE_EQUAL(uint64_t{ 7 }, births[0]["receiver_generation"].asUInt64());
+                VERIFY_ARE_EQUAL(std::string{ "restored-session" }, births[0]["agent_session_id"].asString());
+                VERIFY_ARE_EQUAL(winrt::to_string(::Microsoft::Console::Utils::GuidToPlainString(paneId)), births[0]["pane_id"].asString());
+                VERIFY_ARE_EQUAL(winrt::to_string(tab->StableId()), births[0]["tab_id"].asString());
+                VERIFY_ARE_EQUAL(std::to_string(page->_WindowProperties.WindowId()), births[0]["window_id"].asString());
+                VERIFY_IS_TRUE(page->_pendingRestoredSessionBindings.empty());
+                VERIFY_IS_TRUE(page->_tabsAwaitingRestoredBindings.empty());
+                page->_ReplayNativeAgentObservationsForReceiver(7);
+                VERIFY_ARE_EQUAL(size_t{ 1 }, births.size());
+            });
+        }
     }
 
     void TabTests::LateRestoredSessionBindingNotifiesAfterPaneAttachment()

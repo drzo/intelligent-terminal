@@ -10984,6 +10984,13 @@ namespace winrt::TerminalApp::implementation
             _tabsAwaitingRestoredBindings.insert(tab->StableId());
             return;
         }
+        const auto receiverGeneration = SharedWta::Instance().MasterGeneration();
+        if (receiverGeneration != 0 && _lastReadyNativeAgentReceiverGeneration != receiverGeneration)
+        {
+            _tabsAwaitingRestoredBindings.insert(tab->StableId());
+            _RequestAgentSnapshotRefresh();
+            return;
+        }
         const auto root = tab->GetRootPane();
         if (!root)
         {
@@ -11016,6 +11023,10 @@ namespace winrt::TerminalApp::implementation
             }
             params["tab_id"] = winrt::to_string(tab->StableId());
             params["window_id"] = std::to_string(_WindowProperties.WindowId());
+            if (receiverGeneration != 0)
+            {
+                params["receiver_generation"] = Json::UInt64{ receiverGeneration };
+            }
             it = _pendingRestoredSessionBindings.erase(it);
             _agentPaneLog("_ReplayRestoredSessionBindings: publishing restored session " + params["agent_session_id"].asString());
             _RaiseProtocolEvent("session_born_bound", params);
@@ -12162,6 +12173,13 @@ namespace winrt::TerminalApp::implementation
         }
         const auto replacement = _lastReadyNativeAgentReceiverGeneration != receiverGeneration;
         _lastReadyNativeAgentReceiverGeneration = receiverGeneration;
+        for (const auto& tabId : std::exchange(_tabsAwaitingRestoredBindings, {}))
+        {
+            if (const auto tab = _FindTabByStableId(tabId))
+            {
+                _ReplayRestoredSessionBindings(tab);
+            }
+        }
         if (_settings.GlobalSettings().EffectiveAgentSessionManagementEnabled())
         {
             return;
