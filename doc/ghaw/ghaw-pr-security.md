@@ -29,6 +29,10 @@ better vulnerability detection.
 
 1. The trusted controller binds PR identity, trusted workflow revision,
    comparison merge-base, immutable head, repository relation, and scope hash.
+   Scope resolution, repair publication and reporting load their own code from
+   GitHub's automatic `github.workflow_sha`, never the PR's potentially older
+   base. The recorded PR base/head still govern comparison and live identity;
+   no commit ID is hardcoded.
    It runs only for ordinary same-repository pull requests; fork pull requests
    are skipped. Only authorized same-repository WTA-source scopes may enter repair.
 2. The primary reads every immutable changed hunk, traces relevant base/head
@@ -105,14 +109,16 @@ The severity label does not broaden the language/path allowlist or lower
 confidence.
 
 The controller and workers rematerialize agents, skill, validator, driver, and
-publisher from the trusted workflow revision, not PR-edited files. Dispatch
+publisher from their selected workflow revisions. Dispatch
 fails if the worker revision differs from the recorded trusted base. Git
 reads disable replacement objects, external diff/textconv, pagers, and
 filesystem-monitor hooks. Trusted credential cleanup precedes inference.
 The ordinary `pull_request` controller definition comes from the PR merge
 revision, so same-repository branch authors are trusted to modify that
-definition. Its jobs still check out the immutable base for review tooling;
-the dispatched worker must match that trusted base revision.
+definition. Controller jobs use that workflow revision for their helpers;
+this is not an independent base-only boundary against authorized workflow
+authors. The dispatched worker is base-branch-sourced and must match its
+recorded trusted base revision. PR comparison inputs remain separate.
 Live base/head checks recur before handoff and publication; base changes
 invalidate the snapshot. The head lease rejects both concurrent advance and
 rewind; it never authorizes rewriting history.
