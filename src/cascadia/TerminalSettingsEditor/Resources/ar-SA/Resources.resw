@@ -3102,7 +3102,7 @@ Alt+Shift+/ إدخال طلب؛ Alt+Shift+B التشغيل دون طلب أول�
     <comment>Error shown in AI Agents Settings when the separate Agent Client Protocol server cannot be prepared. The adjacent button retries installation. {Locked="ACP"}</comment>
   </data>
   <data name="AIAgents_AcpStartupFailed.Text" xml:space="preserve">
-    <value>تعذّر بدء اتصال ACP. لا يزال بإمكانك اختيار هذا الوكيل والمحاولة مرة أخرى من جزء الوكيل.</value>
+    <value>تعذّر بدء اتصال ACP. لا يزال بإمكانك اختيار هذا الوكيل والمحاولة مرة أخرى من لوحة الوكيل.</value>
     <comment>Shown when ACP startup fails. The selected agent stays available and the user can explicitly retry. {Locked="ACP"}</comment>
   </data>
   <data name="AIAgents_AcpCleanupFailed.Text" xml:space="preserve">
