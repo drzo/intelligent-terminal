@@ -29,13 +29,15 @@
   worktree. This directory is ignored.
 - Refactor product commits on dev:
   `b8253d73af5f6a79d3ed1b688400de61884fb89b`,
-  `1920ba30909b78480fc1b2a1e9a4c2ffb0cd786a` and
-  `2ef93e5bc800541858d8b3defc97b380d52fe44b`.
+  `1920ba30909b78480fc1b2a1e9a4c2ffb0cd786a`,
+  `2ef93e5bc800541858d8b3defc97b380d52fe44b` and
+  `f4a027d3c35e3c767abdb94939c59150e317a024`.
 - Direct cherry-picks on publish:
   `7301970aa3c40dfd07e1f3a71f541ab19d5b7912`,
-  `1b0961026720dedb9debe3293141abf2f0993197` and
-  `ba61c2929c3494d380fe2aca30ce83989884afe3`.
-- Current refactor publish head: `ba61c2929c3494d380fe2aca30ce83989884afe3`.
+  `1b0961026720dedb9debe3293141abf2f0993197`,
+  `ba61c2929c3494d380fe2aca30ce83989884afe3` and
+  `7803dd855d15c52c46819288f28f8f2077779019`.
+- Current refactor publish head: `7803dd855d15c52c46819288f28f8f2077779019`.
 - Refactor PR: `microsoft/intelligent-terminal#1180`.
 - Current implementation base: `f643ba403f3c2050b0012ec1a5e31924fee918d8`.
   A final fetch confirmed that this is still `origin/main` and an ancestor of
@@ -43,6 +45,87 @@
 - Original dirty worktree: `C:\ado\intelligent-terminal`, left untouched.
 
 ## Current Stage
+
+Latest continuation: the user requested further autonomous work, not a
+premature completion. New evidence and repairs are under
+`Generated Files\acp-review-followup` (ignored):
+
+- The current review-summary detector had a genuine false negative for the
+  observed `ccr-overview-v2` "No open issues" field. Dev-only commit
+  `7a0750727051dcf34c2d4cefb5f6e970a52f03ed` adds strict format compatibility,
+  not a convergence override. Four new tests failed first; all 84 tests now
+  pass, retaining stale-head, unanswered-thread, pending-review, contradiction
+  and historical-section guards. Real reviewed-head convergence passed under
+  PowerShell 7 and Windows PowerShell 5.1; no outdated threads remained.
+- A read-only native probe confirmed `OpenClipboard` returns
+  `ERROR_ACCESS_DENIED (5)`. It neither read nor changed clipboard contents and
+  did not change desktop/permission policy. The two baseline setup failures
+  remain genuine prerequisite failures.
+- Native-report diagnosis found 22 declared source files but only four validly
+  cited files, 18 missing citations and five invalid immutable line references.
+  The validator correctly rejected the generated report. No report was edited
+  into a fake CI pass, and no validator/tool permissions were loosened.
+- A genuine independent local performance review inspected all 61 product files
+  at `ba61c2929` and found a MEDIUM responsiveness regression: retry/post-login
+  initialization waited for a history mutex merely to call an empty method.
+  The parent implemented a normal correction of this introduced regression,
+  without promoting severity or invoking a HIGH-only automatic repair.
+- The corrected regression uses a real pending mock history RPC and a healthy
+  pooled agent. It is RED before the fix and GREEN afterward while history is
+  still pending; it also proves stable agent ownership, one pooled agent and
+  persisted retry epoch 1. It uses paused virtual time, not a latency benchmark.
+  Its explicit native binding and nonexistent fallback command prevent an
+  unintended provider launch on fixture mismatch. An initial mismatched-binding
+  fixture failure is preserved separately and is not counted as RED.
+- Dev `f4a027d3...` and direct publish cherry-pick `7803dd855...` remove only the
+  redundant gate/no-op and obsolete calls, retaining all epoch/cleanup assertions.
+  The same performance reviewer independently verified the delta and recorded
+  RED/GREEN, resolving that finding with no additional actionable delta finding.
+  Slow-storage persistence and probe-retention measurements remain LOW advice.
+- Required full WTA tests: 2,902 passed, the same two clipboard setup failures,
+  five opt-in ignored. The exact publish-head unit run repeats that result.
+  CLI integration, real Ubuntu-24.04 containment and Clippy also passed on the
+  identical dev WTA source; changed Rust matches formatter output.
+- Only WTA was rebuilt/refreshed for this Rust-only correction. No full package
+  deployment was performed. The inactive 0.8.0.18 private carrier from
+  `ba61c2929` retains its C++/XAML binaries; current WTA from `7803dd855` has
+  SHA-256 `DE03B85B98E0F939A4C9B3BD94428C3BC581CA55C470C0FD3F82AED601415430`.
+  Previous WTA and original MSIX are preserved. The installed directory is now
+  an explicitly WTA-refreshed carrier, not the original immutable MSIX payload.
+- New exact-runtime packaged E2E passed 4/4 with quoted paths; fresh failure and
+  recovery screenshots were inspected, and both reports credit C450-C453.
+  Real enterprise acceptance again observed one policy-blocked start, provider
+  selectable, no native dialogs and no owned survivors.
+- The validated product commit was pushed after dev, with a new-head Copilot
+  review completed: `5579024902`, `2026-10-19T23:35:32Z`, matches `7803dd855...`,
+  has no open/suppressed findings, and legitimately reports `Converged=true`.
+  Prior-head review/check outcomes are not new-head proof.
+  No permission, timeout, policy, report-coverage or test safeguard was bypassed.
+
+Repository merge rules were inspected, correcting an earlier overstatement:
+the failed automatic review workflows are not required status checks. GitHub's
+mandatory remaining condition is at least one non-author approval. Current
+`gh` identity and PR author are both `DinahK-2SO`; no alternate account was used,
+no approval was fabricated, and no rule was changed. The user was asked to
+provide the external approval handoff, but was unavailable and will review later.
+
+Current-head optional review outcomes: localization/spelling and Native
+Axe.Windows smoke pass; native source
+report fails validation with no reported defects; performance times out with no
+summary; security reports partial execution with only a scope stub, not a clean
+assessment. Native smoke job `118369859665` passed at
+`2026-10-20T00:04:16Z`; the overall native workflow remains failed because its
+source-report publication check failed. All observed runs are now terminal.
+The independent local performance assessment and actual runtime evidence are
+documented as supplements, not forged passing GitHub checks.
+
+All autonomous implementation, review triage, validation and publication work is
+complete. The remaining mandatory non-author approval is an external handoff:
+the user was unavailable and will review later. No unfounded reviewer selection,
+account switch, approval, branch-policy override or automatic merge was made.
+The task must not be described as already approved or merged.
+
+### Prior accessibility-complete head
 
 2026-10-19 UTC, latest stage: the accessibility follow-up is implemented,
 validated and pushed as `ba61c2929...` after dev `2ef93e5bc...`. Recovery of the
@@ -411,17 +494,17 @@ Intelligent Terminal startup
 | Temporary extraction cleanup | Exact recorded paths, creation instants and reparse-point checks | Passed; three owned directories removed |
 | Exact GUI package | Baseline package build after missing NuGet restore | Deliberately stopped after bounded reproduction; not passed, deployed or launched |
 | Focused GREEN | Startup, history, native parser and process ownership regressions | Passed; review regressions included in final-head full units |
-| Full Rust units | `cargo test --locked --target x86_64-pc-windows-msvc --manifest-path tools\wta\Cargo.toml --bin wta` at `ba61c2929` | 2,901 passed; two baseline clipboard setup failures; five opt-in ignored |
-| CLI integration | Same Cargo target/manifest with `--test sessions_cli` | One passed at `1b096102`; WTA source remains identical at the final head |
-| Real WSL ownership | Same Cargo target/manifest with `--bin wta history_wsl_group_reclaims_owned_work_on_recovery_and_host_exit -- --ignored --nocapture`, `WTA_TEST_WSL_DISTRO=Ubuntu-24.04` | One passed at `1b096102` on unchanged WTA source; no model request |
+| Full Rust units | `cargo test --locked --target x86_64-pc-windows-msvc --manifest-path tools\wta\Cargo.toml --bin wta` at `7803dd855` | 2,902 passed; two baseline clipboard setup failures; five opt-in ignored |
+| CLI integration | Same Cargo target/manifest with `--test sessions_cli` | One passed on dev WTA source identical to `7803dd855` |
+| Real WSL ownership | Same Cargo target/manifest with `--bin wta history_wsl_group_reclaims_owned_work_on_recovery_and_host_exit -- --ignored --nocapture`, `WTA_TEST_WSL_DISTRO=Ubuntu-24.04` | One passed on dev WTA source identical to `7803dd855`; no model request |
 | Native parser/model tests | `TE.exe Terminal.App.Unit.Tests.dll /name:*AcpModelUtilsTests*` | 17 passed after rebuilding the exact `ba61c2929` solution test target |
-| Static analysis | `cargo clippy --locked --target x86_64-pc-windows-msvc --manifest-path tools\wta\Cargo.toml --all-targets` | Passed at `1b096102` on unchanged WTA source; existing warnings |
+| Static analysis | `cargo clippy --locked --target x86_64-pc-windows-msvc --manifest-path tools\wta\Cargo.toml --all-targets` | Passed on dev WTA source identical to `7803dd855`; existing warnings |
 | Localized primary error RED | Focused C450 against `1b096102`/0.8.0.16, before product edit | Expected UIA assertion failed on the appended raw diagnostic suffix |
-| Packaged E2E | `Invoke-Pester -Configuration $config`, `Feature.AcpLifecycle.Tests.ps1`, explicit PFN/App/WTA hashes | Four passed at `ba61c2929`/0.8.0.18; zero failures/skips; exact localized UIA text and fresh screenshots inspected |
+| Packaged E2E | `Invoke-Pester -Configuration $config`, `Feature.AcpLifecycle.Tests.ps1`, explicit PFN/App/WTA hashes | Four passed with exact `7803dd855` WTA and unchanged `ba61c2929`/0.8.0.18 native carrier; zero failures/skips; fresh screenshots inspected |
 | Real enterprise installation check | Private package CLI alias, bounded local runner, no model request | Expected failure contract passed; one launch, selectable, zero dialogs/survivors |
 | Release report mapping | `New-ReleaseReport.ps1` and `Update-ReleaseReport.ps1` against final XML | C450-C453 checked in both reports |
 
-### Exact Publish Identity
+### Previous Exact Publish Identity (`ba61c2929`, before WTA-only refresh)
 
 - Source commit: `ba61c2929c3494d380fe2aca30ce83989884afe3`.
 - Package: `IntelligentTerminal.Worktree.acplife261019_rd9vj3e6a2mbr`,
@@ -781,7 +864,7 @@ content rather than equating failed publication with no findings.
   legacy helper still reports `Converged=false` for its unrecognized overview
   format. No prior-head remote outcome is reused as new-head proof.
 
-Final current-head gate disposition, after `2026-10-19T22:09:31Z`:
+Gate disposition for `ba61c2929`, after `2026-10-19T22:09:31Z`:
 
 | Gate | Result | Evidence |
 | --- | --- | --- |
@@ -800,6 +883,28 @@ the successful smoke job. The native structured artifact also asks for manual
 Narrator/keyboard and contrast/theme/scaling verification. The local real UIA
 test and separate successful native smoke supply their actual evidence only;
 they do not claim audible Narrator or unexecuted visual matrices.
+
+### Review-tool compatibility and local performance completion
+
+The legacy-format caveats above describe earlier snapshots. The dev-only
+compatibility correction now recognizes the actual explicit zero-issue summary
+while retaining all other requirements; `Converged=true` was obtained for the
+genuinely reviewed `ba61c2929` head, not forced or reused for `7803dd855`.
+The product PR excludes this tooling commit.
+
+Local performance reviewer `052e2222-cd88-4fae-b8f3-00f705f3b3c0` reviewed the
+full `f643ba403..ba61c2929` product patch and then independently inspected
+`ba61c2929..7803dd855`. The MEDIUM no-op history-gate dependency is resolved
+and its native regression evidence was inspected. This supplements, rather
+than falsifies, the incomplete GitHub performance runs. No measured throughput,
+UI-latency distribution or resource-soak improvement is claimed.
+
+The native report's citation failures were reproduced against immutable Git
+blobs. The performance worker logs show review work continuing until the
+15-minute cutoff, with two denied command attempts; denied requests were not
+bypassed and are not asserted to be the sole timeout cause. Both workflows use
+trusted base revisions, so changing product-branch workflow files would not
+repair their currently executed definitions.
 
 ## Local-Only Evidence Inventory
 
@@ -845,6 +950,17 @@ they do not claim audible Narrator or unexecuted visual matrices.
 | Curated unpublished-review inspections | `publish-validation\final-review-evidence` | Byte-exact copied monitor/inspection records with digest receipt; native findings empty, performance incomplete |
 | Original monitor evidence | `C:\ado\intelligent-terminal\artifacts\review-monitor\pr1180-ba61c2929-214119` | Ignored raw artifacts retained; only inert report data inspected, no logged commands executed |
 | Accessibility-head remote proof | `publish-validation\a11y-final-remote-heads.json` | Dev evidence `57cfcace0...` and publish `ba61c2929...` matched remote heads before the final gate-note commit |
+| Review-format RED/GREEN | `Generated Files\acp-review-followup\review-format-{red,green}.log`, `review-format-tests.json` | Four new failures before correction, 84 passes afterward; unchanged guard behavior |
+| Real convergence / desktop diagnosis | `Generated Files\acp-review-followup\{current-head-convergence,windows-powershell-convergence,desktop-prerequisites}.json` | Genuine `ba61c2929` convergence and native clipboard access denied without data access |
+| Native report diagnosis | `Generated Files\acp-review-followup\native-citation-diagnosis.json` | 18 missing citations and five bad immutable references; original rejected report not relabeled |
+| Retry/history RED/GREEN | `Generated Files\acp-review-followup\retry-history-{red-native-binding,green}.log` | Actual pending ACP history RPC blocks old initialize; corrected initialize completes while history remains pending |
+| Excluded fixture failure | `Generated Files\acp-review-followup\retry-history-red.log` | Initial legacy/native binding mismatch failed identity assertion; not accepted regression evidence |
+| New WTA tests | `Generated Files\acp-review-followup\retry-history-{full-suite,cli-integration,real-wsl,clippy}.log`, `retry-publish-full-unit.*` | 2,902 passes plus two baseline clipboard failures; CLI/WSL/Clippy pass; exact publish unit provenance |
+| WTA-only deployment | `Generated Files\acp-review-followup\retry-publish-{wta-build,deployed}.json`, `retry-carrier-identity.json` | WTA source `7803dd855`, native carrier source `ba61c2929`, no full package deployment |
+| Preserved previous executable | `Generated Files\acp-review-followup\wta-ba61c2929-before-refresh.exe` | Exact D47311B1 prior WTA; original carrier MSIX also remains unchanged |
+| Final retry-runtime E2E | `Generated Files\acp-review-followup\e2e quote's path`, `retry-final-e2e-report.json`, `reports` | Current WTA 4/4, inspected screenshots, C450-C453 checked |
+| Final retry-runtime enterprise acceptance | `Generated Files\acp-review-followup\enterprise-verified\assertions.json` | DE03B85B runtime, one real policy-blocked attempt, selectable, zero dialogs/survivors |
+| Current-head final native run | `Generated Files\acp-review-followup\current-native-{run.json,watch.log}` | `7803dd855` smoke passed on October 20 at 00:04:16 UTC; source-report failure kept separate |
 
 ## Completed Investigation Checklist
 
@@ -873,9 +989,12 @@ they do not claim audible Narrator or unexecuted visual matrices.
 - [x] Credit C450-C453 in full and incremental release reports.
 - [x] Address every first-round finding; second review at `1b096102` has no open issues.
 - [x] Recover, fix and revalidate the unpublished native HIGH finding with real UIA RED/GREEN.
+- [x] Complete supplemental local performance assessment and correct the demonstrated MEDIUM retry/history dependency.
+- [x] Repair review-summary format compatibility with strict regression/guard coverage, kept dev-only.
 - [ ] Fully green local Rust suite: blocked by two unchanged-baseline clipboard setup failures.
-- [x] Current-head Copilot review has no open or suppressed defects.
-- [ ] All remote gates green: source-review publication and performance execution remain failed.
-- [ ] Human merge approval.
+- [x] Current-head Copilot review has no open or suppressed defects and genuine convergence is verified.
+- [x] Current-head native Axe smoke completed successfully.
+- [ ] All optional remote reviews green: source-report publication, performance and partial security execution remain failed/incomplete.
+- [ ] Mandatory non-author merge approval: handed off to the unavailable user; never fabricated or bypassed.
 - [x] Push dev-only handoff/runner update and confirm remote heads (`b845d887b...`).
 - [x] Record final current-head review/gate disposition without claiming merge readiness.
