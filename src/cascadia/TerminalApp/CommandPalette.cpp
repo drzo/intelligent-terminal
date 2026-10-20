@@ -1427,7 +1427,14 @@ namespace winrt::TerminalApp::implementation
 
     void CommandPalette::EnableTabSearchMode()
     {
-        _switchToMode(CommandPaletteMode::TabSearchMode);
+        if (_currentMode != CommandPaletteMode::TabSearchMode || Visibility() != Visibility::Visible)
+        {
+            _switchToMode(CommandPaletteMode::TabSearchMode);
+        }
+        if (Visibility() == Visibility::Visible)
+        {
+            _searchBox().Focus(FocusState::Programmatic);
+        }
     }
 
     // Method Description:

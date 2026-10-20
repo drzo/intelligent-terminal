@@ -6673,7 +6673,8 @@ namespace winrt::TerminalApp::implementation
         {
             _OnVerticalRailCollapseRequested(nullptr, nullptr);
         }
-        if (winrt::get_self<implementation::TabStrip>(_tabStrip)->FocusTabSearch())
+        const auto toggle = winrt::get_self<implementation::TabRowControl>(_tabRow)->VerticalRailToggleButton();
+        if (toggle && toggle.Focus(FocusState::Programmatic))
         {
             _sidebarHotkeyReturnControl = std::move(returnControl);
         }
@@ -11653,7 +11654,8 @@ namespace winrt::TerminalApp::implementation
         }
 
         if (_commandPaletteIs(Visibility::Visible) &&
-            action.Action() != ShortcutAction::ToggleCommandPalette)
+            action.Action() != ShortcutAction::ToggleCommandPalette &&
+            action.Action() != ShortcutAction::TabSearch)
         {
             CommandPaletteElement().Visibility(Visibility::Collapsed);
         }

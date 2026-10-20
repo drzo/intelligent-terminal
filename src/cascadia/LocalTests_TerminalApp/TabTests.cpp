@@ -450,7 +450,9 @@ namespace TerminalAppLocalTests
         TEST_METHOD(AgentChromeMirrorsWithoutChangingTerminalFlowDirection);
         TEST_METHOD(VerticalRailVisibilityRestoresWidth);
         TEST_METHOD(VerticalRailCollapseRestoresWidth);
-        TEST_METHOD(SidebarHotkeyFocusesSearchAndReturnsToInput);
+        TEST_METHOD(SidebarHotkeyFocusesToggleAndReturnsToInput);
+        TEST_METHOD(SidebarSearchShortcutFocusesSearchFromTerminal);
+        TEST_METHOD(TabSearchShortcutPreservesQueryAndSelection);
         TEST_METHOD(SidebarRecentPreferencePreservesSearchAndInputFocus);
         TEST_METHOD(AgentsViewFiltersLiveTabsAndHistoryConcurrently);
         TEST_METHOD(SidebarFiltersViewModelCombinationsAndNotifications);
@@ -5174,7 +5176,7 @@ namespace TerminalAppLocalTests
         });
     }
 
-    void TabTests::SidebarHotkeyFocusesSearchAndReturnsToInput()
+    void TabTests::SidebarHotkeyFocusesToggleAndReturnsToInput()
     {
         const auto connection = winrt::make_self<TestConnection>(
             winrt::guid{ L"{6239a42c-bbbb-49a3-80bd-e8fdd045185c}" },
@@ -5187,7 +5189,9 @@ namespace TerminalAppLocalTests
             const auto terminal = page->_GetActiveControl();
             VERIFY_IS_NOT_NULL(terminal);
             const auto strip = winrt::get_self<winrt::TerminalApp::implementation::TabStrip>(page->_tabStrip);
-            const auto search = strip->SearchTextBox();
+            const auto row = winrt::get_self<winrt::TerminalApp::implementation::TabRowControl>(page->_tabRow);
+            const auto railButton = row->VerticalRailToggleButton();
+            VERIFY_IS_NOT_NULL(railButton);
             const auto chord = KeyChordSerialization::FromString(L"ctrl+shift+s");
             const auto toggle = [&]() {
                 ActionEventArgs args{};
@@ -5198,9 +5202,9 @@ namespace TerminalAppLocalTests
             VERIFY_IS_TRUE(terminal.Focus(FocusState::Programmatic));
             toggle();
             VERIFY_IS_FALSE(page->_isVerticalRailCollapsed);
-            VERIFY_IS_TRUE(page->_tabSearchActive);
-            VERIFY_IS_TRUE(page->_tabStrip.SearchActive());
-            VERIFY_IS_TRUE(page->_SidebarFocusedControl() == search);
+            VERIFY_IS_FALSE(page->_tabSearchActive);
+            VERIFY_IS_FALSE(page->_tabStrip.SearchActive());
+            VERIFY_IS_TRUE(page->_SidebarFocusedControl() == railButton);
 
             toggle();
             VERIFY_IS_TRUE(page->_isVerticalRailCollapsed);
@@ -5209,12 +5213,14 @@ namespace TerminalAppLocalTests
 
             toggle();
             VERIFY_IS_FALSE(page->_isVerticalRailCollapsed);
-            VERIFY_IS_TRUE(page->_SidebarFocusedControl() == search);
+            VERIFY_IS_FALSE(page->_tabSearchActive);
+            VERIFY_IS_TRUE(page->_SidebarFocusedControl() == railButton);
 
             VERIFY_IS_TRUE(terminal.Focus(FocusState::Programmatic));
             toggle();
             VERIFY_IS_FALSE(page->_isVerticalRailCollapsed);
-            VERIFY_IS_TRUE(page->_SidebarFocusedControl() == search);
+            VERIFY_IS_FALSE(page->_tabSearchActive);
+            VERIFY_IS_TRUE(page->_SidebarFocusedControl() == railButton);
 
             VERIFY_IS_TRUE(strip->FilterTabsButton().Focus(FocusState::Programmatic));
             VERIFY_IS_TRUE(page->_SidebarFocusedControl() == strip->FilterTabsButton());
@@ -5230,8 +5236,11 @@ namespace TerminalAppLocalTests
             VERIFY_IS_TRUE(terminal.FocusState() != FocusState::Unfocused);
 
             toggle();
-            VERIFY_IS_TRUE(page->_tabSearchActive);
+            VERIFY_IS_FALSE(page->_tabSearchActive);
             VERIFY_IS_TRUE(page->_sidebarHotkeyReturnControl.get() == terminal);
+            VERIFY_IS_TRUE(strip->FocusTabSearch());
+            VERIFY_IS_TRUE(page->_tabSearchActive);
+            VERIFY_IS_NULL(page->_sidebarHotkeyReturnControl.get());
             strip->SearchTabsButton().IsChecked(false);
             strip->OnSearchToggleClick(nullptr, nullptr);
             VERIFY_IS_FALSE(page->_tabSearchActive);
@@ -5252,14 +5261,115 @@ namespace TerminalAppLocalTests
             VERIFY_IS_FALSE(page->_isVerticalRailCollapsed);
             VERIFY_IS_FALSE(page->_tabSearchActive);
 
-            const auto row = winrt::get_self<winrt::TerminalApp::implementation::TabRowControl>(page->_tabRow);
-            const auto railButton = row->VerticalRailToggleButton();
-            VERIFY_IS_NOT_NULL(railButton);
             VERIFY_IS_TRUE(railButton.Focus(FocusState::Programmatic));
             VERIFY_IS_TRUE(page->_SidebarFocusedControl() == railButton);
             toggle();
             VERIFY_IS_TRUE(page->_isVerticalRailCollapsed);
             VERIFY_IS_TRUE(terminal.FocusState() != FocusState::Unfocused);
+        });
+    }
+
+    void TabTests::SidebarSearchShortcutFocusesSearchFromTerminal()
+    {
+        const auto connection = winrt::make_self<TestConnection>(
+            winrt::guid{ L"{6239a42c-dddd-49a3-80bd-e8fdd045185c}" },
+            winrt::Microsoft::Terminal::TerminalConnection::ConnectionState::Connected);
+        const auto page = _commonSetup(nullptr, nullptr, std::nullopt, true);
+
+        TestOnUIThread([&]() {
+            page->_GetFocusedTabImpl()->SuppressAgentPrewarm();
+            page->_GetActiveControl().Connection(*connection);
+            const auto terminal = page->_GetActiveControl();
+            const auto strip = winrt::get_self<winrt::TerminalApp::implementation::TabStrip>(page->_tabStrip);
+            const auto chord = KeyChordSerialization::FromString(L"ctrl+f");
+            page->_settings.ActionMap().RegisterKeyBinding(chord, ActionAndArgs{ ShortcutAction::TabSearch, nullptr });
+            const auto keys = winrt::make_self<winrt::TerminalApp::implementation::AppKeyBindings>();
+            keys->SetActionMap(page->_settings.ActionMap());
+            keys->SetDispatch(*page->_actionDispatch);
+
+            for (const auto collapsed : { false, true })
+            {
+                page->_ClearTabSearch();
+                if (page->_isVerticalRailCollapsed != collapsed)
+                {
+                    page->_OnVerticalRailCollapseRequested(nullptr, nullptr);
+                }
+                VERIFY_IS_TRUE(terminal.Focus(FocusState::Programmatic));
+                VERIFY_IS_TRUE(keys->TryKeyChord(chord));
+                VERIFY_IS_FALSE(page->_isVerticalRailCollapsed);
+                VERIFY_IS_TRUE(page->_tabSearchActive);
+                VERIFY_IS_TRUE(page->_SidebarFocusedControl() == strip->SearchTextBox());
+                VERIFY_IS_FALSE(page->_commandPaletteIs(Visibility::Visible));
+
+                strip->SearchTextBox().Text(L"retained sidebar query");
+                strip->SearchTextBox().Select(3, 4);
+                VERIFY_IS_TRUE(terminal.Focus(FocusState::Programmatic));
+                VERIFY_IS_TRUE(keys->TryKeyChord(chord));
+                VERIFY_ARE_EQUAL(winrt::hstring{ L"retained sidebar query" }, strip->SearchQuery());
+                VERIFY_IS_TRUE(page->_SidebarFocusedControl() == strip->SearchTextBox());
+                VERIFY_ARE_EQUAL(3, strip->SearchTextBox().SelectionStart());
+                VERIFY_ARE_EQUAL(4, strip->SearchTextBox().SelectionLength());
+                VERIFY_IS_TRUE(keys->TryKeyChord(chord));
+                VERIFY_ARE_EQUAL(3, strip->SearchTextBox().SelectionStart());
+                VERIFY_ARE_EQUAL(4, strip->SearchTextBox().SelectionLength());
+
+                VERIFY_IS_TRUE(terminal.Focus(FocusState::Programmatic));
+                page->_ToggleSidebarHotkey();
+                VERIFY_IS_FALSE(page->_isVerticalRailCollapsed);
+                VERIFY_IS_TRUE(page->_tabSearchActive);
+                VERIFY_ARE_EQUAL(winrt::hstring{ L"retained sidebar query" }, strip->SearchQuery());
+                const auto row = winrt::get_self<winrt::TerminalApp::implementation::TabRowControl>(page->_tabRow);
+                VERIFY_IS_TRUE(page->_SidebarFocusedControl() == row->VerticalRailToggleButton());
+            }
+
+            page->SetFocusMode(true);
+            VERIFY_IS_FALSE(page->_isVerticalRailVisible);
+            page->_ToggleSidebarHotkey();
+            VERIFY_IS_TRUE(page->FocusMode());
+            VERIFY_IS_FALSE(page->_isVerticalRailVisible);
+            VERIFY_IS_TRUE(keys->TryKeyChord(chord));
+            VERIFY_IS_TRUE(page->FocusMode());
+            VERIFY_IS_FALSE(page->_isVerticalRailVisible);
+        });
+    }
+
+    void TabTests::TabSearchShortcutPreservesQueryAndSelection()
+    {
+        const CascadiaSettings settings{ LR"({
+            "defaultProfile": "{6239a42c-1111-49a3-80bd-e8fdd045185c}",
+            "showTabsInTitlebar": false,
+            "tabLayout": "horizontal",
+            "profiles": [{
+                "name": "Profile",
+                "guid": "{6239a42c-1111-49a3-80bd-e8fdd045185c}",
+                "commandline": "cmd.exe"
+            }]
+        })", {} };
+        winrt::com_ptr<winrt::TerminalApp::implementation::TerminalPage> page;
+        _initializeTerminalPage(page, settings);
+        TestOnUIThread([&]() {
+            VERIFY_IS_FALSE(page->_isVerticalLayout);
+            page->_GetFocusedTabImpl()->SuppressAgentPrewarm();
+            ActionEventArgs args{};
+            page->_HandleTabSearch(nullptr, args);
+            VERIFY_IS_TRUE(args.Handled());
+            const auto palette = page->CommandPaletteElement();
+            VERIFY_ARE_EQUAL(Visibility::Visible, palette.Visibility());
+            const auto search = palette.FindName(L"_searchBox").as<TextBox>();
+            search.Text(L"Profile");
+            search.Select(2, 3);
+
+            page->_HandleTabSearch(nullptr, args);
+            VERIFY_ARE_EQUAL(Visibility::Visible, palette.Visibility());
+            VERIFY_ARE_EQUAL(winrt::hstring{ L"Profile" }, search.Text());
+            VERIFY_ARE_EQUAL(2, search.SelectionStart());
+            VERIFY_ARE_EQUAL(3, search.SelectionLength());
+            VERIFY_IS_TRUE(search.FocusState() != FocusState::Unfocused);
+
+            palette.Visibility(Visibility::Collapsed);
+            page->_HandleTabSearch(nullptr, args);
+            VERIFY_ARE_EQUAL(Visibility::Visible, palette.Visibility());
+            VERIFY_IS_TRUE(search.Text().empty(), L"A new search still starts with an empty query");
         });
     }
 
