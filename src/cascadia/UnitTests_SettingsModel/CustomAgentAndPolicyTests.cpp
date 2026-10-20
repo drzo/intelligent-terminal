@@ -546,6 +546,7 @@ namespace SettingsModelUnitTests
         const auto cleanup = wil::scope_exit([&]() { std::filesystem::remove_all(root); });
         const auto shim = early / L"claude.cmd";
         const auto exe = late / L"claude.exe";
+        std::filesystem::create_directory(early / L"claude.exe");
         std::ofstream{ shim }.put('\n');
         std::ofstream{ exe }.put('\n');
         std::ofstream{ early / L"antigravity.exe" }.put('\n');

@@ -54,12 +54,18 @@ namespace Microsoft::Terminal::AgentProfiles
                     const auto candidate = std::filesystem::path{ directory } / (std::wstring{ executable } + extension);
                     WIN32_FIND_DATAW findData{};
                     const wil::unique_hfind findHandle{ FindFirstFileW(candidate.c_str(), &findData) };
+                    const auto findError = findHandle ? ERROR_SUCCESS : GetLastError();
                     // App execution aliases are launchable, but filesystem::status can fail to follow them.
                     const auto appExecutionAlias = findHandle &&
                                                    WI_IsFlagSet(findData.dwFileAttributes, FILE_ATTRIBUTE_REPARSE_POINT) &&
                                                    WI_IsFlagClear(findData.dwFileAttributes, FILE_ATTRIBUTE_DIRECTORY) &&
                                                    findData.dwReserved0 == IO_REPARSE_TAG_APPEXECLINK;
-                    if (appExecutionAlias || std::filesystem::is_regular_file(candidate))
+                    const auto missing = findError == ERROR_FILE_NOT_FOUND || findError == ERROR_PATH_NOT_FOUND;
+                    const auto launchable = !missing &&
+                                            (findHandle && WI_IsFlagClear(findData.dwFileAttributes, FILE_ATTRIBUTE_REPARSE_POINT) ?
+                                                 WI_IsFlagClear(findData.dwFileAttributes, FILE_ATTRIBUTE_DIRECTORY) :
+                                                 appExecutionAlias || std::filesystem::is_regular_file(candidate));
+                    if (launchable)
                     {
                         return std::filesystem::absolute(candidate);
                     }
