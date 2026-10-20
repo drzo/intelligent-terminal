@@ -38,7 +38,7 @@
   `ba61c2929c3494d380fe2aca30ce83989884afe3` and
   `7803dd855d15c52c46819288f28f8f2077779019` and
   `bde1fc453bb5e98d0f3b9555d7bef3362dae2539`.
-- Current local refactor publish head: `1db0dc548b6925c080d4567f1ca93175b9f4100b`.
+- Current local refactor publish head: `a78568f42571fd7deb43c5425d1740f88df7fdff`.
 - Refactor PR: `microsoft/intelligent-terminal#1180`.
 - Current implementation base: `d2fdbd75fed3d881b069c642a6c200734dbe09a7`.
   A final fetch confirmed that this is still `origin/main` and an ancestor of
@@ -46,6 +46,33 @@
 - Original dirty worktree: `C:\ado\intelligent-terminal`, left untouched.
 
 ## Current Stage
+
+### Canonical legacy/diagnostic identity and final spelling follow-up
+
+Review `5583881808` at `2026-10-20T10:35:05Z` identified a real final identity
+split: a legacy omitted built-in ID and an inferred explicit ID selected
+different shared keys. Dev `6ed864ec8` / publish `a78568f42` canonicalize only
+omitted known IDs in the shared key builder; explicit custom IDs remain distinct.
+Three tests were RED before the correction and GREEN afterward, proving shared
+exhaustion, quarantine and retry reset without launching real providers.
+
+Six spelling annotations were handled narrowly: reword the UTF-8 prose, rename
+the blocked-input test, use `char::REPLACEMENT_CHARACTER`, and add the real
+Linux procfs `wchan` term to the existing expectation list. No check was disabled.
+The security workflow's failure was separately inspected: it refused a stale
+immutable base before dispatch. It is not a clean assessment or a product
+vulnerability finding, and its guard was not bypassed.
+
+Exact publish validation passes **2,995 units plus two CLI integrations**,
+zero failures, six opt-in ignored cases; both WSL ownership tests were also
+explicitly selected and pass. The private 0.8.0.21 native carrier is unchanged.
+Its inactive WTA payload alone was refreshed to
+`9522F430C23AFDBC8D521E1FBFEEDA8C68C4606920CDEDF7845082E246FA8AA1`,
+with the previous binary and complete original MSIX retained.
+`e2e-canonical-runtime` passes 4/4 and reports credit only C455-C458.
+`enterprise-canonical` confirms one initialize, generic failure, original
+Python DLL/LoadLibrary details, zero recorded survivors and preserved settings.
+Publication, replies and final-head review remain pending.
 
 ### Final full package and independent WSL host-lifetime signal
 
