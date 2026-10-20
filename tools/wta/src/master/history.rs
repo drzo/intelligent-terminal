@@ -507,14 +507,18 @@ impl HistoryProcess {
             Ok(())
         }.await;
         if let Err(error) = result {
-            for line in self.stderr.mark_failed() {
+            let lines = self.stderr.mark_failed();
+            for line in &lines {
                 tracing::warn!(target: "master_history", agent_id = %target.agent_id, "{line}");
             }
             // Keep an initialization lease in self across cleanup awaits.
             // Reacquiring it here would deadlock, and a local would be lost
             // if retirement cancels cleanup.
             let cleanup = self.cleanup().await;
-            let error = cleanup.err().unwrap_or(error);
+            let error = crate::agent_lifecycle::StartupDetails::attach(
+                cleanup.err().unwrap_or(error),
+                &lines,
+            );
             return Err(match self.startup.take() {
                 Some(startup) => startup.failed(error),
                 None => error,

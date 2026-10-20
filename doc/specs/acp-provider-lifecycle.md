@@ -113,6 +113,14 @@ diagnostic logs without inventing a provider- or message-specific cause category
 Settings uses fully localized primary error text and the standard InfoBar message
 and action properties. Technical phase/reason codes, attempt counts and diagnostic
 IDs stay in structured CLI output and logs rather than the primary announcement.
+An optional `details` field carries native stderr, or a structured protocol/OS
+error message when stderr is unavailable. It uses the existing conservative
+error-prefix filtering, stops after potentially sensitive data, and is bounded
+to four lines and 1,024 UTF-8 bytes. Arbitrary provider data objects are not
+forwarded. Details are display-only and never determine classification or retry.
+The helper renders them with its startup failure; Settings exposes them in a
+separate localized, expandable details section and clears them on retry or
+selection changes. Older responses without details retain the summary-only UI.
 
 The package-private `acp-startup` ledger uses an exclusive per-target file lease
 so master startup and independent model-probe processes serialize their attempts.

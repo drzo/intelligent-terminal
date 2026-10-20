@@ -736,7 +736,11 @@
   </data><data name="AIAgents_AcpModel.HelpText" xml:space="preserve">
     <value>Изаберите модел који овај агент користи.</value>
     <comment>Supplementary description for the model setting.</comment>
-  </data><data name="AIAgents_DelegateAgent.Header" xml:space="preserve">
+  </data><data name="AIAgents_AcpErrorDetails.Header" xml:space="preserve">
+    <value>Детаљи грешке</value>
+    <comment>Expandable section in Agents Settings containing safely filtered native startup error text, separate from the localized main error message.</comment>
+  </data>
+<data name="AIAgents_DelegateAgent.Header" xml:space="preserve">
     <value>CLI агент</value>
     <comment>{Locked="CLI"} Header for the agent CLI selector in Settings &gt; Agents &gt; Command palette. Here "agent" means an AI intelligent agent (e.g. Copilot, Claude, Gemini), not a proxy or human agent. CLI means command-line interface.</comment>
   </data><data name="AIAgents_DelegateAgent.HelpText" xml:space="preserve">

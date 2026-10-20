@@ -218,6 +218,30 @@ mod tests {
     use agent_client_protocol as acp;
 
     #[test]
+    fn startup_native_details_survive_helper_display() {
+        let error = acp::Error::new(-32603, "Unable to start the selected agent").data(
+            serde_json::json!({
+                "startup": {
+                    "phase": "initialize",
+                    "reason": "failed",
+                    "attempts": 2,
+                    "max_attempts": 3,
+                    "startup_verified": false,
+                    "diagnostic_id": "3ce3c25f-7982-4240-a46f-3697eec05ca3",
+                    "details": "Failed to load Python DLL 'python310.dll'.\nLoadLibrary: An Application Control policy has blocked this file."
+                }
+            }),
+        );
+        let failure = AgentFailure::from_initialize_error(&error);
+        assert_eq!(failure.class(), "startup_failed");
+        let text = failure.to_string();
+        assert!(text.contains("python310.dll"));
+        assert!(text.contains("An Application Control policy has blocked this file."));
+        assert!(text.contains("Initialize Failed [2/3;"));
+        assert!(!text.contains("OperatingSystemPolicy"));
+    }
+
+    #[test]
     fn auth_code_classifies_as_auth_required() {
         let f = AgentFailure::from_acp_error(&acp::Error::auth_required());
         assert!(f.is_auth());

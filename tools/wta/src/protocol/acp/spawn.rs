@@ -151,7 +151,9 @@ impl AgentStderrLog {
     ) -> Result<Vec<String>> {
         let cleanup = child.terminate().await;
         let lines = self.finish_failed_stderr(stderr_task).await;
-        cleanup.context("failed to reclaim the ACP process tree")?;
+        cleanup
+            .context("failed to reclaim the ACP process tree")
+            .map_err(|error| crate::agent_lifecycle::StartupDetails::attach(error, &lines))?;
         Ok(lines)
     }
 

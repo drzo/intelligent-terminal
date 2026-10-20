@@ -6264,6 +6264,7 @@ async fn spawn_one_agent(
                 describe_agent_target(agent_cmd, source),
                 format_startup_stderr(&stderr)
             ));
+            let error = crate::agent_lifecycle::StartupDetails::attach(error, &stderr);
             return Err(startup_error(error, crate::agent_lifecycle::StartupPhase::Initialize));
         }
         Err(_) => {
@@ -6277,12 +6278,15 @@ async fn spawn_one_agent(
                 false,
                 "Timeout",
             );
-            return Err(startup_error(anyhow!(
+            let error = anyhow!(
                 "ACP initialize timed out after {init_timeout_secs}s — agent CLI {} did not respond{}",
                 describe_agent_target(agent_cmd, source),
                 format_startup_stderr(&stderr)
-            ).context(crate::agent_lifecycle::StartupReason::TimedOut),
-                crate::agent_lifecycle::StartupPhase::Initialize));
+            ).context(crate::agent_lifecycle::StartupReason::TimedOut);
+            return Err(startup_error(
+                crate::agent_lifecycle::StartupDetails::attach(error, &stderr),
+                crate::agent_lifecycle::StartupPhase::Initialize,
+            ));
         }
     };
     crate::telemetry::log_agent_cold_start_complete(
