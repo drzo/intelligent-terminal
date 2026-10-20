@@ -72,7 +72,7 @@ Set-StrictMode -Version Latest
 
 # Schema version this script understands. Mirrors STATUS_SCHEMA_VERSION
 # in tools/wta/src/agent_hooks_installer.rs. Bump in lockstep.
-$script:SupportedStatusSchemaVersion = 6
+$script:SupportedStatusSchemaVersion = 5
 
 $script:CliDisplayNames = @{
     copilot = 'Copilot CLI'

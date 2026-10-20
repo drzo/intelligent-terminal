@@ -3001,7 +3001,7 @@ fn bundle_resolve_source_returns_none_when_nothing_resolves() {
 /// as a test failure.
 #[test]
 fn schema_versions_are_pinned() {
-    assert_eq!(STATUS_SCHEMA_VERSION, 6);
+    assert_eq!(STATUS_SCHEMA_VERSION, 5);
     assert_eq!(UNINSTALL_SCHEMA_VERSION, 2);
 }
 

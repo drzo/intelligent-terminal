@@ -104,8 +104,8 @@ auto-discovered entrypoint, rather than loading two plugins.
 The support directory's `plugin.json` records ownership, bundle version, and
 `api_variant: "v1" | "v2"`. Reconciliation checks the required variant even when
 the bundle version is unchanged, so CLI upgrades and downgrades trigger repair.
-The public JSON status stays provider-neutral: compatibility failures use the
-existing `plugin_enabled` and `detection_fallback` fields, without an
+The public JSON status keeps schema v5 and stays provider-neutral: compatibility
+failures use the existing `plugin_enabled` and `detection_fallback` fields, without an
 agent-specific object. With `WTA_LOG=debug`, hook diagnostics record detected
 versions and required/installed API variants; probe failures also log a warning.
 Unknown or mismatched variants are never reported enabled. Foreign files are

@@ -6,6 +6,12 @@ BeforeAll {
     $errors = $null
     $ast = [Management.Automation.Language.Parser]::ParseFile($verifier, [ref]$null, [ref]$errors)
     if ($errors) { throw ($errors -join "`n") }
+    $schemaVersion = $ast.Find({
+        param($node)
+        $node -is [Management.Automation.Language.AssignmentStatementAst] -and
+            $node.Left.Extent.Text -eq '$script:SupportedStatusSchemaVersion'
+    }, $true)
+    . ([scriptblock]::Create($schemaVersion.Extent.Text))
     foreach ($function in $ast.FindAll({
         param($node)
         $node -is [Management.Automation.Language.FunctionDefinitionAst]
@@ -30,6 +36,21 @@ BeforeAll {
 }
 
 Describe 'Unit: agent hook verifier OpenCode compatibility' -Tag 'Unit' {
+    It 'validates shared status schema <Version>' -TestCases @(
+        @{ Version = 5; Accepted = $true },
+        @{ Version = 6; Accepted = $false }
+    ) {
+        param($Version, $Accepted)
+        $report = New-StatusReport (New-CliStatus)
+        $report | Add-Member schema_version $Version
+        $json = $report | ConvertTo-Json -Depth 5
+        if ($Accepted) {
+            (Get-AgentHooksStatus -Json $json).schema_version | Should -Be 5
+        } else {
+            { Get-AgentHooksStatus -Json $json } | Should -Throw '*Unsupported schema_version 6*'
+        }
+    }
+
     It 'reports healthy hooks using only shared status fields' {
         $cli = New-CliStatus
         $row = Get-AgentHookCliRow -Cli $cli

@@ -148,8 +148,6 @@ const OPENCODE_MANIFEST_MANAGED_BY: &str = "Intelligent Terminal: wt-agent-hooks
 /// Schema version of the JSON returned by [`status`]. Bumped when the shape
 /// or the set of possible string-enum values changes.
 ///
-/// v6: OpenCode version-unknown and API-mismatch detection reasons.
-///
 /// v5: added Antigravity's native CLI plugin integration.
 ///
 /// v4: added the per-CLI `installed_version` and
@@ -166,7 +164,7 @@ const OPENCODE_MANIFEST_MANAGED_BY: &str = "Intelligent Terminal: wt-agent-hooks
 /// v2: `bundle_source.kind` no longer includes `"embedded"` (the embedded
 /// `include_str!` fallback was removed in #20). Possible kinds are
 /// `env` / `exe-sibling` / `dev-tree` / `none`.
-const STATUS_SCHEMA_VERSION: u32 = 6;
+const STATUS_SCHEMA_VERSION: u32 = 5;
 
 /// Schema version of the JSON returned by [`uninstall`].
 ///
@@ -373,6 +371,7 @@ pub struct CliStatus {
     /// "none"`) or its manifest carries no parseable version.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub bundle_version: Option<String>,
+    /// Open-ended diagnostic reason; adding a reason does not change the schema.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub detection_fallback: Option<&'static str>,
 }
