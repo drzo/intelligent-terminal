@@ -38,7 +38,7 @@
   `ba61c2929c3494d380fe2aca30ce83989884afe3` and
   `7803dd855d15c52c46819288f28f8f2077779019` and
   `bde1fc453bb5e98d0f3b9555d7bef3362dae2539`.
-- Current local refactor publish head: `f38ce353c84a20f5272a44438f6917fc712ea44b`.
+- Current local refactor publish head: `6c1c868f628691a025e352bf4468251cbc5b0afc`.
 - Refactor PR: `microsoft/intelligent-terminal#1180`.
 - Current implementation base: `d2fdbd75fed3d881b069c642a6c200734dbe09a7`.
   A final fetch confirmed that this is still `origin/main` and an ancestor of
@@ -46,6 +46,41 @@
 - Original dirty worktree: `C:\ado\intelligent-terminal`, left untouched.
 
 ## Current Stage
+
+### Final diagnostic-admission review follow-up
+
+Review `5582626179` at `2026-10-20T08:31:31Z` examined `f38ce353c`.
+It exposed a genuine remaining diagnostic gap: `probe-sessions` and
+`probe-host-sessions` still prepared/spawned outside shared admission.
+Dev `691564a41` / publish `6c1c868f6` now route both through one shared
+session-list startup path. It snapshots inherited configuration, reuses the
+master's stable binding digest, retains the lease through cleanup, and persists
+startup/cleanup failures. Explicit retry cannot override quarantine. The
+common 60-second initialize deadline replaces the older diagnostic 10/25-second
+split; listing stays at 10 seconds and unsupported-list outputs are preserved.
+
+A real CLI integration test first observed four launches instead of three.
+GREEN covers the shared ceiling across both commands, no starts after
+exhaustion, explicit recovery, no starts after an isolated persisted quarantine
+even with retry requested, and no auth/session/prompt requests.
+Final exact-publish tests pass 2,990 units plus two CLI integrations with five
+existing opt-in ignored cases. Clippy passes with unchanged baseline warnings.
+
+The spelling finding was an escape-adjacent synthetic word; `concat!` preserves
+the exact CR-test bytes without changing a spelling allowlist. The other
+Copilot concern mistook a masked credential fixture for a literal asterisk
+input. The exact regression passed 1/1 on unchanged `f38ce353c`; an explicit
+harmless-asterisk control and clarified assertion message now document the
+distinction. Sanitizer behavior was not changed to satisfy that rendering.
+
+The inactive private 0.8.0.20 carrier was WTA-only refreshed again. Current WTA:
+`5B35B8FEE4A6BD836793AEC3EE9CF04ACFC3D4124852A14A64387667CFE22C65`.
+All native binaries, the original MSIX and prior WTA copies remain intact.
+`e2e-diagnostic-runtime` passes 4/4; current reports uniquely credit C455-C458.
+`enterprise-reviewed` verifies the exact new binary still returns the real
+Python DLL / LoadLibrary reason with one initialize, generic failure, no
+remaining recorded processes and no model requests. User configuration remains
+preserved. Review replies/publication and new-head convergence are pending.
 
 ### Native error details and current-main integration
 
