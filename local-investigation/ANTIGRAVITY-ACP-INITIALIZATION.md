@@ -65,10 +65,14 @@ The parent independently reran the strict checker after final cleanup:
 was inspected; its independent-human-review recommendation is not a code defect
 or a fabricated approval.
 
-Spelling and CLA pass. The final security controller failure was inspected:
+Spelling, CLA and localization pass. The final security controller failure was inspected:
 it refused to replace an immutable stale base before dispatch. That safeguard
-was retained, and the failed assessment is not counted as clean. Other optional
-native/performance/localization executions were still pending at handoff.
+was retained, and the failed assessment is not counted as clean. The optional
+native source-review job failed and the performance worker failed without a
+readable summary. The separate native Windows smoke remained in progress.
+These are not passing assessments. The native job log was not available through
+the run viewer while the smoke was active, and direct output was refused for
+terminal escapes; that output safeguard was not disabled.
 The PR is mergeable but awaits its required independent non-author approval.
 No account was switched, approval forged, rule changed or PR merged.
 
