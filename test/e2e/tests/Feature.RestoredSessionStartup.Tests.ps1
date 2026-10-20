@@ -52,10 +52,17 @@ Describe 'Feature: restored session startup' -Tag 'Feature', 'RestoredSessionSta
             $list = $root.FindFirst([Windows.Automation.TreeScope]::Descendants,
                 [Windows.Automation.PropertyCondition]::new(
                     [Windows.Automation.AutomationElement]::AutomationIdProperty, 'ItemsList'))
-            if (-not $list -or $list.Current.IsOffscreen) { return }
-            $rows = @($list.FindAll([Windows.Automation.TreeScope]::Children,
-                [Windows.Automation.Condition]::TrueCondition) | Where-Object {
-                    -not $_.Current.IsOffscreen -and $_.Current.Name.Contains($script:title)
+            if (-not $list -or $list.Current.IsOffscreen) {
+                $script:lastRowNames = @('Owned Sidebar ItemsList is absent or offscreen')
+                return
+            }
+            $allRows = @($list.FindAll([Windows.Automation.TreeScope]::Children,
+                [Windows.Automation.Condition]::TrueCondition))
+            $script:lastRowNames = @($allRows | ForEach-Object {
+                @{ name = $_.Current.Name; offscreen = $_.Current.IsOffscreen }
+            })
+            $rows = @($allRows | Where-Object {
+                    -not $_.Current.IsOffscreen -and $_.Current.Name.Contains($script:sid)
                 })
             if ($rows.Count -eq 1) { $rows[0].Current.Name }
         }
@@ -76,7 +83,7 @@ Describe 'Feature: restored session startup' -Tag 'Feature', 'RestoredSessionSta
         foreach ($sessionsEnabled in @($true, $false)) {
             Assert-WtPackageInactive -App $script:target
             $case = Join-Path $script:evidence "sessions-$sessionsEnabled"
-            $home = Join-Path $case 'home'
+            $sandboxHome = Join-Path $case 'home'
             $bin = Join-Path $case 'bin'
             $nativeBin = Join-Path $case 'native'
             $control = Join-Path $case 'control'
@@ -85,11 +92,11 @@ Describe 'Feature: restored session startup' -Tag 'Feature', 'RestoredSessionSta
             $folder = Join-Path $case ('watcher-' + $script:sid)
             $script:title = 'Restore-' + $script:sid
             $launchLog = Join-Path $folder 'launch.jsonl'
-            foreach ($directory in @($home, $bin, $nativeBin, $control, $script:records, $folder,
-                    (Join-Path $home 'AppData\Local\Packages'), (Join-Path $home 'AppData\Roaming'))) {
+            foreach ($directory in @($sandboxHome, $bin, $nativeBin, $control, $script:records, $folder,
+                    (Join-Path $sandboxHome 'AppData\Local\Packages'), (Join-Path $sandboxHome 'AppData\Roaming'))) {
                 New-Item -ItemType Directory -Path $directory -Force | Out-Null
             }
-            New-Item -ItemType Junction -Path (Join-Path $home "AppData\Local\Packages\$script:package") `
+            New-Item -ItemType Junction -Path (Join-Path $sandboxHome "AppData\Local\Packages\$script:package") `
                 -Target (Split-Path $script:target.LocalStateDir -Parent) | Out-Null
 
             $rejectSource = Join-Path $bin 'Reject.cs'
@@ -115,10 +122,10 @@ Describe 'Feature: restored session startup' -Tag 'Feature', 'RestoredSessionSta
             if ($LASTEXITCODE -ne 0) { throw "Native resume fixture compilation failed: $output" }
 
             $environment = @{
-                USERPROFILE = $home; HOME = $home; COPILOT_HOME = (Join-Path $home '.copilot')
-                CLAUDE_CONFIG_DIR = (Join-Path $home '.claude'); CODEX_HOME = (Join-Path $home '.codex')
-                GEMINI_CLI_HOME = (Join-Path $home '.gemini'); XDG_CONFIG_HOME = (Join-Path $home '.config')
-                OPENCODE_CONFIG_DIR = (Join-Path $home '.config\opencode')
+                USERPROFILE = $sandboxHome; HOME = $sandboxHome; COPILOT_HOME = (Join-Path $sandboxHome '.copilot')
+                CLAUDE_CONFIG_DIR = (Join-Path $sandboxHome '.claude'); CODEX_HOME = (Join-Path $sandboxHome '.codex')
+                GEMINI_CLI_HOME = (Join-Path $sandboxHome '.gemini'); XDG_CONFIG_HOME = (Join-Path $sandboxHome '.config')
+                OPENCODE_CONFIG_DIR = (Join-Path $sandboxHome '.config\opencode')
                 PATH = "$bin;$(Split-Path $script:pwsh);$($script:target.InstallLocation);$env:WINDIR\System32;$env:WINDIR;$env:LOCALAPPDATA\Microsoft\WindowsApps"
                 WTCLI_PATH = $script:target.WtcliPath; WT_WTCLI_PATH = $script:target.WtcliPath
             }
@@ -132,6 +139,7 @@ Describe 'Feature: restored session startup' -Tag 'Feature', 'RestoredSessionSta
                     'XDG_CONFIG_HOME', 'OPENCODE_CONFIG_DIR')) {
                 New-Item -ItemType Directory -Path $environment[$key] -Force | Out-Null
             }
+            New-Item -ItemType Directory -Path (Join-Path $sandboxHome '.copilot\session-state') -Force | Out-Null
             $nativeEnvironment = $environment.Clone()
             $nativeEnvironment.PATH = "$nativeBin;$($environment.PATH)"
             $environmentProbe = Join-Path $control 'agent-environment.json'
@@ -181,15 +189,15 @@ Describe 'Feature: restored session startup' -Tag 'Feature', 'RestoredSessionSta
                 $launch = Get-Content -LiteralPath $launchLog | Select-Object -First 1 | ConvertFrom-Json
                 $launch.session_id | Should -Be $script:sid
                 $launch.pane_session_id.Trim('{}') | Should -Be $pane.Trim('{}')
-                $launch.userprofile | Should -Be $home
+                $launch.userprofile | Should -Be $sandboxHome
                 (Get-Process -Id $launch.native_pid).Path | Should -Be $shim
                 Wait-Until -TimeoutSec 10 -Because 'ACP initialization is held by the real fixture process' -Condition {
                     @(Read-StartupRecords | Where-Object kind -EQ initialize).Count -gt 0
                 } | Out-Null
                 $agentEnvironment = Get-Content -LiteralPath $environmentProbe -Raw | ConvertFrom-Json
-                $agentEnvironment.userprofile | Should -Be $home
-                $agentEnvironment.home | Should -Be $home
-                $agentEnvironment.copilot_home | Should -Be (Join-Path $home '.copilot')
+                $agentEnvironment.userprofile | Should -Be $sandboxHome
+                $agentEnvironment.home | Should -Be $sandboxHome
+                $agentEnvironment.copilot_home | Should -Be (Join-Path $sandboxHome '.copilot')
                 $script:pipe = (Get-Content -LiteralPath (Join-Path $script:app.LocalStateDir 'IntelligentTerminal\master-pipe.txt') -Raw).Trim()
                 $masters = @(Get-CimInstance Win32_Process -Filter "Name='wta.exe'" | Where-Object {
                     $_.ExecutablePath -eq $script:app.WtaPath -and $_.CommandLine.Contains('--master') -and $_.CommandLine.Contains($script:pipe)
@@ -215,7 +223,10 @@ Describe 'Feature: restored session startup' -Tag 'Feature', 'RestoredSessionSta
                 $log = Get-ItLogText -App $script:app -Name 'terminal-agent-pane.log'
                 $log | Should -Match ("publishing restored session " + [regex]::Escape($script:sid) + ' receiver=\d+ consumer=(master|helper)')
                 $log | Should -Match ("agent_status_projection: source=snapshot session=" + [regex]::Escape($script:sid) + ' .*status=Idle')
-                $guard = @(Get-WtPanes -App $script:app | Where-Object { $_.session_id.Trim('{}') -ne $pane.Trim('{}') })
+                $guardTabs = @(Get-WtTabs -App $script:app -WindowId $script:app.WindowId |
+                    Where-Object title -EQ 'Ordinary guard')
+                $guardTabs | Should -HaveCount 1
+                $guard = @(Get-WtPanes -App $script:app -WindowId $script:app.WindowId -TabId ([string]$guardTabs[0].tab_id))
                 $guard | Should -HaveCount 1
                 $guardIds = @($guard | ForEach-Object { $_.session_id.Trim('{}') })
                 @($snapshot.pane_statuses | Where-Object { $_.pane_id.Trim('{}') -in $guardIds }) |
@@ -242,6 +253,19 @@ Describe 'Feature: restored session startup' -Tag 'Feature', 'RestoredSessionSta
                     @(Read-StartupRecords | Where-Object kind -EQ session_ready).Count -gt 0
                 } | Out-Null
                 @((Read-StartupSnapshot).sessions | Where-Object session_id -EQ $script:sid) | Should -HaveCount 1
+            }
+            catch {
+                $original = $_
+                if ($script:app -and -not $script:app.OwnedProcess.HasExited) {
+                    try {
+                        @{ error = $original.ToString(); rows = $script:lastRowNames
+                            snapshot = Read-StartupSnapshot } | ConvertTo-Json -Depth 20 |
+                            Set-Content -LiteralPath (Join-Path $case 'failure.json')
+                        Save-UiScreenshot -App $script:app -Path (Join-Path $case 'failure.png') | Out-Null
+                    }
+                    catch { Write-ItLog -Level WARN -Message "Startup failure diagnostics unavailable: $_" }
+                }
+                throw $original
             }
             finally {
                 if ($script:app) {

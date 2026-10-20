@@ -4197,6 +4197,8 @@ namespace TerminalAppLocalTests
                 const auto second = page->_GetTabImpl(page->_tabs.GetAt(1));
                 const auto firstPane = first->GetActiveTerminalControl().Connection().SessionId();
                 const auto secondPane = second->GetActiveTerminalControl().Connection().SessionId();
+                page->_NotifyRestoredSessionBindings(first);
+                VERIFY_IS_FALSE(page->_agentSnapshotRefreshPending);
                 page->_pendingRestoredSessionBindings[firstPane] = { L"restored-first", L"copilot", L"C:\\first" };
                 page->_pendingRestoredSessionBindings[secondPane] = { L"restored-second", L"copilot", L"C:\\second" };
                 std::vector<Json::Value> births;

@@ -10987,6 +10987,10 @@ namespace winrt::TerminalApp::implementation
 
     void TerminalPage::_ReplayRestoredSessionBindings(const winrt::com_ptr<Tab>& tab, const bool helperSubscribed)
     {
+        if (!helperSubscribed && _pendingRestoredSessionBindings.empty())
+        {
+            return;
+        }
         // Startup yields between panes. A restored helper can subscribe before
         // its tab's remaining shell panes have been created.
         if (helperSubscribed && _startupActionReplayDepth > 0)
