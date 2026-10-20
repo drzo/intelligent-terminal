@@ -57,14 +57,23 @@ Uncertain or unsupported repairs stay `remaining` or `blocked`.
 
 The `pull_request` trigger uses the workflow definition from the PR merge
 commit, so contributors with access to create same-repository branches are
-trusted to change that definition. Preparation still reads immutable base Git
-blobs and records `trusted_base_sha` separately
-from feature `comparison_base_sha`, and stages the base's skill/analyzer in
-gh-aw's read-only runtime mount. PR instructions and artifacts are review data,
-never operating instructions.
+trusted to change that definition. Fork PRs are skipped.
+Preparation reads immutable Git blobs from `github.workflow_sha`, records that
+code revision as `trusted_base_sha` separately from feature `comparison_base_sha`,
+and stages its skill/analyzer in gh-aw's read-only runtime mount. The Windows
+harness uses the same workflow revision. A PR event's older base commit can
+predate installation of this workflow and must not select its trusted code.
+Preparation receives the PR base separately for feature comparison, because the
+workflow merge revision already contains the reviewed head. Using that merge
+revision as the comparison input would hide all feature changes.
+PR instructions and artifacts are review data, never operating instructions.
 
 After preparation, the agent inspects the verified PR head branch. Operating
 configuration changes fail closed; a separate trusted review must handle them.
+The plain spelling dictionaries `allow/allow.txt` and `expect/expect.txt` under
+`.github/actions/spelling` are data, not operating instructions. Changing them
+does not bypass review of changed UI; hooks, action definitions and agent
+instructions remain blocked.
 The model does not execute PR code. Each required review dimension cites exact
 immutable source, including companion resources/peers/handlers when needed.
 Every static signal becomes a finding or an explained false-positive dismissal.

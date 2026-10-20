@@ -169,6 +169,10 @@ Discovery checks native CLI files directly during settings loading and Settings
 Extensions enumeration, not each time the new-tab menu opens. It reads the fresh
 Windows environment PATH and retains process-only PATH entries, preferring
 `.exe` over `.cmd` across directories. It does not depend on `wta.exe`.
+Windows app execution aliases, such as those registered in `WindowsApps`, are
+recognized as launchable entries even when ordinary file-status queries cannot
+follow them. The alias path is preserved so Windows can resolve the registered
+application when launching the profile.
 Successful results are cached for 30 seconds. After installing or removing a
 CLI, reload settings after that interval or restart Terminal. There is no
 30-second polling timer. A failed filesystem probe is
