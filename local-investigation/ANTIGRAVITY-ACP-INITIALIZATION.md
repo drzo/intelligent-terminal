@@ -31,13 +31,14 @@
   `b8253d73af5f6a79d3ed1b688400de61884fb89b`,
   `1920ba30909b78480fc1b2a1e9a4c2ffb0cd786a`,
   `2ef93e5bc800541858d8b3defc97b380d52fe44b` and
-  `f4a027d3c35e3c767abdb94939c59150e317a024`.
+  `f4a027d3c35e3c767abdb94939c59150e317a024` and `72fb4f337`.
 - Direct cherry-picks on publish:
   `7301970aa3c40dfd07e1f3a71f541ab19d5b7912`,
   `1b0961026720dedb9debe3293141abf2f0993197`,
   `ba61c2929c3494d380fe2aca30ce83989884afe3` and
-  `7803dd855d15c52c46819288f28f8f2077779019`.
-- Current refactor publish head: `7803dd855d15c52c46819288f28f8f2077779019`.
+  `7803dd855d15c52c46819288f28f8f2077779019` and
+  `bde1fc453bb5e98d0f3b9555d7bef3362dae2539`.
+- Current refactor publish head: `bde1fc453bb5e98d0f3b9555d7bef3362dae2539`.
 - Refactor PR: `microsoft/intelligent-terminal#1180`.
 - Current implementation base: `f643ba403f3c2050b0012ec1a5e31924fee918d8`.
   A final fetch confirmed that this is still `origin/main` and an ancestor of
@@ -46,7 +47,62 @@
 
 ## Current Stage
 
-Latest continuation: the user requested further autonomous work, not a
+2026-10-20 UTC: the user rejected the special `operating_system_policy`
+category inferred from English stderr and explicitly authorized its removal.
+Product dev commit `72fb4f337` and direct publish cherry-pick `bde1fc453`
+remove the enum variant, `diagnose_stderr`, both probe/master call sites and
+the C++ parser's corresponding allowed value. No replacement message heuristic
+or new raw-error UI was introduced.
+
+The remaining reasons are `failed`, `timed_out`, `authentication_required` and
+`retry_limit_reached`. Structured native OS/RPC codes, bounded startup stderr
+with the existing authentication redaction, the three-attempt budget, explicit
+retry epochs and owned process cleanup remain intact. Phase-based localized
+Settings presentation and provider selectability are unchanged.
+
+Evidence is under `Generated Files\acp-policy-removal`:
+
+- Rust serialization and C++ parsing regressions both failed against the old
+  accepted category, then passed after its removal.
+- The old deployed WTA classified a deterministic fixture's harmless
+  "Application Control policy has blocked" text as `operating_system_policy`,
+  despite the fixture returning an ordinary structured RPC error. This CLI RED
+  is preserved in `cli-red`, not rewritten as new-build evidence.
+- Both dev and exact publish full WTA runs pass: 2,905 unit tests plus one CLI
+  integration test, zero failures and five existing opt-in ignored tests.
+  The earlier clipboard prerequisite failures did not recur in these runs;
+  no clipboard permissions, test assertions or skip controls were changed.
+- Native ACP parser/model tests pass 18/18 on both dev and exact publish.
+  The full incremental ordinary Dev package build also passes, with compiler
+  and PRI warnings. Source identity inputs remain byte-exact ordinary Dev;
+  their timestamps were refreshed to avoid reusing earlier private-brand objects.
+  This package was built only, not installed over any registered layout.
+- Clippy passes with existing repository warnings; changed Rust matches rustfmt,
+  changed C++ is range-formatted, and the modified PowerShell files parse.
+- `cli-publish-green\receipt.json` ties the live CLI regression to clean publish
+  `bde1fc453` and WTA SHA-256
+  `15BAB6712C9A4EDD57941A8441388306770FE3FAAB88E8967E9B18606E758A51`.
+  The former trigger phrase now yields `failed`; RPC `-32603` and diagnostic
+  stderr are retained. Repeated probe processes stop at three starts, ordinary
+  requests stay blocked, explicit retry recovers on start four, and owned
+  fixture descendants are gone before return. Failed verification makes one
+  attempt; successful verification initializes once without a session or prompt.
+  This is isolated unpackaged CLI evidence, not packaged GUI E2E.
+- C451 now asserts generic classification, preserved RPC code and diagnostic
+  stderr in addition to its existing cross-process ceiling/retry contract.
+  The prior four-case packaged pass predates these new assertions.
+
+The user currently has the private 0.8.0.18 test app open. Deployment timing was
+asked explicitly, but the user was unavailable. Preserve that app and all
+current chat processes; do not close it, replace its active layout, uninstall a
+package or reset user data to obtain a new GUI result. The previously deployed
+WTA is still `7803dd855`; the old receipts' policy category is historical, not
+the current error contract. Fresh packaged acceptance remains pending a safe
+inactive-package window. Independent non-author approval remains external.
+
+### Prior autonomous review and approval handoff (7803dd855)
+
+At this earlier stage, the user requested further autonomous work, not a
 premature completion. New evidence and repairs are under
 `Generated Files\acp-review-followup` (ignored):
 
