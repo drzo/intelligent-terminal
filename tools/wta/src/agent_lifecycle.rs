@@ -77,6 +77,85 @@ impl std::fmt::Display for DependencyPrepared {
 
 impl std::error::Error for DependencyPrepared {}
 
+pub(crate) const MAX_STARTUP_DETAILS_BYTES: usize = 1024;
+
+#[derive(Debug)]
+pub(crate) struct StartupDetails(String);
+
+impl StartupDetails {
+    fn from_text(text: &str) -> Option<Self> {
+        let mut lines = std::collections::VecDeque::new();
+        for line in text.lines() {
+            if line.trim().is_empty() {
+                continue;
+            }
+            let redacted = line.to_ascii_lowercase().find("[redacted");
+            let input = &line[..redacted.unwrap_or(line.len())];
+            let safe = crate::protocol::acp::authentication::safe_error_reason(input);
+            let stop = redacted.is_some() || safe.as_deref() != Some(input.trim());
+            if let Some(mut safe) = safe {
+                if redacted.is_some() && !safe.ends_with("[redacted]") {
+                    safe.push_str(" [redacted]");
+                }
+                if lines.len() == 4 {
+                    lines.pop_front();
+                }
+                lines.push_back(safe);
+            }
+            // A credential value may continue on the following line.
+            if stop {
+                break;
+            }
+        }
+        let mut text = lines.into_iter().collect::<Vec<_>>().join("\n");
+        if text.is_empty() {
+            return None;
+        }
+        if text.len() > MAX_STARTUP_DETAILS_BYTES {
+            let mut end = MAX_STARTUP_DETAILS_BYTES - 3;
+            while !text.is_char_boundary(end) {
+                end -= 1;
+            }
+            text.truncate(end);
+            text.push_str("...");
+        }
+        Some(Self(text))
+    }
+
+    pub(crate) fn attach(error: anyhow::Error, lines: &[String]) -> anyhow::Error {
+        match Self::from_text(&lines.join("\n")) {
+            Some(details) => error.context(details),
+            None => error,
+        }
+    }
+}
+
+impl std::fmt::Display for StartupDetails {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str(&self.0)
+    }
+}
+
+impl std::error::Error for StartupDetails {}
+
+fn deserialize_startup_details<'de, D>(
+    deserializer: D,
+) -> std::result::Result<Option<String>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    match Option::<serde_json::Value>::deserialize(deserializer)? {
+        None | Some(serde_json::Value::Null) => Ok(None),
+        Some(serde_json::Value::String(text)) => {
+            Ok(StartupDetails::from_text(&text).map(|details| details.0))
+        }
+        Some(_) => {
+            tracing::warn!(target: "acp_startup", "ignored invalid startup diagnostic details");
+            Ok(None)
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) struct StartupFailure {
     #[serde(default)]
@@ -90,6 +169,12 @@ pub(crate) struct StartupFailure {
     pub os_error: Option<i32>,
     pub rpc_code: Option<i32>,
     pub diagnostic_id: String,
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "deserialize_startup_details"
+    )]
+    pub details: Option<String>,
 }
 
 impl StartupFailure {
@@ -138,6 +223,21 @@ impl StartupFailure {
                 .and_then(std::io::Error::raw_os_error),
             rpc_code,
             diagnostic_id: uuid::Uuid::new_v4().to_string(),
+            details: error
+                .downcast_ref::<StartupDetails>()
+                .map(|details| details.0.clone())
+                .or_else(|| {
+                    error
+                        .downcast_ref::<agent_client_protocol::Error>()
+                        .and_then(|error| StartupDetails::from_text(&error.message))
+                        .map(|details| details.0)
+                })
+                .or_else(|| {
+                    error
+                        .downcast_ref::<std::io::Error>()
+                        .and_then(|error| StartupDetails::from_text(&error.to_string()))
+                        .map(|details| details.0)
+                }),
         }
     }
 }
@@ -148,7 +248,11 @@ impl std::fmt::Display for StartupFailure {
             formatter,
             "ACP {:?} {:?} [{}/{}; diagnostic {}]",
             self.phase, self.reason, self.attempts, self.max_attempts, self.diagnostic_id
-        )
+        )?;
+        if let Some(details) = &self.details {
+            write!(formatter, "\n{details}")?;
+        }
+        Ok(())
     }
 }
 
@@ -487,6 +591,98 @@ impl StartupLease {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn startup_details_preserve_native_text_and_structured_codes() {
+        let lines = vec![
+            "Failed to load Python DLL 'python310.dll'.".to_string(),
+            "LoadLibrary: An Application Control policy has blocked this file.".to_string(),
+        ];
+        let error = StartupDetails::attach(
+            agent_client_protocol::Error::new(-32603, "Internal error")
+                .data(serde_json::json!({"password": "not-public"}))
+                .into(),
+            &lines,
+        );
+        let failure = StartupFailure::from_error(&error, 2, Some(true), false);
+        assert_eq!(failure.reason, StartupReason::Failed);
+        assert_eq!(failure.rpc_code, Some(-32603));
+        assert_eq!(failure.details.as_deref(), Some(lines.join("\n").as_str()));
+        let serialized = serde_json::to_string(&failure).unwrap();
+        assert!(!serialized.contains("not-public"));
+        assert_eq!(
+            serde_json::from_str::<StartupFailure>(&serialized).unwrap(),
+            failure
+        );
+    }
+
+    #[test]
+    fn startup_details_remove_secret_tails_and_unsafe_controls() {
+        for text in [
+            "LoadLibrary failed; password=private-marker\nprivate-continuation",
+            "Provider rejected request; api_key=private-marker",
+            "Provider rejected request; --api-key private-marker",
+            "Provider rejected request; private_key: private-marker",
+            "LoadLibrary failed\n[redacted agent authentication progress]\nprivate-marker",
+            "LoadLibrary failed; https://example.test/?token=private-marker",
+            "LoadLibrary failed\u{1b}[31mprivate-marker",
+            "LoadLibrary failed\u{202e}private-marker",
+        ] {
+            let details = StartupDetails::from_text(text).unwrap().0;
+            assert!(
+                details.contains("LoadLibrary failed")
+                    || details.contains("Provider rejected request")
+            );
+            assert!(!details.contains("private-marker"));
+            assert!(!details.contains("private-continuation"));
+            assert!(!details.contains("example.test"));
+            assert!(!details.chars().any(|ch| ch.is_control() && ch != '\n'));
+            assert!(!details.contains('\u{202e}'));
+        }
+        assert!(StartupDetails::from_text("password=private-marker").is_none());
+    }
+
+    #[test]
+    fn startup_details_are_utf8_bounded_and_fit_the_persistent_ledger() {
+        for text in [
+            vec!["\\".repeat(512); 4].join("\n"),
+            "\u{4e2d}".repeat(2048),
+            (0..10)
+                .map(|index| format!("native line {index}"))
+                .collect::<Vec<_>>()
+                .join("\n"),
+        ] {
+            let details = StartupDetails::from_text(&text).unwrap();
+            assert!(details.0.len() <= MAX_STARTUP_DETAILS_BYTES);
+            assert!(details.0.lines().count() <= 4);
+            let failure =
+                StartupFailure::from_error(&anyhow::Error::new(details), 1, Some(true), false);
+            let state = StartupState {
+                last_failure: Some(failure),
+                ..Default::default()
+            };
+            assert!(serde_json::to_vec(&state).unwrap().len() <= 4096);
+        }
+    }
+
+    #[test]
+    fn startup_details_accept_legacy_payloads_and_discard_invalid_optional_data() {
+        let failure =
+            StartupFailure::from_error(&anyhow::anyhow!("startup failed"), 1, None, false);
+        let mut payload = serde_json::to_value(&failure).unwrap();
+        assert!(payload.get("details").is_none());
+        assert_eq!(
+            serde_json::from_value::<StartupFailure>(payload.clone())
+                .unwrap()
+                .details,
+            None
+        );
+        payload["details"] = serde_json::json!({"password": "private-marker"});
+        let decoded = serde_json::from_value::<StartupFailure>(payload).unwrap();
+        assert_eq!(decoded.reason, StartupReason::Failed);
+        assert_eq!(decoded.details, None);
+        assert!(!decoded.to_string().contains("private-marker"));
+    }
 
     #[test]
     fn startup_reasons_do_not_include_message_inferred_categories() {

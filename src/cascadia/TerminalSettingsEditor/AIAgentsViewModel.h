@@ -100,6 +100,8 @@ namespace winrt::Microsoft::Terminal::Settings::Editor::implementation
         bool IsAcpPreparing() const noexcept { return _acpPreparing; }
         bool AcpPreparationFailed() const noexcept { return _acpPreparationFailed; }
         winrt::hstring AcpPreparationErrorText() const { return _acpPreparationErrorText; }
+        winrt::hstring AcpPreparationErrorDetails() const { return _acpPreparationErrorDetails; }
+        bool HasAcpPreparationErrorDetails() const noexcept { return _acpPreparationFailed && !_acpPreparationErrorDetails.empty(); }
         void RetryAcpPreparation() { _TriggerAcpModelProbe(true); }
 
         using ViewModelHelper<AIAgentsViewModel>::PropertyChanged;
@@ -233,6 +235,7 @@ namespace winrt::Microsoft::Terminal::Settings::Editor::implementation
         bool _acpPreparing{ false };
         bool _acpPreparationFailed{ false };
         winrt::hstring _acpPreparationErrorText;
+        winrt::hstring _acpPreparationErrorDetails;
         // Generation counter: bumped each time _TriggerAcpModelProbe
         // fires. An in-flight probe checks this before publishing its
         // result and bails if a newer trigger has superseded it (user

@@ -46,6 +46,7 @@ namespace Microsoft::Terminal::AcpModels
         uint32_t maxAttempts{};
         bool startupVerified{};
         std::string diagnosticId;
+        std::string details;
     };
 
     inline std::optional<StartupFailure> ParseStartupFailure(const std::string_view payload)
@@ -73,6 +74,7 @@ namespace Microsoft::Terminal::AcpModels
             failure["max_attempts"].asUInt(),
             failure["startup_verified"].asBool(),
             failure["diagnostic_id"].asString(),
+            {},
         };
         constexpr std::string_view phases[]{ "preparation", "spawn", "initialize", "session", "cleanup" };
         constexpr std::string_view reasons[]{ "failed", "timed_out", "authentication_required", "retry_limit_reached" };
@@ -88,6 +90,21 @@ namespace Microsoft::Terminal::AcpModels
             const auto ch = static_cast<unsigned char>(parsed.diagnosticId[index]);
             const auto separator = index == 8 || index == 13 || index == 18 || index == 23;
             if ((separator && ch != '-') || (!separator && !std::isxdigit(ch)))
+            {
+                return std::nullopt;
+            }
+        }
+        if (failure.isMember("details") && !failure["details"].isNull())
+        {
+            if (!failure["details"].isString())
+            {
+                return std::nullopt;
+            }
+            parsed.details = failure["details"].asString();
+            if (parsed.details.size() > 1024 ||
+                std::ranges::any_of(parsed.details, [](const unsigned char ch) {
+                    return (ch < 0x20 && ch != '\n') || ch == 0x7f;
+                }))
             {
                 return std::nullopt;
             }

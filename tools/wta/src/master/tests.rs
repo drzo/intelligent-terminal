@@ -17431,6 +17431,33 @@ async fn seeded_history_carries_the_agents_execution_source() {
 /// distro — so a startup failure has to name the source or it sends the user
 /// debugging the wrong machine.
 #[test]
+fn startup_native_details_cross_the_master_helper_error_boundary() {
+    let error = crate::agent_lifecycle::StartupDetails::attach(
+        acp::Error::new(-32603, "Internal error")
+            .data(serde_json::json!({"credential": "must-not-forward"}))
+            .into(),
+        &[
+            "Failed to load Python DLL 'native-loader.dll'.".into(),
+            "LoadLibrary: controlled native failure.".into(),
+        ],
+    );
+    let failure = crate::agent_lifecycle::StartupFailure::from_error(&error, 2, Some(true), false);
+    let response = helper_initialize_error(
+        HelperInitializeFailure::AgentStartup,
+        &error.context(failure),
+    );
+    let serialized = serde_json::to_string(&response).unwrap();
+    assert!(!serialized.contains("must-not-forward"));
+    let response: acp::Error = serde_json::from_str(&serialized).unwrap();
+    let failure = crate::protocol::acp::failure::AgentFailure::from_initialize_error(&response);
+    assert_eq!(failure.class(), "startup_failed");
+    assert!(failure.to_string().contains("native-loader.dll"));
+    assert!(failure
+        .to_string()
+        .contains("LoadLibrary: controlled native failure."));
+}
+
+#[test]
 fn startup_failure_names_the_execution_source() {
     use crate::agent_source::AgentSource;
 

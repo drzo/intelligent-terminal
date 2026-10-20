@@ -15011,6 +15011,40 @@ fn show_copilot_auth_screen_with_missing_cli_preserves_diagnostic_setup() {
 }
 
 #[test]
+fn initial_startup_native_details_are_rendered_without_changing_recovery() {
+    let _locale = crate::test_support::lock_locale();
+    let _capture = crate::wt_protocol_events::capture_test_published_events();
+    let mut app = test_app();
+    let error = crate::agent_lifecycle::StartupDetails::attach(
+        anyhow::anyhow!("agent exited before initialize"),
+        &[
+            "Failed to load Python DLL 'native-loader.dll'.".into(),
+            "LoadLibrary: controlled native failure.".into(),
+        ],
+    );
+    let failure = crate::protocol::acp::failure::AgentFailure::Startup(
+        crate::agent_lifecycle::StartupFailure::from_error(&error, 2, Some(true), false),
+    );
+    let message = failure.to_string();
+    app.handle_event(AppEvent::InitialAgentStartupFailed { failure, message });
+    assert_eq!(app.mode, AppMode::Setup);
+    let text = render_to_text(&mut app, 120, 35);
+    assert!(text.contains("native-loader.dll"), "rendered:\n{text}");
+    assert!(
+        text.contains("LoadLibrary: controlled native failure."),
+        "rendered:\n{text}"
+    );
+    assert!(app.current_tab().messages.is_empty());
+    assert!(app
+        .setup
+        .as_ref()
+        .unwrap()
+        .options
+        .iter()
+        .any(|option| matches!(option, SetupOption::RetryConnection)));
+}
+
+#[test]
 fn initial_startup_failure_uses_setup_without_polluting_chat() {
     let mut app = test_app();
     let _capture = crate::wt_protocol_events::capture_test_published_events();
@@ -23257,6 +23291,7 @@ fn completed_tool_call_defaults_compact_and_expands_independently() {
 
 #[test]
 fn failed_completed_tool_keeps_bounded_diagnostic_preview() {
+    let _locale = crate::test_support::lock_locale();
     let mut app = test_app();
     app.state = ConnectionState::Connected;
     app.current_tab_mut().completed_turns.push(CompletedTurn {

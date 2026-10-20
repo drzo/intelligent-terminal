@@ -279,6 +279,16 @@
                             Click="{x:Bind ViewModel.RetryAcpPreparation}" />
                 </muxc:InfoBar.ActionButton>
             </muxc:InfoBar>
+            <muxc:Expander x:Uid="AIAgents_AcpErrorDetails"
+                           AutomationProperties.AutomationId="AcpSetupErrorDetails"
+                           HorizontalAlignment="Stretch"
+                           HorizontalContentAlignment="Stretch"
+                           Visibility="{x:Bind ViewModel.HasAcpPreparationErrorDetails, Mode=OneWay}">
+                <TextBlock AutomationProperties.AutomationId="AcpSetupErrorDetailsText"
+                           IsTextSelectionEnabled="True"
+                           Text="{x:Bind ViewModel.AcpPreparationErrorDetails, Mode=OneWay}"
+                           TextWrapping="Wrap" />
+            </muxc:Expander>
             <!--  Model picker — shown for every selected agent (built-in
                   or custom) so a stale acpModel value is always visible
                   and clearable. HasAcpModelList picks between the

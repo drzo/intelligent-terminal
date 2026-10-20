@@ -1809,7 +1809,8 @@ namespace winrt::Microsoft::Terminal::Settings::Editor::implementation
             _acpPreparing = false;
             _acpPreparationFailed = false;
             _acpPreparationErrorText = {};
-            _NotifyChanges(L"IsAcpPreparing", L"AcpPreparationFailed", L"AcpPreparationErrorText");
+            _acpPreparationErrorDetails = {};
+            _NotifyChanges(L"IsAcpPreparing", L"AcpPreparationFailed", L"AcpPreparationErrorText", L"AcpPreparationErrorDetails", L"HasAcpPreparationErrorDetails");
             return;
         }
 
@@ -1821,7 +1822,8 @@ namespace winrt::Microsoft::Terminal::Settings::Editor::implementation
         _acpPreparing = true;
         _acpPreparationFailed = false;
         _acpPreparationErrorText = {};
-        _NotifyChanges(L"IsAcpPreparing", L"AcpPreparationFailed", L"AcpPreparationErrorText");
+        _acpPreparationErrorDetails = {};
+        _NotifyChanges(L"IsAcpPreparing", L"AcpPreparationFailed", L"AcpPreparationErrorText", L"AcpPreparationErrorDetails", L"HasAcpPreparationErrorDetails");
         _RebuildAcpModelListFromCache();
         const auto cacheRevision = Model::AcpRuntimeState::Current().Revision(agentId);
         const auto telemetryAgentId = _StartsWithCustom(agentId) ? winrt::hstring{ L"custom" } : agentId;
@@ -1925,6 +1927,7 @@ namespace winrt::Microsoft::Terminal::Settings::Editor::implementation
                                       L"AIAgents_AcpCleanupFailed/Text" :
                                       L"AIAgents_AcpStartupFailed/Text";
             _acpPreparationErrorText = GetLibraryResourceString(resource);
+            _acpPreparationErrorDetails = startupFailure ? winrt::to_hstring(startupFailure->details) : winrt::hstring{};
             if (startupFailure)
             {
                 LOG_HR_MSG(E_FAIL,
@@ -1943,7 +1946,7 @@ namespace winrt::Microsoft::Terminal::Settings::Editor::implementation
             }
         }
         // InfoBar announces its message when it opens, not when the message changes.
-        _NotifyChanges(L"IsAcpPreparing", L"AcpPreparationErrorText", L"AcpPreparationFailed");
+        _NotifyChanges(L"IsAcpPreparing", L"AcpPreparationErrorText", L"AcpPreparationErrorDetails", L"HasAcpPreparationErrorDetails", L"AcpPreparationFailed");
         const auto probeSucceeded = catalog && !parsed.empty();
         TraceLoggingWrite(
             g_hTerminalSettingsEditorProvider,

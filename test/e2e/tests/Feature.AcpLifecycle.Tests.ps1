@@ -39,10 +39,12 @@ Describe 'Feature: ACP provider lifecycle' -Tag 'Feature', 'AcpLifecycle' {
         $script:fixture = (Resolve-Path (Join-Path $PSScriptRoot '..\fixtures\Mock-AcpChatAgent.ps1')).Path
         [xml]$resources = Get-Content -LiteralPath (Join-Path $PSScriptRoot '..\..\..\src\cascadia\TerminalSettingsEditor\Resources\en-US\Resources.resw') -Raw
         $script:expectedStartupError = $resources.SelectSingleNode("/root/data[@name='AIAgents_AcpStartupFailed.Text']/value").InnerText
+        $script:expectedDetailsHeader = $resources.SelectSingleNode("/root/data[@name='AIAgents_AcpErrorDetails.Header']/value").InnerText
         $script:expectedStartupError | Should -Not -BeNullOrEmpty
         $script:requests = Join-Path $script:evidence 'requests.log'
         $script:control = Join-Path $script:evidence 'startup.json'
-        @{ mode = 'fail' } | ConvertTo-Json | Set-Content -LiteralPath $script:control
+        $script:nativeDetails = "Failed to load Python DLL 'fixture-python.dll'.`nLoadLibrary: Controlled startup failure."
+        @{ mode = 'fail'; failureStderr = $script:nativeDetails } | ConvertTo-Json | Set-Content -LiteralPath $script:control
         $invocation = "& '$($script:fixture.Replace("'", "''"))' -LogPath '$($script:requests.Replace("'", "''"))' -StartupControlPath '$($script:control.Replace("'", "''"))'"
         $encoded = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($invocation))
         $command = "pwsh.exe -NoLogo -NoProfile -NonInteractive -EncodedCommand $encoded"
@@ -228,6 +230,23 @@ Describe 'Feature: ACP provider lifecycle' -Tag 'Feature', 'AcpLifecycle' {
         $messages | Should -Contain $script:expectedStartupError -Because 'the accessible primary error must remain fully localized, without appended protocol diagnostics'
         @($messages | Where-Object { $_ -match '\[[a-z_]+ / [a-z_]+; \d+/\d+;' }).Count |
             Should -Be 0 -Because 'raw startup diagnostics belong in logs, not the primary error announcement'
+        $details = $root.FindFirst(
+            [Windows.Automation.TreeScope]::Descendants,
+            [Windows.Automation.PropertyCondition]::new(
+                [Windows.Automation.AutomationElement]::AutomationIdProperty, 'AcpSetupErrorDetails'))
+        $details | Should -Not -BeNullOrEmpty -Because 'captured native errors must be available separately from the localized summary'
+        $details.Current.Name | Should -Be $script:expectedDetailsHeader
+        $expandDetails = $details.GetCurrentPattern([Windows.Automation.ExpandCollapsePattern]::Pattern)
+        $expandDetails.Current.ExpandCollapseState | Should -Be ([Windows.Automation.ExpandCollapseState]::Collapsed)
+        $expandDetails.Expand()
+        $detailText = $root.FindFirst(
+            [Windows.Automation.TreeScope]::Descendants,
+            [Windows.Automation.PropertyCondition]::new(
+                [Windows.Automation.AutomationElement]::AutomationIdProperty, 'AcpSetupErrorDetailsText'))
+        $detailText.Current.Name | Should -Be $script:nativeDetails
+        $detailText.Current.IsOffscreen | Should -BeFalse
+        Save-UiScreenshot -App $script:app -Path (Join-Path $script:evidence 'startup-native-details.png') | Out-Null
+        $expandDetails.Collapse()
 
         @{ mode = 'ready' } | ConvertTo-Json | Set-Content -LiteralPath $script:control
         Invoke-UiElement -App $script:app -Selector RetryAcpSetup | Out-Null
@@ -256,6 +275,11 @@ Describe 'Feature: ACP provider lifecycle' -Tag 'Feature', 'AcpLifecycle' {
         } | Out-Null
         $modelPicker.GetCurrentPattern([Windows.Automation.ExpandCollapsePattern]::Pattern).Collapse()
         (Get-LifecycleSelection).Name | Should -Match 'pwsh'
+        $oldDetails = $root.FindFirst(
+            [Windows.Automation.TreeScope]::Descendants,
+            [Windows.Automation.PropertyCondition]::new(
+                [Windows.Automation.AutomationElement]::AutomationIdProperty, 'AcpSetupErrorDetails'))
+        if ($oldDetails) { $oldDetails.Current.IsOffscreen | Should -BeTrue }
         Save-UiScreenshot -App $script:app -Path (Join-Path $script:evidence 'startup-recovered.png') | Out-Null
     }
 
@@ -272,6 +296,7 @@ Describe 'Feature: ACP provider lifecycle' -Tag 'Feature', 'AcpLifecycle' {
                 $failure.phase | Should -Be 'initialize'
                 $failure.reason | Should -Be 'failed' -Because 'native stderr wording must not override the structured failure'
                 $failure.rpc_code | Should -Be -32603
+                $failure.details | Should -Be $failureText
             }
         }
         (Get-ItLogText -App $script:app -Name 'wta-probe.log' -SinceStart) |

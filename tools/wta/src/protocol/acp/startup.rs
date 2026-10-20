@@ -104,11 +104,11 @@ pub(crate) async fn start_probe(
             response,
         }),
         Err(error) => {
-            stderr
+            let lines = stderr
                 .finish_failed_startup(&mut spawned.child, stderr_task)
                 .await
                 .context(StartupPhase::Cleanup)?;
-            Err(error)
+            Err(crate::agent_lifecycle::StartupDetails::attach(error, &lines))
         }
     }
 }

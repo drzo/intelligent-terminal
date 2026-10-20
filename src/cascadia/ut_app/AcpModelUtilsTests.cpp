@@ -28,6 +28,8 @@ namespace TerminalAppUnitTests
         TEST_METHOD(RejectsInvalidCatalogShapes);
         TEST_METHOD(StartupFailurePreservesDiagnosticsWithoutBecomingModelCatalog);
         TEST_METHOD(StartupFailureRejectsMessageInferredReasons);
+        TEST_METHOD(StartupFailurePreservesNativeDetails);
+        TEST_METHOD(StartupFailureRejectsUnsafeDetailShapes);
         TEST_METHOD(ProbeCommandsMatchRuntimeLaunchIdentity);
         TEST_METHOD(ParsesAndNormalizesCatalog);
         TEST_METHOD(ParsesCatalogValue);
@@ -137,6 +139,51 @@ namespace TerminalAppUnitTests
             }
         })")
                             .has_value());
+    }
+
+    void AcpModelUtilsTests::StartupFailurePreservesNativeDetails()
+    {
+        const auto failure = ParseStartupFailure(R"({
+            "startup_failure": {
+                "phase":"initialize",
+                "reason":"failed",
+                "attempts":2,
+                "max_attempts":3,
+                "startup_verified":false,
+                "diagnostic_id":"3ce3c25f-7982-4240-a46f-3697eec05ca3",
+                "details":"Failed to load Python DLL 'python310.dll'.\nLoadLibrary: blocked by the operating system."
+            }
+        })");
+        VERIFY_IS_TRUE(failure.has_value());
+        VERIFY_ARE_EQUAL(std::string{ "failed" }, failure->reason);
+        VERIFY_ARE_EQUAL(std::string{ "Failed to load Python DLL 'python310.dll'.\nLoadLibrary: blocked by the operating system." }, failure->details);
+    }
+
+    void AcpModelUtilsTests::StartupFailureRejectsUnsafeDetailShapes()
+    {
+        Json::Value failure{ Json::objectValue };
+        failure["phase"] = "initialize";
+        failure["reason"] = "failed";
+        failure["attempts"] = 1;
+        failure["max_attempts"] = 3;
+        failure["startup_verified"] = false;
+        failure["diagnostic_id"] = "3ce3c25f-7982-4240-a46f-3697eec05ca3";
+        for (const auto& details : {
+                 Json::Value{ std::string(1025, 'x') },
+                 Json::Value{ "unsafe\x1b[31m" },
+                 Json::Value{ 42 } })
+        {
+            failure["details"] = details;
+            Json::Value root{ Json::objectValue };
+            root["startup_failure"] = failure;
+            VERIFY_IS_FALSE(ParseStartupFailure(Json::writeString(Json::StreamWriterBuilder{}, root)).has_value());
+        }
+        failure.removeMember("details");
+        Json::Value legacy{ Json::objectValue };
+        legacy["startup_failure"] = failure;
+        const auto parsed = ParseStartupFailure(Json::writeString(Json::StreamWriterBuilder{}, legacy));
+        VERIFY_IS_TRUE(parsed.has_value());
+        VERIFY_IS_TRUE(parsed->details.empty());
     }
 
     void AcpModelUtilsTests::AppendsSupportedModelFlags()
