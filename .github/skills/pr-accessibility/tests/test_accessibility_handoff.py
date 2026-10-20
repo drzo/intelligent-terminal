@@ -129,9 +129,11 @@ class CompiledGraphTests(unittest.TestCase):
                 for permission, level in requested.items():
                     with self.subTest(caller=job_id, child=child_id, permission=permission):
                         self.assertLessEqual(levels[level], levels[caller["permissions"].get(permission, "none")])
-            # gh-aw v0.87.10 still requests framework issues:write even with
-            # reporting disabled. The model job must never receive that grant.
+            # The artifact conclusion handler needs actions:write at the caller
+            # ceiling, never on the model job. No reusable job may publish issues.
             self.assertNotIn("issues", child["jobs"]["agent"]["permissions"])
+            self.assertNotIn("actions", child["jobs"]["agent"]["permissions"])
+            self.assertNotIn("issues", caller["permissions"])
 
     def test_original_triage_is_available_to_deep_and_final(self):
         deep = (ROOT / ".github/workflows/ghaw-pr-accessibility.md").read_text(encoding="utf-8")

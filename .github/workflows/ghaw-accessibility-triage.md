@@ -46,11 +46,24 @@ steps:
   - name: Prepare run directory
     run: mkdir -p "Generated Files/$ACCESSIBILITY_RUN"
 post-steps:
+  - name: Record triage producer identity even when incomplete
+    if: always()
+    env:
+      PRODUCER_HEAD: ${{ github.event.pull_request.head.sha }}
+      PRODUCER_WORKFLOW: ${{ github.workflow_sha }}
+    run: |
+      mkdir -p "Generated Files/$ACCESSIBILITY_RUN"
+      printf '%s\n' \
+        "run=$GITHUB_RUN_ID" "attempt=$GITHUB_RUN_ATTEMPT" \
+        "head=$PRODUCER_HEAD" "workflow=$PRODUCER_WORKFLOW" \
+        > "Generated Files/$ACCESSIBILITY_RUN/triage-producer.txt"
   - name: Preserve original triage even when invalid
     if: always()
     uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
     with:
-      name: accessibility-triage-${{ github.run_id }}-${{ github.run_attempt }}
+      # One current artifact per producer/run; the file records its actual attempt.
+      name: accessibility-triage-${{ github.run_id }}
+      overwrite: true
       path: Generated Files/accessibility-${{ github.run_id }}-${{ github.run_attempt }}/
       if-no-files-found: warn
       retention-days: 14

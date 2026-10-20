@@ -81,10 +81,9 @@ jobs:
   triage:
     uses: ./.github/workflows/ghaw-accessibility-triage.lock.yml
     permissions:
-      actions: read
+      actions: write # gh-aw artifact conclusion handler; model jobs remain read-only.
       contents: read
       copilot-requests: write
-      issues: write # gh-aw conclusion/safe-output jobs require this ceiling; agents remain read-only.
     secrets: inherit
 
   triage-route:
@@ -102,7 +101,7 @@ jobs:
           persist-credentials: false
       - uses: actions/download-artifact@v8
         with:
-          name: accessibility-triage-${{ github.run_id }}-${{ github.run_attempt }}
+          name: accessibility-triage-${{ github.run_id }}
           path: Generated Files/accessibility-${{ github.run_id }}-${{ github.run_attempt }}
       - id: route
         env:
@@ -134,7 +133,7 @@ jobs:
           persist-credentials: false
       - uses: actions/download-artifact@v8
         with:
-          name: accessibility-deep-${{ github.run_id }}-${{ github.run_attempt }}
+          name: accessibility-deep-${{ github.run_id }}
           path: Generated Files/accessibility-${{ github.run_id }}-${{ github.run_attempt }}
       - id: selection
         run: |
@@ -164,10 +163,9 @@ jobs:
     if: ${{ always() && github.event.pull_request.head.repo.id == github.repository_id }}
     uses: ./.github/workflows/ghaw-accessibility-summary.lock.yml
     permissions:
-      actions: read
+      actions: write # gh-aw artifact conclusion handler; model jobs remain read-only.
       contents: read
       copilot-requests: write
-      issues: write # gh-aw framework only; noop/missing-data issue reporting is disabled.
     secrets: inherit
     with:
       triage-result: ${{ needs.triage-route.result }}
@@ -183,7 +181,7 @@ steps:
   - name: Download original triage
     uses: actions/download-artifact@v8
     with:
-      name: accessibility-triage-${{ github.run_id }}-${{ github.run_attempt }}
+      name: accessibility-triage-${{ github.run_id }}
       path: Generated Files/accessibility-${{ github.run_id }}-${{ github.run_attempt }}
 
   - name: Prepare trusted accessibility evidence
@@ -318,11 +316,25 @@ post-steps:
         --safe-output-queue "$GH_AW_SAFE_OUTPUTS" \
         --transport-root /tmp/gh-aw
 
+  - name: Record deep producer identity even when incomplete
+    if: always()
+    env:
+      PRODUCER_HEAD: ${{ github.event.pull_request.head.sha }}
+      PRODUCER_WORKFLOW: ${{ github.workflow_sha }}
+    run: |
+      mkdir -p "Generated Files/$ACCESSIBILITY_RUN"
+      printf '%s\n' \
+        "run=$GITHUB_RUN_ID" "attempt=$GITHUB_RUN_ATTEMPT" \
+        "head=$PRODUCER_HEAD" "workflow=$PRODUCER_WORKFLOW" \
+        > "Generated Files/$ACCESSIBILITY_RUN/deep-producer.txt"
+
   - name: Upload deep review evidence even when incomplete
     if: always()
     uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
     with:
-      name: accessibility-deep-${{ github.run_id }}-${{ github.run_attempt }}
+      # Stable per-run stage identity survives retained producers on partial reruns.
+      name: accessibility-deep-${{ github.run_id }}
+      overwrite: true
       path: Generated Files/accessibility-${{ github.run_id }}-${{ github.run_attempt }}/
       if-no-files-found: warn
       retention-days: 14
