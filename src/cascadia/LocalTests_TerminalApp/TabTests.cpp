@@ -5322,6 +5322,21 @@ namespace TerminalAppLocalTests
                 VERIFY_IS_TRUE(page->_SidebarFocusedControl() == row->VerticalRailToggleButton());
             }
 
+            const auto palette = page->LoadCommandPalette();
+            palette.EnableCommandPaletteMode(CommandPaletteLaunchMode::Action);
+            palette.Visibility(Visibility::Visible);
+            VERIFY_IS_TRUE(palette.FindName(L"_searchBox").as<TextBox>().Focus(FocusState::Programmatic));
+            VERIFY_IS_TRUE(keys->TryKeyChord(chord));
+            VERIFY_ARE_EQUAL(Visibility::Collapsed, palette.Visibility());
+            VERIFY_IS_TRUE(page->_SidebarFocusedControl() == strip->SearchTextBox());
+            VERIFY_ARE_EQUAL(winrt::hstring{ L"retained sidebar query" }, strip->SearchQuery());
+
+            palette.EnableCommandPaletteMode(CommandPaletteLaunchMode::Action);
+            palette.Visibility(Visibility::Visible);
+            VERIFY_IS_TRUE(palette.FindName(L"_searchBox").as<TextBox>().Focus(FocusState::Programmatic));
+            palette.Visibility(Visibility::Collapsed);
+            VERIFY_IS_TRUE(terminal.FocusState() != FocusState::Unfocused);
+
             page->SetFocusMode(true);
             VERIFY_IS_FALSE(page->_isVerticalRailVisible);
             page->_ToggleSidebarHotkey();
@@ -5371,6 +5386,15 @@ namespace TerminalAppLocalTests
             page->_HandleTabSearch(nullptr, args);
             VERIFY_ARE_EQUAL(Visibility::Visible, palette.Visibility());
             VERIFY_IS_TRUE(search.Text().empty(), L"A new search still starts with an empty query");
+
+            palette.EnableTabSwitcherMode(0, TabSwitcherMode::MostRecentlyUsed);
+            VERIFY_IS_TRUE(palette.FindName(L"_filteredActionsView").as<ListView>().Focus(FocusState::Programmatic));
+            // Model the hidden input while the tab switcher's anchor modifier is held.
+            search.Visibility(Visibility::Collapsed);
+            page->_HandleTabSearch(nullptr, args);
+            VERIFY_ARE_EQUAL(Visibility::Visible, palette.Visibility());
+            VERIFY_ARE_EQUAL(Visibility::Visible, search.Visibility());
+            VERIFY_IS_TRUE(search.FocusState() != FocusState::Unfocused);
         });
     }
 

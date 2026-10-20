@@ -227,6 +227,17 @@ Describe 'Feature: layout-aware agent history and sidebar hotkeys' -Tag @('Featu
                 acpModel = ''
             }
         }
+        $script:StopLayoutApp = {
+            param($App)
+            Stop-Terminal -App $App -RestoreSettings $false
+            if (-not $App.ConfigBackupOwned) { throw 'Layout fixture has no owned configuration backup.' }
+            # Child exit can lag the owned host; retain the same inactivity gate before restoring data.
+            Wait-Until -TimeoutSec 8 -IntervalSec 0.2 -Because 'all test-package processes to exit before restoring configuration' -Condition {
+                @(Get-WtProcessesForApp -App $App -IncludePackageExecutables).Count -eq 0
+            } | Out-Null
+            Assert-WtPackageInactive -App $App
+            Restore-WtConfig -App $App
+        }
     }
 
     It 'Agent history hotkey toggles the layout-appropriate history surface' -Tag 'SidebarHistory' {
@@ -252,7 +263,7 @@ Describe 'Feature: layout-aware agent history and sidebar hotkeys' -Tag @('Featu
             Save-UiScreenshot -App $horizontal -Path (Join-Path $script:evidenceDir 'history-horizontal-hidden.png') | Out-Null
         }
         finally {
-            if ($horizontal) { Stop-Terminal -App $horizontal }
+            if ($horizontal) { & $script:StopLayoutApp $horizontal }
         }
 
         $vertical = $null
@@ -590,7 +601,7 @@ Describe 'Feature: layout-aware agent history and sidebar hotkeys' -Tag @('Featu
             Save-UiScreenshot -App $vertical -Path (Join-Path $script:evidenceDir 'drafts-and-agent-work-preserved.png') | Out-Null
         }
         finally {
-            if ($vertical) { Stop-Terminal -App $vertical }
+            if ($vertical) { & $script:StopLayoutApp $vertical }
         }
         $horizontal = $null
         try {
@@ -632,7 +643,7 @@ Describe 'Feature: layout-aware agent history and sidebar hotkeys' -Tag @('Featu
                 Should -BeFalse -Because 'the sidebar-only action must be a safe no-op in horizontal layout'
         }
         finally {
-            if ($horizontal) { Stop-Terminal -App $horizontal }
+            if ($horizontal) { & $script:StopLayoutApp $horizontal }
         }
     }
 
@@ -696,7 +707,7 @@ Describe 'Feature: layout-aware agent history and sidebar hotkeys' -Tag @('Featu
             (Get-UiValue -App $vertical -Selector SearchTextBox) | Should -Be $query
         }
         finally {
-            if ($vertical) { Stop-Terminal -App $vertical }
+            if ($vertical) { & $script:StopLayoutApp $vertical }
         }
     }
 
@@ -744,7 +755,96 @@ Describe 'Feature: layout-aware agent history and sidebar hotkeys' -Tag @('Featu
             Test-UiElementExists -App $horizontal -Selector SearchTabsButton -TimeoutSec 1 | Should -BeFalse
         }
         finally {
-            if ($horizontal) { Stop-Terminal -App $horizontal }
+            if ($horizontal) { & $script:StopLayoutApp $horizontal }
+        }
+    }
+
+    It 'Global search shortcut opens the horizontal tab palette without replacing the query after the tab switcher' -Tag 'TabSwitcherSearch' {
+        $horizontal = $null
+        $pressedCtrl = $false
+        try {
+            $horizontal = & $script:StartLayoutApp 'horizontal'
+            if (-not (Test-WtWindowKeyFocusable -App $horizontal)) {
+                Set-ItResult -Skipped -Because 'the owned window cannot take foreground for physical keyboard input'
+                return
+            }
+            Set-WtSettings -App $horizontal -Settings @{ tabSwitcherMode = 'mru' } | Out-Null
+            $tab = New-WtTab -App $horizontal -Title 'tab search transition' -Command 'pwsh.exe -NoLogo -NoProfile -NoExit'
+            Set-WtPaneFocus -App $horizontal -SessionId $tab.session_id
+            Set-WtWindowForeground -App $horizontal | Should -BeTrue
+            foreach ($key in @(0x10, 0x11, 0x12, 0x5B, 0x5C)) {
+                [ItE2E.ItWtWin32Input]::IsKeyDown($key) |
+                    Should -BeFalse -Because 'the test must not take ownership of a user-held modifier'
+            }
+            try {
+                [ItE2E.ItWtWin32Input]::keybd_event(0x11, 0, 0, [UIntPtr]::Zero)
+                $pressedCtrl = $true
+                Send-WtWindowKey -App $horizontal -Vk 0x09 -RequireForeground | Out-Null
+                Wait-UiElement -App $horizontal -Selector 'Tab switcher' | Out-Null
+                $search = Get-UiElement -App $horizontal -Selector '_searchBox'
+                [bool]($search -and -not $search.isOffscreen -and $search.height -gt 0) | Should -BeFalse
+                Send-WtWindowKey -App $horizontal -Vk 0x46 -RequireForeground | Out-Null
+                $focused = Test-Until -TimeoutSec 5 -Condition {
+                    $element = [Windows.Automation.AutomationElement]::FocusedElement
+                    $element -and $element.Current.ProcessId -eq $horizontal.Pid -and
+                        $element.Current.AutomationId -eq '_searchBox' -and -not $element.Current.IsOffscreen
+                }
+                Save-UiScreenshot -App $horizontal -Path (Join-Path $script:evidenceDir 'tab-switcher-to-search.png') | Out-Null
+                $focused | Should -BeTrue -Because 'Ctrl+F while Ctrl remains held must reveal and focus the tab-search input'
+            }
+            finally {
+                if ($pressedCtrl) {
+                    [ItE2E.ItWtWin32Input]::keybd_event(0x11, 0, 0x2, [UIntPtr]::Zero)
+                    $pressedCtrl = $false
+                }
+            }
+            Set-UiValue -App $horizontal -Selector '_searchBox' -Value 'switcher query' | Out-Null
+            Send-WtWindowKey -App $horizontal -Vk 0x23 -RequireForeground | Out-Null
+            Send-WtWindowKey -App $horizontal -Vk 0x08 -RequireForeground | Out-Null
+            (Get-UiValue -App $horizontal -Selector '_searchBox') | Should -BeExactly 'switcher quer'
+        }
+        finally {
+            if ($horizontal) { & $script:StopLayoutApp $horizontal }
+        }
+    }
+
+    It 'Global search shortcut opens sidebar search without replacing the query after command palette dismissal' -Tag 'SidebarSearchPalette' {
+        $vertical = $null
+        try {
+            $vertical = & $script:StartLayoutApp 'vertical'
+            if (-not (Test-WtWindowKeyFocusable -App $vertical)) {
+                Set-ItResult -Skipped -Because 'the owned window cannot take foreground for physical keyboard input'
+                return
+            }
+            $pane = Get-ActivePane -App $vertical
+            Set-WtPaneFocus -App $vertical -SessionId $pane.session_id
+            $source = [Windows.Automation.AutomationElement]::FocusedElement
+            & $script:SearchTabsHotkey $vertical
+            (Test-Until -TimeoutSec 5 -Condition { & $script:TabSearchFocused $vertical }) | Should -BeTrue
+            $query = 'palette query'
+            Set-UiValue -App $vertical -Selector SearchTextBox -Value $query | Out-Null
+            Send-WtWindowKey -App $vertical -Vk 0x24 -RequireForeground | Out-Null
+            Send-WtWindowKey -App $vertical -Vk 0x27 -RequireForeground | Out-Null
+            Send-WtWindowKey -App $vertical -Vk 0x27 -Shift -RequireForeground | Out-Null
+            Send-WtWindowKey -App $vertical -Vk 0x50 -Ctrl -Shift -RequireForeground | Out-Null
+            Wait-UiElement -App $vertical -Selector 'Command palette' | Out-Null
+            & $script:SearchTabsHotkey $vertical
+            $focused = Test-Until -TimeoutSec 5 -Condition { & $script:TabSearchFocused $vertical }
+            Save-UiScreenshot -App $vertical -Path (Join-Path $script:evidenceDir 'palette-to-sidebar-search.png') | Out-Null
+            $focused | Should -BeTrue -Because 'normal palette dismissal must not redirect search input to the terminal'
+            (Get-UiValue -App $vertical -Selector SearchTextBox) | Should -BeExactly $query
+            Send-WtWindowKey -App $vertical -Vk 0x08 -RequireForeground | Out-Null
+            (Get-UiValue -App $vertical -Selector SearchTextBox) | Should -BeExactly ($query.Remove(1, 1))
+
+            Send-WtWindowKey -App $vertical -Vk 0x50 -Ctrl -Shift -RequireForeground | Out-Null
+            Wait-UiElement -App $vertical -Selector 'Command palette' | Out-Null
+            Send-WtWindowKey -App $vertical -Vk 0x1B -RequireForeground | Out-Null
+            (Test-Until -TimeoutSec 5 -Condition {
+                [Windows.Automation.Automation]::Compare($source, [Windows.Automation.AutomationElement]::FocusedElement)
+            }) | Should -BeTrue -Because 'ordinary palette Escape retains its terminal-focus restoration'
+        }
+        finally {
+            if ($vertical) { & $script:StopLayoutApp $vertical }
         }
     }
 
@@ -789,7 +889,7 @@ Describe 'Feature: layout-aware agent history and sidebar hotkeys' -Tag @('Featu
             Save-UiScreenshot -App $vertical -Path (Join-Path $script:evidenceDir 'search-returns-to-agent-draft.png') | Out-Null
         }
         finally {
-            if ($vertical) { Stop-Terminal -App $vertical }
+            if ($vertical) { & $script:StopLayoutApp $vertical }
         }
     }
 
@@ -855,7 +955,7 @@ Describe 'Feature: layout-aware agent history and sidebar hotkeys' -Tag @('Featu
             }) | Should -BeTrue -Because 'exiting from a still-visible sidebar button must fall back to a terminal even without a saved source'
         }
         finally {
-            if ($vertical) { Stop-Terminal -App $vertical }
+            if ($vertical) { & $script:StopLayoutApp $vertical }
         }
     }
 
@@ -929,7 +1029,7 @@ Describe 'Feature: layout-aware agent history and sidebar hotkeys' -Tag @('Featu
             }) | Should -BeTrue -Because 'the next hotkey-only session must still return to its fresh split B source'
         }
         finally {
-            if ($vertical) { Stop-Terminal -App $vertical }
+            if ($vertical) { & $script:StopLayoutApp $vertical }
         }
     }
 
@@ -988,7 +1088,7 @@ Describe 'Feature: layout-aware agent history and sidebar hotkeys' -Tag @('Featu
             }) | Should -BeTrue -Because 'pointer search must return to the current shell, not a stale visible Agent input'
         }
         finally {
-            if ($vertical) { Stop-Terminal -App $vertical }
+            if ($vertical) { & $script:StopLayoutApp $vertical }
         }
     }
 
@@ -1038,7 +1138,7 @@ Describe 'Feature: layout-aware agent history and sidebar hotkeys' -Tag @('Featu
                 Should -Match ([regex]::Escape($draft) + '$')
         }
         finally {
-            if ($vertical) { Stop-Terminal -App $vertical }
+            if ($vertical) { & $script:StopLayoutApp $vertical }
         }
     }
 
@@ -1092,7 +1192,7 @@ Describe 'Feature: layout-aware agent history and sidebar hotkeys' -Tag @('Featu
             Save-UiScreenshot -App $vertical -Path (Join-Path $script:evidenceDir 'titlebar-hotkey-return.png') | Out-Null
         }
         finally {
-            if ($vertical) { Stop-Terminal -App $vertical }
+            if ($vertical) { & $script:StopLayoutApp $vertical }
         }
     }
 
@@ -1228,7 +1328,7 @@ Describe 'Feature: layout-aware agent history and sidebar hotkeys' -Tag @('Featu
                 }
             }
             finally {
-                if ($vertical) { Stop-Terminal -App $vertical }
+                if ($vertical) { & $script:StopLayoutApp $vertical }
             }
         }
     }

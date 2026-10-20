@@ -100,7 +100,7 @@ preservation baseline rather than a new focus/navigation design.
 | Ctrl+Shift+S inside the expanded sidebar collapses it and best-effort returns to input. | Preserve the existing return-target/fallback policy rather than inventing a new one. |
 | Ctrl+Shift+S is a consumed no-op in horizontal layout. | No request to change its horizontal behavior. |
 | Terminal content find uses Ctrl+Shift+F. | No request to replace or modify it. |
-| User-defined bindings and explicit unbindings use the action map. | Do not add a hard-coded chord interception path. |
+| User-defined bindings and explicitly unbound shortcuts use the action map. | Do not add a hard-coded chord interception path. |
 | Drafts, selected tabs/panes, sessions, and filter preferences survive focus changes. | No unrelated input, session, or filter redesign. |
 | Pointer entry points retain their behavior. | The requested change concerns keyboard entry responsibilities. |
 
