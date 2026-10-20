@@ -448,11 +448,19 @@ guarantee of future startup.
 
 Failure budgets are stored under the package-private `acp-startup` directory,
 scoped to the WTA binary identity and hashed effective launch target. They contain
-counts and safe diagnostic categories, not commands or credentials. Ordinary
+counts, structured failure fields and bounded, filtered native details rather
+than full provider configuration objects. Native details can include file paths. Ordinary
 refreshes and new helper generations do not reset them. A successful initialize
 or an explicit user retry resets the target's budget; unconfirmed cleanup stops
 replacement instead. `probe-models --retry-startup` is the CLI equivalent of the
 explicit retry action. See [ACP provider lifecycle](../../doc/specs/acp-provider-lifecycle.md).
+
+The `probe-sessions` and `probe-host-sessions` diagnostics share admission for
+their inherited provider binding and retain it through confirmed cleanup.
+Both accept `--retry-startup`; it reopens an exhausted cycle, not a cleanup
+quarantine. They preserve their diagnostic output shapes and treat an unsupported
+session-list method as a normal result rather than an initialization failure.
+Their session-list timeout remains 10 seconds.
 
 Startup checks allow up to 60 seconds for an ACP `initialize` reply from either a
 native agent or an `npx` adapter, including cold starts. Session creation and

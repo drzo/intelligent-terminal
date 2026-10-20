@@ -231,12 +231,15 @@ pub(crate) async fn run_agent_sources(wsl_distro: &str) -> Result<()> {
 /// (the ACP client connection is `!Send`), print the result as pretty
 /// JSON to stdout, force-exit. Diagnostic-only: evaluates whether an
 /// agent CLI answers ACP `session/list` and what it returns.
-pub(crate) async fn run_sessions(agent: &str) -> Result<()> {
+pub(crate) async fn run_sessions(agent: &str, retry_startup: bool) -> Result<()> {
     tracing::info!("probe-sessions start: agent={}", agent);
 
     let local = tokio::task::LocalSet::new();
     let result = match local
-        .run_until(crate::protocol::acp::probe::probe_sessions(agent))
+        .run_until(crate::protocol::acp::probe::probe_sessions(
+            agent,
+            retry_startup,
+        ))
         .await
     {
         Ok(r) => r,
@@ -266,17 +269,10 @@ pub(crate) async fn run_sessions(agent: &str) -> Result<()> {
 /// Diagnostic host-history smoke test: run one ACP CLI, fetch
 /// `session/list`, apply the production Class-A filter, and print the
 /// rows in the same compact shape used by the WSL probe.
-pub(crate) async fn run_host_sessions(agent: &str) -> Result<()> {
+pub(crate) async fn run_host_sessions(agent: &str, retry_startup: bool) -> Result<()> {
     use crate::agent_sessions::{CliSource, SessionLocation};
-    use std::time::Duration;
 
     tracing::info!("probe-host-sessions start: agent={}", agent);
-    crate::agent_lifecycle::providers::prepare(
-        agent,
-        None,
-        &crate::agent_source::AgentSource::Host,
-    )
-    .await?;
 
     // Resolve the CliSource from the agent command so the probe labels and
     // classifies rows the way production seeding does (which uses the real
@@ -288,23 +284,9 @@ pub(crate) async fn run_host_sessions(agent: &str) -> Result<()> {
     let local = tokio::task::LocalSet::new();
     let rows = match local
         .run_until(async {
-            let mut spawned = crate::protocol::acp::spawn::spawn_agent_process(
-                agent,
-                None,
-                None,
-                crate::protocol::acp::spawn::ChildEnvironmentPolicy::ApplySharedProvider,
-            )?;
-            let label = format!("host:{}", crate::session_history::cli_label(&cli_source));
-            let init_timeout = Duration::from_secs(if spawned.is_npx { 25 } else { 10 });
-            let result = crate::protocol::acp::session_list::fetch_session_list(
-                &mut spawned.child,
-                &label,
-                init_timeout,
-                Duration::from_secs(10),
-            )
-            .await;
-            spawned.child.terminate().await?;
-            let (_init, list_result) = result?;
+            let (_init, list_result) =
+                crate::protocol::acp::session_list::fetch_session_list(agent, retry_startup)
+                    .await?;
             // session/list unsupported (e.g. `Method not found`) is the production
             // "empty history, no fallback" case — surface it as `[]` + exit 0, not a
             // diagnostic failure. A genuine spawn/init error still propagates above.
@@ -324,8 +306,7 @@ pub(crate) async fn run_host_sessions(agent: &str) -> Result<()> {
     {
         Ok(r) => r,
         Err(e) => {
-            // Same force-exit rationale as run_sessions: orphan npx/node
-            // grandchildren keep the tokio reactor blocked ~35s on drop.
+            // Shared startup has already confirmed cleanup or persisted quarantine.
             tracing::error!("probe-host-sessions failed: {:#}", e);
             eprintln!("probe-host-sessions failed: {:#}", e);
             let _ = std::io::Write::flush(&mut std::io::stderr());

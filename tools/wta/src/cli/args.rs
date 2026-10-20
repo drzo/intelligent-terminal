@@ -523,6 +523,9 @@ pub(crate) enum Command {
         /// "copilot --acp --stdio" or "npx -y @agentclientprotocol/claude-agent-acp").
         #[arg(long)]
         agent: String,
+        /// Start a new bounded retry cycle unless cleanup is quarantined.
+        #[arg(long)]
+        retry_startup: bool,
     },
     /// Diagnostic: spawn an agent CLI, call ACP `session/list`, filter
     /// agent-pane-origin rows, and print the host history rows WTA would
@@ -532,6 +535,9 @@ pub(crate) enum Command {
         /// "copilot --acp --stdio" or "npx -y @agentclientprotocol/claude-agent-acp").
         #[arg(long)]
         agent: String,
+        /// Start a new bounded retry cycle unless cleanup is quarantined.
+        #[arg(long)]
+        retry_startup: bool,
     },
     /// Submit a typed terminal-action proposal directly to the Helper that
     /// owns the current turn. Intended to be run by an agent session using

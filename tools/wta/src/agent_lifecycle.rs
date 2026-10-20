@@ -270,6 +270,28 @@ impl std::fmt::Display for InstallationStartupCheckFailed {
 
 impl std::error::Error for InstallationStartupCheckFailed {}
 
+pub(crate) fn provider_binding_key(
+    selection: &str,
+    config: &crate::custom_model_provider::Config,
+) -> String {
+    let mut digest = Sha256::new();
+    for field in [
+        selection,
+        config.base_url.as_str(),
+        config.model.as_str(),
+        config.credential_id.as_deref().unwrap_or(""),
+        config.credential_resource,
+    ] {
+        digest.update((field.len() as u64).to_le_bytes());
+        digest.update(field.as_bytes());
+    }
+    digest.update([
+        u8::from(config.api_key_required),
+        u8::from(config.credential_id.is_some()),
+    ]);
+    format!("binding:{:x}", digest.finalize())
+}
+
 pub(crate) fn agent_key(
     command: &str,
     agent_id: Option<&str>,
@@ -627,7 +649,9 @@ mod tests {
             details.0,
             "Failed to load Python DLL.\nLoadLibrary: blocked by the operating system."
         );
-        let interior = StartupDetails::from_text("LoadLibrary failed\rprivate-marker").unwrap();
+        let interior =
+            StartupDetails::from_text(concat!("LoadLibrary failed", "\r", "private-marker"))
+                .unwrap();
         assert!(!interior.0.contains("private-marker"));
     }
 
@@ -654,7 +678,15 @@ mod tests {
             assert!(!details.chars().any(|ch| ch.is_control() && ch != '\n'));
             assert!(!details.contains('\u{202e}'));
         }
-        assert!(StartupDetails::from_text("password=private-marker").is_none());
+        assert!(
+            StartupDetails::from_text("password=private-marker").is_none(),
+            "a credential-labelled diagnostic must be omitted"
+        );
+    }
+
+    #[test]
+    fn startup_details_preserve_literal_asterisks_as_harmless_text() {
+        assert_eq!(StartupDetails::from_text("******").unwrap().0, "******");
     }
 
     #[test]

@@ -133,6 +133,15 @@ It advances a persisted retry epoch; stopped discovery/history workers observe
 that epoch without ordinary refresh resetting the budget. Results from an older
 epoch cannot stop a newer retry cycle.
 
+The `probe-sessions` and `probe-host-sessions` diagnostics also participate in
+shared admission. Their inherited provider configuration is snapshotted and
+uses the same stable binding digest as a legacy-environment master. They keep
+the lease until process cleanup is confirmed and persist cleanup failures.
+`--retry-startup` explicitly reopens an exhausted diagnostic cycle but cannot
+override cleanup quarantine. Both diagnostics use the shared 60-second
+initialize budget and retain a 10-second session-list timeout; an unsupported
+session-list method remains a normal diagnostic result, not a startup failure.
+
 The provider's initialize deadline is separate from the helper's overall startup
 deadline, which also includes bounded admission, preparation and cleanup waits.
 Receipt acquisition and post-initialize retirement keep process ownership and

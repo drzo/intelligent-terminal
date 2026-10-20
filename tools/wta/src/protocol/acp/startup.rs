@@ -4,7 +4,7 @@ use tokio_util::compat::{TokioAsyncReadCompatExt, TokioAsyncWriteCompatExt};
 
 use super::conn;
 use super::process::AgentProcess;
-use super::spawn::{AgentStderrLog, ChildEnvironmentPolicy};
+use super::spawn::{AgentStderrLog, ChildEnvironmentPolicy, SharedProviderSelection};
 use crate::agent_lifecycle::{providers, StartupLease, StartupPhase};
 use crate::agent_source::AgentSource;
 
@@ -31,13 +31,38 @@ pub(crate) async fn start_probe(
     environment: ChildEnvironmentPolicy,
     startup: &mut StartupLease,
 ) -> Result<InitializedProbe> {
+    start_probe_with_provider(
+        command,
+        agent_id,
+        source,
+        environment,
+        SharedProviderSelection::Inherit,
+        startup,
+    )
+    .await
+}
+
+pub(crate) async fn start_probe_with_provider(
+    command: &str,
+    agent_id: Option<&str>,
+    source: &AgentSource,
+    environment: ChildEnvironmentPolicy,
+    provider: SharedProviderSelection<'_>,
+    startup: &mut StartupLease,
+) -> Result<InitializedProbe> {
     let preparation = providers::prepare(command, agent_id, source)
         .await
         .context(StartupPhase::Preparation)?;
     startup.prepared(preparation);
-    let mut spawned =
-        super::spawn::spawn_agent_process_for_source(command, None, agent_id, source, environment)
-            .context(StartupPhase::Spawn)?;
+    let mut spawned = super::spawn::spawn_agent_process_for_source_with_provider(
+        command,
+        None,
+        agent_id,
+        source,
+        environment,
+        provider,
+    )
+    .context(StartupPhase::Spawn)?;
     tracing::info!(
         target: "acp_startup",
         pid = ?spawned.child.id(),
@@ -108,7 +133,9 @@ pub(crate) async fn start_probe(
                 .finish_failed_startup(&mut spawned.child, stderr_task)
                 .await
                 .context(StartupPhase::Cleanup)?;
-            Err(crate::agent_lifecycle::StartupDetails::attach(error, &lines))
+            Err(crate::agent_lifecycle::StartupDetails::attach(
+                error, &lines,
+            ))
         }
     }
 }
