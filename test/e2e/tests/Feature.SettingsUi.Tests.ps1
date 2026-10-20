@@ -30,6 +30,18 @@ Describe 'Feature §1/§6 Settings editor UI (opened via Ctrl+, accelerator)' -T
 
     It 'AI Agents settings page opens and shows the agent picker' {
         if (-not $script:settingsOpen) { Set-ItResult -Skipped -Because 'the WT window could not take foreground to open Settings (env precondition)'; return }
+        Invoke-SettingsNav -App $script:app -NavItem 'LaunchNavItem'
+        [xml]$manifest = Get-Content -LiteralPath (Join-Path $script:app.InstallLocation 'AppxManifest.xml') -Raw
+        $startupTasks = @($manifest.SelectNodes("//*[local-name()='StartupTask' and @TaskId='StartTerminalOnLoginTask']"))
+        $startupLabel = Get-WtReswTextRegex -Key 'Globals_StartOnUserLogin.Header'
+        $startupLabel | Should -Not -BeNullOrEmpty
+        $defaultProfileLabel = Get-WtReswTextRegex -Key 'Globals_DefaultProfile.Header'
+        $defaultProfileLabel | Should -Not -BeNullOrEmpty
+        (Get-UiTree -App $script:app -Depth 20) | Should -Match $defaultProfileLabel -Because 'Startup must render before checking optional settings'
+        $shown = Test-Until -TimeoutSec 3 -IntervalSec 0.5 -Condition {
+            (Get-UiTree -App $script:app -Depth 20) -match $startupLabel
+        }
+        $shown | Should -Be ($startupTasks.Count -gt 0) -Because 'a packaged app may intentionally omit the optional login task'
         Invoke-SettingsNav -App $script:app -NavItem 'AIAgentsNavItem'
         # The AI Agents page renders the agent picker group (stable AutomationId AcpAgent).
         Test-UiElementExists -App $script:app -Selector 'AcpAgent' -TimeoutSec 8 | Should -BeTrue -Because 'the AI Agents page must show the agent picker'
