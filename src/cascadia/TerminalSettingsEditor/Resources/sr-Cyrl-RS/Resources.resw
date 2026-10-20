@@ -738,7 +738,7 @@
     <comment>Supplementary description for the model setting.</comment>
   </data><data name="AIAgents_AcpErrorDetails.Header" xml:space="preserve">
     <value>Детаљи грешке</value>
-    <comment>Expandable section in Agents Settings containing safely filtered native startup error text, separate from the localized main error message.</comment>
+    <comment>Header of a read-only, selectable text field showing safely filtered native startup diagnostics separately from the localized failure summary.</comment>
   </data>
 <data name="AIAgents_DelegateAgent.Header" xml:space="preserve">
     <value>CLI агент</value>
@@ -3095,12 +3095,12 @@ Alt+Shift+/ унесите упит; Alt+Shift+B покрените без по�
     <comment>Progress shown while preparing required ACP dependencies and checking the connection. Does not sign in or send a model prompt. {Locked="ACP"}</comment>
   </data>
   <data name="AIAgents_AcpPreparationFailed.Text" xml:space="preserve">
-    <value>Није могуће инсталирати ACP сервер агента. Проверите мрежу и инсталацију, па покушајте поново.</value>
-    <comment>Error shown in AI Agents Settings when the separate Agent Client Protocol server cannot be prepared. The adjacent button retries installation. {Locked="ACP"}</comment>
+    <value>Није могуће инсталирати ACP сервер агента.</value>
+    <comment>Factual summary shown when the separate ACP server cannot be installed. Native error details appear below; do not add remediation or retry advice. {Locked="ACP"}</comment>
   </data>
   <data name="AIAgents_AcpStartupFailed.Text" xml:space="preserve">
-    <value>Није могуће покренути ACP везу. И даље можете да изаберете овог агента и покушате поново из панела агента.</value>
-    <comment>Shown when ACP startup fails. The selected agent stays available and the user can explicitly retry. {Locked="ACP"}</comment>
+    <value>Није могуће покренути ACP везу.</value>
+    <comment>Factual summary shown when ACP startup fails. Native error details appear below; do not add remediation or retry advice. {Locked="ACP"}</comment>
   </data>
   <data name="AIAgents_AcpCleanupFailed.Text" xml:space="preserve">
     <value>Није могуће потврдити завршетак ACP процеса. Аутоматско покретање је заустављено.</value>

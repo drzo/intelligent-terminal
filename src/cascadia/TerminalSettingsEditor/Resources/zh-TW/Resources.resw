@@ -2833,7 +2833,7 @@
   <data name="AIAgents_AcpModel.HelpText" xml:space="preserve"><value>選擇此代理使用的模型。</value><comment>Supplementary description for the model setting.</comment></data>
   <data name="AIAgents_AcpErrorDetails.Header" xml:space="preserve">
     <value>錯誤詳細資料</value>
-    <comment>Expandable section in Agents Settings containing safely filtered native startup error text, separate from the localized main error message.</comment>
+    <comment>Header of a read-only, selectable text field showing safely filtered native startup diagnostics separately from the localized failure summary.</comment>
   </data>
   <data name="AIAgents_DelegateAgent.Header" xml:space="preserve"><value>智能體 CLI</value><comment>{Locked="CLI"} Header for the agent CLI selector in Settings > Agents > Command palette. Here "agent" means an AI intelligent agent (e.g. Copilot, Claude, Gemini), not a proxy or human agent. CLI means command-line interface.</comment></data>
   <data name="AIAgents_DelegateAgent.HelpText" xml:space="preserve"><value>使用您偏好的智能體 CLI 建立新的索引標籤，並可選擇性地包含提問及來自使用中窗格的內容。
@@ -3055,12 +3055,12 @@ Alt+Shift+/ 輸入提問；Alt+Shift+B 不帶初始提問啟動。</value><comme
     <comment>Progress shown while preparing required ACP dependencies and checking the connection. Does not sign in or send a model prompt. {Locked="ACP"}</comment>
   </data>
   <data name="AIAgents_AcpPreparationFailed.Text" xml:space="preserve">
-    <value>無法安裝代理的 ACP 伺服器。請檢查網路和安裝狀況，然後重試。</value>
-    <comment>Error shown in AI Agents Settings when the separate Agent Client Protocol server cannot be prepared. The adjacent button retries installation. {Locked="ACP"}</comment>
+    <value>無法安裝智能體的 ACP 伺服器。</value>
+    <comment>Factual summary shown when the separate ACP server cannot be installed. Native error details appear below; do not add remediation or retry advice. {Locked="ACP"}</comment>
   </data>
   <data name="AIAgents_AcpStartupFailed.Text" xml:space="preserve">
-    <value>無法啟動 ACP 連線。您仍可選取此代理，並從代理窗格重試。</value>
-    <comment>Shown when ACP startup fails. The selected agent stays available and the user can explicitly retry. {Locked="ACP"}</comment>
+    <value>無法啟動 ACP 連線。</value>
+    <comment>Factual summary shown when ACP startup fails. Native error details appear below; do not add remediation or retry advice. {Locked="ACP"}</comment>
   </data>
   <data name="AIAgents_AcpCleanupFailed.Text" xml:space="preserve">
     <value>無法確認 ACP 程序已清理完畢。已停止自動啟動。</value>
