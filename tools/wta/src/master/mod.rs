@@ -5973,6 +5973,45 @@ async fn initialize_agent(
     .await
 }
 
+async fn wait_for_agent_exit(
+    state: &MasterStateInner,
+    key: &AgentCmdKey,
+    admission_key: &str,
+    child: &mut crate::protocol::acp::process::AgentProcess,
+) -> Result<std::process::ExitStatus> {
+    // Lease only retirement, not a healthy process's lifetime. Cleanup must
+    // still reclaim our owned process if the admission ledger is unavailable.
+    let exited = child.wait_for_exit_or_stop().await;
+    let startup = state.startup_registry.lock(admission_key).await;
+    let status = match exited {
+        Ok(_) => child.wait().await,
+        Err(error) => {
+            let cleanup = child.terminate().await;
+            Err(cleanup.err().unwrap_or(error))
+        }
+    };
+    match startup {
+        Ok(startup) => match status {
+            Ok(status) => Ok(status),
+            Err(error) => {
+                let failure = startup.failed(
+                    error
+                        .context("ACP runtime cleanup failed")
+                        .context(crate::agent_lifecycle::StartupPhase::Cleanup),
+                );
+                tracing::error!(target: "master", agent = %key, %failure,
+                    "replacement blocked after unconfirmed ACP cleanup");
+                Err(failure)
+            }
+        },
+        Err(error) => {
+            tracing::error!(target: "master", agent = %key, %error,
+                "failed to acquire runtime cleanup admission");
+            Err(status.err().unwrap_or(error))
+        }
+    }
+}
+
 async fn spawn_one_agent(
     state: &Arc<MasterStateInner>,
     cell: &AgentCell,
@@ -6263,23 +6302,7 @@ async fn spawn_one_agent(
         let key = key.clone();
         let admission_key = agent_admission_key_with_provider(agent_cmd, agent_id, source, provider_binding);
         tokio::task::spawn_local(async move {
-            let status = child.wait().await;
-            if let Err(error) = &status {
-                match state.startup_registry.lock(&admission_key).await {
-                    Ok(startup) => {
-                        let failure = startup.failed(
-                            anyhow!("ACP runtime cleanup failed: {error:#}")
-                                .context(crate::agent_lifecycle::StartupPhase::Cleanup),
-                        );
-                        tracing::error!(target: "master", agent = %key, %failure,
-                            "replacement blocked after unconfirmed ACP cleanup");
-                    }
-                    Err(error) => {
-                        tracing::error!(target: "master", agent = %key, %error,
-                            "failed to record unconfirmed ACP cleanup");
-                    }
-                }
-            }
+            let status = wait_for_agent_exit(&state, &key, &admission_key, &mut child).await;
             tracing::error!(
                 target: "master",
                 agent = %key,

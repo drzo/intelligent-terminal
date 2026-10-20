@@ -8672,6 +8672,134 @@ async fn reap_agent_drops_only_its_own_orphans() {
         .await;
 }
 
+fn runtime_exit_fixture(
+    script: &str,
+    receipt: bool,
+) -> crate::protocol::acp::process::AgentProcess {
+    let mut command = tokio::process::Command::new("pwsh.exe");
+    command
+        .args(["-NoProfile", "-Command", script])
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .kill_on_drop(true);
+    crate::protocol::acp::process::AgentProcess::spawn(
+        &mut command,
+        receipt.then(|| ("unused".into(), "receipt".into())),
+    )
+    .unwrap()
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn runtime_cleanup_holds_shared_startup_admission() {
+    let state = make_state();
+    let key = "runtime-cleanup-fixture".to_string();
+    // An unread ownership receipt holds real cleanup pending until stdin closes.
+    // EOF releases it without launching WSL.
+    let mut child = runtime_exit_fixture("[Console]::In.ReadLine() | Out-Null", true);
+    let release_cleanup = child.stdin.take().unwrap();
+    child.stop_token().cancel();
+    {
+        let mut reaper = std::pin::pin!(wait_for_agent_exit(&state, &key, &key, &mut child));
+        std::future::poll_fn(|cx| {
+            assert!(std::future::Future::poll(reaper.as_mut(), cx).is_pending());
+            std::task::Poll::Ready(())
+        })
+        .await;
+        {
+            let mut independent = std::pin::pin!(state.startup_registry.lock(&key));
+            std::future::poll_fn(|cx| {
+                assert!(
+                    std::future::Future::poll(independent.as_mut(), cx).is_pending(),
+                    "independent startup admission must wait for runtime process cleanup"
+                );
+                std::task::Poll::Ready(())
+            })
+            .await;
+        }
+        drop(release_cleanup);
+        tokio::time::timeout(std::time::Duration::from_secs(20), reaper)
+            .await
+            .expect("runtime cleanup finishes once its ownership receipt is released")
+            .unwrap();
+    }
+    assert!(child.try_wait().unwrap().is_some());
+    state
+        .startup_registry
+        .lock(&key)
+        .await
+        .unwrap()
+        .begin()
+        .unwrap();
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn runtime_cleanup_wait_does_not_block_admission_for_a_live_agent() {
+    let state = make_state();
+    let key = "runtime-live-fixture".to_string();
+    let mut child = runtime_exit_fixture("[Console]::In.ReadLine() | Out-Null", false);
+    let release_process = child.stdin.take().unwrap();
+    {
+        let mut reaper = std::pin::pin!(wait_for_agent_exit(&state, &key, &key, &mut child));
+        std::future::poll_fn(|cx| {
+            assert!(std::future::Future::poll(reaper.as_mut(), cx).is_pending());
+            std::task::Poll::Ready(())
+        })
+        .await;
+        {
+            let mut startup = tokio::time::timeout(
+                std::time::Duration::from_secs(1),
+                state.startup_registry.lock(&key),
+            )
+            .await
+            .expect("waiting for a live agent must not hold startup admission")
+            .unwrap();
+            startup.begin().unwrap();
+            startup.succeeded().unwrap();
+        }
+        drop(release_process);
+        let status = tokio::time::timeout(std::time::Duration::from_secs(20), reaper)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(status.code(), Some(0));
+    }
+    assert!(child.try_wait().unwrap().is_some());
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn runtime_cleanup_failure_quarantines_independent_admission() {
+    let state = make_state();
+    let key = "runtime-cleanup-failure".to_string();
+    let mut child = runtime_exit_fixture(
+        "[Console]::Out.WriteLine('invalid receipt'); [Console]::Out.Flush(); [Console]::In.ReadLine() | Out-Null",
+        true,
+    );
+    child.stop_token().cancel();
+    let failure = tokio::time::timeout(
+        std::time::Duration::from_secs(20),
+        wait_for_agent_exit(&state, &key, &key, &mut child),
+    )
+    .await
+    .unwrap()
+    .unwrap_err();
+    assert_eq!(
+        failure
+            .downcast_ref::<crate::agent_lifecycle::StartupFailure>()
+            .unwrap()
+            .phase,
+        crate::agent_lifecycle::StartupPhase::Cleanup,
+    );
+    let blocked = state
+        .startup_registry
+        .lock(&key)
+        .await
+        .unwrap()
+        .begin()
+        .unwrap_err();
+    assert!(blocked.is::<crate::agent_lifecycle::StartupCleanupUnconfirmed>());
+    assert!(state.startup_registry.retry(&key).await.is_err());
+}
+
 #[tokio::test(flavor = "current_thread")]
 async fn reap_agent_keeps_key_unavailable_through_orphan_cleanup() {
     tokio::task::LocalSet::new()
