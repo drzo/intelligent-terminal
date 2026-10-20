@@ -86,6 +86,7 @@ impl StartupDetails {
     fn from_text(text: &str) -> Option<Self> {
         let mut lines = std::collections::VecDeque::new();
         for line in text.lines() {
+            let line = line.trim_end_matches('\r');
             if line.trim().is_empty() {
                 continue;
             }
@@ -614,6 +615,20 @@ mod tests {
             serde_json::from_str::<StartupFailure>(&serialized).unwrap(),
             failure
         );
+    }
+
+    #[test]
+    fn startup_details_normalize_windows_line_endings_without_false_redaction() {
+        let details = StartupDetails::from_text(
+            "Failed to load Python DLL.\r\r\nLoadLibrary: blocked by the operating system.\r",
+        )
+        .unwrap();
+        assert_eq!(
+            details.0,
+            "Failed to load Python DLL.\nLoadLibrary: blocked by the operating system."
+        );
+        let interior = StartupDetails::from_text("LoadLibrary failed\rprivate-marker").unwrap();
+        assert!(!interior.0.contains("private-marker"));
     }
 
     #[test]

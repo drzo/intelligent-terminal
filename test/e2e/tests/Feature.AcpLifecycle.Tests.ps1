@@ -239,10 +239,14 @@ Describe 'Feature: ACP provider lifecycle' -Tag 'Feature', 'AcpLifecycle' {
         $expandDetails = $details.GetCurrentPattern([Windows.Automation.ExpandCollapsePattern]::Pattern)
         $expandDetails.Current.ExpandCollapseState | Should -Be ([Windows.Automation.ExpandCollapseState]::Collapsed)
         $expandDetails.Expand()
-        $detailText = $root.FindFirst(
-            [Windows.Automation.TreeScope]::Descendants,
-            [Windows.Automation.PropertyCondition]::new(
-                [Windows.Automation.AutomationElement]::AutomationIdProperty, 'AcpSetupErrorDetailsText'))
+        $detailText = Wait-Until -TimeoutSec 10 -IntervalSec 0.2 -Because 'the expanded native error text to become visible' -Condition {
+            $candidate = $root.FindFirst(
+                [Windows.Automation.TreeScope]::Descendants,
+                [Windows.Automation.PropertyCondition]::new(
+                    [Windows.Automation.AutomationElement]::AutomationIdProperty, 'AcpSetupErrorDetailsText'))
+            if ($candidate -and -not $candidate.Current.IsOffscreen) { return $candidate }
+            $false
+        }
         $detailText.Current.Name | Should -Be $script:nativeDetails
         $detailText.Current.IsOffscreen | Should -BeFalse
         Save-UiScreenshot -App $script:app -Path (Join-Path $script:evidence 'startup-native-details.png') | Out-Null
