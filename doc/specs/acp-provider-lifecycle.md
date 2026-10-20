@@ -128,6 +128,9 @@ Targets include the authoritative agent identity, execution source, command and
 a restart-stable digest of effective provider binding fields. Process-local pool
 generations are not used as persistent admission identities. Ledger directories are scoped to the WTA executable identity,
 so installing a different build does not inherit an obsolete startup failure.
+An omitted built-in agent ID is inferred consistently for the shared key, so
+legacy runtime and diagnostic callers cannot obtain separate failure budgets
+for the same launch. Explicit custom IDs remain authoritative.
 An explicit retry does not override an unconfirmed cleanup failure.
 It advances a persisted retry epoch; stopped discovery/history workers observe
 that epoch without ordinary refresh resetting the budget. Results from an older
@@ -157,8 +160,8 @@ WSL children retain their verified process-group ownership and stdin-EOF fast
 path. A separate guardian observes host stderr-pipe closure, so blocked writes
 to an agent's stdin cannot hide host exit. It emits one blank stderr line per
 second while the host remains connected; those heartbeats are discarded before
-logging or retaining startup details. ACP stdout is unchanged, and stderr is
-decoded lossily so non-UTF-8 diagnostics do not close a healthy lifetime channel.
+logging or retaining startup details. ACP stdout is unchanged, and invalid
+UTF-8 bytes in stderr are replaced so diagnostics do not close a healthy lifetime channel.
 
 ## Validation
 
