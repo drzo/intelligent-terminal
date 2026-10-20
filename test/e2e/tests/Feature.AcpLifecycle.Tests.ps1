@@ -228,29 +228,90 @@ Describe 'Feature: ACP provider lifecycle' -Tag 'Feature', 'AcpLifecycle' {
         ) | Where-Object { -not $_.Current.IsOffscreen } | ForEach-Object { $_.Current.Name })
         $messages | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $script:evidence 'startup-accessible-text.json')
         $messages | Should -Contain $script:expectedStartupError -Because 'the accessible primary error must remain fully localized, without appended protocol diagnostics'
+        $messages | Should -Contain 'The ACP connection could not start.' -Because 'the failure summary must state the failure without speculative retry advice'
         @($messages | Where-Object { $_ -match '\[[a-z_]+ / [a-z_]+; \d+/\d+;' }).Count |
             Should -Be 0 -Because 'raw startup diagnostics belong in logs, not the primary error announcement'
-        $details = $root.FindFirst(
-            [Windows.Automation.TreeScope]::Descendants,
-            [Windows.Automation.PropertyCondition]::new(
-                [Windows.Automation.AutomationElement]::AutomationIdProperty, 'AcpSetupErrorDetails'))
-        $details | Should -Not -BeNullOrEmpty -Because 'captured native errors must be available separately from the localized summary'
-        $details.Current.Name | Should -Be $script:expectedDetailsHeader
-        $expandDetails = $details.GetCurrentPattern([Windows.Automation.ExpandCollapsePattern]::Pattern)
-        $expandDetails.Current.ExpandCollapseState | Should -Be ([Windows.Automation.ExpandCollapseState]::Collapsed)
-        $expandDetails.Expand()
-        $detailText = Wait-Until -TimeoutSec 10 -IntervalSec 0.2 -Because 'the expanded native error text to become visible' -Condition {
+        $details = Wait-Until -TimeoutSec 10 -IntervalSec 0.2 -Because 'native diagnostics to be visible without expanding another control' -Condition {
             $candidate = $root.FindFirst(
                 [Windows.Automation.TreeScope]::Descendants,
                 [Windows.Automation.PropertyCondition]::new(
-                    [Windows.Automation.AutomationElement]::AutomationIdProperty, 'AcpSetupErrorDetailsText'))
+                    [Windows.Automation.AutomationElement]::AutomationIdProperty, 'AcpSetupErrorDetails'))
             if ($candidate -and -not $candidate.Current.IsOffscreen) { return $candidate }
             $false
         }
-        $detailText.Current.Name | Should -Be $script:nativeDetails
-        $detailText.Current.IsOffscreen | Should -BeFalse
+        $details.Current.ControlType | Should -Be ([Windows.Automation.ControlType]::Edit)
+        $details.Current.Name | Should -Be $script:expectedDetailsHeader
+        $details.Current.IsEnabled | Should -BeTrue -Because 'read-only diagnostics must remain selectable'
+        $pattern = $details.GetCurrentPattern([Windows.Automation.TextPattern]::Pattern)
+        $pattern.DocumentRange.GetAttributeValue([Windows.Automation.TextPattern]::IsReadOnlyAttribute) |
+            Should -BeTrue
+        $pattern.DocumentRange.GetText(-1).Replace("`r`n", "`n").Replace("`r", "`n").TrimEnd("`n") |
+            Should -Be $script:nativeDetails
+        $clipboard = $null
+        $clipboardSaved = $false
+        $searchValue = $null
+        $searchBefore = $null
+        try {
+            (Set-WtWindowForeground -App $script:app) | Should -BeTrue
+            $details.SetFocus()
+            $selectionText = 'fixture-python.dll'
+            $range = $pattern.DocumentRange.FindText($selectionText, $false, $false)
+            $range | Should -Not -BeNullOrEmpty
+            $range.Select()
+            $ranges = @($pattern.GetSelection())
+            $ranges.Count | Should -Be 1
+            $ranges[0].GetText(-1) | Should -BeExactly $selectionText
+            $clipboard = Get-ClipboardSnapshot
+            $clipboardSaved = $true
+            Set-Clipboard -Value "ACP_COPY_$([guid]::NewGuid().ToString('N'))"
+            Wait-Until -TimeoutSec 5 -IntervalSec 0.2 -Because 'the read-only diagnostic field to own keyboard focus' -Condition {
+                $details.Current.HasKeyboardFocus
+            } | Should -BeTrue
+            Send-WtWindowKey -App $script:app -Vk 0x43 -Ctrl -RequireForeground | Out-Null
+            Wait-Until -TimeoutSec 5 -IntervalSec 0.2 -Because 'copying the selected native diagnostic text' -Condition {
+                [string]::Equals((Get-Clipboard -Raw), $selectionText, [StringComparison]::Ordinal)
+            } | Should -BeTrue
+            $search = $root.FindFirst(
+                [Windows.Automation.TreeScope]::Descendants,
+                [Windows.Automation.PropertyCondition]::new(
+                    [Windows.Automation.AutomationElement]::AutomationIdProperty, 'SettingsSearchBox'))
+            $search | Should -Not -BeNullOrEmpty
+            if ($search.Current.ControlType -ne [Windows.Automation.ControlType]::Edit) {
+                $search = $search.FindFirst(
+                    [Windows.Automation.TreeScope]::Descendants,
+                    [Windows.Automation.PropertyCondition]::new(
+                        [Windows.Automation.AutomationElement]::ControlTypeProperty, [Windows.Automation.ControlType]::Edit))
+            }
+            $search | Should -Not -BeNullOrEmpty
+            $searchValue = $search.GetCurrentPattern([Windows.Automation.ValuePattern]::Pattern)
+            $searchBefore = $searchValue.Current.Value
+            $searchValue.SetValue('')
+            $search.SetFocus()
+            Wait-Until -TimeoutSec 5 -IntervalSec 0.2 -Because 'the owned search text field to receive the paste' -Condition {
+                $search.Current.HasKeyboardFocus
+            } | Should -BeTrue
+            Send-WtWindowKey -App $script:app -Vk 0x56 -Ctrl -RequireForeground | Out-Null
+            Wait-Until -TimeoutSec 5 -IntervalSec 0.2 -Because 'pasting the copied diagnostic into an ordinary editable control' -Condition {
+                [string]::Equals($searchValue.Current.Value, $selectionText, [StringComparison]::Ordinal)
+            } | Should -BeTrue
+            @{
+                ReadOnly = $true
+                Selection = $selectionText
+                ClipboardCopyVerified = $true
+                PasteVerified = $true
+                PhysicalDragAutomated = $false
+                PhysicalDragNote = 'The existing harness refuses mouse-down drag injection; no guard was bypassed.'
+            } | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $script:evidence 'native-details-copy.json')
+        }
+        finally {
+            try {
+                if ($searchValue) { $searchValue.SetValue($searchBefore) }
+            }
+            finally {
+                if ($clipboardSaved) { Restore-ClipboardSnapshot -Snapshot $clipboard }
+            }
+        }
         Save-UiScreenshot -App $script:app -Path (Join-Path $script:evidence 'startup-native-details.png') | Out-Null
-        $expandDetails.Collapse()
 
         @{ mode = 'ready' } | ConvertTo-Json | Set-Content -LiteralPath $script:control
         Invoke-UiElement -App $script:app -Selector RetryAcpSetup | Out-Null

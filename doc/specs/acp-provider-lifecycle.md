@@ -118,9 +118,12 @@ error message when stderr is unavailable. It uses the existing conservative
 error-prefix filtering, stops after potentially sensitive data, and is bounded
 to four lines and 1,024 UTF-8 bytes. Arbitrary provider data objects are not
 forwarded. Details are display-only and never determine classification or retry.
-The helper renders them with its startup failure; Settings exposes them in a
-separate localized, expandable details section and clears them on retry or
-selection changes. Older responses without details retain the summary-only UI.
+The helper renders them with its startup failure. Settings states only the
+failure, without generic remediation or retry advice, and displays native
+details immediately in a separate localized read-only text field. The field
+supports selection and copying and clears on retry or selection changes.
+Older responses without details retain the summary-only UI. The explicit retry
+action remains available without implying that retry will resolve the cause.
 
 The package-private `acp-startup` ledger uses an exclusive per-target file lease
 so master startup and independent model-probe processes serialize their attempts.

@@ -2828,7 +2828,7 @@
   </data>
 <data name="AIAgents_AcpErrorDetails.Header" xml:space="preserve">
   <value>[Ĕŕŕóŕ đéţåïļš!!]</value>
-  <comment>Expandable section in Agents Settings containing safely filtered native startup error text, separate from the localized main error message.</comment>
+  <comment>Header of a read-only, selectable text field showing safely filtered native startup diagnostics separately from the localized failure summary.</comment>
 </data>
 <data name="AIAgents_DelegateAgent.Header" xml:space="preserve"><value>Agent CLI</value><comment>{Locked="CLI"} Header for the agent CLI selector in Settings &gt; Agents &gt; Command palette. Here "agent" means an AI intelligent agent (e.g. Copilot, Claude, Gemini), not a proxy or human agent. CLI means command-line interface.</comment></data><data name="AIAgents_AcpGroupHeader.Text" xml:space="preserve"><value>Agent pane</value><comment>Section header for the agent pane settings group.</comment></data><data name="AIAgents_YoloMode.Header" xml:space="preserve"><value>Automatic approval</value><comment>Header for the Settings toggle that enables automatic approval for the AI agent running in the agent pane.</comment></data>
 <data name="AIAgents_YoloMode.HelpText" xml:space="preserve"><value>Your agent in the agent pane runs with full permissions provided by the agent CLI</value><comment>{Locked="CLI"} Description shown under the automatic approval toggle. Agent means an AI intelligent agent in the agent pane, not a proxy or human representative. Full permissions are provided by the agent CLI.</comment></data>
@@ -3048,12 +3048,12 @@ Alt+Shift+/ enter a prompt; Alt+Shift+B launch without an initial prompt.</value
     <comment>Progress shown while preparing required ACP dependencies and checking the connection. Does not sign in or send a model prompt. {Locked="ACP"}</comment>
   </data>
   <data name="AIAgents_AcpPreparationFailed.Text" xml:space="preserve">
-    <value>[Ţĥé åğéñţ'ś ACP śéŕṽéŕ çöûĺď ñöţ ƀé ïñśţåĺĺéď. Çĥéçķ ýöûŕ ñéţŵöŕķ åñď ïñśţåĺĺåţïöñ, ţĥéñ ţŕÿ åğåïñ.!!!! !!!! !!!! !!!!]</value>
-    <comment>Error shown in AI Agents Settings when the separate Agent Client Protocol server cannot be prepared. The adjacent button retries installation. {Locked="ACP"}</comment>
+    <value>[Ţĥé åğéñţ'ś ACP śéŕṽéŕ çöûĺď ñöţ ƀé ïñśţåĺĺéď.!!!! !!!!]</value>
+    <comment>Factual summary shown when the separate ACP server cannot be installed. Native error details appear below; do not add remediation or retry advice. {Locked="ACP"}</comment>
   </data>
   <data name="AIAgents_AcpStartupFailed.Text" xml:space="preserve">
-    <value>[Ţhé ACP çöññéçţïöñ çöûld ñöţ śţårţ. Yöû çåñ śţïll śéléçţ ţhïś ågéñţ åñd ţry ågåïñ fröm ţhé ågéñţ påñé.!!!! !!!!]</value>
-    <comment>Shown when ACP startup fails. The selected agent stays available and the user can explicitly retry. {Locked="ACP"}</comment>
+    <value>[Ţhé ACP çöññéçţïöñ çöûld ñöţ śţårţ.!!!!]</value>
+    <comment>Factual summary shown when ACP startup fails. Native error details appear below; do not add remediation or retry advice. {Locked="ACP"}</comment>
   </data>
   <data name="AIAgents_AcpCleanupFailed.Text" xml:space="preserve">
     <value>[ACP pröçéśś çléåñûp çöûld ñöţ bé çöñfïrméd. Åûţömåţïç śţårţûp håś śţöppéd.!!!! !!!!]</value>
