@@ -3,6 +3,7 @@ import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 import { createRequire } from 'node:module';
+import { fileURLToPath } from 'node:url';
 import test from 'node:test';
 
 const workflow = fs.readFileSync(new URL('../../../workflows/ghaw-pr-performance-controller.yml', import.meta.url), 'utf8');
@@ -14,9 +15,86 @@ const extract = name => {
 };
 const reportScript = new AsyncFunction('github', 'context', 'core', 'process', 'require', extract('Publish linked PR run report'));
 
+function temporaryDirectory(prefix) {
+    const generated = path.join(process.cwd(), 'Generated Files');
+    fs.mkdirSync(generated, { recursive: true });
+    return fs.mkdtempSync(path.join(generated, prefix));
+}
+
+test('controller loads its helper from the workflow revision when the PR base predates it', t => {
+    const root = temporaryDirectory('performance-controller-checkout-');
+    t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+    const git = args => execFileSync('git', args, { cwd: root, encoding: 'utf8', timeout: 15000 }).trim();
+    const commit = subject => {
+        git(['add', '--all']);
+        git(['-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.invalid', 'commit', '--quiet', '-m', subject]);
+        return git(['rev-parse', 'HEAD']);
+    };
+    git(['init', '--quiet', '--initial-branch=main']);
+    const source = path.join(root, 'tools', 'wta', 'src', 'lib.rs');
+    fs.mkdirSync(path.dirname(source), { recursive: true });
+    fs.writeFileSync(source, 'pub fn value() -> usize { 1 }\n');
+    const base = commit('PR base before the reviewer existed');
+    git(['checkout', '--quiet', '-b', 'topic']);
+    fs.writeFileSync(source, 'pub fn value() -> usize { 2 }\n');
+    const head = commit('Reviewed source change');
+    git(['checkout', '--quiet', 'main']);
+    const helper = path.join(root, '.github', 'workflows', 'ghaw-pr-performance', 'scripts', 'performance-review.mjs');
+    fs.mkdirSync(path.dirname(helper), { recursive: true });
+    fs.copyFileSync(new URL('../scripts/performance-review.mjs', import.meta.url), helper);
+    commit('Install the reviewer after the PR base');
+    git(['-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.invalid',
+        'merge', '--quiet', '--no-ff', '-m', 'Workflow merge revision', 'topic']);
+    const trusted = git(['rev-parse', 'HEAD']);
+    assert.equal(git(['merge-base', trusted, head]), head);
+    const context = {
+        'github.workflow_sha': trusted,
+        'github.event.pull_request.base.sha': base,
+        'github.event.pull_request.head.sha': head,
+    };
+    const expression = workflow.match(/uses: actions\/checkout@[^\r\n]+\r?\n\s+with:\r?\n\s+ref: \$\{\{\s*([^}]+?)\s*\}\}/)?.[1];
+    assert.ok(Object.hasOwn(context, expression), 'resolve the actual controller checkout expression');
+    git(['checkout', '--quiet', '--detach', context[expression]]);
+    const scopeDirectory = path.join(root, '.git', 'scope');
+    const comparisonBase = git(['merge-base', base, head]);
+    execFileSync(process.execPath, [helper, 'prepare', '--output-dir', scopeDirectory,
+        '--pr', '42', '--base', comparisonBase, '--head', head], { cwd: root, timeout: 15000 });
+    const scope = JSON.parse(fs.readFileSync(path.join(scopeDirectory, 'performance-scope.json'), 'utf8'));
+    assert.deepEqual(scope.identity, { prNumber: 42, baseSha: base, headSha: head });
+    assert.deepEqual(scope.candidates.map(file => file.filename), ['tools/wta/src/lib.rs']);
+    assert.equal(git(['rev-parse', 'HEAD']), trusted);
+    assert.match(workflow, /BASE_SHA: \$\{\{ github\.event\.pull_request\.base\.sha \}\}/);
+    assert.match(workflow, /HEAD_SHA: \$\{\{ github\.event\.pull_request\.head\.sha \}\}/);
+});
+
+test('repair worker collects the agent-written report from its pre-created output directory', t => {
+    const worker = fs.readFileSync(new URL('../../../workflows/ghaw-pr-performance.md', import.meta.url), 'utf8');
+    const block = worker.match(/RUNTIME=.*node --input-type=module <<'NODE'\r?\n([\s\S]*?)\r?\n      NODE/)?.[1];
+    assert.ok(block, 'actual report collection step exists');
+    const root = temporaryDirectory('performance-agent-summary-');
+    t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+    const agent = path.join(root, 'agent');
+    const output = path.join(root, 'artifacts');
+    fs.mkdirSync(agent);
+    fs.mkdirSync(output);
+    const file = path.join(agent, 'performance-summary.md');
+    const markdown = '## Performance review\n\nNo actionable findings.\n\n| Check | Result |\n| --- | --- |\n| Source review | Completed |\n';
+    fs.writeFileSync(file, markdown);
+    const script = block.replace(/^ {6}/gm, '').replaceAll("'/tmp/gh-aw/agent/performance-summary.md'", JSON.stringify(file));
+    execFileSync(process.execPath, ['--input-type=module', '--eval', script], {
+        cwd: root, timeout: 15000,
+        env: { ...process.env, OUTPUT: output,
+            RUNTIME: fileURLToPath(new URL('../scripts/performance-review.mjs', import.meta.url)) },
+    });
+    assert.equal(fs.readFileSync(path.join(output, '.performance-summary.md'), 'utf8'), markdown);
+    assert.match(worker, /Always write[\s\S]*?even when there are no findings or no eligible commits/);
+    assert.match(worker, /before requesting either[^]*?noop/);
+    assert.match(worker, /noop\.message[^]*?does not replace/);
+});
+
 async function reportRun(markdown, { currentHead = 'a'.repeat(40), recordedHead = 'a'.repeat(40),
     outcome = 'success', comments = [], failComment = false, commentSequence, headSequence } = {}) {
-    const root = fs.mkdtempSync(path.join(process.cwd(), '.performance-delivery-'));
+    const root = temporaryDirectory('performance-delivery-');
     const checks = [];
     const posted = [];
     const warnings = [];

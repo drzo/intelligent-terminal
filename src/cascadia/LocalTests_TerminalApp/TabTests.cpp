@@ -6058,36 +6058,89 @@ namespace TerminalAppLocalTests
                 if (configured)
                 {
                     globals.TabLayout(*configured);
+                    globals.RenderAgentMarkdown(*configured == TabLayout::Vertical);
+                    globals.ShowTokenUsageAndCost(*configured == TabLayout::Vertical);
                 }
 
                 fre.Initialize(settings);
-                const auto picker = fre.FindName(L"TabModeComboBox").try_as<ComboBox>();
-                VERIFY_IS_NOT_NULL(picker);
-                VERIFY_ARE_EQUAL(2u, picker.Items().Size());
-                VERIFY_ARE_EQUAL(configured == TabLayout::Horizontal ? 1 : 0, picker.SelectedIndex());
-                VERIFY_IS_FALSE(Automation::AutomationProperties::GetName(picker).empty());
-                VERIFY_IS_FALSE(Automation::AutomationProperties::GetHelpText(picker).empty());
+                for (const auto name : {
+                         L"TabModeComboBox", L"TabModeDescriptionText",
+                         L"RenderAgentMarkdownToggle", L"RenderAgentMarkdownTitle", L"RenderAgentMarkdownDescription",
+                         L"ShowTokenUsageAndCostToggle", L"TokenUsageDescriptionText" })
+                {
+                    VERIFY_IS_NULL(fre.FindName(name), name);
+                }
+                for (const auto name : { L"AgentComboBox", L"PanePositionComboBox", L"ErrorDetectionComboBox", L"SessionManagementToggle", L"SaveButton" })
+                {
+                    const auto control = fre.FindName(name).as<FrameworkElement>();
+                    VERIFY_IS_NOT_NULL(control);
+                    const auto peer = Automation::Peers::FrameworkElementAutomationPeer::CreatePeerForElement(control);
+                    VERIFY_IS_NOT_NULL(peer);
+                    VERIFY_IS_FALSE(peer.GetName().empty());
+                }
 
-                picker.SelectedIndex(1 - picker.SelectedIndex());
                 VERIFY_ARE_EQUAL(configured.has_value(), globals.HasTabLayout());
-                VERIFY_ARE_EQUAL(configured.value_or(TabLayout::Horizontal), globals.TabLayout());
+                VERIFY_ARE_EQUAL(configured.value_or(TabLayout::Vertical), globals.TabLayout());
+                VERIFY_ARE_EQUAL(configured.has_value(), globals.HasRenderAgentMarkdown());
+                VERIFY_ARE_EQUAL(configured != TabLayout::Horizontal, globals.RenderAgentMarkdown());
+                VERIFY_ARE_EQUAL(configured.has_value(), globals.HasShowTokenUsageAndCost());
+                VERIFY_ARE_EQUAL(configured != TabLayout::Horizontal, globals.ShowTokenUsageAndCost());
             }
         });
     }
 
     void TabTests::FreIllustrationsFollowThemeWithoutChangingChrome()
     {
-        TestOnUIThread([]() {
-            winrt::TerminalApp::FreOverlay fre;
-            for (const auto theme : { ElementTheme::Light, ElementTheme::Dark, ElementTheme::Default, ElementTheme::Light })
-            {
-                fre.RequestedTheme(theme);
-                const auto actualTheme = fre.ActualTheme();
-                VERIFY_ARE_NOT_EQUAL(ElementTheme::Default, actualTheme);
-                if (theme != ElementTheme::Default)
+        ::details::Event loaded;
+        UIElement previousContent{ nullptr };
+        Grid host{ nullptr };
+        winrt::TerminalApp::FreOverlay fre{ nullptr };
+        winrt::event_token loadedToken{};
+        TestOnUIThread([&]() {
+            previousContent = Window::Current().Content();
+            host = Grid{};
+            host.RequestedTheme(ElementTheme::Dark);
+            fre = winrt::TerminalApp::FreOverlay{};
+            loadedToken = fre.Loaded([&](auto&&, auto&&) { loaded.Set(); });
+            host.Children().Append(fre);
+            Window::Current().Content(host);
+            Window::Current().Activate();
+            host.UpdateLayout();
+        });
+        const auto cleanup = wil::scope_exit([&]() {
+            LOG_IF_FAILED(RunOnUIThread([&]() {
+                fre.Loaded(loadedToken);
+                Window::Current().Content(previousContent);
+            }));
+        });
+        VERIFY_ARE_EQUAL(static_cast<DWORD>(WAIT_OBJECT_0), WaitForSingleObject(loaded.m_handle, 10000));
+
+        for (const auto theme : { ElementTheme::Light, ElementTheme::Dark, ElementTheme::Default, ElementTheme::Light })
+        {
+            ::details::Event changed;
+            const auto expectedTheme = theme == ElementTheme::Default ? ElementTheme::Dark : theme;
+            const auto signalReady = [&]() {
+                if (fre.ActualTheme() == expectedTheme &&
+                    fre.FindName(L"SidebarImage").as<Image>().RequestedTheme() == expectedTheme &&
+                    fre.FindName(L"AutofixImage").as<Image>().RequestedTheme() == expectedTheme)
                 {
-                    VERIFY_ARE_EQUAL(theme, actualTheme);
+                    changed.Set();
                 }
+            };
+            winrt::event_token token{};
+            TestOnUIThread([&]() {
+                token = fre.ActualThemeChanged([&](auto&&, auto&&) { signalReady(); });
+                fre.RequestedTheme(theme);
+                host.UpdateLayout();
+                signalReady();
+            });
+            const auto removeHandler = wil::scope_exit([&]() {
+                LOG_IF_FAILED(RunOnUIThread([&]() { fre.ActualThemeChanged(token); }));
+            });
+            VERIFY_ARE_EQUAL(static_cast<DWORD>(WAIT_OBJECT_0), WaitForSingleObject(changed.m_handle, 10000));
+            TestOnUIThread([&]() {
+                const auto actualTheme = fre.ActualTheme();
+                VERIFY_ARE_EQUAL(expectedTheme, actualTheme);
                 VERIFY_ARE_EQUAL(ElementTheme::Dark, fre.FindName(L"RootGrid").as<Grid>().RequestedTheme());
                 for (const auto name : { L"SidebarImage", L"AutofixImage" })
                 {
@@ -6097,8 +6150,8 @@ namespace TerminalAppLocalTests
                     const winrt::hstring expectedSource{ std::wstring_view{ name } == L"SidebarImage" ? L"ms-appx:///FREAssets/sidebar.png" : L"ms-appx:///FREAssets/Error-detection.png" };
                     VERIFY_ARE_EQUAL(expectedSource, source);
                 }
-            }
-        });
+            });
+        }
     }
 
     void TabTests::EmptyTabLayoutChangeCompletesBeforeStartup()
