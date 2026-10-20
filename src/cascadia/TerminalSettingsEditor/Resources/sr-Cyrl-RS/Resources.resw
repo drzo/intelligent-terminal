@@ -3099,7 +3099,7 @@ Alt+Shift+/ унесите упит; Alt+Shift+B покрените без по�
     <comment>Error shown in AI Agents Settings when the separate Agent Client Protocol server cannot be prepared. The adjacent button retries installation. {Locked="ACP"}</comment>
   </data>
   <data name="AIAgents_AcpStartupFailed.Text" xml:space="preserve">
-    <value>Није могуће покренути ACP везу. И даље можете да изаберете овог агента и покушате поново из окна агента.</value>
+    <value>Није могуће покренути ACP везу. И даље можете да изаберете овог агента и покушате поново из панела агента.</value>
     <comment>Shown when ACP startup fails. The selected agent stays available and the user can explicitly retry. {Locked="ACP"}</comment>
   </data>
   <data name="AIAgents_AcpCleanupFailed.Text" xml:space="preserve">
