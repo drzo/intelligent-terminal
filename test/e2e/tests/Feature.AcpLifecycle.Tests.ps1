@@ -119,12 +119,12 @@ Describe 'Feature: ACP provider lifecycle' -Tag 'Feature', 'AcpLifecycle' {
         }
 
         function script:New-LifecycleFixture {
-            param([string]$Mode = 'fail', [switch]$SpawnChild)
+            param([string]$Mode = 'fail', [switch]$SpawnChild, [string]$FailureStderr = '')
             $directory = Join-Path $script:evidence ([guid]::NewGuid().ToString('N'))
             New-Item -ItemType Directory -Path $directory -Force | Out-Null
             $log = Join-Path $directory 'requests.log'
             $control = Join-Path $directory 'startup.json'
-            @{ mode = $Mode; spawnChild = [bool]$SpawnChild } | ConvertTo-Json | Set-Content -LiteralPath $control
+            @{ mode = $Mode; spawnChild = [bool]$SpawnChild; failureStderr = $FailureStderr } | ConvertTo-Json | Set-Content -LiteralPath $control
             $invocation = "& '$($script:fixture.Replace("'", "''"))' -LogPath '$($log.Replace("'", "''"))' -StartupControlPath '$($control.Replace("'", "''"))'"
             $encoded = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($invocation))
             [pscustomobject]@{
@@ -260,13 +260,22 @@ Describe 'Feature: ACP provider lifecycle' -Tag 'Feature', 'AcpLifecycle' {
     }
 
     It 'ACP startup budgets survive separate probe requests' {
-        $fixture = New-LifecycleFixture
+        $failureText = 'Application Control policy has blocked this file. Controlled fixture stderr.'
+        $fixture = New-LifecycleFixture -FailureStderr $failureText
         for ($i = 0; $i -lt 2; $i++) {
             $result = Invoke-Native -FilePath $script:wtaAlias -Arguments @(
                 'probe-models', '--agent', $fixture.Command, '--agent-id', 'custom:lifecycle-budget'
             ) -TimeoutSec 120
             $result.ExitCode | Should -Not -Be 0
+            if ($i -eq 0) {
+                $failure = ($result.StdOut | ConvertFrom-Json).startup_failure
+                $failure.phase | Should -Be 'initialize'
+                $failure.reason | Should -Be 'failed' -Because 'native stderr wording must not override the structured failure'
+                $failure.rpc_code | Should -Be -32603
+            }
         }
+        (Get-ItLogText -App $script:app -Name 'wta-probe.log' -SinceStart) |
+            Should -Match ([regex]::Escape($failureText)) -Because 'native stderr must remain available in diagnostic logs'
         (Get-LifecycleStarts $fixture) | Should -Be 3 -Because 'separate CLI processes must share one failure ceiling'
         @{ mode = 'ready' } | ConvertTo-Json | Set-Content -LiteralPath $fixture.Control
         $blocked = Invoke-Native -FilePath $script:wtaAlias -Arguments @(

@@ -97,6 +97,10 @@ while ($true) {
                     throw 'startup control must select ready or fail'
                 }
                 if ($startup.mode -eq 'fail') {
+                    if ($startup['failureStderr']) {
+                        [Console]::Error.WriteLine([string]$startup['failureStderr'])
+                        [Console]::Error.Flush()
+                    }
                     if ($startup.spawnChild) {
                         $program = [Diagnostics.Process]::GetCurrentProcess().MainModule.FileName
                         $child = Start-Process -FilePath $program -ArgumentList @(

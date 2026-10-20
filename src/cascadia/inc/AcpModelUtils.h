@@ -75,7 +75,7 @@ namespace Microsoft::Terminal::AcpModels
             failure["diagnostic_id"].asString(),
         };
         constexpr std::string_view phases[]{ "preparation", "spawn", "initialize", "session", "cleanup" };
-        constexpr std::string_view reasons[]{ "failed", "timed_out", "authentication_required", "operating_system_policy", "retry_limit_reached" };
+        constexpr std::string_view reasons[]{ "failed", "timed_out", "authentication_required", "retry_limit_reached" };
         if (std::ranges::find(phases, parsed.phase) == std::end(phases) ||
             std::ranges::find(reasons, parsed.reason) == std::end(reasons) ||
             parsed.maxAttempts != 3 || parsed.attempts > parsed.maxAttempts ||

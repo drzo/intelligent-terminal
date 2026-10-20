@@ -107,6 +107,9 @@ even after a successful installation-time check.
 Preserve structured phase, reason, available numeric error codes, attempt count,
 safe summary and permitted next actions. Keep credentials, raw provider
 configuration and unrelated terminal data out of public status payloads.
+Derive reasons from structured errors and WTA-owned lifecycle state, not from
+matching native stderr wording. Preserve safely filtered, bounded stderr in
+diagnostic logs without inventing a provider- or message-specific cause category.
 Settings uses fully localized primary error text and the standard InfoBar message
 and action properties. Technical phase/reason codes, attempt counts and diagnostic
 IDs stay in structured CLI output and logs rather than the primary announcement.

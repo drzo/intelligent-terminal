@@ -55,7 +55,6 @@ pub(crate) enum StartupReason {
     Failed,
     TimedOut,
     AuthenticationRequired,
-    OperatingSystemPolicy,
     RetryLimitReached,
 }
 
@@ -77,16 +76,6 @@ impl std::fmt::Display for DependencyPrepared {
 }
 
 impl std::error::Error for DependencyPrepared {}
-
-pub(crate) fn diagnose_stderr(lines: &[String]) -> Option<StartupReason> {
-    lines
-        .iter()
-        .any(|line| {
-            line.to_ascii_lowercase()
-                .contains("application control policy has blocked")
-        })
-        .then_some(StartupReason::OperatingSystemPolicy)
-}
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) struct StartupFailure {
@@ -498,6 +487,29 @@ impl StartupLease {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn startup_reasons_do_not_include_message_inferred_categories() {
+        for (reason, wire) in [
+            (StartupReason::Failed, "failed"),
+            (StartupReason::TimedOut, "timed_out"),
+            (
+                StartupReason::AuthenticationRequired,
+                "authentication_required",
+            ),
+            (StartupReason::RetryLimitReached, "retry_limit_reached"),
+        ] {
+            assert_eq!(serde_json::to_value(reason).unwrap(), wire);
+            assert_eq!(
+                serde_json::from_value::<StartupReason>(serde_json::json!(wire)).unwrap(),
+                reason
+            );
+        }
+        assert!(
+            serde_json::from_str::<StartupReason>(r#""operating_system_policy""#).is_err(),
+            "native stderr wording must not define a startup reason"
+        );
+    }
 
     #[tokio::test(start_paused = true)]
     async fn helper_wait_allows_queued_initialization_but_remains_bounded() {
