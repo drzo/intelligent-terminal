@@ -152,6 +152,8 @@ Describe 'Feature: restored session startup' -Tag 'Feature', 'RestoredSessionSta
             $pane = '{' + [guid]::NewGuid().ToString() + '}'
             $savedHelper = '"wta.exe" --initial-view chat --agent-backend host:custom:restore-startup --agent-custom-command "' + $command + '"'
             $state = @{
+                featureRolloutId = '{00000000-0000-0000-0000-000000000001}'
+                sidebarRolloutVersion = 1; sidebarRolloutAssignment = 'Sidebar'
                 sidebarLayoutMigrationCompleted = $true; sidebarIntroductionShown = $true
                 persistedWindowLayouts = @(@{ tabLayout = @(
                     @{ action = 'newTab'; profile = $nativeProfile; sessionId = $pane
@@ -180,6 +182,10 @@ Describe 'Feature: restored session startup' -Tag 'Feature', 'RestoredSessionSta
                     ) }
                 }
                 $script:app.Launched | Should -BeTrue
+                $effectiveSettings = Invoke-WtCli -App $script:app -Arguments @('get-settings')
+                $effectiveSettings.tabLayout | Should -Be 'vertical'
+                $effectiveSettings.agentSessionManagementEnabled | Should -Be $sessionsEnabled
+                $effectiveSettings.defaultProfile | Should -Be $guardProfile
                 (Get-Process -Id $script:app.Pid).Path | Should -Be $script:app.WindowsTerminal
                 @((Get-Process -Id $script:app.Pid).Modules | Where-Object ModuleName -EQ TerminalApp.dll)[0].FileName |
                     Should -Be (Join-Path $script:target.InstallLocation 'TerminalApp.dll')
