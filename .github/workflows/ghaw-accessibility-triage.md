@@ -21,6 +21,12 @@ tools:
     - 'git diff:*'
     - 'git show:*'
 safe-outputs:
+  # A non-system artifact output suppresses gh-aw's default create-issue tool.
+  upload-artifact:
+    allowed-paths:
+      - Generated Files/${{ env.ACCESSIBILITY_RUN }}/triage.md
+    max-size-bytes: 32768
+    retention-days: 14
   noop:
     report-as-issue: false
   missing-tool:
@@ -28,6 +34,9 @@ safe-outputs:
   missing-data:
     create-issue: false
   report-failure-as-issue: false
+  report-failed-jobs: false
+  report-incomplete:
+    create-issue: false
   threat-detection:
     max-ai-credits: 30
     retries: 0
