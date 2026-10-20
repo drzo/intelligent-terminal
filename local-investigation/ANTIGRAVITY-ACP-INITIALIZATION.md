@@ -38,7 +38,7 @@
   `ba61c2929c3494d380fe2aca30ce83989884afe3` and
   `7803dd855d15c52c46819288f28f8f2077779019` and
   `bde1fc453bb5e98d0f3b9555d7bef3362dae2539`.
-- Current local refactor publish head: `1f4e4d79e46dabe6cb01058a0ac47dafbfe5c524`.
+- Current local refactor publish head: `86f88c1a537fe613580690562a66bea275e8c205`.
 - Refactor PR: `microsoft/intelligent-terminal#1180`.
 - Current implementation base: `d2fdbd75fed3d881b069c642a6c200734dbe09a7`.
   A final fetch confirmed that this is still `origin/main` and an ancestor of
@@ -46,6 +46,51 @@
 - Original dirty worktree: `C:\ado\intelligent-terminal`, left untouched.
 
 ## Current Stage
+
+### Critical check assessment and current-main alignment
+
+Settings follow-up review `5586234276` at `2026-10-20T14:09:06Z` genuinely
+converged on `1f4e4d79e` with no concrete findings. The user's requested critical
+check analysis then inspected real completed artifacts/logs instead of treating
+red statuses as either product bugs or automatic false positives.
+
+- Security failed before review: recorded PR base `d2fdbd75` differed from live
+  main `3b0ff06d`. Its immutable-baseline guard was retained.
+- Native source review claimed no findings but failed `review_checks must cite
+  every classified changed file`. Its separate three-state Windows Axe smoke
+  passed. This is an incomplete report, not complete accessibility approval.
+- Performance worker `39413632868` exceeded its 15-minute execution limit and
+  produced no Markdown summary; detector follow-up also lacked `threat-detect`.
+  The additional report check is a second display of the same failed worker.
+- Main already contains reviewed workflow startup/summary fixes. After a clean
+  preview, exact main `3b0ff06d` was merged normally into dev `c6e15f552` and
+  publish `86f88c1a5`; no guard or trust condition was relaxed.
+
+Integrated validation: exact publish WTA 2,998 unit +2 CLI tests pass, six opt-in
+ignored; final Clippy and two explicitly selected WSL ownership controls pass.
+Windows hook tests pass 33/33. Workflow tests pass 96 with three platform skips
+on native Linux fixtures; accessibility contract tests pass 111 and localization
+workflow tests pass eight. Initial local fixture failures were diagnosed as
+missing VM-module options, Windows NUL hook-path handling and NTFS file modes;
+the guards stayed enabled. One owned hung Linux hook test was identified by
+exact executable/parent/arguments and stopped by PID; Windows hook coverage
+passed separately.
+
+An additional Rich Tab literal-path fixture fails identically on unmodified
+main code: the escaped `git[1].cmd` application path is not resolved by the
+selected PowerShell. The diagnostic assertion was not weakened and temporary
+logging was removed. This unrelated baseline failure is recorded, not counted
+as a passing full native suite; focused ACP parsing passes 20/20.
+
+Full private package **0.8.0.23** (`ci-aligned-publish-013`) is deployed from
+`86f88c1a5`, including the new static OpenCode hook assets. All four binaries
+match MSIX `3EAE176C477CDDB83524D538DF9DCB37E407D39DB701C19BAEB41228186A9F9F`;
+WTA is `4FEEBE16A49B484B02C69E4FEA8E7E25F73F688EED7C4E7381F616D23F39AB5F`.
+The four lifecycle E2E cases, including native text selection/copy/paste, pass;
+C455-C458 remain uniquely mapped. User settings/state/runtime and clipboard
+are preserved. Source identity overrides are restored and normal outputs rebuilt.
+The short user-facing check explanation is `local-investigation\PR-1180-CHECKS.md`
+on DEV only. New-head publication/review/check observation is still pending.
 
 ### Factual Settings errors and selectable native text
 
