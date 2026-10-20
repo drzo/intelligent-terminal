@@ -38,7 +38,7 @@
   `ba61c2929c3494d380fe2aca30ce83989884afe3` and
   `7803dd855d15c52c46819288f28f8f2077779019` and
   `bde1fc453bb5e98d0f3b9555d7bef3362dae2539`.
-- Current local refactor publish head: `a78568f42571fd7deb43c5425d1740f88df7fdff`.
+- Current refactor publish head: `a78568f42571fd7deb43c5425d1740f88df7fdff`.
 - Refactor PR: `microsoft/intelligent-terminal#1180`.
 - Current implementation base: `d2fdbd75fed3d881b069c642a6c200734dbe09a7`.
   A final fetch confirmed that this is still `origin/main` and an ancestor of
@@ -46,6 +46,31 @@
 - Original dirty worktree: `C:\ado\intelligent-terminal`, left untouched.
 
 ## Current Stage
+
+### Completed native-details implementation and review convergence
+
+All requested code, publication and deployment work is complete. Private
+**0.8.0.21** remains registered at `native-details-publish-011`; its final WTA
+is SHA-256 `9522F430C23AFDBC8D521E1FBFEEDA8C68C4606920CDEDF7845082E246FA8AA1`
+from publish `a78568f42`, with the full `1db0dc548` native carrier and original
+MSIX preserved. Native error details are visible in the helper and the separate
+localized Settings section. User settings/state and existing runtime files
+remain byte-exact. Final GUI/enterprise acceptance, screenshots and correctly
+mapped C455-C458 reports were inspected.
+
+Copilot review **5584308163**, submitted **2026-10-20T11:21:25Z**, is at exact
+HEAD `a78568f42571fd7deb43c5425d1740f88df7fdff` and has no new findings.
+The parent independently reran the strict checker after final cleanup:
+`Converged=true`, no pending review, zero open/unanswered threads. The full body
+was inspected; its independent-human-review recommendation is not a code defect
+or a fabricated approval.
+
+Spelling and CLA pass. The final security controller failure was inspected:
+it refused to replace an immutable stale base before dispatch. That safeguard
+was retained, and the failed assessment is not counted as clean. Other optional
+native/performance/localization executions were still pending at handoff.
+The PR is mergeable but awaits its required independent non-author approval.
+No account was switched, approval forged, rule changed or PR merged.
 
 ### Canonical legacy/diagnostic identity and final spelling follow-up
 
