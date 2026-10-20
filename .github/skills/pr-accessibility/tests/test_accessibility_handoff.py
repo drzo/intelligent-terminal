@@ -82,6 +82,26 @@ class CompiledGraphTests(unittest.TestCase):
         self.assertIn("head-sha: ${{ github.event.pull_request.head.sha }}",
                       (ROOT / ".github/workflows/ghaw-pr-accessibility.lock.yml").read_text(encoding="utf-8"))
 
+    def test_native_selection_survives_failed_deep_validation_but_not_skip_or_cancel(self):
+        selector = self.jobs["native-selection"]
+        self.assertEqual(
+            "${{ !cancelled() && needs.agent.result != 'skipped' }}",
+            selector["if"],
+        )
+        # Explicit status function overrides GitHub's implicit success() gate.
+        # A failed report/repair validator may still leave a valid selection.
+        for cancelled, result, expected in (
+            (False, "success", True), (False, "failure", True),
+            (False, "skipped", False), (True, "failure", False),
+            (True, "cancelled", False),
+        ):
+            with self.subTest(cancelled=cancelled, result=result):
+                self.assertEqual(expected, not cancelled and result != "skipped")
+        self.assertIn("needs.agent.result == 'success'", self.jobs["safe_outputs"]["if"])
+        upload = next(step for step in self.jobs["agent"]["steps"]
+                      if step.get("name") == "Upload deep review evidence even when incomplete")
+        self.assertIn("always()", upload["if"])
+
     def test_final_summary_runs_after_skips_and_failures(self):
         summary = self.jobs["final-summary"]
         self.assertIn("always()", summary["if"])

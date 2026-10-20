@@ -121,6 +121,7 @@ jobs:
 
   native-selection:
     needs: [agent]
+    if: ${{ !cancelled() && needs.agent.result != 'skipped' }}
     runs-on: ubuntu-latest
     permissions:
       contents: read
