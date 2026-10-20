@@ -5,7 +5,9 @@
 #include <oleauto.h>
 #include <winrt/Windows.Foundation.h>
 #include "ITerminalProtocol.h"
+#include <limits>
 #include <stdexcept>
+#include <utility>
 
 // Load SDK/WIL declarations before mocking the CLI's COM activation calls.
 #include "..\..\..\cascadia\TerminalProtocol\ProtocolMarshaling.h"
@@ -114,10 +116,75 @@ namespace NativeMock
         loadCalls = registerCalls = 0;
     }
 
-    void Require(bool condition)
+    void Require(bool condition, const char* message = "listener connection contract failed")
     {
         if (!condition)
-            throw std::runtime_error("listener connection contract failed");
+            throw std::runtime_error(message);
+    }
+
+    void CheckListenTimestampFormatting()
+    {
+        using Result = wtcli::ListenEventFormatResult;
+
+        Json::StreamWriterBuilder writer;
+        writer["indentation"] = "";
+        Json::Value event;
+        event["type"] = "event";
+        event["method"] = "agent_event";
+        event["params"]["event"] = "agent.notification";
+        event["params"]["pane_id"] = "owner";
+        event["params"]["payload"]["message"] = "approve command";
+        event["params"]["payload"]["tool_input"]["timestamp"] = 123;
+        event["params"]["last_activity_at_ms"] = 456;
+        const std::pair<Json::Int64, const char*> cases[]{
+            { 1792473545608, "2026-10-20T05:19:05.608Z" },
+            { 0, "1970-01-01T00:00:00.000Z" },
+            { -1, "1969-12-31T23:59:59.999Z" },
+            { 1709164800000, "2024-02-29T00:00:00.000Z" },
+            { 253402300799999, "9999-12-31T23:59:59.999Z" },
+        };
+        for (const auto& [timestamp, expected] : cases)
+        {
+            event["params"]["payload"]["timestamp"] = timestamp;
+            const auto raw = Json::writeString(writer, event);
+            std::string formatted;
+            Require(wtcli::FormatListenEvent(raw, false, formatted) == Result::Unchanged, "plain listen must preserve numeric timestamps");
+            Require(wtcli::FormatListenEvent(raw, true, formatted) == Result::Normalized, "JSON listen must normalize numeric timestamps");
+            Json::Value actual;
+            Json::CharReaderBuilder reader;
+            std::string errors;
+            std::istringstream stream{ formatted };
+            Require(Json::parseFromStream(reader, stream, &actual, &errors), "normalized output must remain valid JSON");
+            event["params"]["payload"]["timestamp"] = expected;
+            Require(actual == event, "normalization must produce UTC ISO 8601 and preserve other fields");
+            Require(formatted.find('\n') == std::string::npos, "listen output must remain one JSON object per line");
+            Require(wtcli::FormatListenEvent(formatted, true, formatted) == Result::Unchanged, "existing ISO timestamps must stay unchanged");
+        }
+
+        for (const auto& timestamp : {
+                 Json::Value{ (std::numeric_limits<Json::UInt64>::max)() },
+                 Json::Value{ Json::Int64{ 253402300800000 } },
+                 Json::Value{ 1.5 },
+             })
+        {
+            event["params"]["payload"]["timestamp"] = timestamp;
+            std::string formatted;
+            Require(wtcli::FormatListenEvent(Json::writeString(writer, event), true, formatted) == Result::InvalidTimestamp, "invalid timestamps must be reported instead of inventing dates");
+        }
+        for (const auto* unchanged : {
+                 R"({"method":"agent_event","params":{"payload":{"timestamp":"2026-10-20T13:19:05.580+08:00"}}})",
+                 R"({"method":"agent_event","params":{"payload":{}}})",
+                 R"({"method":"connection_state","params":{"payload":{"timestamp":1792473545608}}})",
+                 R"({"method":"agent_event","params":{"payload":false}})",
+             })
+        {
+            std::string formatted;
+            Require(wtcli::FormatListenEvent(unchanged, true, formatted) == Result::Unchanged, "unrelated events and existing timestamp strings must remain unchanged");
+        }
+        std::string formatted;
+        Require(wtcli::FormatListenEvent("invalid JSON", true, formatted) == Result::InvalidJson, "JSON listen must report malformed events");
+        Require(wtcli::FormatListenEvent("invalid JSON", false, formatted) == Result::Unchanged, "plain listen must remain a raw pass-through");
+        puts("Listener timestamp formatting tests passed.");
     }
 
     int Listen(bool existingOnly)
@@ -160,6 +227,7 @@ int wmain()
     using namespace NativeMock;
     try
     {
+        CheckListenTimestampFormatting();
         SetEnvironmentVariableW(L"WT_COM_CLSID", L"{11111111-1111-1111-1111-111111111111}");
         for (const auto failLoad : { false, true })
         {
