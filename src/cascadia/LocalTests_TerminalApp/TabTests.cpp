@@ -708,6 +708,7 @@ namespace TerminalAppLocalTests
         TEST_METHOD(ResumedPaneIdentityPersistsWithoutHooksOrBannerParsing);
         TEST_METHOD(RestoredSessionBindingsWaitForTheirHelperSubscription);
         TEST_METHOD(RestoredSessionBindingsWaitForMasterReadiness);
+        TEST_METHOD(RestoredSessionBindingsRegisterBeforeHelperAndLayoutReadiness);
         TEST_METHOD(LateRestoredSessionBindingNotifiesAfterPaneAttachment);
         TEST_METHOD(EndedRestoredSessionDoesNotReplayItsBinding);
         TEST_METHOD(AgentRestoreRecordOutlivesTheAgentPane);
@@ -4167,6 +4168,94 @@ namespace TerminalAppLocalTests
                 VERIFY_IS_TRUE(page->_tabsAwaitingRestoredBindings.empty());
                 page->_ReplayNativeAgentObservationsForReceiver(7);
                 VERIFY_ARE_EQUAL(size_t{ 1 }, births.size());
+            });
+        }
+    }
+
+    void TabTests::RestoredSessionBindingsRegisterBeforeHelperAndLayoutReadiness()
+    {
+        using Owner = winrt::TerminalApp::implementation::SharedWta;
+        for (const auto sessionsEnabled : { true, false })
+        {
+            auto page = _restoreBindingsSetup();
+            TestOnUIThread([&]() {
+                auto& owner = Owner::Instance();
+                VERIFY_IS_FALSE(owner.IsRunning());
+                const auto originalGeneration = owner.MasterGeneration();
+                const auto restoreGeneration = wil::scope_exit([&]() {
+                    std::lock_guard lock{ owner._mtx };
+                    owner._masterGeneration = originalGeneration;
+                });
+                {
+                    std::lock_guard lock{ owner._mtx };
+                    owner._masterGeneration = 7;
+                }
+                page->_settings.GlobalSettings().AgentSessionManagementEnabled(sessionsEnabled);
+                page->_agentSnapshotRefreshInFlight = true;
+                page->_startupActionReplayDepth = 1;
+                const auto first = page->_GetTabImpl(page->_tabs.GetAt(0));
+                const auto second = page->_GetTabImpl(page->_tabs.GetAt(1));
+                const auto firstPane = first->GetActiveTerminalControl().Connection().SessionId();
+                const auto secondPane = second->GetActiveTerminalControl().Connection().SessionId();
+                page->_pendingRestoredSessionBindings[firstPane] = { L"restored-first", L"copilot", L"C:\\first" };
+                page->_pendingRestoredSessionBindings[secondPane] = { L"restored-second", L"copilot", L"C:\\second" };
+                std::vector<Json::Value> births;
+                const auto token = page->ProtocolVtSequenceReceived([&](auto&&, const winrt::hstring& payload) {
+                    Json::Value event;
+                    Json::CharReaderBuilder reader;
+                    std::string errors;
+                    std::istringstream stream{ winrt::to_string(payload) };
+                    VERIFY_IS_TRUE(Json::parseFromStream(reader, stream, &event, &errors));
+                    if (event["method"] == "session_born_bound")
+                    {
+                        births.push_back(event["params"]);
+                    }
+                });
+                const auto revoke = wil::scope_exit([&]() { page->ProtocolVtSequenceReceived(token); });
+
+                page->_NotifyRestoredSessionBindings(first);
+                page->_NotifyRestoredSessionBindings(second);
+                VERIFY_IS_TRUE(births.empty());
+                VERIFY_IS_TRUE(page->_tabsAwaitingRestoredBindings.empty());
+                page->_ReplayNativeAgentObservationsForReceiver(7);
+                VERIFY_ARE_EQUAL(size_t{ 2 }, births.size());
+                for (const auto& birth : births)
+                {
+                    const auto isFirst = birth["agent_session_id"] == "restored-first";
+                    VERIFY_ARE_EQUAL(isFirst ? std::string{ "restored-first" } : std::string{ "restored-second" },
+                                     birth["agent_session_id"].asString());
+                    VERIFY_ARE_EQUAL(winrt::to_string(::Microsoft::Console::Utils::GuidToPlainString(isFirst ? firstPane : secondPane)),
+                                     birth["pane_id"].asString());
+                    VERIFY_ARE_EQUAL(winrt::to_string((isFirst ? first : second)->StableId()), birth["tab_id"].asString());
+                    VERIFY_ARE_EQUAL(std::to_string(page->_WindowProperties.WindowId()), birth["window_id"].asString());
+                    VERIFY_ARE_EQUAL(uint64_t{ 7 }, birth["receiver_generation"].asUInt64());
+                }
+                VERIFY_ARE_EQUAL(size_t{ 2 }, page->_pendingRestoredSessionBindings.size());
+                VERIFY_ARE_EQUAL(uint64_t{ 7 }, page->_pendingRestoredSessionBindings.at(firstPane).publishedReceiverGeneration);
+                page->_ReplayNativeAgentObservationsForReceiver(7);
+                page->_NotifyRestoredSessionBindings(first);
+                VERIFY_ARE_EQUAL(size_t{ 2 }, births.size());
+
+                {
+                    std::lock_guard lock{ owner._mtx };
+                    owner._masterGeneration = 8;
+                }
+                page->_ReplayNativeAgentObservationsForReceiver(7);
+                VERIFY_ARE_EQUAL(size_t{ 2 }, births.size());
+                page->_ReplayNativeAgentObservationsForReceiver(8);
+                VERIFY_ARE_EQUAL(size_t{ 4 }, births.size());
+                VERIFY_ARE_EQUAL(uint64_t{ 8 }, page->_pendingRestoredSessionBindings.at(secondPane).publishedReceiverGeneration);
+
+                page->_ReplayRestoredSessionBindings(first);
+                VERIFY_ARE_EQUAL(size_t{ 4 }, births.size());
+                page->_startupActionReplayDepth = 0;
+                page->_ReplayRestoredSessionBindings(first);
+                VERIFY_ARE_EQUAL(size_t{ 5 }, births.size());
+                VERIFY_IS_FALSE(page->_pendingRestoredSessionBindings.contains(firstPane));
+                VERIFY_IS_TRUE(page->_pendingRestoredSessionBindings.contains(secondPane));
+                page->_ReplayRestoredSessionBindings(second);
+                VERIFY_ARE_EQUAL(size_t{ 6 }, births.size());
+                VERIFY_IS_TRUE(page->_pendingRestoredSessionBindings.empty());
             });
         }
     }

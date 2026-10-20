@@ -3679,6 +3679,10 @@ namespace winrt::TerminalApp::implementation
                    !(info.providerId.empty() && !providerId.empty()) &&
                    !_ShouldReplaceReportedAgentState(info, incoming);
         };
+        const auto previous = _richTabAgentStatusBySessionId.find(sessionIdString);
+        const auto statusChanged = previous == _richTabAgentStatusBySessionId.end() ||
+                                   previous->second.status != statusString ||
+                                   previous->second.paneSessionId != paneId;
         if (const auto existing = _richTabAgentStatusBySessionId.find(sessionIdString);
             existing != _richTabAgentStatusBySessionId.end() && rejectsIncoming(existing->second))
         {
@@ -3724,6 +3728,11 @@ namespace winrt::TerminalApp::implementation
         {
             auto& paneInfo = _richTabAgentStatusByPaneId[*paneId];
             updateInfo(paneInfo, sessionInfo);
+        }
+        if (statusChanged && sessionInfo.status == statusString && sessionInfo.paneSessionId == paneId)
+        {
+            _agentPaneLog("agent_status_projection: source=delta session=" + sessionIdString +
+                          " pane=" + std::string{ paneSessionId } + " status=" + statusString);
         }
         for (const auto& runtimeTab : _RuntimeTabs())
         {
@@ -10961,6 +10970,7 @@ namespace winrt::TerminalApp::implementation
                 }
                 return false;
             });
+            _ReplayRestoredSessionBindings(tab, /*helperSubscribed*/ false);
             for (const auto& [paneId, binding] : _pendingRestoredSessionBindings)
             {
                 if (root->FindPaneBySessionId(paneId))
@@ -10975,19 +10985,26 @@ namespace winrt::TerminalApp::implementation
         }
     }
 
-    void TerminalPage::_ReplayRestoredSessionBindings(const winrt::com_ptr<Tab>& tab)
+    void TerminalPage::_ReplayRestoredSessionBindings(const winrt::com_ptr<Tab>& tab, const bool helperSubscribed)
     {
         // Startup yields between panes. A restored helper can subscribe before
         // its tab's remaining shell panes have been created.
-        if (_startupActionReplayDepth > 0)
+        if (helperSubscribed && _startupActionReplayDepth > 0)
         {
             _tabsAwaitingRestoredBindings.insert(tab->StableId());
             return;
         }
         const auto receiverGeneration = SharedWta::Instance().MasterGeneration();
+        if (!helperSubscribed && receiverGeneration == 0)
+        {
+            return;
+        }
         if (receiverGeneration != 0 && _lastReadyNativeAgentReceiverGeneration != receiverGeneration)
         {
-            _tabsAwaitingRestoredBindings.insert(tab->StableId());
+            if (helperSubscribed)
+            {
+                _tabsAwaitingRestoredBindings.insert(tab->StableId());
+            }
             _RequestAgentSnapshotRefresh();
             return;
         }
@@ -10996,16 +11013,20 @@ namespace winrt::TerminalApp::implementation
         {
             return;
         }
-        root->WalkTree([&](const auto& pane) {
-            if (const auto control = pane->GetTerminalControl())
-            {
-                _PublishNativeAgentObservation(control, "reset", true);
-            }
-            return false;
-        });
+        if (helperSubscribed)
+        {
+            root->WalkTree([&](const auto& pane) {
+                if (const auto control = pane->GetTerminalControl())
+                {
+                    _PublishNativeAgentObservation(control, "reset", true);
+                }
+                return false;
+            });
+        }
         for (auto it = _pendingRestoredSessionBindings.begin(); it != _pendingRestoredSessionBindings.end();)
         {
-            if (!root->FindPaneBySessionId(it->first))
+            if (!root->FindPaneBySessionId(it->first) ||
+                (!helperSubscribed && it->second.publishedReceiverGeneration == receiverGeneration))
             {
                 ++it;
                 continue;
@@ -11027,8 +11048,18 @@ namespace winrt::TerminalApp::implementation
             {
                 params["receiver_generation"] = Json::UInt64{ receiverGeneration };
             }
-            it = _pendingRestoredSessionBindings.erase(it);
-            _agentPaneLog("_ReplayRestoredSessionBindings: publishing restored session " + params["agent_session_id"].asString());
+            if (helperSubscribed)
+            {
+                it = _pendingRestoredSessionBindings.erase(it);
+            }
+            else
+            {
+                it->second.publishedReceiverGeneration = receiverGeneration;
+                ++it;
+            }
+            _agentPaneLog("_ReplayRestoredSessionBindings: publishing restored session " + params["agent_session_id"].asString() +
+                          " receiver=" + std::to_string(receiverGeneration) +
+                          " consumer=" + (helperSubscribed ? "helper" : "master"));
             _RaiseProtocolEvent("session_born_bound", params);
         }
     }
@@ -12180,6 +12211,13 @@ namespace winrt::TerminalApp::implementation
                 _ReplayRestoredSessionBindings(tab);
             }
         }
+        for (const auto& runtimeTab : _RuntimeTabs())
+        {
+            if (const auto tab = _GetTabImpl(runtimeTab))
+            {
+                _ReplayRestoredSessionBindings(tab, /*helperSubscribed*/ false);
+            }
+        }
         if (_settings.GlobalSettings().EffectiveAgentSessionManagementEnabled())
         {
             return;
@@ -12884,6 +12922,22 @@ namespace winrt::TerminalApp::implementation
                             }
                             return false;
                         });
+                    }
+                }
+                for (const auto& [paneId, report] : snapshot.byPane)
+                {
+                    const auto binding = page->_paneAgentSessions.find(paneId);
+                    const auto previous = page->_richTabAgentStatusByPaneId.find(paneId);
+                    if (binding != page->_paneAgentSessions.end() &&
+                        winrt::to_string(binding->second.sessionId) == report.sessionId &&
+                        (previous == page->_richTabAgentStatusByPaneId.end() ||
+                         previous->second.sessionId != report.sessionId ||
+                         previous->second.status != report.status))
+                    {
+                        _agentPaneLog("agent_status_projection: source=snapshot session=" + report.sessionId +
+                                      " pane=" + winrt::to_string(::Microsoft::Console::Utils::GuidToPlainString(paneId)) +
+                                      " status=" + report.status +
+                                      " receiver=" + std::to_string(receiverGeneration));
                     }
                 }
                 page->_richTabAgentStatusBySessionId = std::move(snapshot.bySession);
@@ -16572,8 +16626,8 @@ namespace winrt::TerminalApp::implementation
             original->SetActive();
         }
 
-        // WTA starts after layout replay, so an immediate COM broadcast here
-        // is lost. Retain the binding until its helper's listener is subscribed.
+        // The master may not be listening yet. Retain the binding for independent
+        // master registration and the owning helper's later subscription replay.
         if (newTerminalArgs && (hasSessionId || !_settings.GlobalSettings().EffectiveAgentSessionManagementEnabled()))
         {
             const auto& target = restoredAgent;
