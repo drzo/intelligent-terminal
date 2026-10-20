@@ -153,8 +153,12 @@ termination and cleanup-failure persistence before retiring the pool entry.
 Windows ACP children inherit critical-error reporting instead of a native loader
 dialog. This changes error presentation only: Application Control enforcement,
 the provider's extraction directory and DLL verification remain unchanged.
-WSL children retain their verified process-group ownership and stdin-EOF
-guardian.
+WSL children retain their verified process-group ownership and stdin-EOF fast
+path. A separate guardian observes host stderr-pipe closure, so blocked writes
+to an agent's stdin cannot hide host exit. It emits one blank stderr line per
+second while the host remains connected; those heartbeats are discarded before
+logging or retaining startup details. ACP stdout is unchanged, and stderr is
+decoded lossily so non-UTF-8 diagnostics do not close a healthy lifetime channel.
 
 ## Validation
 

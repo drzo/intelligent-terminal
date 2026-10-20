@@ -268,11 +268,12 @@ fn resume_suspended_child(pid: u32) -> Result<()> {
 }
 
 pub(crate) fn wsl_process_script(script: &str, marker: &str) -> String {
-    // The group leader stays alive while its stdin proxy forwards ACP bytes.
-    // EOF kills the group even when the agent stopped reading its own stdin.
+    // Stderr closure observes host lifetime independently of a blocked stdin
+    // relay. Ignore SIGPIPE in the guardian so a failed write reaches cleanup.
     let inner = format!(
         "IFS= read -r stat < /proc/$$/stat; set -- ${{stat##*) }}; \
          printf '{marker} %s %s\\n' \"$$\" \"${{20}}\"; \
+         (trap '' PIPE; while sleep 1; do printf '\\n' >&2 || kill -KILL -- -$$; done) & \
          {script} < <(cat; kill -KILL -- -$$); kill -KILL -- -$$"
     );
     format!(
@@ -411,12 +412,97 @@ mod tests {
     }
 
     #[tokio::test]
+    #[ignore = "requires an explicitly selected WSL distro with bash, ps and readable process wait channels"]
+    async fn wsl_host_exit_reclaims_backpressured_agent() {
+        use tokio::io::AsyncWriteExt;
+
+        let distro = std::env::var("WTA_TEST_WSL_DISTRO").expect("select WTA_TEST_WSL_DISTRO");
+        let mut spawned = crate::protocol::acp::spawn::spawn_history_agent_process(
+            "sleep 300",
+            "custom:backpressure-fixture",
+            &crate::agent_source::AgentSource::Wsl {
+                distro: distro.clone(),
+            },
+            crate::protocol::acp::spawn::SharedProviderSelection::Disabled,
+        )
+        .unwrap();
+        let _incoming = spawned.child.take_stdout().await.unwrap();
+        let mut input = spawned.child.stdin.take().unwrap();
+        let writer = tokio::spawn(async move { input.write_all(&vec![b'x'; 1024 * 1024]).await });
+        let group = spawned.child.wsl_group.as_ref().unwrap();
+        let observation: Result<()> = async {
+            let mut last_state = String::new();
+            tokio::time::timeout(Duration::from_secs(20), async {
+                loop {
+                    let script = format!(
+                        "while read -r pgid pid comm; do \
+                         [ \"$pgid\" = '{}' ] || continue; \
+                         [ -r /proc/$pid/wchan ] || continue; channel=$(</proc/$pid/wchan); \
+                         printf '%s %s %s\\n' \"$pid\" \"$comm\" \"$channel\"; \
+                         case \"$comm:$channel\" in cat:pipe_write|cat:anon_pipe_write) exit 0 ;; esac; \
+                         done < <(ps -eo pgid=,pid=,comm=); exit 1",
+                        group.pid
+                    );
+                    let output = tokio::process::Command::new("wsl.exe")
+                        .args(["-d", &distro, "--exec", "bash", "--noprofile", "--norc", "-c", &script])
+                        .stdin(std::process::Stdio::null())
+                        .kill_on_drop(true)
+                        .output()
+                        .await?;
+                    last_state = String::from_utf8_lossy(&output.stdout).into_owned();
+                    if output.status.success() {
+                        break;
+                    }
+                    tokio::time::sleep(Duration::from_millis(50)).await;
+                }
+                Ok::<_, std::io::Error>(())
+            })
+            .await
+            .with_context(|| format!("fixture did not fill the owned forwarding pipe: {last_state}"))??;
+
+            spawned.child.job.terminate().await?;
+            tokio::time::timeout(Duration::from_secs(5), async {
+                loop {
+                    let script = format!(
+                        "groups=$(ps -eo pgid=) || exit 2; ! printf '%s\\n' \"$groups\" | grep -Eq '^[[:space:]]*{}[[:space:]]*$'",
+                        group.pid
+                    );
+                    let status = tokio::process::Command::new("wsl.exe")
+                        .args(["-d", &distro, "--exec", "bash", "--noprofile", "--norc", "-c", &script])
+                        .stdin(std::process::Stdio::null())
+                        .kill_on_drop(true)
+                        .status()
+                        .await?;
+                    if status.success() {
+                        break;
+                    }
+                    tokio::time::sleep(Duration::from_millis(50)).await;
+                }
+                Ok::<_, std::io::Error>(())
+            })
+            .await
+            .context("host exit must reclaim a group with a full forwarding pipe")??;
+            Ok(())
+        }
+        .await;
+        writer.abort();
+        let _ = writer.await;
+        group
+            .terminate()
+            .await
+            .expect("reclaim this test's owned group");
+        observation.unwrap();
+    }
+
+    #[tokio::test]
     #[ignore = "requires an explicitly selected WSL distro with bash, setsid, ps and grep"]
     async fn history_wsl_group_reclaims_owned_work_on_recovery_and_host_exit() {
+        use tokio::io::{AsyncBufReadExt, AsyncWriteExt};
+
         let distro = std::env::var("WTA_TEST_WSL_DISTRO").expect("select WTA_TEST_WSL_DISTRO");
         for host_exit in [false, true] {
             let mut spawned = crate::protocol::acp::spawn::spawn_history_agent_process(
-                "sleep 300",
+                if host_exit { "sleep 300" } else { "cat" },
                 "custom:history-fixture",
                 &crate::agent_source::AgentSource::Wsl {
                     distro: distro.clone(),
@@ -424,7 +510,7 @@ mod tests {
                 crate::protocol::acp::spawn::SharedProviderSelection::Disabled,
             )
             .unwrap();
-            let _incoming = spawned.child.take_stdout().await.unwrap();
+            let mut incoming = spawned.child.take_stdout().await.unwrap();
             let group = spawned.child.wsl_group.as_ref().unwrap();
             if host_exit {
                 spawned.child.job.terminate().await.unwrap();
@@ -441,6 +527,34 @@ mod tests {
                 group.terminate().await.unwrap();
                 assert!(gone.is_ok(), "stdin EOF guardian must kill Linux work even if the Windows launcher is killed");
             } else {
+                let mut stderr = BufReader::new(spawned.child.stderr.take().unwrap());
+                for _ in 0..2 {
+                    let mut heartbeat = String::new();
+                    tokio::time::timeout(Duration::from_secs(5), stderr.read_line(&mut heartbeat))
+                        .await
+                        .unwrap()
+                        .unwrap();
+                    assert_eq!(heartbeat, "\n");
+                }
+                let payload = "owned transport remains usable\n";
+                spawned
+                    .child
+                    .stdin
+                    .as_mut()
+                    .unwrap()
+                    .write_all(payload.as_bytes())
+                    .await
+                    .unwrap();
+                let mut echoed = String::new();
+                tokio::time::timeout(Duration::from_secs(5), incoming.read_line(&mut echoed))
+                    .await
+                    .unwrap()
+                    .unwrap();
+                assert_eq!(
+                    echoed, payload,
+                    "lifetime signaling must not alter ACP stdout"
+                );
+                assert!(spawned.child.try_wait().unwrap().is_none());
                 spawned.child.terminate().await.unwrap();
             }
         }

@@ -123,11 +123,14 @@ impl AgentStderrLog {
     pub(crate) fn drain(&self, stderr: tokio::process::ChildStderr) -> tokio::task::JoinHandle<()> {
         let log = self.clone();
         tokio::spawn(async move {
-            let mut lines = BufReader::new(stderr).lines();
+            let mut reader = BufReader::new(stderr);
             loop {
-                match lines.next_line().await {
-                    Ok(Some(line)) => log.log_line(&line),
-                    Ok(None) => break,
+                let mut line = Vec::new();
+                match reader.read_until(b'\n', &mut line).await {
+                    Ok(0) => break,
+                    Ok(_) => log.log_line(
+                        String::from_utf8_lossy(&line).trim_end_matches(['\r', '\n']),
+                    ),
                     Err(error) => {
                         log.log_line(&format!("failed to read agent stderr: {error}"));
                         break;
@@ -220,6 +223,10 @@ impl AgentStderrLog {
     }
 
     pub(crate) fn log_line(&self, line: &str) {
+        // The WSL host-lifetime guardian uses blank stderr heartbeats.
+        if line.trim().is_empty() {
+            return;
+        }
         let redacted = super::authentication::redact_auth_stderr(line);
         {
             let mut inner = self
@@ -1277,6 +1284,41 @@ mod tests {
         assert!(!captured.contains("accounts.google.com"));
         assert!(!captured.contains("private-marker"));
         assert!(captured.contains("redacted"));
+    }
+
+    #[test]
+    fn stderr_heartbeats_do_not_displace_startup_diagnostics() {
+        let log = AgentStderrLog::new("heartbeat-fixture");
+        log.log_line("native failure detail");
+        for _ in 0..STARTUP_STDERR_MAX_LINES + 1 {
+            log.log_line("");
+            log.log_line("\r");
+        }
+        assert_eq!(log.mark_failed(), vec!["native failure detail"]);
+    }
+
+    #[tokio::test]
+    async fn stderr_reader_keeps_draining_after_non_utf8_bytes() {
+        let mut command = tokio::process::Command::new("pwsh.exe");
+        command
+            .args([
+                "-NoProfile",
+                "-Command",
+                "$e=[Console]::OpenStandardError();$e.Write([byte[]](255,10,111,107,10),0,5);$e.Flush()",
+            ])
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::piped())
+            .kill_on_drop(true);
+        let mut child = super::super::process::AgentProcess::spawn(&mut command, None).unwrap();
+        let log = AgentStderrLog::new("lossy-stderr-fixture");
+        let drain = log.drain(child.stderr.take().unwrap());
+        tokio::time::timeout(Duration::from_secs(20), drain)
+            .await
+            .unwrap()
+            .unwrap();
+        child.terminate().await.unwrap();
+        assert_eq!(log.mark_failed(), vec!["\u{fffd}", "ok"]);
     }
 
     #[test]
