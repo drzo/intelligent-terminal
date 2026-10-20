@@ -299,6 +299,10 @@ pub(crate) fn agent_key(
     provider_binding: &str,
     model_scoped: bool,
 ) -> String {
+    let agent_id = agent_id.or_else(|| {
+        let inferred = crate::agent_registry::resolve_agent_id_from_cmd(command);
+        crate::agent_registry::is_known_id(inferred).then_some(inferred)
+    });
     let lifecycle = if model_scoped || command_is_model_scoped(command, agent_id) {
         "model:"
     } else {
@@ -614,6 +618,62 @@ impl StartupLease {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn omitted_builtin_identity_shares_diagnostic_admission_and_retry() {
+        let registry = StartupRegistry::default();
+        let source = crate::agent_source::AgentSource::Host;
+        let command = "copilot --acp --stdio";
+        let legacy = agent_key(command, None, &source, "same-provider", false);
+        let diagnostic = agent_key(command, Some("copilot"), &source, "same-provider", false);
+        for _ in 0..MAX_STARTUP_ATTEMPTS {
+            let mut lease = registry.lock(&legacy).await.unwrap();
+            lease.begin().unwrap();
+            let _ = lease.failed(anyhow::anyhow!("controlled initialization failure"));
+        }
+        let stopped = registry
+            .lock(&diagnostic)
+            .await
+            .unwrap()
+            .begin()
+            .unwrap_err();
+        assert!(stopped.is::<StartupLimitReached>());
+        registry.retry(&diagnostic).await.unwrap();
+        registry.lock(&legacy).await.unwrap().begin().unwrap();
+    }
+
+    #[tokio::test]
+    async fn omitted_builtin_identity_preserves_cleanup_quarantine() {
+        let registry = StartupRegistry::default();
+        let source = crate::agent_source::AgentSource::Host;
+        let command = "copilot --acp --stdio";
+        let legacy = agent_key(command, None, &source, "same-provider", false);
+        let diagnostic = agent_key(command, Some("copilot"), &source, "same-provider", false);
+        let lease = registry.lock(&legacy).await.unwrap();
+        let _ = lease.failed(anyhow::Error::new(StartupPhase::Cleanup));
+        let stopped = registry
+            .lock(&diagnostic)
+            .await
+            .unwrap()
+            .begin()
+            .unwrap_err();
+        assert!(stopped.is::<StartupCleanupUnconfirmed>());
+        assert!(registry.retry(&diagnostic).await.is_err());
+    }
+
+    #[test]
+    fn omitted_builtin_identity_does_not_override_authoritative_custom_ids() {
+        let source = crate::agent_source::AgentSource::Host;
+        let command = "copilot --acp --stdio";
+        assert_eq!(
+            agent_key(command, None, &source, "native", false),
+            agent_key(command, Some("copilot"), &source, "native", false),
+        );
+        assert_ne!(
+            agent_key(command, None, &source, "native", false),
+            agent_key(command, Some("custom:my-agent"), &source, "native", false),
+        );
+    }
 
     #[test]
     fn startup_details_preserve_native_text_and_structured_codes() {

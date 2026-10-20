@@ -1318,7 +1318,10 @@ mod tests {
             .unwrap()
             .unwrap();
         child.terminate().await.unwrap();
-        assert_eq!(log.mark_failed(), vec!["\u{fffd}", "ok"]);
+        assert_eq!(
+            log.mark_failed(),
+            vec![char::REPLACEMENT_CHARACTER.to_string(), "ok".to_string()]
+        );
     }
 
     #[test]

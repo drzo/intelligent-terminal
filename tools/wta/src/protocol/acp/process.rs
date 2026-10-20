@@ -413,7 +413,7 @@ mod tests {
 
     #[tokio::test]
     #[ignore = "requires an explicitly selected WSL distro with bash, ps and readable process wait channels"]
-    async fn wsl_host_exit_reclaims_backpressured_agent() {
+    async fn wsl_host_exit_reclaims_agent_with_blocked_input() {
         use tokio::io::AsyncWriteExt;
 
         let distro = std::env::var("WTA_TEST_WSL_DISTRO").expect("select WTA_TEST_WSL_DISTRO");
