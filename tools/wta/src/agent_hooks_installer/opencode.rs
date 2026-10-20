@@ -37,15 +37,6 @@ impl ApiVariant {
     }
 }
 
-#[derive(Debug, Clone, Serialize)]
-pub struct Compatibility {
-    pub cli_version: Option<String>,
-    pub api_variant: Option<ApiVariant>,
-    pub installed_api_variant: Option<ApiVariant>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub error: Option<String>,
-}
-
 fn parse_cli_version(output: &str) -> Result<(String, ApiVariant), String> {
     let output = output
         .trim()
@@ -360,6 +351,14 @@ fn apply_detected(
         Some(Err(error)) => (None, None, Some(error)),
         None => (None, None, None),
     };
+    tracing::debug!(
+        target: "agent_hooks",
+        cli_version = cli_version.as_deref(),
+        required_api = variant.map(ApiVariant::name),
+        installed_api = installed.map(ApiVariant::name),
+        error = error.as_deref(),
+        "checked OpenCode hook compatibility"
+    );
     if status.binary_on_path && (variant.is_none() || installed != variant) {
         status.plugin_enabled = false;
         status.detection_fallback = Some(if variant.is_none() {
@@ -368,12 +367,6 @@ fn apply_detected(
             "opencode-api-variant-mismatch"
         });
     }
-    status.opencode = Some(Compatibility {
-        cli_version,
-        api_variant: variant,
-        installed_api_variant: installed,
-        error,
-    });
 }
 
 fn check_owned_files(home: &Path) -> std::io::Result<()> {
@@ -976,34 +969,49 @@ mod tests {
     }
 
     #[test]
-    fn unknown_or_changed_cli_versions_never_report_enabled_hooks() {
-        let mut status = CliStatus::stub_skipped(CliKind::OpenCode);
-        status.binary_on_path = true;
-        status.plugin_enabled = true;
-        apply_detected(
-            &mut status,
-            Some(ApiVariant::V1),
-            Some(Ok(("2.0.10".into(), ApiVariant::V2))),
-        );
-        assert!(!status.plugin_enabled);
-        assert_eq!(
-            status.detection_fallback,
-            Some("opencode-api-variant-mismatch")
-        );
-        assert_eq!(
-            decide_install_action(CliKind::OpenCode, &status, None),
-            InstallAction::Install
-        );
-        apply_detected(
-            &mut status,
-            Some(ApiVariant::V1),
-            Some(Err("timeout".into())),
-        );
-        assert_eq!(status.detection_fallback, Some("opencode-version-unknown"));
-        assert_eq!(
-            status.opencode.as_ref().unwrap().error.as_deref(),
-            Some("timeout")
-        );
+    fn compatibility_uses_provider_neutral_status_fields() {
+        for (installed, detected, enabled, reason) in [
+            (
+                Some(ApiVariant::V1),
+                Ok(("1.18.0".into(), ApiVariant::V1)),
+                true,
+                None,
+            ),
+            (
+                Some(ApiVariant::V2),
+                Ok(("2.0.10".into(), ApiVariant::V2)),
+                true,
+                None,
+            ),
+            (
+                Some(ApiVariant::V1),
+                Ok(("2.0.10".into(), ApiVariant::V2)),
+                false,
+                Some("opencode-api-variant-mismatch"),
+            ),
+            (
+                Some(ApiVariant::V2),
+                Err("timeout".into()),
+                false,
+                Some("opencode-version-unknown"),
+            ),
+        ] {
+            let mut status = CliStatus::stub_skipped(CliKind::OpenCode);
+            status.binary_on_path = true;
+            status.plugin_enabled = true;
+            apply_detected(&mut status, installed, Some(detected));
+            assert_eq!(status.plugin_enabled, enabled);
+            assert_eq!(status.detection_fallback, reason);
+            let json = serde_json::to_value(&status).unwrap();
+            assert_eq!(json["plugin_enabled"], enabled);
+            assert!(json.get("opencode").is_none());
+            if !enabled {
+                assert_eq!(
+                    decide_install_action(CliKind::OpenCode, &status, None),
+                    InstallAction::Install
+                );
+            }
+        }
     }
 
     #[test]

@@ -281,17 +281,6 @@ function Get-AgentHookCliRow {
         Version = Get-AgentHookVersionLabel -Cli $Cli -PluginInstalled $plugin
     }
 
-    if ($Cli.name -eq 'opencode' -and (Get-Member -InputObject $Cli -Name opencode -ErrorAction SilentlyContinue) -and $Cli.opencode) {
-        $compatibility = $Cli.opencode
-        $version = if ($compatibility.cli_version) { $compatibility.cli_version } else { 'unknown' }
-        $required = if ($compatibility.api_variant) { $compatibility.api_variant } else { 'unknown' }
-        $installed = if ($compatibility.installed_api_variant) { $compatibility.installed_api_variant } else { 'none' }
-        $compatibilityDetail = "CLI version=$version; required API=$required; installed API=$installed"
-        if ((Get-Member -InputObject $compatibility -Name error -ErrorAction SilentlyContinue) -and $compatibility.error) {
-            $compatibilityDetail += "; error=$($compatibility.error)"
-        }
-        $row.Detail = if ($row.Detail) { "$($row.Detail); $compatibilityDetail" } else { $compatibilityDetail }
-    }
     $detectionLabel = Get-AgentHookDetectionLabel -Cli $Cli
     if ($detectionLabel) {
         $row.Detail = if ($row.Detail) { "$($row.Detail); $detectionLabel" } else { $detectionLabel }

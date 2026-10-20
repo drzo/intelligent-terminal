@@ -474,7 +474,6 @@ mod tests {
             installed_version: None,
             bundle_version: bundle.map(str::to_string),
             detection_fallback: None,
-            opencode: None,
         }
     }
 
@@ -596,7 +595,6 @@ mod tests {
             installed_version: None,
             bundle_version: None,
             detection_fallback: None,
-            opencode: None,
         }
     }
 

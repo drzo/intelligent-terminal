@@ -104,10 +104,13 @@ auto-discovered entrypoint, rather than loading two plugins.
 The support directory's `plugin.json` records ownership, bundle version, and
 `api_variant: "v1" | "v2"`. Reconciliation checks the required variant even when
 the bundle version is unchanged, so CLI upgrades and downgrades trigger repair.
-The JSON status's optional `opencode` object distinguishes `cli_version`,
-`api_variant`, and `installed_api_variant`. Unknown or mismatched variants are
-never reported enabled. Foreign files are preserved; the completion manifest
-is committed last, and partial managed installations remain repairable.
+The public JSON status stays provider-neutral: compatibility failures use the
+existing `plugin_enabled` and `detection_fallback` fields, without an
+agent-specific object. With `WTA_LOG=debug`, hook diagnostics record detected
+versions and required/installed API variants; probe failures also log a warning.
+Unknown or mismatched variants are never reported enabled. Foreign files are
+preserved; the completion manifest is committed last, and partial managed
+installations remain repairable.
 
 The V2 pane-binding RPC contract is a plain JSON Schema object. Its installed
 local package does not require a separate `@opencode/plugin` SDK installation.

@@ -57,13 +57,21 @@ Describe 'Feature: default OpenCode session management' -Tag 'Feature', 'OpenCod
             $status = Invoke-Wta -App $script:app -Arguments @('hooks', 'status', '--json') -TimeoutSec 60
             $opencode = @($status.clis | Where-Object name -eq 'opencode')
             $opencode | Should -HaveCount 1
-            $opencode[0].opencode.cli_version | Should -Match "^$Major\."
-            $opencode[0].opencode.api_variant | Should -Be "v$Major"
-            $opencode[0].opencode.installed_api_variant | Should -Be "v$Major"
+            $entry = $opencode[0].binary_path
+            $entry | Should -Not -BeNullOrEmpty
+            $versionCall = '& ''' + $entry.Replace("'", "''") + ''' --version; exit $LASTEXITCODE'
+            $versionEncoded = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($versionCall))
+            $version = Invoke-Native -FilePath (Get-Process -Id $PID).Path -Arguments @(
+                '-NoProfile', '-EncodedCommand', $versionEncoded
+            ) -TimeoutSec 15
+            $version.ExitCode | Should -Be 0 -Because $version.StdErr
+            $version.StdOut.Trim() | Should -Match "^(?:opencode\s+)?v?$Major\."
             $opencode[0].plugin_enabled | Should -BeTrue
             $opencode[0].installed_version | Should -Be $opencode[0].bundle_version
             $bundle = Join-Path $script:app.InstallLocation 'wt-agent-hooks\opencode'
             $support = Join-Path $opencode[0].marketplace_path 'wt-agent-hooks'
+            $installedManifest = Get-Content -LiteralPath (Join-Path $support 'plugin.json') -Raw | ConvertFrom-Json
+            $installedManifest.api_variant | Should -Be "v$Major"
             $installedEntry = if ($Major -ge 2) { Join-Path $support 'wt-agent-hooks.js' }
                 else { Join-Path $opencode[0].marketplace_path 'wt-agent-hooks.js' }
             (Get-FileHash -LiteralPath $installedEntry).Hash |
@@ -74,8 +82,6 @@ Describe 'Feature: default OpenCode session management' -Tag 'Feature', 'OpenCod
                         Should -Be (Get-FileHash -LiteralPath (Join-Path $bundle "v2\$file")).Hash
                 }
             }
-            $entry = $opencode[0].binary_path
-            $entry | Should -Not -BeNullOrEmpty
             $shell = Get-ActivePane -App $script:app
             $call = '& ''' + $entry.Replace("'", "''") + ''' session list --format json; exit $LASTEXITCODE'
             $encoded = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($call))

@@ -3102,7 +3102,6 @@ fn installed_status(name: &'static str) -> CliStatus {
         installed_version: Some("0.1.6".into()),
         bundle_version: Some("0.1.6".into()),
         detection_fallback: None,
-        opencode: None,
     }
 }
 
@@ -3826,7 +3825,6 @@ fn populate_marketplace_path_noop_without_home() {
         installed_version: None,
         bundle_version: None,
         detection_fallback: None,
-        opencode: None,
     };
     populate_marketplace_path(&mut s, CliKind::Copilot, None);
     assert!(s.marketplace_path.is_none());
@@ -3849,7 +3847,6 @@ fn cli_status_serializes_new_fields() {
         installed_version: None,
         bundle_version: None,
         detection_fallback: None,
-        opencode: None,
     };
     let v = serde_json::to_value(&s).unwrap();
     assert_eq!(
@@ -4038,7 +4035,6 @@ fn codex_fs_fallback_detects_install_dirs() {
         installed_version: None,
         bundle_version: None,
         detection_fallback: None,
-        opencode: None,
     };
     codex_fs_fallback(&mut s, Some(&tmp_root));
     assert!(s.marketplace_registered);

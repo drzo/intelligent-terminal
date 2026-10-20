@@ -148,7 +148,7 @@ const OPENCODE_MANIFEST_MANAGED_BY: &str = "Intelligent Terminal: wt-agent-hooks
 /// Schema version of the JSON returned by [`status`]. Bumped when the shape
 /// or the set of possible string-enum values changes.
 ///
-/// v6: OpenCode CLI version and installed/required plugin API variants.
+/// v6: OpenCode version-unknown and API-mismatch detection reasons.
 ///
 /// v5: added Antigravity's native CLI plugin integration.
 ///
@@ -216,7 +216,6 @@ fn opencode_status(on_path: bool, bin_path: Option<String>, home: Option<&Path>)
         installed_version: None,
         bundle_version: None,
         detection_fallback: None,
-        opencode: None,
     };
     let Some(home) = home else { return out };
     let dir = opencode_plugins_dir(home);
@@ -349,6 +348,8 @@ impl CliScope {
 /// "is the CLI running the hooks this wta ships?". They are deliberately
 /// separate from the boolean flags: a CLI can be fully, validly installed and
 /// still be a release behind, which every other field reports as healthy.
+/// Keep this shape provider-neutral; use shared flags and detection reasons
+/// for provider-specific installation checks.
 #[derive(Debug, Clone, Serialize)]
 pub struct CliStatus {
     pub name: &'static str,
@@ -374,8 +375,6 @@ pub struct CliStatus {
     pub bundle_version: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub detection_fallback: Option<&'static str>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub opencode: Option<opencode::Compatibility>,
 }
 
 impl CliStatus {
@@ -397,7 +396,6 @@ impl CliStatus {
             installed_version: None,
             bundle_version: None,
             detection_fallback: None,
-            opencode: None,
         }
     }
 
@@ -1769,7 +1767,6 @@ fn copilot_status(on_path: bool, bin_path: Option<String>, home: Option<&Path>) 
         installed_version: None,
         bundle_version: None,
         detection_fallback: None,
-        opencode: None,
     };
     if !on_path {
         // CLI not present — fall back to fs check so we still report
@@ -1968,7 +1965,6 @@ fn claude_status(on_path: bool, bin_path: Option<String>, home: Option<&Path>) -
         installed_version: None,
         bundle_version: None,
         detection_fallback: None,
-        opencode: None,
     };
     if !on_path {
         claude_fs_fallback(&mut out, home);
@@ -2052,7 +2048,6 @@ fn gemini_status(on_path: bool, bin_path: Option<String>, home: Option<&Path>) -
         installed_version: None,
         bundle_version: None,
         detection_fallback: None,
-        opencode: None,
     };
     if !on_path {
         gemini_fs_fallback(&mut out, home);
@@ -3791,7 +3786,6 @@ fn codex_status(on_path: bool, bin_path: Option<String>, home: Option<&Path>) ->
         installed_version: None,
         bundle_version: None,
         detection_fallback: None,
-        opencode: None,
     };
     if !on_path {
         codex_fs_fallback(&mut out, home);

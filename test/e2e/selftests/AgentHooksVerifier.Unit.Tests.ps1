@@ -21,11 +21,6 @@ BeforeAll {
             plugin_installed = $true
             plugin_enabled = $true
             detection_fallback = $null
-            opencode = [pscustomobject]@{
-                cli_version = '2.0.10'
-                api_variant = 'v2'
-                installed_api_variant = 'v2'
-            }
         }
     }
     function New-StatusReport {
@@ -35,20 +30,19 @@ BeforeAll {
 }
 
 Describe 'Unit: agent hook verifier OpenCode compatibility' -Tag 'Unit' {
-    It 'shows the detected CLI version and matching API variants without reporting an inconsistency' {
+    It 'reports healthy hooks using only shared status fields' {
         $cli = New-CliStatus
         $row = Get-AgentHookCliRow -Cli $cli
-        $row.Detail | Should -Be 'CLI version=2.0.10; required API=v2; installed API=v2'
+        $row.State | Should -Be 'installed'
+        $row.Detail | Should -BeNullOrEmpty
         (Test-AgentHooksConsistent -Report (New-StatusReport $cli)).Ok | Should -BeTrue
     }
 
     It 'reports an API mismatch rather than filesystem fallback' {
         $cli = New-CliStatus
         $cli.plugin_enabled = $false
-        $cli.opencode.installed_api_variant = 'v1'
         $cli.detection_fallback = 'opencode-api-variant-mismatch'
         $row = Get-AgentHookCliRow -Cli $cli
-        $row.Detail | Should -Match 'required API=v2; installed API=v1'
         $row.Detail | Should -Match 'OpenCode API variant mismatch'
         $result = Test-AgentHooksConsistent -Report (New-StatusReport $cli)
         $result.Ok | Should -BeFalse
@@ -56,17 +50,12 @@ Describe 'Unit: agent hook verifier OpenCode compatibility' -Tag 'Unit' {
         ($result.Reasons -join "`n") | Should -Not -Match 'fs detection|fs fallback'
     }
 
-    It 'surfaces unknown CLI versions, missing variants, and the probe error' {
+    It 'surfaces an unknown CLI version through the shared detection reason' {
         $cli = New-CliStatus
         $cli.plugin_enabled = $false
-        $cli.opencode.cli_version = $null
-        $cli.opencode.api_variant = $null
-        $cli.opencode.installed_api_variant = $null
-        $cli.opencode | Add-Member error 'version probe timed out'
         $cli.detection_fallback = 'opencode-version-unknown'
         $row = Get-AgentHookCliRow -Cli $cli
-        $row.Detail | Should -Match 'CLI version=unknown; required API=unknown; installed API=none'
-        $row.Detail | Should -Match 'error=version probe timed out'
+        $row.Detail | Should -Match 'OpenCode CLI version unknown'
         $result = Test-AgentHooksConsistent -Report (New-StatusReport $cli)
         $result.Ok | Should -BeFalse
         ($result.Reasons -join "`n") | Should -Match 'OpenCode CLI version unknown'
