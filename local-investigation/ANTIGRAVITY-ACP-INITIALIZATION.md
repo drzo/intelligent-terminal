@@ -92,13 +92,37 @@ Evidence is under `Generated Files\acp-policy-removal`:
   stderr in addition to its existing cross-process ceiling/retry contract.
   The prior four-case packaged pass predates these new assertions.
 
-The user currently has the private 0.8.0.18 test app open. Deployment timing was
-asked explicitly, but the user was unavailable. Preserve that app and all
-current chat processes; do not close it, replace its active layout, uninstall a
-package or reset user data to obtain a new GUI result. The previously deployed
-WTA is still `7803dd855`; the old receipts' policy category is historical, not
-the current error contract. Fresh packaged acceptance remains pending a safe
-inactive-package window. Independent non-author approval remains external.
+The first deployment check found the private 0.8.0.18 app active, so it was
+preserved. The user then explicitly closed it and requested the latest build.
+Publish `bde1fc453` is now deployed as private **0.8.0.19**, immutable layout
+`policy-removal-publish-009`, with the same PFN, aliases and protocol CLSID.
+No package was uninstalled and no user-owned process was terminated.
+The old receipts' policy category remains historical, not the current contract.
+
+The four packaged lifecycle cases now pass on this exact build, including the
+strengthened C451 reason/RPC/stderr assertions. Both screenshots were inspected,
+and full/incremental reports credit C450-C453. The larger report count is not a
+claim that more than four cases ran. `settings.json` and `state.json` remain
+byte-exact; both existing private runtime files were preserved after inactive
+teardown. Only the test-replaced `master-pipe.txt` needed restoration from its
+local backup. All four installed binaries match the exact private MSIX
+`DE00DDAA6653E29939C0D61790FA78626FFA7130874A738117E2BE1C6A527397`.
+Receipts and results are under `Generated Files\acp-policy-removal\private-package`.
+The three temporary private source substitutions were restored byte-exact and
+the normal package outputs were rebuilt; the registered private layout remains
+separate. The user can reopen this build for manual testing.
+
+Current-head Copilot review `5581009913` at `2026-10-20T05:13:31Z` is **not
+converged**. Although its overview says "No open issues", its body contains a
+previously missed MEDIUM at `master/mod.rs:6268`: the initialized-process reaper
+calls `AgentProcess::wait()` (which terminates descendants) before acquiring the
+shared startup lease. Independent callers can admit work during that cleanup.
+The strict review detector correctly reports `NoNewComments=false`; absence of
+a separate review thread is not resolution. Investigation confirmed the
+ordering and found the existing `HistoryProcess::cleanup` lease pattern.
+No fix for this new finding has been implemented yet. Keep the user's current
+manual-test installation unchanged while working on a separate code correction.
+Independent non-author approval also remains external.
 
 ### Prior autonomous review and approval handoff (7803dd855)
 
