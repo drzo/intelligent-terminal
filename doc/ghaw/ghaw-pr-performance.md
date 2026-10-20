@@ -53,11 +53,18 @@ as verified or tested fixes.
 1. The controller runs on ordinary `pull_request` events only for non-draft PRs
    whose head repository ID matches this repository. Fork PRs are skipped and
    do not dispatch a guidance worker or publish a performance report.
-   For eligible PRs it fetches the immutable head, resolves the merge base and
-   skips agent execution when no performance-sensitive source changed.
+   It loads its scripts from GitHub's automatic `github.workflow_sha` revision,
+   independently of the PR's age. For eligible PRs it fetches the immutable head,
+   resolves the merge base from the PR's recorded base and skips agent execution
+   when no performance-sensitive source changed. No commit ID is hardcoded.
+   With `pull_request`, the workflow revision can be the PR merge commit:
+   same-repository branch authors are trusted to change the workflow itself,
+   as required by the repository's same-repository-only automation policy.
 2. The repair worker inspects source and callers, creates a separate local
    commit for each eligible HIGH finding, then writes the shared summary
-   template with those commit links. No eligible fix means `noop`.
+   template with those commit links to the framework's pre-created
+   `/tmp/gh-aw/agent/performance-summary.md`. The file is required even with no
+   findings or no eligible fixes, before requesting `noop` or push.
 3. Trusted post-processing checks the actual captured bundle's commit range
    from the immutable reviewed head, not just the current checkout. Its tip
    must match the recorded proposal. Existing authored C++/Cargo/documentation
@@ -83,6 +90,9 @@ capabilities for use outside this automated same-repository flow.
 ## Reporting
 
 The controller updates only its own marked `github-actions[bot]` comment.
+The repair worker copies the agent-written file into its summary artifact;
+`noop.message` is not the report transport. No summary is generated or rewritten
+during collection. Fork PRs do not run this workflow.
 Numeric run/attempt markers prevent an older rerun from replacing a newer
 report, including when duplicate marked comments exist: the greatest recorded
 run/attempt determines freshness and the update target. It checks the live head against the worker's recorded head before
