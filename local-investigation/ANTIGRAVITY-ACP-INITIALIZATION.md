@@ -38,14 +38,104 @@
   `ba61c2929c3494d380fe2aca30ce83989884afe3` and
   `7803dd855d15c52c46819288f28f8f2077779019` and
   `bde1fc453bb5e98d0f3b9555d7bef3362dae2539`.
-- Current refactor publish head: `bde1fc453bb5e98d0f3b9555d7bef3362dae2539`.
+- Current local refactor publish head: `f38ce353c84a20f5272a44438f6917fc712ea44b`.
 - Refactor PR: `microsoft/intelligent-terminal#1180`.
-- Current implementation base: `f643ba403f3c2050b0012ec1a5e31924fee918d8`.
+- Current implementation base: `d2fdbd75fed3d881b069c642a6c200734dbe09a7`.
   A final fetch confirmed that this is still `origin/main` and an ancestor of
   the publish head.
 - Original dirty worktree: `C:\ado\intelligent-terminal`, left untouched.
 
 ## Current Stage
+
+### Native error details and current-main integration
+
+The user confirmed that safe native error details should be displayed. A
+read-only correlation of their real 0.8.0.19 failure showed that master had
+already captured the Python DLL path and the native LoadLibrary rejection;
+`helper_initialize_error` had forwarded only a summary and structured codes.
+This was a propagation/display gap, not absence of an underlying diagnostic.
+
+Native-details implementation is dev `b4ef05a` / publish `9ef8902e0`:
+
+- Optional `StartupFailure.details` carries at most four lines / 1,024 UTF-8
+  bytes of conservatively filtered stderr, or structured RPC/OS message text.
+  The existing authentication reason filter is reused and extended to common
+  API/private-key labels; control/bidi characters and sensitive tails are not
+  forwarded. Provider data objects stay private. Details do not infer causes.
+- Master, probe/installation verification and history startup attach the same
+  context. The helper renders it without changing the failure/recovery type.
+  Settings keeps its localized primary InfoBar and exposes native data in a
+  separate, initially collapsed Expander that clears on retry/selection changes.
+- One localized header was added in all 18 locales. An independent read-only
+  review accepted all translations; 90 file checks pass. Original mixed line
+  endings outside the new entry are preserved, avoiding unrelated resource churn.
+- Helper display and the real CLI first failed their new native-detail oracles,
+  then passed. Source-level transport and actual helper render tests pass.
+  Native parser/model tests pass 20/20; pre-main full Rust passes 2,915 plus
+  one CLI test with five existing ignored cases, and Clippy passes with warnings.
+  The existing localized preview assertion now holds the normal locale guard
+  after an observed parallel-only failure; its assertion was not weakened.
+- C450 now checks the separate localized details header, expansion, native text,
+  and clearing after recovery; C451 checks native detail propagation while
+  retaining the generic `failed` reason and cross-process ceiling.
+
+The body-only runtime cleanup review finding is fixed locally in dev
+`e0b2be846` / publish `38cc3a1bd`. A real receipt-waiting process made independent
+admission incorrectly succeed before the fix. The corrected reaper waits for
+exit/stop without reserving a healthy process's lease, then holds admission
+through termination and cleanup-failure persistence. Pending-cleanup, healthy
+process and quarantine controls pass; real Ubuntu-24.04 containment also passes.
+
+Main advanced to `d2fdbd75` during this work. Both branches now integrate it
+(dev `cb0c2c9a`, publish `6da09358a`), retaining both native-observation fields
+and lifecycle state. Three textual conflicts were resolved by preserving both
+features, and seven lifecycle tests use the new explicit partial-inventory
+argument. Integrated dev Rust is green: 2,988 unit tests plus one CLI test,
+zero failures and five existing ignored cases. Dev/publish WTA and native
+source tree hashes match.
+
+Final acceptance refinements are dev `a624fddbb` / publish `f38ce353c`:
+
+- Real Windows stderr ended with an extra carriage return. The first deployed
+  result retained both useful DLL lines but marked that harmless suffix redacted.
+  Normalize trailing CR as a line ending; interior controls still terminate
+  safe details. The new regression and final exact-publish full suite pass:
+  2,989 unit tests plus one CLI test, zero failures, five existing opt-in ignored.
+  Final Clippy passes with repository/main warnings.
+- Expander realization is asynchronous. The first packaged details assertion
+  queried its child too early. Waiting for the visible native Text element
+  retains the exact text/name assertion; the full four-case rerun passes.
+- Main independently assigned C450-C453 to native-status cases. Remove only this
+  PR's colliding assignments and run Set-ChecklistIds: lifecycle cases are now
+  **C455-C458**. Each new ID is unique; main's existing mappings/multiplicities
+  remain unchanged. Full/incremental reports credit only these four lifecycle
+  cases, not main's unexecuted C450-C453 cases.
+
+The private package is now **0.8.0.20**, layout `native-details-publish-010`.
+Its complete native/MSIX carrier is from `6da09358a`, with exact-binary acceptance.
+Only WTA was then refreshed from `f38ce353c` after another inactivity check;
+current WTA SHA-256 is
+`16256F3F7ECA408F49A0759E7DC42A22CAA1984505687893663D525177852B3B`.
+The previous 208B34AC executable and original MSIX are preserved, not represented
+as containing the refreshed WTA. All three native binaries are unchanged.
+The final-runtime packaged suite passes 4/4 with no skips. Current settings/state
+were backed up afresh before upgrading, and only creation-owned test processes
+were stopped. Source identity overrides were restored byte-exact and normal
+build outputs refreshed.
+
+Real Antigravity verification on the 0.8.0.20 carrier returned an installed but
+failed single initialize, generic `failed`, native Python DLL / LoadLibrary
+details, and zero remaining recorded launcher/PYI processes. The first evidence
+script looked in `wta-probe` incorrectly; the already completed operation was
+correlated in `wta-cli` without starting another ACP. The fixture's RPC code is
+not represented as a Windows DLL status code. Final refreshed-runtime
+verification also passed: one initialize, native DLL/LoadLibrary details without
+false CR redaction, two recorded launcher/PYI PIDs both gone, and no model
+requests. `enterprise-final\receipt.json` records the exact 16256F3F binary.
+Publication and current-head review remain; no clean review is inferred from
+the old review summary or from empty thread lists.
+
+### Prior policy-category removal and 0.8.0.19 deployment
 
 2026-10-20 UTC: the user rejected the special `operating_system_policy`
 category inferred from English stderr and explicitly authorized its removal.
