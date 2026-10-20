@@ -38,7 +38,7 @@
   `ba61c2929c3494d380fe2aca30ce83989884afe3` and
   `7803dd855d15c52c46819288f28f8f2077779019` and
   `bde1fc453bb5e98d0f3b9555d7bef3362dae2539`.
-- Current local refactor publish head: `6c1c868f628691a025e352bf4468251cbc5b0afc`.
+- Current local refactor publish head: `1db0dc548b6925c080d4567f1ca93175b9f4100b`.
 - Refactor PR: `microsoft/intelligent-terminal#1180`.
 - Current implementation base: `d2fdbd75fed3d881b069c642a6c200734dbe09a7`.
   A final fetch confirmed that this is still `origin/main` and an ancestor of
@@ -46,6 +46,45 @@
 - Original dirty worktree: `C:\ado\intelligent-terminal`, left untouched.
 
 ## Current Stage
+
+### Final full package and independent WSL host-lifetime signal
+
+The concurrent localization bot pushed `511991dd7` while publication was in
+progress. The normal push safely rejected; no force push was attempted. Its
+Arabic/Serbian startup-message corrections match existing RESW/YAML agent-pane
+terminology and pass 12 focused checks. They were preserved in dev `3891ee851`
+and publish merge `8fd3f187c`, which received genuine current-head Copilot
+convergence at `2026-10-20T09:32:10Z`.
+
+An intervening review body (`5582874030`) also described stdin-backpressure
+blocking the WSL EOF guardian. This was not ignored just because a later summary
+had no open issues. Dev `9dd1589ce` / publish `1db0dc548` fix it:
+
+- A real owned relay was observed in `anon_pipe_write` with 1 MiB queued.
+  The former guardian then failed the bounded host-exit oracle. Earlier attempts
+  that assumed the kernel wait-channel name or newline format were fixture
+  diagnostics, not accepted RED. The RED run explicitly reclaimed its group.
+- An independent stderr-closure guardian now detects host exit while stdin
+  forwarding is blocked. One blank line per second is filtered before logging
+  and startup retention. Lossy stderr decoding preserves reader lifetime when
+  native diagnostics are not UTF-8; ACP stdout is untouched.
+- Exact publish tests pass 2,992 units plus two CLI integrations, with six
+  opt-in ignored cases. Both relevant WSL tests were explicitly run and pass:
+  blocked host exit, healthy echo after heartbeat intervals, idle host exit,
+  and ordinary owned cleanup. Clippy passes with baseline warnings.
+
+The complete final **0.8.0.21** private package is deployed at
+`native-details-publish-011`; all four installed binaries match the exact MSIX
+`35D0AECE0F90C8531046160824B99A8173BF1BEE44A7ADDB25BDE9655DDA997F`.
+WTA SHA-256 is
+`2A0E36BD8ED46377F4AD72B498A030F97BDC6E0E5FC8AA298B2CA48ACB739E16`.
+All four packaged lifecycle cases pass, reports uniquely credit C455-C458,
+and real Antigravity verification again exposes the Python DLL/LoadLibrary
+failure with one initialize and no recorded survivors or model requests.
+Current settings/state and existing runtime files are preserved. Private
+source identity substitutions are restored byte-exact and ordinary outputs
+rebuilt. Final-head publication/review remains; the older `8fd3f187c`
+convergence is not proof for `1db0dc548`.
 
 ### Final diagnostic-admission review follow-up
 
