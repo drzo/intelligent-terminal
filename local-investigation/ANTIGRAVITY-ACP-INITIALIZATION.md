@@ -38,7 +38,7 @@
   `ba61c2929c3494d380fe2aca30ce83989884afe3` and
   `7803dd855d15c52c46819288f28f8f2077779019` and
   `bde1fc453bb5e98d0f3b9555d7bef3362dae2539`.
-- Current local refactor publish head: `86f88c1a537fe613580690562a66bea275e8c205`.
+- Current refactor publish head: `86f88c1a537fe613580690562a66bea275e8c205`.
 - Refactor PR: `microsoft/intelligent-terminal#1180`.
 - Current implementation base: `d2fdbd75fed3d881b069c642a6c200734dbe09a7`.
   A final fetch confirmed that this is still `origin/main` and an ancestor of
@@ -46,6 +46,36 @@
 - Original dirty worktree: `C:\ado\intelligent-terminal`, left untouched.
 
 ## Current Stage
+
+### Final current-head check conclusions
+
+At exact head `86f88c1a5` and base `3b0ff06d`, review `5587814564` submitted
+`2026-10-20T15:56:53Z` genuinely converges: zero open/unanswered threads, no
+pending review, and no concrete new body finding. Independent human approval
+remains required.
+
+The baseline correction demonstrably worked: security worker `39452263395`
+started and controller `39452196089` plus validated publication passed.
+Its two LOW notes were critically checked, not blindly converted into patches:
+process-wide critical-error-mode inheritance is real and documented as the
+intentional background-dialog tradeoff; errors/enforcement are not suppressed.
+Microsoft's SetErrorMode documentation confirms this mode returns critical
+errors to the caller and is inherited by children. The alleged ordinary-reconnect
+reset is not supported by the actual callers: the initial flags are false,
+retry metadata requires explicit setup retry or completed login, and the
+generation-bound request is consumed once. Same-user clients can intentionally
+request retry, which is the existing trust boundary, not a newly proven
+privilege-crossing defect. No LOW-driven product or security-policy edit was made.
+
+Current spelling/CLA/localization and all three Axe.Windows smoke states pass.
+Native source job `118730267908` still rejects incomplete per-file citations.
+Performance worker `39452254029` again timed out after 15 minutes, did not write
+its Markdown summary, and its detector follow-up lacked `threat-detect`.
+The separate Performance report check duplicates that worker failure. These
+three red checks are two incomplete assessments, not three demonstrated product
+bugs and not passing assessments. The plain-language DEV-only explanation is
+`local-investigation\PR-1180-CHECKS.md`; raw current-head evidence is under
+`Generated Files\pr-1180-check-assessment`.
 
 ### Critical check assessment and current-main alignment
 
