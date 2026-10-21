@@ -104,9 +104,22 @@ Describe 'Feature: Sidebar tab keyboard navigation' -Tag @('Feature', 'SidebarTa
 
         function Assert-NavigationTab {
             param($Tab, [string]$Title, [string]$Draft)
-            (Test-Until -TimeoutSec 6 -IntervalSec 0.2 -Condition {
+            $observation = [pscustomobject]@{
+                ExpectedTab = [string]$Tab.tab_id
+                ExpectedPane = [string]$Tab.session_id
+                ActualTab = ''
+                ActualPane = ''
+                FocusProcessId = 0
+                FocusClass = ''
+                Matched = $false
+            }
+            $matched = Test-Until -TimeoutSec 6 -IntervalSec 0.2 -Condition {
                 $active = Get-ActivePane -App $script:app
                 $focused = [Windows.Automation.AutomationElement]::FocusedElement
+                $observation.ActualTab = [string]$active.tab_id
+                $observation.ActualPane = [string]$active.session_id
+                $observation.FocusProcessId = if ($focused) { $focused.Current.ProcessId } else { 0 }
+                $observation.FocusClass = if ($focused) { $focused.Current.ClassName } else { '' }
                 if ([string]$active.tab_id -ne [string]$Tab.tab_id -or
                     [string]$active.session_id -ne [string]$Tab.session_id -or
                     -not $focused -or $focused.Current.ProcessId -ne $script:app.Pid -or
@@ -126,7 +139,15 @@ Describe 'Feature: Sidebar tab keyboard navigation' -Tag @('Feature', 'SidebarTa
                     }
                 }
                 $true
-            }) | Should -BeTrue -Because 'navigation must activate the exact existing tab, focus its input and display its retained draft'
+            }
+            $observation.Matched = $matched
+            $observation | ConvertTo-Json -Compress |
+                Add-Content -LiteralPath (Join-Path $script:evidenceDir 'activation-observations.jsonl') -Encoding utf8
+            if (-not $matched) {
+                Save-UiScreenshot -App $script:app -Path (
+                    Join-Path $script:evidenceDir "activation-failure-$([guid]::NewGuid().ToString('N')).png") | Out-Null
+            }
+            $matched | Should -BeTrue -Because 'navigation must activate the exact existing tab, focus its input and display its retained draft'
             if ($Title) {
                 $rows = @(Get-VisibleTabRows | Where-Object { Test-TabRowTitle -Row $_ -Title $Title })
                 $rows.Count | Should -Be 1
