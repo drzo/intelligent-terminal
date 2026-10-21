@@ -58,10 +58,13 @@ Describe 'Feature: VT hook transport' -Tag @('Feature', 'HookVt') -Skip:(-not $s
         $encoded = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($fixtureCode))
         $profile = '{' + [guid]::NewGuid().ToString() + '}'
         $script:app = Start-Terminal -Package (Get-ItTestPackage) -PassFre $true -State @{
+            featureRolloutId = '{00000000-0000-0000-0000-000000000001}'
+            sidebarRolloutVersion = 1
+            sidebarRolloutAssignment = 'Sidebar'
             sidebarLayoutMigrationCompleted = $true
             sidebarIntroductionShown = $true
         } -Settings @{
-            language = 'en-US'; tabLayout = 'horizontal'; startupActions = ''
+            language = 'en-US'; tabLayout = 'vertical'; startupActions = ''
             firstWindowPreference = 'defaultProfile'; windowingBehavior = 'useNew'
             agentSessionManagementEnabled = $false
             autoErrorDetectionEnabled = $false; autoFixEnabled = $false
@@ -85,11 +88,12 @@ Describe 'Feature: VT hook transport' -Tag @('Feature', 'HookVt') -Skip:(-not $s
             }
             $headerId = if ($Determinate) { 'HeaderProgressRing' } else { 'HeaderIndeterminateProgressRing' }
             $paneId = if ($Determinate) { 'PaneProgressRing' } else { 'PaneIndeterminateProgressRing' }
-            $condition = [Windows.Automation.OrCondition]::new(
+            $tabId = if ($Determinate) { 'TabProgressRing' } else { 'TabIndeterminateProgressRing' }
+            $conditions = foreach ($id in @($headerId, $paneId, $tabId)) {
                 [Windows.Automation.PropertyCondition]::new(
-                    [Windows.Automation.AutomationElement]::AutomationIdProperty, $headerId),
-                [Windows.Automation.PropertyCondition]::new(
-                    [Windows.Automation.AutomationElement]::AutomationIdProperty, $paneId))
+                    [Windows.Automation.AutomationElement]::AutomationIdProperty, $id)
+            }
+            $condition = [Windows.Automation.OrCondition]::new([Windows.Automation.Condition[]]$conditions)
             @($window.FindAll([Windows.Automation.TreeScope]::Descendants, $condition) | Where-Object {
                 $_.Current.ProcessId -eq $script:app.Pid -and -not $_.Current.IsOffscreen -and
                 $_.Current.BoundingRectangle.Width -gt 0 -and $_.Current.BoundingRectangle.Height -gt 0
