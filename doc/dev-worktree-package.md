@@ -153,4 +153,5 @@ The sandbox does not support jump-list launching: internal shell links still
 expect the normal `wtai.exe` alias, not this template's tokenized alias.
 The template also omits Explorer menus, startup tasks, default-terminal handoff,
 and global proxy registrations. Validate these with ordinary Dev, not this sandbox.
+Settings hides the login-startup switch when the package does not declare that task.
 Windows PATH checks do not prove WSL discovery or full-suite parallel safety.
