@@ -343,12 +343,23 @@ throughout, so no duplicate is ever produced.
 ### Hook-owned Copilot activity
 
 Hook-owned sessions do not supplement hooks with transcript permission events.
-Copilot's `PostToolUse` restores Working after a successful tool return;
-`Stop` owns Idle, and late tool returns do not reactivate an Idle turn.
-This intentionally uses the latest session-level hook,
-not per-request approval correlation: a tool can remain Waiting while it runs,
-and another parallel tool's return may replace an outstanding wait. The original
-born-bound, hookless file-watcher fallback is unchanged.
+Each blocking Copilot notification starts or resets a session-local 30-second
+cooldown measured from registry receipt time, not the provider timestamp.
+Successful tool returns during it leave Waiting and its metadata unchanged,
+regardless of tool name or missing/invalid source timestamps. Informational
+notifications do not reset the deadline, which survives session snapshots.
+
+Expiry does not automatically restore activity. Later successful returns may
+restore Working, but a source timestamp older than the newest waiting
+notification remains ignored. Numeric Unix milliseconds and RFC 3339 source
+timestamps share that comparison. `Stop` immediately owns Idle even during the
+cooldown; prompts, errors, and session/pane closure keep their normal behavior,
+and late returns cannot reactivate Idle or terminal-state rows.
+
+This is a time-window heuristic, not per-request approval correlation: quick
+approvals can remain Waiting until another accepted event or Stop, and unrelated
+parallel completions after the cooldown can still replace an outstanding wait.
+The original born-bound, hookless file-watcher fallback is unchanged.
 
 ### Born-bound activity fallback
 

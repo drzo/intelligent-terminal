@@ -25,6 +25,14 @@ Public `listen` without the flag retains normal COM activation, including a
 headless server. `--ready-token` emits its JSON marker only after `Subscribe`
 succeeds, not merely after finding a factory.
 
+`wtcli --json listen` converts numeric Unix-millisecond
+`agent_event.params.payload.timestamp` values to UTC ISO 8601 strings, such as
+`"2026-10-20T05:19:05.608Z"`. Existing timestamp strings and other event fields
+are preserved. Plain `wtcli listen` and the original COM broadcasts remain
+unchanged. Unsupported numeric timestamps or malformed JSON are reported on
+stderr and forwarded unchanged; missing timestamps are not invented. Each event
+still occupies one stdout line.
+
 `publish --existing-only` uses that same non-activating lookup for passive
 notifications. Every WTA-managed publisher passes this flag, including
 `session_registry_changed` during shutdown. If Terminal is absent or its
@@ -88,6 +96,8 @@ COM entry points. They verify default activation, class-unregistered recovery
 through the running factory, existing-factory routing, and
 failure without activation when the factory is absent or incompatible for
 `listen` and both `publish` input forms; no Terminal or agent is launched.
+They also check JSON-listener timestamp normalization, raw-listener pass-through,
+existing ISO strings, unchanged unrelated fields, and invalid timestamp handling.
 From a razzle CMD session at the repository root:
 
 ```cmd
