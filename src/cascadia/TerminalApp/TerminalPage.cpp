@@ -10999,17 +10999,14 @@ namespace winrt::TerminalApp::implementation
             return;
         }
         const auto receiverGeneration = SharedWta::Instance().MasterGeneration();
-        if (!helperSubscribed && receiverGeneration == 0)
+        const auto masterReady = receiverGeneration != 0 &&
+                                 _lastReadyNativeAgentReceiverGeneration == receiverGeneration;
+        if (!helperSubscribed && !masterReady)
         {
-            return;
-        }
-        if (receiverGeneration != 0 && _lastReadyNativeAgentReceiverGeneration != receiverGeneration)
-        {
-            if (helperSubscribed)
+            if (receiverGeneration != 0)
             {
-                _tabsAwaitingRestoredBindings.insert(tab->StableId());
+                _RequestAgentSnapshotRefresh();
             }
-            _RequestAgentSnapshotRefresh();
             return;
         }
         const auto root = tab->GetRootPane();
@@ -11054,11 +11051,19 @@ namespace winrt::TerminalApp::implementation
             }
             if (helperSubscribed)
             {
+                it->second.helperReplayed = true;
+            }
+            if (masterReady)
+            {
+                it->second.publishedReceiverGeneration = receiverGeneration;
+            }
+            if (it->second.helperReplayed &&
+                (receiverGeneration == 0 || it->second.publishedReceiverGeneration == receiverGeneration))
+            {
                 it = _pendingRestoredSessionBindings.erase(it);
             }
             else
             {
-                it->second.publishedReceiverGeneration = receiverGeneration;
                 ++it;
             }
             _agentPaneLog("_ReplayRestoredSessionBindings: publishing restored session " + params["agent_session_id"].asString() +

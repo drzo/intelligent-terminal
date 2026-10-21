@@ -1235,9 +1235,9 @@ namespace winrt::TerminalApp::implementation
             winrt::hstring cwd;
             winrt::hstring backend;
             uint64_t publishedReceiverGeneration{ 0 };
+            bool helperReplayed{ false };
         };
-        // Register attached panes with the ready master independently, but retain
-        // bindings until the owning helper acknowledges its COM subscription.
+        // Track master registration and subscribed-helper replay independently.
         std::unordered_map<winrt::guid, _PendingRestoredSessionBinding> _pendingRestoredSessionBindings;
         std::unordered_set<winrt::hstring> _tabsAwaitingRestoredBindings;
         void _NotifyRestoredSessionBindings(const winrt::com_ptr<Tab>& tab);

@@ -707,7 +707,7 @@ namespace TerminalAppLocalTests
         TEST_METHOD(GetWindowLayoutIncludesAgentRestoreMetadata);
         TEST_METHOD(ResumedPaneIdentityPersistsWithoutHooksOrBannerParsing);
         TEST_METHOD(RestoredSessionBindingsWaitForTheirHelperSubscription);
-        TEST_METHOD(RestoredSessionBindingsWaitForMasterReadiness);
+        TEST_METHOD(RestoredSessionBindingsKeepHelperFallbackWhileMasterUnready);
         TEST_METHOD(RestoredSessionBindingsRegisterBeforeHelperAndLayoutReadiness);
         TEST_METHOD(LateRestoredSessionBindingNotifiesAfterPaneAttachment);
         TEST_METHOD(EndedRestoredSessionDoesNotReplayItsBinding);
@@ -4112,7 +4112,7 @@ namespace TerminalAppLocalTests
         });
     }
 
-    void TabTests::RestoredSessionBindingsWaitForMasterReadiness()
+    void TabTests::RestoredSessionBindingsKeepHelperFallbackWhileMasterUnready()
     {
         using Owner = winrt::TerminalApp::implementation::SharedWta;
         for (const auto sessionsEnabled : { true, false })
@@ -4149,25 +4149,38 @@ namespace TerminalAppLocalTests
                 });
                 const auto revoke = wil::scope_exit([&]() { page->ProtocolVtSequenceReceived(token); });
 
-                page->_ReplayRestoredSessionBindings(tab);
+                page->_ReplayRestoredSessionBindings(tab, /*helperSubscribed*/ false);
                 VERIFY_IS_TRUE(births.empty());
                 VERIFY_IS_TRUE(page->_pendingRestoredSessionBindings.contains(paneId));
-                VERIFY_IS_TRUE(page->_tabsAwaitingRestoredBindings.contains(tab->StableId()));
+                VERIFY_IS_TRUE(page->_tabsAwaitingRestoredBindings.empty());
                 VERIFY_IS_TRUE(page->_agentSnapshotRefreshPending);
                 page->_ReplayNativeAgentObservationsForReceiver(6);
                 VERIFY_IS_TRUE(births.empty());
 
-                page->_ReplayNativeAgentObservationsForReceiver(7);
+                page->_agentSnapshotRefreshPending = false;
+                page->_ReplayRestoredSessionBindings(tab);
                 VERIFY_ARE_EQUAL(size_t{ 1 }, births.size());
                 VERIFY_ARE_EQUAL(uint64_t{ 7 }, births[0]["receiver_generation"].asUInt64());
                 VERIFY_ARE_EQUAL(std::string{ "restored-session" }, births[0]["agent_session_id"].asString());
                 VERIFY_ARE_EQUAL(winrt::to_string(::Microsoft::Console::Utils::GuidToPlainString(paneId)), births[0]["pane_id"].asString());
                 VERIFY_ARE_EQUAL(winrt::to_string(tab->StableId()), births[0]["tab_id"].asString());
                 VERIFY_ARE_EQUAL(std::to_string(page->_WindowProperties.WindowId()), births[0]["window_id"].asString());
+                VERIFY_IS_FALSE(page->_agentSnapshotRefreshPending);
+                VERIFY_ARE_EQUAL(uint64_t{ 0 }, page->_lastReadyNativeAgentReceiverGeneration);
+                VERIFY_IS_TRUE(page->_pendingRestoredSessionBindings.at(paneId).helperReplayed);
+                VERIFY_ARE_EQUAL(uint64_t{ 0 }, page->_pendingRestoredSessionBindings.at(paneId).publishedReceiverGeneration);
+                page->_ReplayRestoredSessionBindings(tab, /*helperSubscribed*/ false);
+                VERIFY_ARE_EQUAL(size_t{ 1 }, births.size());
+                VERIFY_IS_TRUE(page->_pendingRestoredSessionBindings.contains(paneId));
+
+                page->_ReplayNativeAgentObservationsForReceiver(7);
+                VERIFY_ARE_EQUAL(size_t{ 2 }, births.size());
+                VERIFY_ARE_EQUAL(births[0]["agent_session_id"].asString(), births[1]["agent_session_id"].asString());
+                VERIFY_ARE_EQUAL(births[0]["pane_id"].asString(), births[1]["pane_id"].asString());
                 VERIFY_IS_TRUE(page->_pendingRestoredSessionBindings.empty());
                 VERIFY_IS_TRUE(page->_tabsAwaitingRestoredBindings.empty());
                 page->_ReplayNativeAgentObservationsForReceiver(7);
-                VERIFY_ARE_EQUAL(size_t{ 1 }, births.size());
+                VERIFY_ARE_EQUAL(size_t{ 2 }, births.size());
             });
         }
     }
