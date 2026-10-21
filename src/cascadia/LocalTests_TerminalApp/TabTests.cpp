@@ -710,6 +710,8 @@ namespace TerminalAppLocalTests
         TEST_METHOD(KeepRunningStartupRestoresBatchAfterLayout);
         TEST_METHOD(ContentIdAttachedPaneEmitsEndStateForItsConnection);
         TEST_METHOD(GetWindowLayoutIncludesAgentRestoreMetadata);
+        TEST_METHOD(ElevatedPersistedTabKeepsShellCommands);
+        TEST_METHOD(ElevatedPersistedTabExcludesAgentPanes);
         TEST_METHOD(ResumedPaneIdentityPersistsWithoutHooksOrBannerParsing);
         TEST_METHOD(RestoredSessionBindingsWaitForTheirHelperSubscription);
         TEST_METHOD(RestoredSessionBindingsKeepHelperFallbackWhileMasterUnready);
@@ -3948,6 +3950,132 @@ namespace TerminalAppLocalTests
             {
                 VERIFY_FAIL(L"Expected the split pane to keep its agent session metadata.");
             }
+        });
+    }
+
+    static winrt::TerminalApp::TerminalPaneContent _makePersistenceTestContent(const winrt::hstring& commandline)
+    {
+        const auto settings = winrt::make_self<ControlUnitTests::MockControlSettings>();
+        settings->Commandline(commandline);
+        const auto connection = winrt::make_self<TestConnection>(
+            ::Microsoft::Console::Utils::CreateGuid(),
+            winrt::Microsoft::Terminal::TerminalConnection::ConnectionState::Connected);
+        const winrt::Microsoft::Terminal::Control::TermControl control{ *settings, *settings, *connection };
+        return winrt::make<winrt::TerminalApp::implementation::TerminalPaneContent>(
+            Profile{},
+            std::shared_ptr<winrt::TerminalApp::implementation::TerminalSettingsCache>{},
+            control);
+    }
+
+    void TabTests::ElevatedPersistedTabKeepsShellCommands()
+    {
+        const auto page = _restoreBindingsSetup();
+        TestOnUIThread([&]() {
+            const std::array panes{
+                std::make_shared<Pane>(_makePersistenceTestContent(L"cmd.exe /k echo original"), true),
+                std::make_shared<Pane>(_makePersistenceTestContent(L"pwsh.exe -NoLogo"))
+            };
+            const auto tab = winrt::make_self<winrt::TerminalApp::implementation::Tab>(
+                std::make_shared<Pane>(panes[0], panes[1], SplitState::Vertical, 0.65f));
+            const auto serialize = [](std::vector<ActionAndArgs> actions) {
+                return ActionAndArgs::Serialize(winrt::single_threaded_vector<ActionAndArgs>(std::move(actions)));
+            };
+            const auto original = serialize(tab->BuildStartupActions(BuildStartupKind::Persist));
+            const auto firstId = panes[0]->GetTerminalControl().Connection().SessionId();
+            const auto secondId = panes[1]->GetTerminalControl().Connection().SessionId();
+            page->_paneAgentSessions[firstId] = { L"elevated-cli-session", L"copilot", L"copilot --resume elevated-cli-session" };
+            page->_paneAgentSessions[secondId] = { L"fallback-session", L"custom:test", L"test-agent --resume fallback-session" };
+
+            VERIFY_ARE_EQUAL(original, serialize(page->_BuildPersistedTabActions(tab.get(), true)));
+
+            const auto normal = page->_BuildPersistedTabActions(tab.get(), false);
+            VERIFY_ARE_EQUAL(
+                winrt::hstring{ ::Microsoft::Terminal::AgentPaneRestore::BuildResumeCommandline(L"copilot", L"elevated-cli-session") },
+                _getTerminalArgs(normal.at(0)).Commandline());
+            VERIFY_IS_TRUE(_getTerminalArgs(normal.at(1)).Commandline() == L"test-agent --resume fallback-session");
+            VERIFY_ARE_EQUAL(original, serialize(page->_BuildPersistedTabActions(tab.get(), true)));
+        });
+    }
+
+    void TabTests::ElevatedPersistedTabExcludesAgentPanes()
+    {
+        const auto page = _restoreBindingsSetup();
+        TestOnUIThread([&]() {
+            for (const auto orientation : { SplitState::Horizontal, SplitState::Vertical })
+            {
+                for (const auto leadingEdge : { false, true })
+                {
+                    for (const auto hidden : { false, true })
+                    {
+                        const auto first = std::make_shared<Pane>(_makePersistenceTestContent(L"cmd.exe"), true);
+                        const auto second = std::make_shared<Pane>(_makePersistenceTestContent(L"pwsh.exe -NoLogo"));
+                        const auto shells = std::make_shared<Pane>(first, second, SplitState::Vertical, 0.65f);
+                        const auto agent = winrt::make_self<winrt::TerminalApp::implementation::AgentPaneContent>(
+                            _makePersistenceTestContent(L"wta.exe --connect-master old-pipe"));
+                        agent->SetAgentRestoreIdentity(L"copilot", {});
+                        agent->SetAgentSessionId(L"assistant-session");
+                        agent->SetAgentRestoreExecutable(L"wta.exe");
+                        const auto assistant = std::make_shared<Pane>(*agent);
+                        assistant->IsAgentPane(true);
+                        const auto root = std::make_shared<Pane>(
+                            leadingEdge ? assistant : shells,
+                            leadingEdge ? shells : assistant,
+                            orientation,
+                            0.4f);
+                        const auto tab = winrt::make_self<winrt::TerminalApp::implementation::Tab>(root);
+                        if (hidden)
+                        {
+                            tab->StashAgentPane();
+                        }
+
+                        const auto normal = tab->BuildStartupActions(BuildStartupKind::Persist);
+                        auto agentCount = 0u;
+                        for (const auto& action : normal)
+                        {
+                            if (const auto args = _getTerminalArgs(action);
+                                args && ::Microsoft::Terminal::AgentPaneRestore::IsPaneType(args.Type()))
+                            {
+                                ++agentCount;
+                                VERIFY_IS_TRUE(args.Type() == (hidden ? L"agentStashed" : L"agent"));
+                            }
+                        }
+                        VERIFY_ARE_EQUAL(1u, agentCount);
+
+                        WindowLayout layout;
+                        layout.TabLayout(winrt::single_threaded_vector<ActionAndArgs>(page->_BuildPersistedTabActions(tab.get(), true)));
+                        const auto saved = WindowLayout::FromJson(WindowLayout::ToJson(layout)).TabLayout();
+                        auto shellCount = 0u;
+                        for (const auto& action : saved)
+                        {
+                            if (const auto args = _getTerminalArgs(action))
+                            {
+                                VERIFY_IS_FALSE(::Microsoft::Terminal::AgentPaneRestore::IsPaneType(args.Type()));
+                                if (args.SessionId() == first->GetTerminalControl().Connection().SessionId())
+                                {
+                                    VERIFY_IS_TRUE(args.Commandline() == L"cmd.exe");
+                                }
+                                else
+                                {
+                                    VERIFY_ARE_EQUAL(second->GetTerminalControl().Connection().SessionId(), args.SessionId());
+                                    VERIFY_IS_TRUE(args.Commandline() == L"pwsh.exe -NoLogo");
+                                }
+                                ++shellCount;
+                            }
+                        }
+                        VERIFY_ARE_EQUAL(2u, shellCount);
+                        VERIFY_ARE_EQUAL(ShortcutAction::NewTab, saved.GetAt(0).Action());
+                        VERIFY_ARE_EQUAL(ShortcutAction::SplitPane, saved.GetAt(1).Action());
+                    }
+                }
+            }
+
+            const auto agent = winrt::make<winrt::TerminalApp::implementation::AgentPaneContent>(
+                _makePersistenceTestContent(L"wta.exe --connect-master old-pipe"));
+            const auto assistant = std::make_shared<Pane>(agent);
+            assistant->IsAgentPane(true);
+            const auto tab = winrt::make_self<winrt::TerminalApp::implementation::Tab>(assistant);
+            VERIFY_IS_TRUE(page->_BuildPersistedTabActions(tab.get(), true).empty());
+            VERIFY_ARE_EQUAL(size_t{ 1 }, tab->BuildStartupActions(BuildStartupKind::Persist).size());
         });
     }
 

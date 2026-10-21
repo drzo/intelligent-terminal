@@ -13902,11 +13902,17 @@ namespace winrt::TerminalApp::implementation
         QuitRequested.raise(nullptr, nullptr);
     }
 
-    std::vector<ActionAndArgs> TerminalPage::_BuildPersistedTabActions(Tab* tab)
+    std::vector<ActionAndArgs> TerminalPage::_BuildPersistedTabActions(Tab* tab, const bool elevated)
     {
-        _RefreshAgentRestoreIdentity(tab);
-        auto actions = tab->BuildStartupActions(BuildStartupKind::Persist);
-        _StampAgentResumeCommandlines(actions);
+        if (!elevated)
+        {
+            _RefreshAgentRestoreIdentity(tab);
+        }
+        auto actions = tab->BuildStartupActions(BuildStartupKind::Persist, !elevated);
+        if (!elevated)
+        {
+            _StampAgentResumeCommandlines(actions);
+        }
         return actions;
     }
 
@@ -13921,11 +13927,25 @@ namespace winrt::TerminalApp::implementation
         }
 
         std::vector<ActionAndArgs> actions;
+        uint32_t persistedTabCount = 0;
+        std::optional<uint32_t> focusedTabIndex;
+        const auto focusedTab = _GetFocusedTab();
+        // Use the same elevation check as ApplicationState's choice of state file.
+        const auto elevated = ::Microsoft::Console::Utils::IsRunningElevated();
 
         for (auto tab : _tabs)
         {
             auto t = winrt::get_self<implementation::Tab>(tab);
-            auto tabActions = _BuildPersistedTabActions(t);
+            auto tabActions = _BuildPersistedTabActions(t, elevated);
+            if (tabActions.empty())
+            {
+                continue;
+            }
+            if (tab == focusedTab)
+            {
+                focusedTabIndex = persistedTabCount;
+            }
+            ++persistedTabCount;
             actions.insert(actions.end(), std::make_move_iterator(tabActions.begin()), std::make_move_iterator(tabActions.end()));
         }
 
@@ -13936,12 +13956,11 @@ namespace winrt::TerminalApp::implementation
         }
 
         // if the focused tab was not the last tab, restore that
-        auto idx = _GetFocusedTabIndex();
-        if (idx && idx != tabCount - 1)
+        if (focusedTabIndex && *focusedTabIndex != persistedTabCount - 1)
         {
             ActionAndArgs action;
             action.Action(ShortcutAction::SwitchToTab);
-            SwitchToTabArgs switchToTabArgs{ idx.value() };
+            SwitchToTabArgs switchToTabArgs{ *focusedTabIndex };
             action.Args(switchToTabArgs);
 
             actions.emplace_back(std::move(action));
@@ -14014,7 +14033,7 @@ namespace winrt::TerminalApp::implementation
                 {
                     continue;
                 }
-                auto actions = page->_BuildPersistedTabActions(impl);
+                auto actions = page->_BuildPersistedTabActions(impl, ::Microsoft::Console::Utils::IsRunningElevated());
                 extraActions.insert(extraActions.end(), std::make_move_iterator(actions.begin()), std::make_move_iterator(actions.end()));
             }
         }
@@ -14025,23 +14044,30 @@ namespace winrt::TerminalApp::implementation
 
         WindowLayout layout;
         std::vector<ActionAndArgs> actions;
+        uint32_t visibleTabCount = 0;
+        std::optional<uint32_t> focusedTabIndex;
         if (visibleLayout)
         {
             for (const auto& action : visibleLayout.TabLayout())
             {
                 actions.emplace_back(action);
+                if (action.Action() == ShortcutAction::NewTab || action.Action() == ShortcutAction::OpenSettings)
+                {
+                    focusedTabIndex = visibleTabCount++;
+                }
+                else if (action.Action() == ShortcutAction::SwitchToTab)
+                {
+                    focusedTabIndex = action.Args().as<SwitchToTabArgs>().TabIndex();
+                }
             }
             layout.InitialPosition(visibleLayout.InitialPosition());
             layout.InitialSize(visibleLayout.InitialSize());
             layout.LaunchMode(visibleLayout.LaunchMode());
         }
         actions.insert(actions.end(), std::make_move_iterator(extraActions.begin()), std::make_move_iterator(extraActions.end()));
-        if (visibleLayout)
+        if (focusedTabIndex)
         {
-            if (const auto focused = _GetFocusedTabIndex())
-            {
-                actions.emplace_back(ShortcutAction::SwitchToTab, SwitchToTabArgs{ *focused });
-            }
+            actions.emplace_back(ShortcutAction::SwitchToTab, SwitchToTabArgs{ *focusedTabIndex });
         }
         layout.TabLayout(winrt::single_threaded_vector<ActionAndArgs>(std::move(actions)));
         return layout;

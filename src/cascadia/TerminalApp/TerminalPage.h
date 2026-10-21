@@ -1195,7 +1195,7 @@ namespace winrt::TerminalApp::implementation
         safe_void_coroutine _ExportTab(const Tab& tab, winrt::hstring filepath);
         void _RefreshAgentRestoreIdentity(Tab* tab);
         void _StampAgentResumeCommandlines(std::vector<winrt::Microsoft::Terminal::Settings::Model::ActionAndArgs>& actions);
-        std::vector<winrt::Microsoft::Terminal::Settings::Model::ActionAndArgs> _BuildPersistedTabActions(Tab* tab);
+        std::vector<winrt::Microsoft::Terminal::Settings::Model::ActionAndArgs> _BuildPersistedTabActions(Tab* tab, bool elevated);
         winrt::Microsoft::Terminal::Settings::Model::WindowLayout _AppendKeptTabsToStartupLayout(const winrt::Microsoft::Terminal::Settings::Model::WindowLayout& visibleLayout);
         // Pane ids whose terminal end event (`closed` / `failed`) already went
         // out on ProtocolVtSequenceReceived for the current TermControl
