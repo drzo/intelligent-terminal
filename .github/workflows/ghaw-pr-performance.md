@@ -98,6 +98,7 @@ jobs:
           "change_summary=$summary" >> $env:GITHUB_OUTPUT
   agent:
     needs: [prepare]
+    timeout-minutes: 75
   safe_outputs:
     if: needs.agent.result == 'success' && needs.detection.result == 'success'
 
@@ -131,6 +132,11 @@ safe-outputs:
   missing-data: false
   threat-detection:
     continue-on-error: false
+    post-steps:
+      - name: Install detector for skipped-run conclusion
+        if: always() && steps.detection_guard.outputs.run_detection != 'true'
+        shell: bash
+        run: bash "${RUNNER_TEMP}/gh-aw/actions/install_threat_detect_binary.sh" v0.5.1
   push-to-pull-request-branch:
     target: '${{ github.event.inputs.pr_number }}'
     base-branch: '${{ github.event.inputs.head_ref }}'
@@ -186,7 +192,7 @@ post-steps:
       if-no-files-found: warn
       retention-days: 7
 
-timeout-minutes: 15
+timeout-minutes: 60
 max-ai-credits: 500
 max-daily-ai-credits: 100000
 concurrency:
