@@ -102,12 +102,41 @@ Describe 'Feature: Sidebar tab keyboard navigation' -Tag @('Feature', 'SidebarTa
                 Should -Be $Index -Because $Because
         }
 
+        function Assert-NavigationTab {
+            param($Tab, [string]$Title, [string]$Draft)
+            (Test-Until -TimeoutSec 6 -IntervalSec 0.2 -Condition {
+                $active = Get-ActivePane -App $script:app
+                $focused = [Windows.Automation.AutomationElement]::FocusedElement
+                if ([string]$active.tab_id -ne [string]$Tab.tab_id -or
+                    [string]$active.session_id -ne [string]$Tab.session_id -or
+                    -not $focused -or $focused.Current.ProcessId -ne $script:app.Pid -or
+                    -not $focused.Current.HasKeyboardFocus -or $focused.Current.ClassName -ne 'TermControl') {
+                    return $false
+                }
+                if ($Draft) {
+                    $pattern = $null
+                    if (-not $focused.TryGetCurrentPattern([Windows.Automation.TextPattern]::Pattern, [ref]$pattern) -or
+                        -not $pattern.DocumentRange.GetText(-1).Contains($Draft)) {
+                        return $false
+                    }
+                }
+                $true
+            }) | Should -BeTrue -Because 'navigation must activate the exact existing tab, focus its input and display its retained draft'
+            if ($Title) {
+                $rows = @(Get-VisibleTabRows | Where-Object { Test-TabRowTitle -Row $_ -Title $Title })
+                $rows.Count | Should -Be 1
+                $rows[0].GetCurrentPattern([Windows.Automation.SelectionItemPattern]::Pattern).Current.IsSelected |
+                    Should -BeTrue -Because 'the displayed row selection must agree with the active terminal'
+            }
+        }
+
         $artifactRoot = if ($env:ITE2E_ARTIFACT_ROOT) { $env:ITE2E_ARTIFACT_ROOT } else { Join-Path $PSScriptRoot '..\artifacts' }
         $script:evidenceDir = Join-Path ([IO.Path]::GetFullPath($artifactRoot)) "sidebar-tab-keyboard-$([guid]::NewGuid().ToString('N'))"
         New-Item -ItemType Directory -Force -Path $script:evidenceDir | Out-Null
         Wait-UiElement -App $script:app -Selector VerticalTabsHeader | Out-Null
         $initialTabs = @(Get-WtTabs -App $script:app -WindowId ([string]$script:app.WindowId))
         if ($initialTabs.Count -ne 1) { throw "Expected one initial terminal tab, found $($initialTabs.Count)." }
+        $script:initialPane = Get-ActivePane -App $script:app
 
         $script:marker = [guid]::NewGuid().ToString('N').Substring(0, 8)
         $script:titleA = "focus-$script:marker-A"
@@ -124,6 +153,115 @@ Describe 'Feature: Sidebar tab keyboard navigation' -Tag @('Feature', 'SidebarTa
 
     AfterAll {
         if ($script:app) { Stop-Terminal -App $script:app }
+    }
+
+    It 'Sidebar navigation hotkeys cycle through displayed tabs' -Tag 'SidebarNavigationHotkeys' {
+        $script:app.Launched | Should -BeTrue
+        if (-not (Test-WtWindowKeyFocusable -App $script:app)) {
+            Set-ItResult -Skipped -Because 'the owned window cannot take foreground for physical keyboard input'
+            return
+        }
+        $before = (@(Get-WtTabs -App $script:app -WindowId ([string]$script:app.WindowId)).tab_id -join ',')
+        $draftA = "NAV_A_$script:marker"
+        $draftB = "NAV_B_$script:marker"
+        Send-WtInput -App $script:app -SessionId $script:tabA.session_id -Text $draftA | Out-Null
+        Send-WtInput -App $script:app -SessionId $script:tabB.session_id -Text $draftB | Out-Null
+        Set-WtPaneFocus -App $script:app -SessionId $script:tabB.session_id
+        Assert-NavigationTab -Tab $script:tabB -Title $script:titleB -Draft $draftB
+        Save-UiScreenshot -App $script:app -Path (Join-Path $script:evidenceDir 'cycle-before.png') | Out-Null
+
+        Send-WtWindowKey -App $script:app -Vk 0x28 -Ctrl -Alt -RequireForeground | Out-Null
+        Assert-NavigationTab -Tab $script:initialPane
+        Send-WtWindowKey -App $script:app -Vk 0x26 -Ctrl -Alt -RequireForeground | Out-Null
+        Assert-NavigationTab -Tab $script:tabB -Title $script:titleB -Draft $draftB
+        Send-WtWindowKey -App $script:app -Vk 0x26 -Ctrl -Alt -RequireForeground | Out-Null
+        Assert-NavigationTab -Tab $script:tabA -Title $script:titleA -Draft $draftA
+        Send-WtWindowKey -App $script:app -Vk 0x28 -Ctrl -Alt -RequireForeground | Out-Null
+        Assert-NavigationTab -Tab $script:tabB -Title $script:titleB -Draft $draftB
+
+        Send-WtWindowKey -App $script:app -Vk 0x53 -Ctrl -Shift -RequireForeground | Out-Null
+        (Test-Until -TimeoutSec 5 -Condition {
+            [Windows.Automation.AutomationElement]::FocusedElement.Current.Name -eq 'Collapse sidebar'
+        }) | Should -BeTrue
+        Send-WtWindowKey -App $script:app -Vk 0x28 -Ctrl -Alt -RequireForeground | Out-Null
+        Assert-NavigationTab -Tab $script:initialPane
+        Send-WtWindowKey -App $script:app -Vk 0x26 -Ctrl -Alt -RequireForeground | Out-Null
+        Assert-NavigationTab -Tab $script:tabB -Title $script:titleB -Draft $draftB
+
+        Invoke-UiClick -App $script:app -Selector SearchTabsButton | Out-Null
+        try {
+            $query = "focus-$script:marker"
+            Set-UiValue -App $script:app -Selector SearchTextBox -Value $query | Out-Null
+            (Test-Until -TimeoutSec 6 -Condition { @(Get-VisibleTabRows).Count -eq 2 }) | Should -BeTrue
+            Set-WtPaneFocus -App $script:app -SessionId $script:tabB.session_id
+            Send-WtWindowKey -App $script:app -Vk 0x28 -Ctrl -Alt -RequireForeground | Out-Null
+            Assert-NavigationTab -Tab $script:tabA -Title $script:titleA -Draft $draftA
+            Send-WtWindowKey -App $script:app -Vk 0x26 -Ctrl -Alt -RequireForeground | Out-Null
+            Assert-NavigationTab -Tab $script:tabB -Title $script:titleB -Draft $draftB
+            Save-UiScreenshot -App $script:app -Path (Join-Path $script:evidenceDir 'cycle-filtered-wrap.png') | Out-Null
+
+            @(Get-VisibleTabRows)[0].SetFocus()
+            Send-WtWindowKey -App $script:app -Vk 0x28 -Ctrl -Alt -RequireForeground | Out-Null
+            Assert-NavigationTab -Tab $script:tabA -Title $script:titleA -Draft $draftA
+            (Get-SidebarElement -AutomationId 'SearchTextBox').SetFocus()
+            Send-WtWindowKey -App $script:app -Vk 0x26 -Ctrl -Alt -RequireForeground | Out-Null
+            Assert-NavigationTab -Tab $script:tabB -Title $script:titleB -Draft $draftB
+            (Get-UiValue -App $script:app -Selector SearchTextBox) | Should -BeExactly $query
+
+            Set-UiValue -App $script:app -Selector SearchTextBox -Value $script:titleA | Out-Null
+            (Test-Until -TimeoutSec 6 -Condition { @(Get-VisibleTabRows).Count -eq 1 }) | Should -BeTrue
+            Set-WtPaneFocus -App $script:app -SessionId $script:tabB.session_id
+            foreach ($vk in @(0x28, 0x26)) {
+                (Get-SidebarElement -AutomationId 'SearchTextBox').SetFocus()
+                Send-WtWindowKey -App $script:app -Vk $vk -Ctrl -Alt -RequireForeground | Out-Null
+                Assert-NavigationTab -Tab $script:tabA -Title $script:titleA -Draft $draftA
+            }
+
+            $emptyQuery = "navigation-no-match-$script:marker"
+            Set-UiValue -App $script:app -Selector SearchTextBox -Value $emptyQuery | Out-Null
+            (Test-Until -TimeoutSec 6 -Condition { @(Get-VisibleTabRows).Count -eq 0 }) | Should -BeTrue
+            Set-WtPaneFocus -App $script:app -SessionId $script:tabA.session_id
+            foreach ($vk in @(0x28, 0x26)) {
+                Send-WtWindowKey -App $script:app -Vk $vk -Ctrl -Alt -RequireForeground | Out-Null
+                Assert-NavigationTab -Tab $script:tabA -Draft $draftA
+            }
+            (Get-UiValue -App $script:app -Selector SearchTextBox) | Should -BeExactly $emptyQuery
+        }
+        finally {
+            $search = Get-SidebarElement -AutomationId 'SearchTextBox'
+            if ($search -and -not $search.Current.IsOffscreen) {
+                Invoke-UiClick -App $script:app -Selector SearchTabsButton | Out-Null
+            }
+        }
+        (@(Get-WtTabs -App $script:app -WindowId ([string]$script:app.WindowId)).tab_id -join ',') |
+            Should -BeExactly $before -Because 'navigation must not create, close, reorder or replace tabs'
+        Set-WtPaneFocus -App $script:app -SessionId $script:tabB.session_id
+        Assert-NavigationTab -Tab $script:tabB -Title $script:titleB -Draft $draftB
+        Save-UiScreenshot -App $script:app -Path (Join-Path $script:evidenceDir 'cycle-after-round-trip.png') | Out-Null
+
+        try {
+            Set-WtSetting -App $script:app -Key tabLayout -Value horizontal | Out-Null
+            Wait-UiElement -App $script:app -Selector NewTabButton | Out-Null
+            Test-UiElementExists -App $script:app -Selector SearchTabsButton -TimeoutSec 1 | Should -BeFalse
+            Set-WtPaneFocus -App $script:app -SessionId $script:tabB.session_id
+            Save-UiScreenshot -App $script:app -Path (Join-Path $script:evidenceDir 'cycle-horizontal-before.png') | Out-Null
+            foreach ($vk in @(0x26, 0x28)) {
+                Send-WtWindowKey -App $script:app -Vk $vk -Ctrl -Alt -RequireForeground | Out-Null
+                for ($sample = 0; $sample -lt 3; $sample++) {
+                    Start-Sleep -Milliseconds 200
+                    Assert-NavigationTab -Tab $script:tabB
+                }
+            }
+            Test-UiElementExists -App $script:app -Selector NewTabButton -TimeoutSec 2 | Should -BeTrue
+            Test-UiElementExists -App $script:app -Selector SearchTabsButton -TimeoutSec 1 | Should -BeFalse
+            (@(Get-WtTabs -App $script:app -WindowId ([string]$script:app.WindowId)).tab_id -join ',') |
+                Should -BeExactly $before
+            Save-UiScreenshot -App $script:app -Path (Join-Path $script:evidenceDir 'cycle-horizontal-after.png') | Out-Null
+        }
+        finally {
+            Set-WtSetting -App $script:app -Key tabLayout -Value vertical | Out-Null
+            Wait-UiElement -App $script:app -Selector VerticalTabsHeader | Out-Null
+        }
     }
 
     It 'Sidebar tabs keyboard navigation stays in the list (unfiltered)' {

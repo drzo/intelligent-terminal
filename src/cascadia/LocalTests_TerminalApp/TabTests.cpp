@@ -499,6 +499,7 @@ namespace TerminalAppLocalTests
         TEST_METHOD(VerticalTabRepeatedMovesPreserveCollections);
         TEST_METHOD(AgentScopeMoveTabDispatchPreservesOwner);
         TEST_METHOD(PresentedTabNumbersUseRealBindings);
+        TEST_METHOD(SidebarNavigationHotkeysCycleDisplayedTabs);
         TEST_METHOD(AgentScopeMoveTabSearchAndPinBoundaries);
         TEST_METHOD(MoveTabDispatchPreservesOrdinaryLayouts);
         TEST_METHOD(VerticalTabSelectionPreservesPresentation);
@@ -18658,6 +18659,140 @@ namespace TerminalAppLocalTests
                 VERIFY_ARE_EQUAL(expanded, display.IsExpanded());
                 VERIFY_IS_TRUE(page->_tabs.GetAt(0) == *first);
                 VERIFY_IS_TRUE(page->_tabs.GetAt(2) == *shell);
+            }
+        });
+    }
+
+    void TabTests::SidebarNavigationHotkeysCycleDisplayedTabs()
+    {
+        using Page = winrt::TerminalApp::implementation::TerminalPage;
+        using State = winrt::Microsoft::Terminal::TerminalConnection::ConnectionState;
+        const auto connection = winrt::make_self<TestConnection>(
+            winrt::guid{ L"{6239a42c-a001-49a3-80bd-e8fdd045185c}" }, State::Connected);
+        const auto page = _commonSetup(*connection, nullptr, std::nullopt, true);
+        TestOnUIThread([&]() {
+            page->_historyRefreshInFlight = true;
+            const auto first = page->_GetFocusedTabImpl();
+            first->SuppressAgentPrewarm();
+            first->SetTabText(L"displayed-first");
+            const auto middleConnection = winrt::make_self<TestConnection>(
+                winrt::guid{ L"{6239a42c-a002-49a3-80bd-e8fdd045185c}" }, State::Connected);
+            const auto lastConnection = winrt::make_self<TestConnection>(
+                winrt::guid{ L"{6239a42c-a003-49a3-80bd-e8fdd045185c}" }, State::Connected);
+            const auto middle = page->_GetTabImpl(page->_CreateNewTabFromPane(page->_MakePane(nullptr, nullptr, *middleConnection)));
+            const auto last = page->_GetTabImpl(page->_CreateNewTabFromPane(page->_MakePane(nullptr, nullptr, *lastConnection)));
+            middle->SuppressAgentPrewarm();
+            last->SuppressAgentPrewarm();
+            middle->SetTabText(L"other-middle");
+            last->SetTabText(L"displayed-last");
+            const auto splitConnection = winrt::make_self<TestConnection>(
+                winrt::guid{ L"{6239a42c-a004-49a3-80bd-e8fdd045185c}" }, State::Connected);
+            VERIFY_IS_TRUE(page->_SplitPane(last, SplitDirection::Right, 0.5f, page->_MakePane(nullptr, nullptr, *splitConnection), false));
+            const auto root = last->GetRootPane();
+            const auto active = last->GetActivePane();
+            const auto panes = last->GetVisiblePaneSnapshot();
+            page->_SetTabPinned(first, true);
+            page->_tabStrip.SidebarFilters().ShowAgentsOnly(false);
+            page->_ApplyTabListProjection();
+            page->_SelectTab(0);
+
+            const auto map = CascadiaSettings::LoadDefaults().ActionMap();
+            const auto keys = winrt::make_self<winrt::TerminalApp::implementation::AppKeyBindings>();
+            keys->SetActionMap(map);
+            keys->SetDispatch(*page->_actionDispatch);
+            const auto up = KeyChordSerialization::FromString(L"ctrl+alt+up");
+            const auto down = KeyChordSerialization::FromString(L"ctrl+alt+down");
+            const auto navigate = [&](const auto& chord, const auto& expected) {
+                const auto handled = keys->TryKeyChord(chord);
+                VERIFY_IS_TRUE(page->_GetFocusedTabImpl() == expected, L"The keyboard entry must select the adjacent displayed live tab.");
+                VERIFY_IS_TRUE(handled);
+                page->UpdateLayout();
+                VERIFY_IS_TRUE(page->_GetActiveControl() == expected->GetActivePane()->GetTerminalControl());
+                VERIFY_IS_TRUE(page->_GetActiveControl().FocusState() != FocusState::Unfocused);
+                VERIFY_IS_FALSE(page->_commandPaletteIs(Visibility::Visible), L"Sidebar navigation must not open the tab switcher.");
+            };
+            navigate(down, middle);
+            navigate(down, last);
+            navigate(down, first);
+            navigate(up, last);
+
+            page->_tabStrip.SearchActive(true);
+            page->_tabStrip.SearchQuery(L"displayed");
+            page->_ApplyTabListProjection();
+            VERIFY_IS_FALSE(page->_IsTabVisibleInProjection(middle));
+            navigate(down, first);
+            navigate(down, last);
+            navigate(up, first);
+            navigate(up, last);
+            VERIFY_ARE_EQUAL(winrt::hstring{ L"displayed" }, page->_tabStrip.SearchQuery());
+
+            page->_tabStrip.SearchQuery(L"displayed-first");
+            page->_ApplyTabListProjection();
+            navigate(down, first);
+            const auto strip = winrt::get_self<winrt::TerminalApp::implementation::TabStrip>(page->_tabStrip);
+            VERIFY_IS_TRUE(strip->SearchTextBox().Focus(FocusState::Programmatic));
+            navigate(up, first);
+            page->_tabStrip.SearchQuery(L"no-visible-navigation-target");
+            page->_ApplyTabListProjection();
+            navigate(down, first);
+            navigate(up, first);
+
+            page->_paneAgentSessions.insert_or_assign(middle->GetActivePane()->GetSessionId(), Page::_PaneAgentSession{ L"navigation-middle", L"copilot", L"" });
+            page->_paneAgentSessions.insert_or_assign(lastConnection->SessionId(), Page::_PaneAgentSession{ L"navigation-last", L"claude", L"" });
+            page->_tabStrip.SearchQuery(L"");
+            page->_tabStrip.SearchActive(false);
+            page->_tabStrip.SidebarFilters().ShowAgentsOnly(true);
+            page->_ApplyTabListProjection();
+            navigate(down, middle);
+            navigate(up, last);
+            navigate(down, middle);
+            page->_tabStrip.SearchActive(true);
+            page->_tabStrip.SearchQuery(L"displayed");
+            page->_ApplyTabListProjection();
+            VERIFY_IS_TRUE(page->_IsTabVisibleInProjection(first), L"Global search may display an ordinary tab despite the Agents-only preference.");
+            navigate(up, first);
+            navigate(down, last);
+
+            for (auto* guard : { &page->_rearranging, &page->_mutatingTabCollections })
+            {
+                *guard = true;
+                navigate(down, last);
+                navigate(up, last);
+                *guard = false;
+            }
+            const auto defaultDown = map.GetActionByKeyChord(down).ActionAndArgs();
+            const auto alias = KeyChordSerialization::FromString(L"ctrl+shift+y");
+            map.RegisterKeyBinding(alias, defaultDown);
+            navigate(alias, first);
+            map.DeleteKeyBinding(down);
+            VERIFY_IS_FALSE(keys->TryKeyChord(down));
+            VERIFY_IS_TRUE(page->_GetFocusedTabImpl() == first);
+            map.RegisterKeyBinding(down, { ShortcutAction::NextTab, NextTabArgs{ TabSwitcherMode::Disabled } });
+            navigate(down, middle);
+            map.RegisterKeyBinding(down, defaultDown);
+            navigate(down, last);
+
+            VERIFY_IS_TRUE(page->_ApplyTabLayout(TabLayout::Horizontal));
+            page->_CompleteTabLayoutChange(page->_tabLayoutGeneration);
+            for (const auto& chord : { up, down, alias })
+            {
+                VERIFY_IS_FALSE(keys->TryKeyChord(chord), L"Sidebar navigation must leave horizontal input unhandled.");
+                VERIFY_IS_TRUE(page->_GetFocusedTabImpl() == last);
+            }
+            VERIFY_ARE_EQUAL(3u, page->_tabs.Size());
+            VERIFY_IS_TRUE(page->_tabs.GetAt(0) == *first);
+            VERIFY_IS_TRUE(page->_tabs.GetAt(1) == *middle);
+            VERIFY_IS_TRUE(page->_tabs.GetAt(2) == *last);
+            VERIFY_IS_TRUE(first->IsPinned());
+            VERIFY_IS_TRUE(last->GetRootPane() == root);
+            VERIFY_IS_TRUE(last->GetActivePane() == active);
+            const auto after = last->GetVisiblePaneSnapshot();
+            VERIFY_ARE_EQUAL(panes.size(), after.size());
+            for (size_t index = 0; index < panes.size(); ++index)
+            {
+                VERIFY_ARE_EQUAL(panes[index].SessionId, after[index].SessionId);
+                VERIFY_ARE_EQUAL(panes[index].ContentId, after[index].ContentId);
+                VERIFY_ARE_EQUAL(panes[index].IsActive, after[index].IsActive);
             }
         });
     }
