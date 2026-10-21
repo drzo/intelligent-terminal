@@ -1680,6 +1680,65 @@ fn copilot_tool_finished_keeps_working_only_agent_stop_idles() {
 }
 
 #[test]
+fn copilot_hook_timestamp_range_matches_json_listener() {
+    for (timestamp, expected) in [
+        (json!(0), Some(0)),
+        (json!(253402300799999_u64), Some(253402300799999)),
+        (json!("9999-12-31T23:59:59.999Z"), Some(253402300799999)),
+        (json!("9999-12-31T23:59:59.999-01:00"), None),
+        (json!(253402300800000_u64), None),
+        (json!(u64::MAX), None),
+        (json!(-1), None),
+        (json!(1.5), None),
+    ] {
+        assert_eq!(
+            hook_timestamp_ms(&json!({"timestamp": timestamp})),
+            expected,
+            "{timestamp}"
+        );
+    }
+}
+
+#[test]
+fn copilot_out_of_range_waiting_timestamp_recovers_helper() {
+    use crate::agent_sessions::{AgentSessionRegistry, AgentStatus, CliSource};
+    for timestamp in [253402300800000_u64, u64::MAX] {
+        let mut reg = AgentSessionRegistry::new();
+        let mut hook = json!({
+            "event": "agent.prompt.submit", "cli_source": "copilot",
+            "agent_session_id": "range", "payload": {},
+        });
+        route_agent_event_to_registry(&mut reg, "owner", &hook);
+        let facts = AgentEventFacts {
+            key: "range".into(),
+            session_known: true,
+            session_status: Some(AgentStatus::Working),
+            pane_owned_by_other: false,
+        };
+        let plan = plan_agent_event(
+            "agent.notification",
+            &json!({"notification_type": "permission_prompt", "message": "approve", "timestamp": timestamp}),
+            "owner",
+            &CliSource::Copilot,
+            &facts,
+        );
+        for event in plan.events {
+            reg.apply_at(event, std::time::UNIX_EPOCH);
+        }
+        assert_eq!(
+            reg.get(&"range".into()).unwrap().status,
+            AgentStatus::Attention
+        );
+        hook["event"] = json!("agent.tool.finished");
+        hook["payload"] = json!({"tool_name": "sql", "timestamp": 1792473545613_u64});
+        route_agent_event_to_registry(&mut reg, "owner", &hook);
+        let row = reg.get(&"range".into()).unwrap();
+        assert_eq!(row.status, AgentStatus::Working, "{timestamp}");
+        assert!(row.attention_reason.is_none());
+    }
+}
+
+#[test]
 fn copilot_stale_tool_return_preserves_helper_waiting() {
     use crate::agent_sessions::{AgentSessionRegistry, AgentStatus, CliSource};
 
@@ -15084,6 +15143,40 @@ fn show_copilot_auth_screen_with_missing_cli_preserves_diagnostic_setup() {
 }
 
 #[test]
+fn initial_startup_native_details_are_rendered_without_changing_recovery() {
+    let _locale = crate::test_support::lock_locale();
+    let _capture = crate::wt_protocol_events::capture_test_published_events();
+    let mut app = test_app();
+    let error = crate::agent_lifecycle::StartupDetails::attach(
+        anyhow::anyhow!("agent exited before initialize"),
+        &[
+            "Failed to load Python DLL 'native-loader.dll'.".into(),
+            "LoadLibrary: controlled native failure.".into(),
+        ],
+    );
+    let failure = crate::protocol::acp::failure::AgentFailure::Startup(
+        crate::agent_lifecycle::StartupFailure::from_error(&error, 2, Some(true), false),
+    );
+    let message = failure.to_string();
+    app.handle_event(AppEvent::InitialAgentStartupFailed { failure, message });
+    assert_eq!(app.mode, AppMode::Setup);
+    let text = render_to_text(&mut app, 120, 35);
+    assert!(text.contains("native-loader.dll"), "rendered:\n{text}");
+    assert!(
+        text.contains("LoadLibrary: controlled native failure."),
+        "rendered:\n{text}"
+    );
+    assert!(app.current_tab().messages.is_empty());
+    assert!(app
+        .setup
+        .as_ref()
+        .unwrap()
+        .options
+        .iter()
+        .any(|option| matches!(option, SetupOption::RetryConnection)));
+}
+
+#[test]
 fn initial_startup_failure_uses_setup_without_polluting_chat() {
     let mut app = test_app();
     let _capture = crate::wt_protocol_events::capture_test_published_events();
@@ -23330,6 +23423,7 @@ fn completed_tool_call_defaults_compact_and_expands_independently() {
 
 #[test]
 fn failed_completed_tool_keeps_bounded_diagnostic_preview() {
+    let _locale = crate::test_support::lock_locale();
     let mut app = test_app();
     app.state = ConnectionState::Connected;
     app.current_tab_mut().completed_turns.push(CompletedTurn {

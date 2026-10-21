@@ -330,8 +330,13 @@ a supported, pinned ACP archive when the server is needed. This includes agent
 pane connections and Settings model discovery. Background sidebar discovery does
 not automatically prepare or start Antigravity, even if a CLI shim or cached ACP
 installation is detected. Read-only availability checks do not download software.
-Settings displays installation progress and a retry action when preparation
-fails; the terminal remains usable.
+Settings displays preparation/check progress and a retry action when setup
+fails; the terminal remains usable. Installation is followed by one startup
+check, reused from the first real connection where possible. If installation
+succeeds but ACP cannot initialize, the error is shown without hiding or
+disabling the agent. You can still select it and retry from the agent pane.
+Automatic startup is limited to three attempts per launch target, and failed
+attempts release their owned process trees before replacement.
 
 The managed installation validates the archive checksum, expected companion
 files and Windows publisher signatures. It does not replace a complete existing

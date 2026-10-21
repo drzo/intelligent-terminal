@@ -449,6 +449,20 @@ pub(crate) enum Command {
         /// Install only in this explicitly selected distro's default-user source.
         #[arg(long)]
         wsl_distro: Option<String>,
+        /// Explicit user retry after a previous startup check failed.
+        #[arg(long)]
+        retry_startup: bool,
+    },
+    /// Prepare the selected ACP dependency and verify one initialize round trip.
+    VerifyAcp {
+        #[arg(long)]
+        agent: String,
+        #[arg(long)]
+        agent_id: String,
+        #[arg(long)]
+        wsl_distro: Option<String>,
+        #[arg(long)]
+        retry_startup: bool,
     },
     /// One-shot ACP handshake to read an agent's advertised model list.
     /// Spawned by the Settings UI when the user picks a new ACP agent so
@@ -467,6 +481,9 @@ pub(crate) enum Command {
         /// Authoritative built-in/custom identity supplied by the Settings caller.
         #[arg(long)]
         agent_id: Option<String>,
+        /// Explicitly retry this target after its previous startup attempt finishes.
+        #[arg(long)]
+        retry_startup: bool,
     },
     /// List built-in ACP agents installed inside one WSL distro.
     /// Used by the per-profile Settings picker.
@@ -506,6 +523,9 @@ pub(crate) enum Command {
         /// "copilot --acp --stdio" or "npx -y @agentclientprotocol/claude-agent-acp").
         #[arg(long)]
         agent: String,
+        /// Start a new bounded retry cycle unless cleanup is quarantined.
+        #[arg(long)]
+        retry_startup: bool,
     },
     /// Diagnostic: spawn an agent CLI, call ACP `session/list`, filter
     /// agent-pane-origin rows, and print the host history rows WTA would
@@ -515,6 +535,9 @@ pub(crate) enum Command {
         /// "copilot --acp --stdio" or "npx -y @agentclientprotocol/claude-agent-acp").
         #[arg(long)]
         agent: String,
+        /// Start a new bounded retry cycle unless cleanup is quarantined.
+        #[arg(long)]
+        retry_startup: bool,
     },
     /// Submit a typed terminal-action proposal directly to the Helper that
     /// owns the current turn. Intended to be run by an agent session using

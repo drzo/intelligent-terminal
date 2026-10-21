@@ -17,8 +17,27 @@ Describe 'Feature §1/§6 Settings editor UI (opened via Ctrl+, accelerator)' -T
     BeforeAll {
         Import-Module (Join-Path $PSScriptRoot '..\ItE2E\ItE2E.psd1') -Force
         # A custom agent so the model control is expected to render on the AI Agents page.
+        $artifactRoot = if ($env:ITE2E_ARTIFACT_ROOT) { $env:ITE2E_ARTIFACT_ROOT }
+        else { Join-Path $PSScriptRoot '..\artifacts' }
+        $evidence = Join-Path $artifactRoot "settings-ui\$([guid]::NewGuid().ToString('N'))"
+        New-Item -ItemType Directory -Path $evidence -Force | Out-Null
+        $fixture = (Resolve-Path (Join-Path $PSScriptRoot '..\fixtures\Mock-AcpChatAgent.ps1')).Path
+        $invocation = "& '$($fixture.Replace("'", "''"))' -LogPath '$((Join-Path $evidence 'fixture.log').Replace("'", "''"))'"
         $script:app = Start-Terminal -Package (Get-ItTestPackage) -PassFre $true -Settings @{
-            acpAgent = 'custom:qwen'; acpCustomCommand = 'copilot --acp --stdio'
+            acpAgent = 'custom:settings-ui-fixture'
+            acpCustomCommand = "pwsh -NoProfile -EncodedCommand $([Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($invocation)))"
+            autoErrorDetectionEnabled = $false
+            agentSessionManagementEnabled = $false
+            defaultProfile = '{0caa0dad-35be-5f56-a8ff-afceeeaa6101}'
+            disabledProfileSources = @(
+                'Windows.Terminal.PowershellCore', 'Windows.Terminal.Wsl',
+                'Windows.Terminal.Azure', 'Windows.Terminal.VisualStudio',
+                'Windows.Terminal.SSH', 'Microsoft.WSL'
+            )
+            profiles = @{ list = @(
+                @{ guid = '{0caa0dad-35be-5f56-a8ff-afceeeaa6101}'; commandline = 'cmd.exe' }
+                @{ guid = '{61c54bbd-c2c6-5271-96e7-009a87ff44bf}'; commandline = 'cmd.exe'; hidden = $true }
+            ) }
         }
 
         # Try to open Settings once; if the window can't take foreground, mark the suite skippable.
@@ -30,19 +49,31 @@ Describe 'Feature §1/§6 Settings editor UI (opened via Ctrl+, accelerator)' -T
 
     It 'AI Agents settings page opens and shows the agent picker' {
         if (-not $script:settingsOpen) { Set-ItResult -Skipped -Because 'the WT window could not take foreground to open Settings (env precondition)'; return }
+        Invoke-SettingsNav -App $script:app -NavItem 'LaunchNavItem'
+        [xml]$manifest = Get-Content -LiteralPath (Join-Path $script:app.InstallLocation 'AppxManifest.xml') -Raw
+        $startupTasks = @($manifest.SelectNodes("//*[local-name()='StartupTask' and @TaskId='StartTerminalOnLoginTask']"))
+        $startupLabel = Get-WtReswTextRegex -Key 'Globals_StartOnUserLogin.Header'
+        $startupLabel | Should -Not -BeNullOrEmpty
+        $defaultProfileLabel = Get-WtReswTextRegex -Key 'Globals_DefaultProfile.Header'
+        $defaultProfileLabel | Should -Not -BeNullOrEmpty
+        (Get-UiTree -App $script:app -Depth 20) | Should -Match $defaultProfileLabel -Because 'Startup must render before checking optional settings'
+        $shown = Test-Until -TimeoutSec 3 -IntervalSec 0.5 -Condition {
+            (Get-UiTree -App $script:app -Depth 20) -match $startupLabel
+        }
+        $shown | Should -Be ($startupTasks.Count -gt 0) -Because 'a packaged app may intentionally omit the optional login task'
         Invoke-SettingsNav -App $script:app -NavItem 'AIAgentsNavItem'
         # The AI Agents page renders the agent picker group (stable AutomationId AcpAgent).
         Test-UiElementExists -App $script:app -Selector 'AcpAgent' -TimeoutSec 8 | Should -BeTrue -Because 'the AI Agents page must show the agent picker'
     }
 
-    It 'Settings Tab Mode matches FRE' {
+    It 'Settings retains the localized Tab Mode control' {
         if (-not $script:settingsOpen) { Set-ItResult -Skipped -Because 'the WT window could not take foreground to open Settings (env precondition)'; return }
         Invoke-SettingsNav -App $script:app -NavItem 'AppearanceNavItem' | Out-Null
-        $tabModeLabel = Get-WtReswTextRegex -Key 'FreOverlay_TabModeLabel.Text'
+        $tabModeLabel = Get-WtReswTextRegex -Key 'Globals_TabLayout.Header'
         $tabModeLabel | Should -Not -BeNullOrEmpty
         (Test-Until -TimeoutSec 8 -IntervalSec 0.5 -Condition {
                 (Get-UiTree -App $script:app -Depth 18) -match $tabModeLabel
-            }) | Should -BeTrue -Because 'Appearance must render the same localized Tab Mode label as FRE'
+            }) | Should -BeTrue -Because 'removing the FRE choice must not remove Tab Mode from Appearance'
     }
 
     It 'Model selection visible: the model control shows on the AI Agents page for a custom agent' {
