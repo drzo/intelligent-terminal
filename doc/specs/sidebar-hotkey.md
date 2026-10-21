@@ -128,7 +128,7 @@ the scrolled viewport. Recent-session history rows and child pane rows are not
 tab-navigation targets. Navigation does not resume a session or reorder tabs.
 If the active tab has been filtered out, continue from its position in the
 canonical tab order, skipping excluded tabs and wrapping. One displayed tab
-remains selected; no displayed tabs leaves selection and focus unchanged.
+remains selected; with no displayed tabs, the active tab is unchanged.
 
 Activation and focus use the same paths as tab selection and activation of an
 already selected sidebar row. Preserve the search query, active pane within each

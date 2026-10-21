@@ -110,13 +110,18 @@ Describe 'Feature: Sidebar tab keyboard navigation' -Tag @('Feature', 'SidebarTa
                 if ([string]$active.tab_id -ne [string]$Tab.tab_id -or
                     [string]$active.session_id -ne [string]$Tab.session_id -or
                     -not $focused -or $focused.Current.ProcessId -ne $script:app.Pid -or
-                    -not $focused.Current.HasKeyboardFocus -or $focused.Current.ClassName -ne 'TermControl') {
+                    -not $focused.Current.HasKeyboardFocus -or $focused.Current.IsOffscreen -or
+                    $focused.Current.ClassName -ne 'TermControl') {
                     return $false
                 }
                 if ($Draft) {
                     $pattern = $null
-                    if (-not $focused.TryGetCurrentPattern([Windows.Automation.TextPattern]::Pattern, [ref]$pattern) -or
-                        -not $pattern.DocumentRange.GetText(-1).Contains($Draft)) {
+                    if (-not $focused.TryGetCurrentPattern([Windows.Automation.TextPattern]::Pattern, [ref]$pattern)) {
+                        return $false
+                    }
+                    $visibleText = (@($pattern.GetVisibleRanges() | ForEach-Object { $_.GetText(-1) }) -join '')
+                    if (-not $visibleText.Contains($Draft) -or
+                        -not (Get-WtCapture -App $script:app -SessionId $Tab.session_id -MaxLines 30).TrimEnd().EndsWith($Draft)) {
                         return $false
                     }
                 }
