@@ -1234,13 +1234,14 @@ namespace winrt::TerminalApp::implementation
             winrt::hstring agent;
             winrt::hstring cwd;
             winrt::hstring backend;
+            uint64_t publishedReceiverGeneration{ 0 };
+            bool helperReplayed{ false };
         };
-        // Layout replay precedes WTA startup. Keep births until the owning
-        // helper acknowledges its COM subscription, not merely ACP readiness.
+        // Track master registration and subscribed-helper replay independently.
         std::unordered_map<winrt::guid, _PendingRestoredSessionBinding> _pendingRestoredSessionBindings;
         std::unordered_set<winrt::hstring> _tabsAwaitingRestoredBindings;
         void _NotifyRestoredSessionBindings(const winrt::com_ptr<Tab>& tab);
-        void _ReplayRestoredSessionBindings(const winrt::com_ptr<Tab>& tab);
+        void _ReplayRestoredSessionBindings(const winrt::com_ptr<Tab>& tab, bool helperSubscribed = true);
         void _TryPublishInteractiveResumeBinding(
             const Microsoft::Terminal::Control::TermControl& control,
             std::string_view paneId,
