@@ -603,10 +603,22 @@
   </data>
   <data name="SidebarIntroductionTitle" xml:space="preserve">
     <value>Una manera més intel·ligent de gestionar les pestanyes</value>
-    <comment>Title of the once-only sidebar introduction teaching tip shown after the new default layout is available.</comment>
+    <comment>Title of the once-only sidebar introduction teaching tip: a smarter way to manage tabs.</comment>
   </data>
   <data name="SidebarIntroductionDescription" xml:space="preserve">
-    <value>Les pestanyes i les sessions dels agents ara són a la barra lateral. Utilitza Opcions de visualització de la barra lateral per a triar els detalls de les pestanyes. Fes clic amb el botó dret en una pestanya per a tornar a les pestanyes horitzontals.</value>
-    <comment>Body of the once-only sidebar introduction teaching tip. Sidebar display options refers to the sidebar toolbar button with that tooltip. Explain where to customize visible tab details and how to return to the horizontal tab layout using a tab's context menu. Agents means AI agents, not people.</comment>
+    <value>Descobrix la nova barra lateral, amb més funcions per a les pestanyes i els agents. Alterna entre les vistes de pestanyes i d’agents. Fes clic amb el botó dret en una pestanya per a tornar a les pestanyes horitzontals.</value>
+    <comment>Body of the once-only sidebar introduction teaching tip. Agents means AI agents, not people. Tab and agent views refer to the sidebar filters; right-click a tab to return to the horizontal layout.</comment>
+  </data>
+  <data name="SidebarIntroductionNewBadge" xml:space="preserve">
+    <value>Nou</value>
+    <comment>Short badge shown beside the sidebar introduction title to indicate the new sidebar.</comment>
+  </data>
+  <data name="HorizontalTabsIntroductionTitle" xml:space="preserve">
+    <value>Prova maneres més intel·ligents de gestionar les pestanyes</value>
+    <comment>Title of the introduction tooltip shown in the horizontal tab layout. Invites the user to try the vertical tab layout for managing terminal tabs.</comment>
+  </data>
+  <data name="HorizontalTabsIntroductionDescription" xml:space="preserve">
+    <value>Canvia a les pestanyes verticals per a vore l’activitat dels agents d’una ullada. Fes clic amb el botó dret en una pestanya i tria {0}.</value>
+    <comment>Description of the introduction tooltip shown in the horizontal tab layout. Agent activity means the activity of AI agents, not people. Vertical tabs means the tab layout in the sidebar. {0} is the already-localized "Switch to sidebar" command label from the tab's right-click context menu (SwitchToVerticalTabsText); insert it unchanged and do not translate it here.</comment>
   </data>
 </root>
