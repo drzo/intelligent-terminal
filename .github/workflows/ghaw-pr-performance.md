@@ -132,11 +132,6 @@ safe-outputs:
   missing-data: false
   threat-detection:
     continue-on-error: false
-    post-steps:
-      - name: Install detector for skipped-run conclusion
-        if: always() && steps.detection_guard.outputs.run_detection != 'true'
-        shell: bash
-        run: bash "${RUNNER_TEMP}/gh-aw/actions/install_threat_detect_binary.sh" v0.5.1
   push-to-pull-request-branch:
     target: '${{ github.event.inputs.pr_number }}'
     base-branch: '${{ github.event.inputs.head_ref }}'

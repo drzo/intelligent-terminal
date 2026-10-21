@@ -126,22 +126,6 @@ steps:
       git checkout -B "$HEAD_REF" "$HEAD_SHA"
 
 pre-agent-steps:
-  - name: Prepare citation coverage query tool
-    shell: bash
-    run: |
-      set -euo pipefail
-      : "${RUNNER_TOOL_CACHE:?RUNNER_TOOL_CACHE must be set}"
-      tool_dir="$RUNNER_TOOL_CACHE/gh-aw-citation-yq/4.54.1/x64/bin"
-      mkdir -p "$tool_dir"
-      curl --fail --silent --show-error --location \
-        https://github.com/mikefarah/yq/releases/download/v4.54.1/yq_linux_amd64 \
-        --output "$tool_dir/yq.download"
-      echo "8e34fc298390875de416e6a4afcb8cabeceb25d9aa8506c1a2f9353cf702ea5f  $tool_dir/yq.download" | sha256sum --check
-      mv "$tool_dir/yq.download" "$tool_dir/yq"
-      chmod 755 "$tool_dir/yq"
-      "$tool_dir/yq" --version
-      echo "$tool_dir" >> "$GITHUB_PATH"
-
   - name: Record framework configuration changes
     shell: bash
     env:
@@ -164,11 +148,6 @@ safe-outputs:
   threat-detection:
     max-ai-credits: 30
     retries: 0
-    post-steps:
-      - name: Install detector for skipped-run conclusion
-        if: always() && steps.detection_guard.outputs.run_detection != 'true'
-        shell: bash
-        run: bash "${RUNNER_TEMP}/gh-aw/actions/install_threat_detect_binary.sh" v0.5.1
   push-to-pull-request-branch:
     base-branch: ${{ github.event.pull_request.head.sha }}
     github-token-for-extra-empty-commit: "${{ '' }}"
@@ -283,12 +262,12 @@ content, resources, bindings, labels or peers; static signals alone are not
 defects. For shared-style replacements, compare removed properties with actual
 setters and framework defaults, including Stretch beside wrapped content.
 
-Track every `changed_files` path as a citation checklist, not just a list of
-reviewed files. A path in a check's `files` array does not count as evidence:
-that path also needs at least one exact immutable citation in `evidence`.
-Review every changed locale separately. Do not substitute en-US, representative
-translations, a shared binding, or a companion file for citations to the other
-changed files. Preserve companion citations as additional evidence.
+Before requesting completion or publication, check every `changed_files` path
+against the report: it must appear in a review check's `files` and have at least
+one exact immutable source citation in `evidence`. Check all changed locales,
+not just representative translations. Companion citations do not replace
+citations to the changed files. Correct omissions with actual source evidence;
+do not invent references.
 
 Preserve each prepared signal as a finding or explain its false-positive
 dismissal with repository evidence. Preserve its stable ID. Do not silently
@@ -372,10 +351,7 @@ unchanged; publication outcomes remain visible in the safe-output job.
 
 ## Structured evidence
 
-Maintain `/tmp/gh-aw/accessibility/final.json` while reviewing bounded groups of
-files, using the schema below. Add the verified per-file citations as each group
-is reviewed instead of reconstructing all references from memory at the end.
-An incomplete draft is not a completed review or permission to publish.
+Write `/tmp/gh-aw/accessibility/final.json` once, using:
 
 ```json
 {
@@ -418,25 +394,6 @@ An incomplete draft is not a completed review or permission to publish.
   "patch_files": []
 }
 ```
-
-Before requesting `noop` or a branch push, use the prepared, already-permitted `yq` tool
-to list any changed files still missing from the report's citations:
-
-```bash
-yq -n -o=json 'load(strenv(RUNNER_TEMP) + "/gh-aw/accessibility-trusted/prepared.json").changed_files - (load("/tmp/gh-aw/accessibility/final.json") | [.review_checks[].evidence[].file] | unique)'
-```
-
-The result must be `[]`. If it is not empty, inspect those immutable files and
-add their actual source citations; do not invent references or copy a citation
-from another locale. Then check the same condition with an explicit exit status:
-
-```bash
-yq -e -n '(load(strenv(RUNNER_TEMP) + "/gh-aw/accessibility-trusted/prepared.json").changed_files - (load("/tmp/gh-aw/accessibility/final.json") | [.review_checks[].evidence[].file] | unique)) | length == 0'
-```
-
-This read-only preflight checks file coverage only, not citation correctness or
-review quality. The unchanged trusted final gate still checks each quoted line,
-revision, review dimension, runtime status and complete repair/publication state.
 
 Keep `validation` empty. The trusted post-step verifies the exact recipe,
 one-finding commit attribution, immutable identity and captured publication.
