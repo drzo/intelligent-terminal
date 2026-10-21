@@ -410,9 +410,10 @@ remain visible according to the requested origin filter.
 
 Initial host discovery runs at master startup, after a confirmed host-agent
 installation, or on an explicit `wta sessions refresh` request. There is no unconditional
-periodic installation scan. Failed host-agent startup discoveries are retried through the
-same discovery worker, with delays of 5, 10, 20, 40, then at most 60 seconds after
-each failure (checked on the existing five-second history timer). Retries recheck
+periodic installation scan. Failed host-agent startup discoveries use delays of 5
+and 10 seconds and stop after three total attempts. The master, dedicated history
+workers and model probes use the common startup admission layer; separate probe
+processes cannot reset the same target's failure budget. Retries recheck
 installation and policy and do not restart healthy resident providers.
 `wta sessions refresh --json` schedules discovery while respecting failure backoff and returns the
 current snapshot with `history_status`; it does not wait for discovery to finish.
@@ -423,12 +424,47 @@ only in nonvertical layout; vertical layout uses the Sidebar fallback instead.
 Live layout changes and helper-ready runtime configuration update this selection per
 window without reconnecting ACP. Push updates remain immediate in either layout,
 and returning to nonvertical layout immediately refreshes an already-open helper view.
-History-query recovery may rebuild only its history-only process. Startup
-discovery retries are separate and retain the existing ACP initialization timeout.
+History-query recovery may rebuild only its history-only process.
 
-Master allows up to 60 seconds for an ACP `initialize` reply from either a
-native agent or an `npx` adapter, including cold starts. Session creation,
-authentication and model-probe timeouts are separate and unchanged.
+### ACP preparation and startup verification
+
+Provider-specific detection and preparation adapters live in
+`src/agent_lifecycle/providers/`. The agent registry still owns commands, models
+and authentication metadata. Shared admission, safe diagnostics and process-tree
+ownership apply to every provider, including custom launch commands.
+
+`install-acp --agent-id antigravity` prepares the separate ACP dependency and
+performs one initialize-only check. Its JSON distinguishes `dependency_present`
+from `startup_verified`; a failed check exits nonzero but does not uninstall the
+dependency or hide the provider. `verify-acp --agent <command> --agent-id <id>`
+performs the same bounded check without a conversation or prompt.
+Both accept `--wsl-distro` and explicit `--retry-startup`.
+
+Settings uses the first initialization of its model probe as the startup check,
+rather than launching a disposable verification process and then another model
+probe. The normal agent-pane connection similarly verifies its prepared
+dependency in the actual shared runtime. An installation-time check is not a
+guarantee of future startup.
+
+Failure budgets are stored under the package-private `acp-startup` directory,
+scoped to the WTA binary identity and hashed effective launch target. They contain
+counts, structured failure fields and bounded, filtered native details rather
+than full provider configuration objects. Native details can include file paths. Ordinary
+refreshes and new helper generations do not reset them. A successful initialize
+or an explicit user retry resets the target's budget; unconfirmed cleanup stops
+replacement instead. `probe-models --retry-startup` is the CLI equivalent of the
+explicit retry action. See [ACP provider lifecycle](../../doc/specs/acp-provider-lifecycle.md).
+
+The `probe-sessions` and `probe-host-sessions` diagnostics share admission for
+their inherited provider binding and retain it through confirmed cleanup.
+Both accept `--retry-startup`; it reopens an exhausted cycle, not a cleanup
+quarantine. They preserve their diagnostic output shapes and treat an unsupported
+session-list method as a normal result rather than an initialization failure.
+Their session-list timeout remains 10 seconds.
+
+Startup checks allow up to 60 seconds for an ACP `initialize` reply from either a
+native agent or an `npx` adapter, including cold starts. Session creation and
+authentication retain their own limits.
 
 ### tmux-like CLI
 

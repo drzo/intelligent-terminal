@@ -178,6 +178,8 @@ pub struct WtaMeta {
     /// `retired` means the owning tab was reset or closed while the agent
     /// request was in flight, so the helper must not bind the returned ID.
     pub session_result: Option<String>,
+    /// Explicit user retry; never inferred from refresh or a new helper.
+    pub startup_intent: Option<String>,
 }
 
 impl WtaMeta {
@@ -208,6 +210,7 @@ impl WtaMeta {
             && blank(&self.cloud_models_source)
             && blank(&self.proposal_mcp)
             && blank(&self.session_result)
+            && blank(&self.startup_intent)
     }
 }
 
@@ -262,6 +265,7 @@ pub fn extract_wta_meta(meta: &mut Option<acp::schema::v1::Meta>) -> WtaMeta {
         cloud_models_source: str_field("cloud_models_source"),
         proposal_mcp: str_field("proposal_mcp"),
         session_result: str_field("session_result"),
+        startup_intent: str_field("startup_intent"),
     }
 }
 
@@ -306,6 +310,7 @@ pub fn inject_wta_meta(meta: &mut Option<acp::schema::v1::Meta>, wta: &WtaMeta) 
     put("cloud_models_source", &wta.cloud_models_source);
     put("proposal_mcp", &wta.proposal_mcp);
     put("session_result", &wta.session_result);
+    put("startup_intent", &wta.startup_intent);
     // Every field was absent/whitespace-only after filtering — nothing
     // meaningful to attach, so don't litter the wire with an empty
     // `_meta.wta` object (a strict downstream implementer might reject it).
@@ -10021,6 +10026,24 @@ mod tests {
     }
 
     #[test]
+    fn explicit_startup_retry_intent_survives_the_private_metadata_boundary() {
+        let mut meta = Some(
+            serde_json::json!({"wta": {"agent_id": "copilot", "startup_intent": "retry"}})
+                .as_object()
+                .unwrap()
+                .clone(),
+        );
+        let parsed = extract_wta_meta(&mut meta);
+        assert!(meta.is_none(), "private retry intent must not reach the agent");
+        inject_wta_meta(&mut meta, &parsed);
+        assert_eq!(
+            meta.as_ref().unwrap()["wta"]["startup_intent"],
+            "retry",
+            "explicit retry intent must reach the lifecycle owner"
+        );
+    }
+
+    #[test]
     fn inject_then_extract_round_trips_control_client_role() {
         let original = WtaMeta {
             control_client: Some("sidebar-history-v1".to_string()),
@@ -10085,6 +10108,7 @@ mod tests {
                 cloud_models_source: Some("\t".to_string()),
                 proposal_mcp: Some(" ".to_string()),
                 session_result: Some(" ".to_string()),
+                startup_intent: Some(" ".to_string()),
             },
         );
         assert!(meta.is_none(), "all-blank meta ⇒ no _meta.wta on the wire");
@@ -10130,6 +10154,7 @@ mod tests {
                 cloud_models_source: Some("\t".to_string()),
                 proposal_mcp: Some(" ".to_string()),
                 session_result: Some(" ".to_string()),
+                startup_intent: Some("\t".to_string()),
             }
             .is_empty(),
             "all-whitespace fields ⇒ empty"
