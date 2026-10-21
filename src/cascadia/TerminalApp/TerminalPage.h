@@ -187,7 +187,7 @@ namespace winrt::TerminalApp::implementation
         winrt::hstring ApplicationDisplayName();
         winrt::hstring ApplicationVersion();
 
-        CommandPalette LoadCommandPalette();
+        winrt::TerminalApp::CommandPalette LoadCommandPalette();
         SuggestionsControl LoadSuggestionsUI();
 
         safe_void_coroutine RequestQuit();
@@ -909,7 +909,7 @@ namespace winrt::TerminalApp::implementation
 
         safe_void_coroutine _NewTerminalByDrop(const Windows::Foundation::IInspectable&, winrt::Windows::UI::Xaml::DragEventArgs e);
 
-        __declspec(noinline) CommandPalette _loadCommandPaletteSlowPath();
+        __declspec(noinline) winrt::TerminalApp::CommandPalette _loadCommandPaletteSlowPath();
         bool _commandPaletteIs(winrt::Windows::UI::Xaml::Visibility visibility);
         __declspec(noinline) SuggestionsControl _loadSuggestionsElementSlowPath();
         bool _suggestionsControlIs(winrt::Windows::UI::Xaml::Visibility visibility);

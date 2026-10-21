@@ -6,6 +6,7 @@
 #include "TerminalPage.h"
 #include "TabStrip.h"
 #include "TabHeaderControl.h"
+#include "CommandPalette.h"
 
 #include <iomanip>
 #include <icu.h>
@@ -6673,7 +6674,8 @@ namespace winrt::TerminalApp::implementation
         {
             _OnVerticalRailCollapseRequested(nullptr, nullptr);
         }
-        if (winrt::get_self<implementation::TabStrip>(_tabStrip)->FocusTabSearch())
+        const auto toggle = winrt::get_self<implementation::TabRowControl>(_tabRow)->VerticalRailToggleButton();
+        if (toggle && toggle.Focus(FocusState::Programmatic))
         {
             _sidebarHotkeyReturnControl = std::move(returnControl);
         }
@@ -11665,7 +11667,8 @@ namespace winrt::TerminalApp::implementation
         }
 
         if (_commandPaletteIs(Visibility::Visible) &&
-            action.Action() != ShortcutAction::ToggleCommandPalette)
+            action.Action() != ShortcutAction::ToggleCommandPalette &&
+            action.Action() != ShortcutAction::TabSearch)
         {
             CommandPaletteElement().Visibility(Visibility::Collapsed);
         }
@@ -13716,7 +13719,7 @@ namespace winrt::TerminalApp::implementation
         return nullptr;
     }
 
-    CommandPalette TerminalPage::LoadCommandPalette()
+    winrt::TerminalApp::CommandPalette TerminalPage::LoadCommandPalette()
     {
         if (const auto p = CommandPaletteElement())
         {
@@ -13731,18 +13734,21 @@ namespace winrt::TerminalApp::implementation
         return p && p.Visibility() == visibility;
     }
 
-    CommandPalette TerminalPage::_loadCommandPaletteSlowPath()
+    winrt::TerminalApp::CommandPalette TerminalPage::_loadCommandPaletteSlowPath()
     {
-        const auto p = FindName(L"CommandPaletteElement").as<CommandPalette>();
+        const auto p = FindName(L"CommandPaletteElement").as<winrt::TerminalApp::CommandPalette>();
 
         p.SetActionMap(_settings.ActionMap());
 
-        // When the visibility of the command palette changes to "collapsed",
-        // the palette has been closed. Toss focus back to the currently active control.
+        // Keep an explicit sidebar focus destination when focus loss dismisses the palette.
         p.RegisterPropertyChangedCallback(UIElement::VisibilityProperty(), [this](auto&&, auto&&) {
             if (_commandPaletteIs(Visibility::Collapsed))
             {
-                _FocusActiveControl(nullptr, nullptr);
+                const auto palette = winrt::get_self<implementation::CommandPalette>(CommandPaletteElement());
+                if (!palette->DismissedByFocusLoss() || !_SidebarFocusedControl())
+                {
+                    _FocusActiveControl(nullptr, nullptr);
+                }
             }
         });
         p.DispatchCommandRequested({ this, &TerminalPage::_OnDispatchCommandRequested });
