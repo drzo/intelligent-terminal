@@ -9,6 +9,7 @@ BeforeDiscovery {
 Describe 'Feature: Sidebar tab keyboard navigation' -Tag @('Feature', 'SidebarTabKeyboard') -Skip:(-not $script:Ready) {
     BeforeAll {
         Import-Module (Join-Path $PSScriptRoot '..\ItE2E\ItE2E.psd1') -Force
+        . (Join-Path $PSScriptRoot 'helpers\SidebarExpansionEvents.ps1')
         Add-Type -AssemblyName UIAutomationClient
         Add-Type -AssemblyName UIAutomationTypes
 
@@ -264,6 +265,92 @@ Describe 'Feature: Sidebar tab keyboard navigation' -Tag @('Feature', 'SidebarTa
         Set-WtPaneFocus -App $script:app -SessionId $script:tabB.session_id
         Assert-NavigationTab -Tab $script:tabB -Title $script:titleB -Draft $draftB
         Save-UiScreenshot -App $script:app -Path (Join-Path $script:evidenceDir 'cycle-after-round-trip.png') | Out-Null
+
+        $createdPanes = [Collections.Generic.List[string]]::new()
+        try {
+            $visibleQuery = "nav-visible-$script:marker"
+            $titleX = "$visibleQuery-agent"
+            $titleGap = "$visibleQuery-ordinary"
+            $titleY = "nav-other-$script:marker-agent"
+            $cwd = [IO.Path]::GetPathRoot($env:SystemRoot)
+            $agentX = Invoke-WtCli -App $script:app -Arguments @(
+                'new-tab', '-c', 'pwsh.exe -NoLogo -NoProfile -NoExit', '-d', $cwd,
+                '-n', $titleX, '-w', [string]$script:app.WindowId, '--agent-provider', 'copilot')
+            $createdPanes.Add([string]$agentX.session_id)
+            $gap = New-WtTab -App $script:app -Title $titleGap -Cwd $cwd -Command 'pwsh.exe -NoLogo -NoProfile -NoExit'
+            $createdPanes.Add([string]$gap.session_id)
+            $agentY = Invoke-WtCli -App $script:app -Arguments @(
+                'new-tab', '-c', 'pwsh.exe -NoLogo -NoProfile -NoExit', '-d', $cwd,
+                '-n', $titleY, '-w', [string]$script:app.WindowId, '--agent-provider', 'copilot')
+            $createdPanes.Add([string]$agentY.session_id)
+            $split = Split-WtPane -App $script:app -SessionId $agentY.session_id -Direction right `
+                -Command 'pwsh.exe -NoLogo -NoProfile -NoExit'
+            $createdPanes.Add([string]$split.session_id)
+            $splitTarget = [pscustomobject]@{ tab_id = $agentY.tab_id; session_id = $split.session_id }
+            $panes = @(Get-WtPanes -App $script:app -TabId $agentY.tab_id -WindowId ([string]$script:app.WindowId))
+            $panes.Count | Should -Be 2
+            @($panes | Where-Object session_id -eq $agentY.session_id)[0].native_agent_provider_id | Should -Be 'copilot'
+            $paneIds = @($panes.session_id | Sort-Object)
+            $paneProcesses = @{}
+            foreach ($paneId in $paneIds) {
+                $paneProcesses[$paneId] = (Get-WtPaneStatus -App $script:app -SessionId $paneId).pid
+            }
+            $draftX = "NAV_X_$script:marker"
+            $draftSplit = "NAV_SPLIT_$script:marker"
+            $draftGap = "NAV_GAP_$script:marker"
+            Send-WtInput -App $script:app -SessionId $agentX.session_id -Text $draftX | Out-Null
+            Send-WtInput -App $script:app -SessionId $split.session_id -Text $draftSplit | Out-Null
+            Send-WtInput -App $script:app -SessionId $gap.session_id -Text $draftGap | Out-Null
+            $order = (@(Get-WtTabs -App $script:app -WindowId ([string]$script:app.WindowId)).tab_id -join ',')
+
+            Set-TestSidebarScope -App $script:app -AgentsOnly $true -Recent $false
+            (Test-Until -TimeoutSec 8 -Condition { @(Get-VisibleTabRows).Count -eq 2 }) | Should -BeTrue
+            Set-WtPaneFocus -App $script:app -SessionId $split.session_id
+            Assert-NavigationTab -Tab $splitTarget -Title $titleY -Draft $draftSplit
+            Send-WtWindowKey -App $script:app -Vk 0x28 -Ctrl -Alt -RequireForeground | Out-Null
+            Assert-NavigationTab -Tab $agentX -Title $titleX -Draft $draftX
+            Send-WtWindowKey -App $script:app -Vk 0x28 -Ctrl -Alt -RequireForeground | Out-Null
+            Assert-NavigationTab -Tab $splitTarget -Title $titleY -Draft $draftSplit
+            Send-WtWindowKey -App $script:app -Vk 0x26 -Ctrl -Alt -RequireForeground | Out-Null
+            Assert-NavigationTab -Tab $agentX -Title $titleX -Draft $draftX
+            Send-WtWindowKey -App $script:app -Vk 0x26 -Ctrl -Alt -RequireForeground | Out-Null
+            Assert-NavigationTab -Tab $splitTarget -Title $titleY -Draft $draftSplit
+            Save-UiScreenshot -App $script:app -Path (Join-Path $script:evidenceDir 'cycle-agents-split.png') | Out-Null
+
+            Invoke-UiClick -App $script:app -Selector SearchTabsButton | Out-Null
+            Set-UiValue -App $script:app -Selector SearchTextBox -Value $visibleQuery | Out-Null
+            (Test-Until -TimeoutSec 8 -Condition { @(Get-VisibleTabRows).Count -eq 2 }) | Should -BeTrue
+            Set-WtPaneFocus -App $script:app -SessionId $agentX.session_id
+            Send-WtWindowKey -App $script:app -Vk 0x28 -Ctrl -Alt -RequireForeground | Out-Null
+            Assert-NavigationTab -Tab $gap -Title $titleGap -Draft $draftGap
+            Send-WtWindowKey -App $script:app -Vk 0x28 -Ctrl -Alt -RequireForeground | Out-Null
+            Assert-NavigationTab -Tab $agentX -Title $titleX -Draft $draftX
+            (Get-UiValue -App $script:app -Selector SearchTextBox) | Should -BeExactly $visibleQuery
+            Invoke-UiClick -App $script:app -Selector SearchTabsButton | Out-Null
+            Set-WtPaneFocus -App $script:app -SessionId $split.session_id
+            Send-WtWindowKey -App $script:app -Vk 0x28 -Ctrl -Alt -RequireForeground | Out-Null
+            Assert-NavigationTab -Tab $agentX -Title $titleX -Draft $draftX
+            Send-WtWindowKey -App $script:app -Vk 0x26 -Ctrl -Alt -RequireForeground | Out-Null
+            Assert-NavigationTab -Tab $splitTarget -Title $titleY -Draft $draftSplit
+            @((Get-WtPanes -App $script:app -TabId $agentY.tab_id -WindowId ([string]$script:app.WindowId)).session_id | Sort-Object) |
+                Should -Be $paneIds
+            foreach ($paneId in $paneIds) {
+                (Get-WtPaneStatus -App $script:app -SessionId $paneId).pid | Should -Be $paneProcesses[$paneId]
+            }
+            (@(Get-WtTabs -App $script:app -WindowId ([string]$script:app.WindowId)).tab_id -join ',') |
+                Should -BeExactly $order -Because 'agent-filtered navigation must not reorder or recreate owning tabs'
+        }
+        finally {
+            $search = Get-SidebarElement -AutomationId 'SearchTextBox'
+            if ($search -and -not $search.Current.IsOffscreen) {
+                Invoke-UiClick -App $script:app -Selector SearchTabsButton | Out-Null
+            }
+            Set-TestSidebarScope -App $script:app -AgentsOnly $false -Recent $false
+            for ($index = $createdPanes.Count - 1; $index -ge 0; $index--) {
+                Close-WtPane -App $script:app -SessionId $createdPanes[$index]
+            }
+        }
+        (@(Get-WtTabs -App $script:app -WindowId ([string]$script:app.WindowId)).tab_id -join ',') | Should -BeExactly $before
 
         try {
             Set-WtSetting -App $script:app -Key tabLayout -Value horizontal | Out-Null
