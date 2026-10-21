@@ -787,6 +787,8 @@ namespace winrt::TerminalApp::implementation
             }
         });
         _tabStrip.KeyDown({ get_weak(), &TerminalPage::_KeyDownHandler });
+        _tabStrip.PreviewKeyDown({ get_weak(), &TerminalPage::_SidebarNavigationKeyDown });
+        _tabRow.PreviewKeyDown({ get_weak(), &TerminalPage::_SidebarNavigationKeyDown });
         _tabStrip.HistoryActivationRequested([weakThis{ get_weak() }](auto&&, const auto& args) {
             if (const auto page = weakThis.get(); page && args)
             {
@@ -11695,6 +11697,16 @@ namespace winrt::TerminalApp::implementation
     // - <none>
     void TerminalPage::_KeyDownHandler(const Windows::Foundation::IInspectable& /*sender*/, const Windows::UI::Xaml::Input::KeyRoutedEventArgs& e)
     {
+        _DispatchKeyEvent(e, false);
+    }
+
+    void TerminalPage::_SidebarNavigationKeyDown(const Windows::Foundation::IInspectable& /*sender*/, const Windows::UI::Xaml::Input::KeyRoutedEventArgs& e)
+    {
+        _DispatchKeyEvent(e, true);
+    }
+
+    void TerminalPage::_DispatchKeyEvent(const Windows::UI::Xaml::Input::KeyRoutedEventArgs& e, const bool sidebarNavigationOnly)
+    {
         const auto keyStatus = e.KeyStatus();
         const auto vkey = gsl::narrow_cast<WORD>(e.OriginalKey());
         const auto scanCode = gsl::narrow_cast<WORD>(keyStatus.ScanCode);
@@ -11749,6 +11761,14 @@ namespace winrt::TerminalApp::implementation
         }
 
         const auto action = cmd.ActionAndArgs();
+        const auto sidebarNavigation = action.Action() == ShortcutAction::NextSidebarTab ||
+                                       action.Action() == ShortcutAction::PrevSidebarTab;
+        // TabRow forwards KeyUp for legacy commands; navigation already ran on PreviewKeyDown.
+        if ((sidebarNavigationOnly && !sidebarNavigation) ||
+            (sidebarNavigation && keyStatus.IsKeyReleased))
+        {
+            return;
+        }
         const auto handled = (action.Action() == ShortcutAction::ToggleSidebar ||
                               action.Action() == ShortcutAction::SwitchToTab) ?
                                  _actionDispatch->DoAction(chord, action) :
