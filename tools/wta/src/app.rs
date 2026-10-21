@@ -1758,6 +1758,7 @@ pub(crate) fn session_info_to_agent_session(
         current_tool: info.current_tool.clone(),
         attention_reason: info.attention_reason.clone(),
         attention_timestamp_ms: info.attention_timestamp_ms,
+        attention_cooldown_until_ms: info.attention_cooldown_until_ms,
         log_path: None,
         origin,
         location: info.location.clone(),

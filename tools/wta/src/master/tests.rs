@@ -17443,6 +17443,13 @@ async fn copilot_completion_hooks_resume_activity_without_file_events() {
             Some(AgentStatus::Attention)
         );
         crate::wt_protocol_events::take_test_published_events();
+        let before = state.registry.lookup(&sid).await.unwrap();
+        handle_master_wt_event(&state, hook("agent.tool.finished")).await;
+        assert_eq!(state.registry.lookup(&sid).await.unwrap(), before);
+        assert!(crate::wt_protocol_events::take_test_published_events().is_empty());
+        let mut expired = before;
+        expired.attention_cooldown_until_ms = Some(0);
+        state.registry.upsert(expired).await;
         handle_master_wt_event(&state, hook("agent.tool.finished")).await;
         let row = state.registry.lookup(&sid).await.unwrap();
         assert_eq!(row.status, Some(AgentStatus::Working));
@@ -17515,6 +17522,9 @@ async fn copilot_stale_tool_return_preserves_master_waiting() {
         });
         handle_master_wt_event(&state, hook.clone()).await;
     }
+    let mut expired = state.registry.lookup(&sid).await.unwrap();
+    expired.attention_cooldown_until_ms = Some(0);
+    state.registry.upsert(expired).await;
     let before = state.registry.lookup(&sid).await.unwrap();
     crate::wt_protocol_events::take_test_published_events();
     hook["params"]["event"] = serde_json::json!("agent.tool.finished");

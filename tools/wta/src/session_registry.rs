@@ -19,7 +19,7 @@ use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::SystemTime;
 
 use crate::agent_sessions::{
     AgentSession, AgentStatus, CliSource, SessionEvent, SessionLocation, SessionOrigin,
@@ -1427,6 +1427,8 @@ pub struct SessionInfo {
     pub attention_reason: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub attention_timestamp_ms: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub attention_cooldown_until_ms: Option<u64>,
     #[serde(default)]
     pub last_activity_at_ms: Option<u64>,
     #[serde(default)]
@@ -1491,6 +1493,7 @@ impl PartialEq for SessionInfo {
             && self.current_tool == other.current_tool
             && self.attention_reason == other.attention_reason
             && self.attention_timestamp_ms == other.attention_timestamp_ms
+            && self.attention_cooldown_until_ms == other.attention_cooldown_until_ms
             && self.last_activity_at_ms == other.last_activity_at_ms
             && self.origin == other.origin
             && self.last_error == other.last_error
@@ -1525,6 +1528,7 @@ impl SessionInfo {
             current_tool: None,
             attention_reason: None,
             attention_timestamp_ms: None,
+            attention_cooldown_until_ms: None,
             last_activity_at_ms: None,
             origin: None,
             last_error: None,
@@ -1585,6 +1589,7 @@ pub fn agent_session_to_session_info(s: &AgentSession) -> SessionInfo {
         current_tool: s.current_tool.clone(),
         attention_reason: s.attention_reason.clone(),
         attention_timestamp_ms: s.attention_timestamp_ms,
+        attention_cooldown_until_ms: s.attention_cooldown_until_ms,
         last_activity_at_ms,
         origin: Some(s.origin.clone()),
         last_error: s.last_error.clone(),
@@ -2157,10 +2162,7 @@ impl SessionRegistry for InMemoryRegistry {
 
 #[allow(dead_code)] // Used through apply_event once Task B forwards hook events.
 fn now_ms() -> u64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_millis() as u64
+    crate::agent_sessions::system_time_ms(SystemTime::now())
 }
 
 fn pane_key(pane_session_id: &str) -> String {
@@ -2341,13 +2343,17 @@ fn end_entry(state: &mut RegistryState, identity: &SessionIdentity, now: u64) ->
     entry.current_tool = None;
     entry.attention_reason = None;
     entry.attention_timestamp_ms = None;
+    entry.attention_cooldown_until_ms = None;
     entry.last_activity_at_ms = Some(now);
     true
 }
 
 #[allow(dead_code)] // Task B calls this via SessionRegistry::apply_event.
 fn apply_event_locked(state: &mut RegistryState, ev: SessionEvent) -> bool {
-    let now = now_ms();
+    apply_event_at_ms(state, ev, now_ms())
+}
+
+fn apply_event_at_ms(state: &mut RegistryState, ev: SessionEvent, now: u64) -> bool {
     let ev = match ev {
         SessionEvent::SessionStarted {
             key,
@@ -2568,6 +2574,7 @@ fn apply_event_locked(state: &mut RegistryState, ev: SessionEvent) -> bool {
                 entry.last_error = None;
                 entry.attention_reason = None;
                 entry.attention_timestamp_ms = None;
+                entry.attention_cooldown_until_ms = None;
                 entry.current_tool = None;
             }
             entry.last_activity_at_ms = Some(now);
@@ -2692,6 +2699,7 @@ fn apply_event_locked(state: &mut RegistryState, ev: SessionEvent) -> bool {
                 return false;
             }
             entry.status = Some(AgentStatus::Working);
+            entry.attention_cooldown_until_ms = None;
             entry.current_tool = Some(tool_name);
             entry.last_activity_at_ms = Some(now);
             true
@@ -2713,6 +2721,14 @@ fn apply_event_locked(state: &mut RegistryState, ev: SessionEvent) -> bool {
                 return false;
             }
             if entry.status == Some(AgentStatus::Attention)
+                && entry
+                    .attention_cooldown_until_ms
+                    .is_some_and(|until| now < until)
+            {
+                tracing::debug!(target: "session_registry", session_id = %sid, attention_cooldown_until_ms = entry.attention_cooldown_until_ms, "ignored tool return during attention cooldown");
+                return false;
+            }
+            if entry.status == Some(AgentStatus::Attention)
                 && timestamp_ms
                     .zip(entry.attention_timestamp_ms)
                     .is_some_and(|(returned, attention)| returned < attention)
@@ -2724,6 +2740,7 @@ fn apply_event_locked(state: &mut RegistryState, ev: SessionEvent) -> bool {
             entry.current_tool = None;
             entry.attention_reason = None;
             entry.attention_timestamp_ms = None;
+            entry.attention_cooldown_until_ms = None;
             entry.last_activity_at_ms = Some(now);
             true
         }
@@ -2752,6 +2769,7 @@ fn apply_event_locked(state: &mut RegistryState, ev: SessionEvent) -> bool {
                 entry.status = Some(AgentStatus::Idle);
                 entry.attention_reason = None;
                 entry.attention_timestamp_ms = None;
+                entry.attention_cooldown_until_ms = None;
             }
             entry.current_tool = None;
             entry.last_activity_at_ms = Some(now);
@@ -2785,6 +2803,10 @@ fn apply_event_locked(state: &mut RegistryState, ev: SessionEvent) -> bool {
                 timestamp_ms
             };
             entry.status = Some(AgentStatus::Attention);
+            entry.attention_cooldown_until_ms = (entry.cli_source == Some(CliSource::Copilot))
+                .then_some(
+                    now.saturating_add(crate::agent_sessions::COPILOT_ATTENTION_COOLDOWN_MS),
+                );
             entry.attention_reason = Some(message);
             entry.last_activity_at_ms = Some(now);
             true
@@ -2852,7 +2874,7 @@ fn apply_event_locked(state: &mut RegistryState, ev: SessionEvent) -> bool {
             }) {
                 return false;
             }
-            apply_event_locked(state, SessionEvent::SessionStopped { key, reason })
+            apply_event_at_ms(state, SessionEvent::SessionStopped { key, reason }, now)
         }
         SessionEvent::SessionStopped { key, reason } => {
             let sid = acp::schema::v1::SessionId::new(key);
@@ -2891,6 +2913,7 @@ fn apply_event_locked(state: &mut RegistryState, ev: SessionEvent) -> bool {
             entry.current_tool = None;
             entry.attention_reason = None;
             entry.attention_timestamp_ms = None;
+            entry.attention_cooldown_until_ms = None;
             entry.last_activity_at_ms = Some(now);
             true
         }
@@ -2909,6 +2932,7 @@ fn apply_event_locked(state: &mut RegistryState, ev: SessionEvent) -> bool {
             entry.current_tool = None;
             entry.attention_reason = None;
             entry.attention_timestamp_ms = None;
+            entry.attention_cooldown_until_ms = None;
             entry.last_activity_at_ms = Some(now);
             true
         }
@@ -2934,6 +2958,7 @@ fn apply_event_locked(state: &mut RegistryState, ev: SessionEvent) -> bool {
                 return false;
             }
             entry.status = Some(AgentStatus::Error);
+            entry.attention_cooldown_until_ms = None;
             entry.last_error = Some(reason);
             entry.last_activity_at_ms = Some(now);
             true
@@ -3056,6 +3081,201 @@ pub async fn apply_ext_notification(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn cooldown_state() -> RegistryState {
+        let mut state = RegistryState::default();
+        apply_event_at_ms(
+            &mut state,
+            SessionEvent::SessionStarted {
+                key: "cooldown".into(),
+                cli_source: CliSource::Copilot,
+                pane_session_id: "owner".into(),
+                cwd: PathBuf::from("/repo"),
+                title: "copilot".into(),
+            },
+            0,
+        );
+        apply_event_at_ms(
+            &mut state,
+            SessionEvent::ToolStarting {
+                key: "cooldown".into(),
+                tool_name: "prompt".into(),
+            },
+            0,
+        );
+        state
+    }
+
+    #[test]
+    fn copilot_attention_cooldown_preserves_master_snapshot_and_expiry_boundary() {
+        for (attention_timestamp, return_timestamp) in [
+            (Some(100), Some(200)),
+            (Some(100), None),
+            (None, Some(200)),
+            (None, None),
+        ] {
+            let mut state = cooldown_state();
+            assert!(apply_event_at_ms(
+                &mut state,
+                SessionEvent::Notification {
+                    key: "cooldown".into(),
+                    message: "approve command".into(),
+                    timestamp_ms: attention_timestamp,
+                },
+                10_000,
+            ));
+            apply_event_at_ms(
+                &mut state,
+                SessionEvent::WorkingDirectoryChanged {
+                    key: "cooldown".into(),
+                    pane_session_id: "owner".into(),
+                    cwd: PathBuf::from("/other"),
+                },
+                20_000,
+            );
+            let before = state.sessions.values().next().unwrap().clone();
+            let wire = serde_json::to_value(&before).unwrap();
+            let decoded: SessionInfo = serde_json::from_value(wire).unwrap();
+            let helper = crate::app::session_info_to_agent_session(&decoded);
+            let round_trip = agent_session_to_session_info(&helper);
+            assert_eq!(round_trip.attention_cooldown_until_ms, Some(40_000));
+            assert_eq!(round_trip.attention_timestamp_ms, attention_timestamp);
+            assert!(!apply_event_at_ms(
+                &mut state,
+                SessionEvent::ToolReturned {
+                    key: "cooldown".into(),
+                    timestamp_ms: return_timestamp,
+                },
+                39_999,
+            ));
+            assert_eq!(state.sessions.values().next().unwrap(), &before);
+            apply_event_at_ms(
+                &mut state,
+                SessionEvent::WorkingDirectoryChanged {
+                    key: "cooldown".into(),
+                    pane_session_id: "owner".into(),
+                    cwd: PathBuf::from("/at-expiry"),
+                },
+                40_000,
+            );
+            assert_eq!(
+                state.sessions.values().next().unwrap().status,
+                Some(AgentStatus::Attention)
+            );
+            assert!(apply_event_at_ms(
+                &mut state,
+                SessionEvent::ToolReturned {
+                    key: "cooldown".into(),
+                    timestamp_ms: return_timestamp,
+                },
+                40_000,
+            ));
+            let recovered = state.sessions.values().next().unwrap();
+            assert_eq!(recovered.status, Some(AgentStatus::Working));
+            assert!(recovered.attention_reason.is_none());
+            assert!(recovered.attention_cooldown_until_ms.is_none());
+        }
+    }
+
+    #[test]
+    fn copilot_attention_cooldown_resets_without_delaying_master_stop_or_prompt() {
+        let mut state = cooldown_state();
+        for (received, source) in [(10_000, Some(100)), (40_000, Some(90))] {
+            apply_event_at_ms(
+                &mut state,
+                SessionEvent::Notification {
+                    key: "cooldown".into(),
+                    message: "waiting".into(),
+                    timestamp_ms: source,
+                },
+                received,
+            );
+        }
+        assert_eq!(
+            state
+                .sessions
+                .values()
+                .next()
+                .unwrap()
+                .attention_cooldown_until_ms,
+            Some(70_000)
+        );
+        assert!(!apply_event_at_ms(
+            &mut state,
+            SessionEvent::ToolReturned {
+                key: "cooldown".into(),
+                timestamp_ms: Some(200),
+            },
+            40_000,
+        ));
+        assert!(apply_event_at_ms(
+            &mut state,
+            SessionEvent::ToolCompleted {
+                key: "cooldown".into()
+            },
+            40_001
+        ));
+        let stopped = state.sessions.values().next().unwrap();
+        assert_eq!(stopped.status, Some(AgentStatus::Idle));
+        assert!(stopped.attention_cooldown_until_ms.is_none());
+        assert!(!apply_event_at_ms(
+            &mut state,
+            SessionEvent::ToolReturned {
+                key: "cooldown".into(),
+                timestamp_ms: Some(200),
+            },
+            40_002,
+        ));
+        apply_event_at_ms(
+            &mut state,
+            SessionEvent::Notification {
+                key: "cooldown".into(),
+                message: "another wait".into(),
+                timestamp_ms: None,
+            },
+            80_000,
+        );
+        apply_event_at_ms(
+            &mut state,
+            SessionEvent::ToolStarting {
+                key: "cooldown".into(),
+                tool_name: "prompt".into(),
+            },
+            80_001,
+        );
+        let active = state.sessions.values().next().unwrap();
+        assert_eq!(active.status, Some(AgentStatus::Working));
+        assert!(active.attention_cooldown_until_ms.is_none());
+        apply_event_at_ms(
+            &mut state,
+            SessionEvent::Notification {
+                key: "cooldown".into(),
+                message: "waiting before error".into(),
+                timestamp_ms: None,
+            },
+            90_000,
+        );
+        apply_event_at_ms(
+            &mut state,
+            SessionEvent::ConnectionFailed {
+                pane_session_id: "owner".into(),
+                reason: "connection failed".into(),
+            },
+            90_001,
+        );
+        assert!(!apply_event_at_ms(
+            &mut state,
+            SessionEvent::ToolReturned {
+                key: "cooldown".into(),
+                timestamp_ms: None,
+            },
+            90_002,
+        ));
+        assert_eq!(
+            state.sessions.values().next().unwrap().status,
+            Some(AgentStatus::Error)
+        );
+    }
 
     fn info(id: &str, pane: Option<&str>) -> SessionInfo {
         let mut s = SessionInfo::new(
@@ -4228,6 +4448,7 @@ mod tests {
             current_tool: Some("ask_user".into()),
             attention_reason: Some("Need approval".into()),
             attention_timestamp_ms: None,
+            attention_cooldown_until_ms: None,
             last_activity_at_ms: Some(1717012345678),
             origin: Some(crate::agent_sessions::SessionOrigin::AgentPane),
             last_error: Some("previous failure".into()),
@@ -4407,6 +4628,7 @@ mod tests {
             current_tool: None,
             attention_reason: None,
             attention_timestamp_ms: None,
+            attention_cooldown_until_ms: None,
             last_activity_at_ms: Some(123),
             origin: Some(crate::agent_sessions::SessionOrigin::AgentPane),
             last_error: None,
@@ -4765,6 +4987,7 @@ mod tests {
             current_tool: None,
             attention_reason: None,
             attention_timestamp_ms: None,
+            attention_cooldown_until_ms: None,
             last_activity_at_ms: Some(1),
             origin: Some(crate::agent_sessions::SessionOrigin::AgentPane),
             last_error: None,
@@ -6056,6 +6279,7 @@ mod tests {
             current_tool: None,
             attention_reason: None,
             attention_timestamp_ms: None,
+            attention_cooldown_until_ms: None,
             log_path: None,
             origin: SessionOrigin::AgentPane,
             location: SessionLocation::Host,
@@ -6091,6 +6315,7 @@ mod tests {
             current_tool: None,
             attention_reason: None,
             attention_timestamp_ms: None,
+            attention_cooldown_until_ms: None,
             log_path: None,
             origin: SessionOrigin::Unknown,
             location: SessionLocation::Host,
@@ -6691,6 +6916,7 @@ mod tests {
             current_tool: None,
             attention_reason: None,
             attention_timestamp_ms: None,
+            attention_cooldown_until_ms: None,
             log_path: None,
             origin: SessionOrigin::Unknown,
             location: SessionLocation::Wsl {

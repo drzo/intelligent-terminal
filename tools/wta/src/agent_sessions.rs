@@ -31,6 +31,22 @@ use std::time::SystemTime;
 
 pub type AgentKey = String;
 
+pub(crate) const COPILOT_ATTENTION_COOLDOWN_MS: u64 = 30_000;
+
+pub(crate) fn system_time_ms(time: SystemTime) -> u64 {
+    match time
+        .duration_since(std::time::UNIX_EPOCH)
+        .ok()
+        .and_then(|duration| duration.as_millis().try_into().ok())
+    {
+        Some(value) => value,
+        None => {
+            tracing::warn!(target: "agent_session_registry", "invalid system clock for session activity");
+            0
+        }
+    }
+}
+
 pub(crate) fn is_safe_cli_resume_id(value: &str) -> bool {
     !value.is_empty()
         && value.len() <= 256
@@ -327,6 +343,8 @@ pub struct AgentSession {
     pub attention_reason: Option<String>,
     /// Newest waiting hook's source time, not its COM delivery time.
     pub attention_timestamp_ms: Option<u64>,
+    /// Receipt-time deadline, independent of the provider's source timestamp.
+    pub attention_cooldown_until_ms: Option<u64>,
     pub log_path: Option<PathBuf>,
     /// Provenance for this session — populated for historical rows from
     /// the agent-pane origin index. See [`SessionOrigin`].
@@ -529,7 +547,11 @@ impl AgentSessionRegistry {
     }
 
     pub fn apply(&mut self, ev: SessionEvent) {
-        let now = SystemTime::now();
+        self.apply_at(ev, SystemTime::now());
+    }
+
+    pub(crate) fn apply_at(&mut self, ev: SessionEvent, now: SystemTime) {
+        let received_at_ms = system_time_ms(now);
         // Native events and hooks differ in GUID braces and case. Use the
         // same canonical identity for stored rows and every pane-keyed lookup.
         let ev = match ev {
@@ -649,6 +671,7 @@ impl AgentSessionRegistry {
                                     prev.current_tool = None;
                                     prev.attention_reason = None;
                                     prev.attention_timestamp_ms = None;
+                                    prev.attention_cooldown_until_ms = None;
                                     prev.last_activity_at = now;
                                     tracing::info!(
                                         target: "agent_session_registry",
@@ -683,6 +706,7 @@ impl AgentSessionRegistry {
                         current_tool: None,
                         attention_reason: None,
                         attention_timestamp_ms: None,
+                        attention_cooldown_until_ms: None,
                         log_path: None,
                         origin: SessionOrigin::default(),
                         location: SessionLocation::Host,
@@ -750,6 +774,7 @@ impl AgentSessionRegistry {
                     entry.last_error = None;
                     entry.attention_reason = None;
                     entry.attention_timestamp_ms = None;
+                    entry.attention_cooldown_until_ms = None;
                     entry.current_tool = None;
                 }
                 entry.last_activity_at = now;
@@ -798,6 +823,7 @@ impl AgentSessionRegistry {
             SessionEvent::ToolStarting { key, tool_name } => {
                 if let Some(entry) = self.sessions.get_mut(&key) {
                     entry.status = AgentStatus::Working;
+                    entry.attention_cooldown_until_ms = None;
                     entry.current_tool = Some(tool_name);
                     entry.last_activity_at = now;
                     self.dirty = true;
@@ -812,6 +838,14 @@ impl AgentSessionRegistry {
                         return;
                     }
                     if entry.status == AgentStatus::Attention
+                        && entry
+                            .attention_cooldown_until_ms
+                            .is_some_and(|until| received_at_ms < until)
+                    {
+                        tracing::debug!(target: "agent_session_registry", key, attention_cooldown_until_ms = entry.attention_cooldown_until_ms, "ignored tool return during attention cooldown");
+                        return;
+                    }
+                    if entry.status == AgentStatus::Attention
                         && timestamp_ms
                             .zip(entry.attention_timestamp_ms)
                             .is_some_and(|(returned, attention)| returned < attention)
@@ -823,6 +857,7 @@ impl AgentSessionRegistry {
                     entry.current_tool = None;
                     entry.attention_reason = None;
                     entry.attention_timestamp_ms = None;
+                    entry.attention_cooldown_until_ms = None;
                     entry.last_activity_at = now;
                     self.dirty = true;
                 }
@@ -838,6 +873,7 @@ impl AgentSessionRegistry {
                         entry.status = AgentStatus::Idle;
                         entry.attention_reason = None;
                         entry.attention_timestamp_ms = None;
+                        entry.attention_cooldown_until_ms = None;
                     }
                     entry.current_tool = None;
                     entry.last_activity_at = now;
@@ -857,6 +893,8 @@ impl AgentSessionRegistry {
                         timestamp_ms
                     };
                     entry.status = AgentStatus::Attention;
+                    entry.attention_cooldown_until_ms = (entry.cli_source == CliSource::Copilot)
+                        .then_some(received_at_ms.saturating_add(COPILOT_ATTENTION_COOLDOWN_MS));
                     entry.attention_reason = Some(message);
                     entry.last_activity_at = now;
                     self.dirty = true;
@@ -894,7 +932,7 @@ impl AgentSessionRegistry {
                             .as_deref()
                             .is_none_or(|pane| self.active_by_pane.get(pane) == Some(&key))
                 }) {
-                    self.apply(SessionEvent::SessionStopped { key, reason });
+                    self.apply_at(SessionEvent::SessionStopped { key, reason }, now);
                 }
             }
             SessionEvent::SessionStopped { key, reason } => {
@@ -957,6 +995,7 @@ impl AgentSessionRegistry {
                     entry.current_tool = None;
                     entry.attention_reason = None;
                     entry.attention_timestamp_ms = None;
+                    entry.attention_cooldown_until_ms = None;
                     entry.last_activity_at = now;
                     self.dirty = true;
                 }
@@ -970,6 +1009,7 @@ impl AgentSessionRegistry {
                         entry.current_tool = None;
                         entry.attention_reason = None;
                         entry.attention_timestamp_ms = None;
+                        entry.attention_cooldown_until_ms = None;
                         entry.last_activity_at = now;
                         self.dirty = true;
                     }
@@ -990,6 +1030,7 @@ impl AgentSessionRegistry {
                             && entry.last_error.as_deref() == Some(reason.as_str());
                         if !unchanged {
                             entry.status = AgentStatus::Error;
+                            entry.attention_cooldown_until_ms = None;
                             entry.last_error = Some(reason);
                             entry.last_activity_at = now;
                             self.dirty = true;
@@ -1043,6 +1084,7 @@ impl AgentSessionRegistry {
                                 prev.current_tool = None;
                                 prev.attention_reason = None;
                                 prev.attention_timestamp_ms = None;
+                                prev.attention_cooldown_until_ms = None;
                                 prev.last_activity_at = now;
                             }
                         }
@@ -1310,6 +1352,7 @@ impl AgentSessionRegistry {
                         entry.current_tool = None;
                         entry.attention_reason = None;
                         entry.attention_timestamp_ms = None;
+                        entry.attention_cooldown_until_ms = None;
                         entry.last_activity_at = now;
                         self.dirty = true;
                         tracing::info!(
@@ -1369,6 +1412,7 @@ impl AgentSessionRegistry {
         entry.current_tool = None;
         entry.attention_reason = None;
         entry.attention_timestamp_ms = None;
+        entry.attention_cooldown_until_ms = None;
         entry.last_activity_at = now;
         self.dirty = true;
         if let Some(pane) = pane_to_clear {
@@ -1484,6 +1528,7 @@ impl AgentSessionRegistry {
                     entry.current_tool = None;
                     entry.attention_reason = None;
                     entry.attention_timestamp_ms = None;
+                    entry.attention_cooldown_until_ms = None;
                     entry.last_error = None;
                     if let Some(pane) = pane_opt {
                         let pane_lc = pane_key(pane);
@@ -1669,6 +1714,7 @@ impl AgentSessionRegistry {
                 current_tool: None,
                 attention_reason: None,
                 attention_timestamp_ms: None,
+                attention_cooldown_until_ms: None,
                 log_path: Some(PathBuf::from("~/.gemini/logs/2026-05-03-1530.log")),
                 origin: SessionOrigin::default(),
                 location: SessionLocation::Host,
@@ -1736,6 +1782,196 @@ mod tests {
     }
     fn pane(s: &str) -> String {
         s.to_string()
+    }
+
+    fn cooldown_time(ms: u64) -> SystemTime {
+        std::time::UNIX_EPOCH + std::time::Duration::from_millis(ms)
+    }
+
+    fn cooldown_registry() -> AgentSessionRegistry {
+        let mut reg = AgentSessionRegistry::new();
+        reg.apply_at(
+            SessionEvent::SessionStarted {
+                key: k("cooldown"),
+                cli_source: CliSource::Copilot,
+                pane_session_id: pane("owner"),
+                cwd: PathBuf::from("/repo"),
+                title: "copilot".into(),
+            },
+            cooldown_time(0),
+        );
+        reg.apply_at(
+            SessionEvent::ToolStarting {
+                key: k("cooldown"),
+                tool_name: "prompt".into(),
+            },
+            cooldown_time(0),
+        );
+        reg.take_dirty();
+        reg
+    }
+
+    #[test]
+    fn copilot_attention_cooldown_uses_receipt_time_and_expires_on_a_later_event() {
+        for (attention_timestamp, return_timestamp) in [
+            (Some(100), Some(200)),
+            (Some(100), None),
+            (None, Some(200)),
+            (None, None),
+        ] {
+            let mut reg = cooldown_registry();
+            reg.apply_at(
+                SessionEvent::Notification {
+                    key: k("cooldown"),
+                    message: "approve command".into(),
+                    timestamp_ms: attention_timestamp,
+                },
+                cooldown_time(10_000),
+            );
+            reg.apply_at(
+                SessionEvent::WorkingDirectoryChanged {
+                    key: k("cooldown"),
+                    pane_session_id: pane("owner"),
+                    cwd: PathBuf::from("/other"),
+                },
+                cooldown_time(20_000),
+            );
+            let before = reg.get(&k("cooldown")).unwrap().clone();
+            assert_eq!(before.attention_cooldown_until_ms, Some(40_000));
+            reg.take_dirty();
+            reg.apply_at(
+                SessionEvent::ToolReturned {
+                    key: k("cooldown"),
+                    timestamp_ms: return_timestamp,
+                },
+                cooldown_time(39_999),
+            );
+            let blocked = reg.get(&k("cooldown")).unwrap();
+            assert_eq!(blocked.status, AgentStatus::Attention);
+            assert_eq!(blocked.attention_reason, before.attention_reason);
+            assert_eq!(blocked.current_tool, before.current_tool);
+            assert_eq!(blocked.last_activity_at, before.last_activity_at);
+            assert_eq!(blocked.attention_cooldown_until_ms, Some(40_000));
+            assert!(!reg.take_dirty());
+            reg.apply_at(
+                SessionEvent::WorkingDirectoryChanged {
+                    key: k("cooldown"),
+                    pane_session_id: pane("owner"),
+                    cwd: PathBuf::from("/at-expiry"),
+                },
+                cooldown_time(40_000),
+            );
+            assert_eq!(
+                reg.get(&k("cooldown")).unwrap().status,
+                AgentStatus::Attention
+            );
+            reg.apply_at(
+                SessionEvent::ToolReturned {
+                    key: k("cooldown"),
+                    timestamp_ms: return_timestamp,
+                },
+                cooldown_time(40_000),
+            );
+            let recovered = reg.get(&k("cooldown")).unwrap();
+            assert_eq!(recovered.status, AgentStatus::Working);
+            assert!(recovered.attention_reason.is_none());
+            assert!(recovered.attention_cooldown_until_ms.is_none());
+        }
+    }
+
+    #[test]
+    fn copilot_attention_cooldown_resets_and_does_not_block_stop_or_new_activity() {
+        let mut reg = cooldown_registry();
+        for (received, source) in [(10_000, Some(100)), (40_000, Some(90))] {
+            reg.apply_at(
+                SessionEvent::Notification {
+                    key: k("cooldown"),
+                    message: "waiting".into(),
+                    timestamp_ms: source,
+                },
+                cooldown_time(received),
+            );
+        }
+        assert_eq!(
+            reg.get(&k("cooldown")).unwrap().attention_cooldown_until_ms,
+            Some(70_000)
+        );
+        reg.apply_at(
+            SessionEvent::ToolReturned {
+                key: k("cooldown"),
+                timestamp_ms: Some(200),
+            },
+            cooldown_time(40_000),
+        );
+        assert_eq!(
+            reg.get(&k("cooldown")).unwrap().status,
+            AgentStatus::Attention
+        );
+        reg.apply_at(
+            SessionEvent::ToolCompleted { key: k("cooldown") },
+            cooldown_time(40_001),
+        );
+        assert_eq!(reg.get(&k("cooldown")).unwrap().status, AgentStatus::Idle);
+        assert!(reg
+            .get(&k("cooldown"))
+            .unwrap()
+            .attention_cooldown_until_ms
+            .is_none());
+        reg.apply_at(
+            SessionEvent::ToolReturned {
+                key: k("cooldown"),
+                timestamp_ms: Some(200),
+            },
+            cooldown_time(40_002),
+        );
+        assert_eq!(reg.get(&k("cooldown")).unwrap().status, AgentStatus::Idle);
+        reg.apply_at(
+            SessionEvent::Notification {
+                key: k("cooldown"),
+                message: "another wait".into(),
+                timestamp_ms: None,
+            },
+            cooldown_time(80_000),
+        );
+        reg.apply_at(
+            SessionEvent::ToolStarting {
+                key: k("cooldown"),
+                tool_name: "prompt".into(),
+            },
+            cooldown_time(80_001),
+        );
+        assert_eq!(
+            reg.get(&k("cooldown")).unwrap().status,
+            AgentStatus::Working
+        );
+        assert!(reg
+            .get(&k("cooldown"))
+            .unwrap()
+            .attention_cooldown_until_ms
+            .is_none());
+        reg.apply_at(
+            SessionEvent::Notification {
+                key: k("cooldown"),
+                message: "waiting before error".into(),
+                timestamp_ms: None,
+            },
+            cooldown_time(90_000),
+        );
+        reg.apply_at(
+            SessionEvent::ConnectionFailed {
+                pane_session_id: pane("owner"),
+                reason: "connection failed".into(),
+            },
+            cooldown_time(90_001),
+        );
+        reg.apply_at(
+            SessionEvent::ToolReturned {
+                key: k("cooldown"),
+                timestamp_ms: None,
+            },
+            cooldown_time(90_002),
+        );
+        assert_eq!(reg.get(&k("cooldown")).unwrap().status, AgentStatus::Error);
     }
 
     #[test]
@@ -2514,6 +2750,7 @@ mod tests {
             current_tool: None,
             attention_reason: None,
             attention_timestamp_ms: None,
+            attention_cooldown_until_ms: None,
             log_path: None,
             origin: SessionOrigin::default(),
             location: SessionLocation::Host,
@@ -2796,6 +3033,7 @@ mod tests {
             current_tool: None,
             attention_reason: None,
             attention_timestamp_ms: None,
+            attention_cooldown_until_ms: None,
             log_path: None,
             origin: SessionOrigin::default(),
             location: SessionLocation::Host,
@@ -3135,6 +3373,7 @@ mod tests {
             current_tool: None,
             attention_reason: None,
             attention_timestamp_ms: None,
+            attention_cooldown_until_ms: None,
             log_path: None,
             origin: SessionOrigin::Unknown,
             location: SessionLocation::Host,
@@ -3402,6 +3641,7 @@ mod tests {
             current_tool: None,
             attention_reason: None,
             attention_timestamp_ms: None,
+            attention_cooldown_until_ms: None,
             log_path: None,
             origin: SessionOrigin::AgentPane,
             location: SessionLocation::Host,

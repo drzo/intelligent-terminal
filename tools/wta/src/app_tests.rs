@@ -1639,11 +1639,16 @@ fn copilot_tool_finished_keeps_working_only_agent_stop_idles() {
         reg.get(&sid.to_string()).unwrap().status,
         AgentStatus::Attention
     );
+    let before = reg.get(&sid.to_string()).unwrap().clone();
     route(&mut reg, "agent.tool.finished");
     let row = reg.get(&sid.to_string()).unwrap();
-    assert_eq!(row.status, AgentStatus::Working);
-    assert!(row.current_tool.is_none());
-    assert!(row.attention_reason.is_none());
+    assert_eq!(row.status, AgentStatus::Attention);
+    assert_eq!(row.current_tool, before.current_tool);
+    assert_eq!(row.attention_reason, before.attention_reason);
+    assert_eq!(
+        row.attention_cooldown_until_ms,
+        before.attention_cooldown_until_ms
+    );
 
     // Only agent.stop ends the turn → Idle.
     route(&mut reg, "agent.stop");
@@ -1676,7 +1681,7 @@ fn copilot_tool_finished_keeps_working_only_agent_stop_idles() {
 
 #[test]
 fn copilot_stale_tool_return_preserves_helper_waiting() {
-    use crate::agent_sessions::{AgentSessionRegistry, AgentStatus};
+    use crate::agent_sessions::{AgentSessionRegistry, AgentStatus, CliSource};
 
     for (timestamp, expected) in [
         (json!("2026-10-20T05:19:05.580Z"), AgentStatus::Attention),
@@ -1703,7 +1708,24 @@ fn copilot_stale_tool_return_preserves_helper_waiting() {
                 "message": "approve command",
                 "timestamp": timestamp,
             });
-            route_agent_event_to_registry(&mut reg, pane, &hook);
+            let facts = AgentEventFacts {
+                key: key.into(),
+                session_known: true,
+                session_status: reg.get(&key.to_string()).map(|row| row.status.clone()),
+                pane_owned_by_other: false,
+            };
+            let plan = plan_agent_event(
+                "agent.notification",
+                &hook["payload"],
+                pane,
+                &CliSource::Copilot,
+                &facts,
+            );
+            // Keep the receipt-time cooldown expired to isolate source-time ordering.
+            for event in plan.events {
+                reg.apply_at(event, std::time::UNIX_EPOCH);
+            }
+            reg.take_dirty();
         }
         let before = reg.get(&key.to_string()).unwrap().clone();
         hook["event"] = json!("agent.tool.finished");
@@ -26966,6 +26988,7 @@ fn antigravity_resume_keeps_acp_and_cli_sessions_in_their_own_stores() {
             current_tool: None,
             attention_reason: None,
             attention_timestamp_ms: None,
+            attention_cooldown_until_ms: None,
             log_path: None,
             origin: origin.clone(),
             location: SessionLocation::Wsl {
@@ -27036,6 +27059,7 @@ fn antigravity_wsl_cli_resume_preserves_literal_cwd_arguments() {
             current_tool: None,
             attention_reason: None,
             attention_timestamp_ms: None,
+            attention_cooldown_until_ms: None,
             log_path: None,
             origin: SessionOrigin::Unknown,
             location: SessionLocation::Wsl {
@@ -27173,6 +27197,7 @@ fn enter_on_wsl_history_row_resumes_inside_distro() {
         current_tool: None,
         attention_reason: None,
         attention_timestamp_ms: None,
+        attention_cooldown_until_ms: None,
         log_path: None,
         origin: SessionOrigin::Unknown,
         location: SessionLocation::Wsl {
