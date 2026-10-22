@@ -449,7 +449,9 @@
                     </Grid>
                 </Button.Content>
                 <Button.Flyout>
-                    <MenuFlyout Closing="OnRichTabMetadataFlyoutClosing"
+                    <MenuFlyout Closed="OnDisplayOptionsClosed"
+                                Closing="OnRichTabMetadataFlyoutClosing"
+                                Opened="OnDisplayOptionsOpened"
                                 Placement="BottomEdgeAlignedLeft">
                         <MenuFlyoutItem x:Uid="VerticalTabsFilterSection"
                                         IsEnabled="False"

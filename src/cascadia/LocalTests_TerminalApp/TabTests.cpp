@@ -5362,7 +5362,7 @@ namespace TerminalAppLocalTests
                 LR"({
                     "actions": [
                         { "command": "toggleSidebarAgentsOnly", "id": "Terminal.ToggleSidebarAgentsOnly", "keys": "ctrl+shift+g" },
-                        { "command": "toggleSidebarRecentAgentSessions", "id": "Terminal.ToggleSidebarRecentAgentSessions", "keys": "ctrl+shift+r" }
+                        { "command": "openAgentSessions", "id": "Terminal.OpenAgentSessions", "keys": "ctrl+shift+/" }
                     ]
                 })"
             };
@@ -5413,10 +5413,24 @@ namespace TerminalAppLocalTests
                 VERIFY_ARE_EQUAL(chord.empty() ? Visibility::Collapsed : Visibility::Visible, shortcut.Visibility());
             };
             verifyHint(L"Ctrl+Shift+S");
+            verifyFilterHints(L"Ctrl+Shift+G", L"Ctrl+Shift+/");
+            const auto recentChord = KeyChordSerialization::FromString(L"ctrl+shift+/");
+            const auto customRecentChord = KeyChordSerialization::FromString(L"ctrl+shift+r");
+            actionMap.RegisterKeyBinding(customRecentChord, ActionAndArgs{ ShortcutAction::ToggleSidebarRecentAgentSessions, nullptr });
+            page->_RefreshUIForSettingsReload();
+            verifyFilterHints(L"Ctrl+Shift+G", L"Ctrl+Shift+/");
+            actionMap.DeleteKeyBinding(recentChord);
+            page->_RefreshUIForSettingsReload();
             verifyFilterHints(L"Ctrl+Shift+G", L"Ctrl+Shift+R");
+            actionMap.DeleteKeyBinding(customRecentChord);
+            page->_RefreshUIForSettingsReload();
+            verifyFilterHints(L"Ctrl+Shift+G", {});
+            actionMap.RegisterKeyBinding(recentChord, ActionAndArgs{ ShortcutAction::OpenAgentSessions, nullptr });
+            page->_RefreshUIForSettingsReload();
+            verifyFilterHints(L"Ctrl+Shift+G", L"Ctrl+Shift+/");
             page->_OnVerticalRailCollapseRequested(nullptr, nullptr);
             verifyHint(L"Ctrl+Shift+S");
-            verifyFilterHints(L"Ctrl+Shift+G", L"Ctrl+Shift+R");
+            verifyFilterHints(L"Ctrl+Shift+G", L"Ctrl+Shift+/");
 
             actionMap.RebindKeys(initial, rebound);
             page->_RefreshUIForSettingsReload();
@@ -5436,12 +5450,12 @@ namespace TerminalAppLocalTests
             verifyHint({});
 
             actionMap.AddKeyBinding(KeyChordSerialization::FromString(L"ctrl+shift+j"), L"Terminal.ToggleSidebarAgentsOnly");
-            actionMap.AddKeyBinding(KeyChordSerialization::FromString(L"ctrl+shift+k"), L"Terminal.ToggleSidebarRecentAgentSessions");
+            actionMap.AddKeyBinding(KeyChordSerialization::FromString(L"ctrl+shift+k"), L"Terminal.OpenAgentSessions");
             page->_RefreshUIForSettingsReload();
             verifyFilterHints(L"Ctrl+Shift+J", L"Ctrl+Shift+K");
 
             actionMap.DeleteKeyBinding(KeyChordSerialization::FromString(L"ctrl+shift+g"));
-            actionMap.DeleteKeyBinding(KeyChordSerialization::FromString(L"ctrl+shift+r"));
+            actionMap.DeleteKeyBinding(KeyChordSerialization::FromString(L"ctrl+shift+/"));
             page->_RefreshUIForSettingsReload();
             verifyFilterHints(L"Ctrl+Shift+J", L"Ctrl+Shift+K");
             actionMap.DeleteKeyBinding(KeyChordSerialization::FromString(L"ctrl+shift+j"));
@@ -5450,7 +5464,7 @@ namespace TerminalAppLocalTests
             verifyFilterHints({}, {});
 
             actionMap.RegisterKeyBinding(KeyChordSerialization::FromString(L"ctrl+shift+g"), ActionAndArgs{ ShortcutAction::CopyText, nullptr });
-            actionMap.RegisterKeyBinding(KeyChordSerialization::FromString(L"ctrl+shift+r"), ActionAndArgs{ ShortcutAction::CopyText, nullptr });
+            actionMap.RegisterKeyBinding(KeyChordSerialization::FromString(L"ctrl+shift+/"), ActionAndArgs{ ShortcutAction::CopyText, nullptr });
             page->_RefreshUIForSettingsReload();
             verifyFilterHints({}, {});
 
@@ -5459,13 +5473,13 @@ namespace TerminalAppLocalTests
             agentsAlias.GenerateID();
             actionMap.AddAction(agentsAlias, KeyChordSerialization::FromString(L"ctrl+shift+u"));
             const auto recentAlias = Command::NewUserCommand();
-            recentAlias.ActionAndArgs(ActionAndArgs{ ShortcutAction::ToggleSidebarRecentAgentSessions, nullptr });
+            recentAlias.ActionAndArgs(ActionAndArgs{ ShortcutAction::OpenAgentSessions, nullptr });
             recentAlias.GenerateID();
             actionMap.AddAction(recentAlias, KeyChordSerialization::FromString(L"ctrl+shift+v"));
             page->_RefreshUIForSettingsReload();
             verifyFilterHints(L"Ctrl+Shift+U", L"Ctrl+Shift+V");
             actionMap.AddKeyBinding(KeyChordSerialization::FromString(L"ctrl+shift+g"), L"Terminal.ToggleSidebarAgentsOnly");
-            actionMap.AddKeyBinding(KeyChordSerialization::FromString(L"ctrl+shift+r"), L"Terminal.ToggleSidebarRecentAgentSessions");
+            actionMap.AddKeyBinding(KeyChordSerialization::FromString(L"ctrl+shift+/"), L"Terminal.OpenAgentSessions");
             page->_RefreshUIForSettingsReload();
             verifyFilterHints(L"Ctrl+Shift+U", L"Ctrl+Shift+V");
             actionMap.AddKeyBinding(KeyChordSerialization::FromString(L"ctrl+shift+w"), agentsAlias.ID());

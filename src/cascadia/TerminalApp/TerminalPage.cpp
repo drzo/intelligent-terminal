@@ -789,6 +789,12 @@ namespace winrt::TerminalApp::implementation
         _tabStrip.KeyDown({ get_weak(), &TerminalPage::_KeyDownHandler });
         _tabStrip.PreviewKeyDown({ get_weak(), &TerminalPage::_SidebarNavigationKeyDown });
         _tabRow.PreviewKeyDown({ get_weak(), &TerminalPage::_SidebarNavigationKeyDown });
+        winrt::get_self<implementation::TabStrip>(_tabStrip)->DisplayOptionsKeyDown([weakThis{ get_weak() }](auto&&, const auto& e) {
+            if (const auto page = weakThis.get(); page && page->_isVerticalLayout && !e.Handled())
+            {
+                page->_DispatchKeyEvent(e, KeyDispatchScope::SidebarFilters);
+            }
+        });
         _tabStrip.HistoryActivationRequested([weakThis{ get_weak() }](auto&&, const auto& args) {
             if (const auto page = weakThis.get(); page && args)
             {
@@ -6595,11 +6601,15 @@ namespace winrt::TerminalApp::implementation
         const auto actionMap = _settings.ActionMap();
         for (const auto& [elementName, action] : {
                  std::pair{ L"AgentsOnlyFilterMenuItem", ShortcutAction::ToggleSidebarAgentsOnly },
-                 std::pair{ L"RecentAgentSessionsFilterMenuItem", ShortcutAction::ToggleSidebarRecentAgentSessions } })
+                 std::pair{ L"RecentAgentSessionsFilterMenuItem", ShortcutAction::OpenAgentSessions } })
         {
             if (const auto item = _tabStrip.FindName(elementName).try_as<WUX::Controls::ToggleMenuFlyoutItem>())
             {
-                const auto chord = _GetEffectiveKeyBindingForAction(actionMap, action);
+                auto chord = _GetEffectiveKeyBindingForAction(actionMap, action);
+                if (!chord && action == ShortcutAction::OpenAgentSessions)
+                {
+                    chord = _GetEffectiveKeyBindingForAction(actionMap, ShortcutAction::ToggleSidebarRecentAgentSessions);
+                }
                 winrt::hstring shortcut;
                 if (chord)
                 {
@@ -11697,15 +11707,15 @@ namespace winrt::TerminalApp::implementation
     // - <none>
     void TerminalPage::_KeyDownHandler(const Windows::Foundation::IInspectable& /*sender*/, const Windows::UI::Xaml::Input::KeyRoutedEventArgs& e)
     {
-        _DispatchKeyEvent(e, false);
+        _DispatchKeyEvent(e, KeyDispatchScope::All);
     }
 
     void TerminalPage::_SidebarNavigationKeyDown(const Windows::Foundation::IInspectable& /*sender*/, const Windows::UI::Xaml::Input::KeyRoutedEventArgs& e)
     {
-        _DispatchKeyEvent(e, true);
+        _DispatchKeyEvent(e, KeyDispatchScope::SidebarNavigation);
     }
 
-    void TerminalPage::_DispatchKeyEvent(const Windows::UI::Xaml::Input::KeyRoutedEventArgs& e, const bool sidebarNavigationOnly)
+    void TerminalPage::_DispatchKeyEvent(const Windows::UI::Xaml::Input::KeyRoutedEventArgs& e, const KeyDispatchScope scope)
     {
         const auto keyStatus = e.KeyStatus();
         const auto vkey = gsl::narrow_cast<WORD>(e.OriginalKey());
@@ -11763,9 +11773,13 @@ namespace winrt::TerminalApp::implementation
         const auto action = cmd.ActionAndArgs();
         const auto sidebarNavigation = action.Action() == ShortcutAction::NextSidebarTab ||
                                        action.Action() == ShortcutAction::PrevSidebarTab;
+        const auto sidebarFilter = action.Action() == ShortcutAction::ToggleSidebarAgentsOnly ||
+                                   action.Action() == ShortcutAction::OpenAgentSessions ||
+                                   action.Action() == ShortcutAction::ToggleSidebarRecentAgentSessions;
         // TabRow forwards KeyUp for legacy commands; navigation already ran on PreviewKeyDown.
-        if ((sidebarNavigationOnly && !sidebarNavigation) ||
-            (sidebarNavigation && keyStatus.IsKeyReleased))
+        if ((scope == KeyDispatchScope::SidebarNavigation && !sidebarNavigation) ||
+            (scope == KeyDispatchScope::SidebarFilters && !sidebarFilter) ||
+            ((sidebarNavigation || scope == KeyDispatchScope::SidebarFilters) && keyStatus.IsKeyReleased))
         {
             return;
         }
