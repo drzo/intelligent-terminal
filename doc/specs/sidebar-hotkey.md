@@ -152,7 +152,7 @@ the other filter item owns keyboard focus. Each press changes its preference
 once and updates the native checked state. The menu displays the effective
 configured shortcuts rather than fixed default text.
 
-Ctrl+Shift+R has no default sidebar-filter binding. Explicit user bindings and
-unbindings retain normal action-map precedence. Horizontal Agent Pane session
+Ctrl+Shift+R has no default sidebar-filter binding. User-defined bindings and
+explicit unbinding retain normal action-map precedence. Horizontal Agent Pane session
 behavior, other flyouts/dialogs, native mouse/Space/Enter activation, Escape,
 metadata-toggle behavior, terminal input and selection remain unchanged.
