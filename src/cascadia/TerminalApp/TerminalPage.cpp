@@ -16453,10 +16453,13 @@ namespace winrt::TerminalApp::implementation
     // - If the newTerminalArgs required us to open the pane as a new elevated
     //   connection, then we'll return nullptr. Otherwise, we'll return a new
     //   Pane for this connection.
-    std::shared_ptr<Pane> TerminalPage::_MakeTerminalPane(const NewTerminalArgs& newTerminalArgs,
+    std::shared_ptr<Pane> TerminalPage::_MakeTerminalPane(const NewTerminalArgs& contentArgs,
                                                           const winrt::TerminalApp::Tab& sourceTab,
                                                           TerminalConnection::ITerminalConnection existingConnection)
     {
+        // Elevation and resume enrichment must not mutate reusable action arguments.
+        const NewTerminalArgs newTerminalArgs{ contentArgs ? contentArgs.Copy().as<NewTerminalArgs>() : nullptr };
+
         // First things first - Check for making a pane from content ID.
         if (newTerminalArgs &&
             newTerminalArgs.ContentId() != 0)
