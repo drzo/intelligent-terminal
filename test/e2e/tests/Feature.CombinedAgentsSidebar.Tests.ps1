@@ -1531,7 +1531,10 @@ Describe 'Feature: combined Agents sidebar' -Tag @('Feature', 'CombinedAgentsSid
                 $activationKey = if ($entry.Id -eq 'AgentsOnlyFilterMenuItem') { 0x20 } else { 0x0D }
                 Send-WtWindowKey -App $script:app -Vk $activationKey -RequireForeground | Out-Null
                 (Get-CombinedFilterState)[$entry.Id] | Should -BeFalse
-                (Get-CombinedElement FilterTabsButton).Current.HasKeyboardFocus | Should -BeTrue
+                Wait-Until -TimeoutSec 5 -Because 'native menu dismissal restores focus to the current Display options button' -Condition {
+                    $button = Get-CombinedElement FilterTabsButton
+                    $button -and $button.Current.HasKeyboardFocus
+                } | Out-Null
                 Assert-CombinedScopeRows @('ordinary', 'agent', 'history')
             }
             Invoke-UiElement -App $script:app -Selector FilterTabsButton | Out-Null
@@ -1551,7 +1554,10 @@ Describe 'Feature: combined Agents sidebar' -Tag @('Feature', 'CombinedAgentsSid
             }
             $changedByRemovedChord | Should -BeFalse -Because 'Ctrl+Shift+R is not a default sidebar shortcut'
             Send-WtWindowKey -App $script:app -Vk 0x1B -RequireForeground | Out-Null
-            (Get-CombinedElement FilterTabsButton).Current.HasKeyboardFocus | Should -BeTrue
+            Wait-Until -TimeoutSec 5 -Because 'Escape restores focus to the current Display options button' -Condition {
+                $button = Get-CombinedElement FilterTabsButton
+                $button -and $button.Current.HasKeyboardFocus
+            } | Out-Null
             Get-UiValue -App $script:app -Selector SearchTextBox -ValuePattern | Should -Be $script:scopeQuery
             @(foreach ($tab in $script:scopeTabs) { Get-WtCapture -App $script:app -SessionId $tab.session_id }) | Should -Be $capture
         }
