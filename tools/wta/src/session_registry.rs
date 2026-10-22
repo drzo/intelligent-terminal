@@ -592,8 +592,6 @@ pub struct SessionActivateResponse {
     pub accepted: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub detail: Option<String>,
-    #[serde(default)]
-    pub error_reported_in_pane: bool,
 }
 
 #[derive(Debug, Clone, Copy, Default, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
@@ -8364,7 +8362,6 @@ mod tests {
                 action: String::new(),
                 accepted: false,
                 detail: None,
-                error_reported_in_pane: false,
             };
             let raw = serde_json::value::to_raw_value(&response).unwrap();
             assert_eq!(parse_session_activate_response(&raw).unwrap(), response);

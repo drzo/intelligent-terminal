@@ -8473,7 +8473,6 @@ async fn handle_session_activation_status(
             action: String::new(),
             accepted: false,
             detail: None,
-            error_reported_in_pane: false,
         },
     ))
 }
@@ -8514,7 +8513,6 @@ async fn handle_session_activate(
                 action: String::new(),
                 accepted: false,
                 detail: None,
-                error_reported_in_pane: false,
             },
         },
     );
@@ -8563,7 +8561,6 @@ async fn execute_session_activation(
                 action: $action.to_string(),
                 accepted: $accepted,
                 detail: $detail,
-                error_reported_in_pane: false,
             }
         }};
     }
@@ -8873,7 +8870,7 @@ async fn execute_session_activation(
                             "resume pane failed before the session started"
                         );
                         broadcast_session_status_change(state, None).await;
-                        let mut response = respond!(
+                        return respond!(
                             "resume_cli",
                             false,
                             Some(format!(
@@ -8881,8 +8878,6 @@ async fn execute_session_activation(
                                 current.last_error.as_deref().unwrap_or("connection failed")
                             ))
                         );
-                        response.error_reported_in_pane = true;
-                        return response;
                     }
                     // No change can mean a real hook already established the exact binding.
                     if !binding_changed

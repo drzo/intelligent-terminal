@@ -11383,12 +11383,12 @@ namespace TerminalAppLocalTests
             VERIFY_ARE_EQUAL(winrt::hstring{ L"history query" }, stripImpl->SearchTextBox().Text());
 
             const auto failedResume = page->_ParseSidebarHistoryActivation(
-                R"({"activation_id":"resume-1","state":"complete","action":"resume_cli","accepted":false,"detail":"The session could not be resumed","error_reported_in_pane":true})",
+                R"({"activation_id":"resume-1","state":"complete","action":"resume_cli","accepted":false,"detail":"The session could not be resumed"})",
                 L"resume-1");
             page->_tabStrip.HistoryActivating(true);
             page->_tabStrip.HistoryError(L"Previous error");
             VERIFY_IS_FALSE(failedResume.accepted);
-            VERIFY_IS_TRUE(page->_CompleteSidebarHistoryActivation(9, failedResume.accepted, failedResume.detail, failedResume.errorReportedInPane));
+            VERIFY_IS_TRUE(page->_CompleteSidebarHistoryActivation(9, failedResume.accepted, failedResume.detail));
             VERIFY_IS_TRUE(page->_tabStrip.HistoryActive());
             VERIFY_IS_FALSE(page->_tabStrip.HistoryActivating());
             VERIFY_IS_TRUE(page->_tabStrip.HistoryError().empty());
@@ -11399,7 +11399,11 @@ namespace TerminalAppLocalTests
             VERIFY_IS_TRUE(page->_CompleteSidebarHistoryActivation(10, false, L"Cannot focus session"));
             VERIFY_IS_TRUE(page->_tabStrip.HistoryActive());
             VERIFY_IS_FALSE(page->_tabStrip.HistoryActivating());
-            VERIFY_ARE_EQUAL(winrt::hstring{ L"Cannot focus session" }, page->_tabStrip.HistoryError());
+            VERIFY_IS_TRUE(page->_tabStrip.HistoryError().empty());
+            page->_tabStrip.HistoryActivating(true);
+            VERIFY_IS_TRUE(page->_CompleteSidebarHistoryActivation(10, false, L""));
+            VERIFY_IS_FALSE(page->_tabStrip.HistoryActivating());
+            VERIFY_IS_TRUE(page->_tabStrip.HistoryError().empty());
             VERIFY_ARE_EQUAL(winrt::hstring{ L"history query" }, stripImpl->SearchTextBox().Text());
             page->_CloseSidebarHistory(false);
             VERIFY_IS_FALSE(page->_tabStrip.HistoryActive());
@@ -14988,13 +14992,15 @@ namespace TerminalAppLocalTests
             VERIFY_IS_FALSE(strip.HistoryActivating());
             VERIFY_ARE_EQUAL(Visibility::Visible, impl->ItemsList().Visibility());
             VERIFY_IS_TRUE(impl->ItemsList().IsItemClickEnabled());
-            VERIFY_ARE_EQUAL(winrt::hstring{ L"Cannot focus session" }, impl->HistoryMessage().Text());
-            VERIFY_ARE_EQUAL(Visibility::Visible, impl->HistoryMessage().Visibility());
+            VERIFY_IS_TRUE(strip.HistoryError().empty());
+            VERIFY_ARE_EQUAL(Visibility::Collapsed, impl->HistoryMessage().Visibility());
             page->_CompleteSidebarHistoryRefresh(page->_historyRequestGeneration, {});
-            VERIFY_ARE_EQUAL(winrt::hstring{ L"Cannot focus session" }, impl->HistoryMessage().Text());
+            const auto refreshError = impl->HistoryMessage().Text();
+            VERIFY_IS_FALSE(refreshError.empty());
             VERIFY_IS_TRUE(strip.HistoryActive());
             VERIFY_IS_TRUE(page->_CompleteSidebarHistoryActivation(page->_historyActivationSerial, true, L""));
             VERIFY_IS_FALSE(strip.HistoryError().empty());
+            VERIFY_ARE_EQUAL(refreshError, impl->HistoryMessage().Text());
             VERIFY_ARE_EQUAL(Visibility::Visible, impl->HistoryMessage().Visibility());
             page->_CompleteSidebarHistoryRefresh(page->_historyRequestGeneration, { State::Ready, { item } });
             VERIFY_ARE_EQUAL(Visibility::Collapsed, impl->HistoryMessage().Visibility());
@@ -15138,7 +15144,6 @@ namespace TerminalAppLocalTests
             R"({"activation_id":"activation-1","state":"complete","action":"focus","accepted":false,"detail":"Cannot focus"})", activationId);
         VERIFY_IS_TRUE(failed.state == State::Complete);
         VERIFY_IS_FALSE(failed.accepted);
-        VERIFY_IS_FALSE(failed.errorReportedInPane);
         VERIFY_ARE_EQUAL(winrt::hstring{ L"Cannot focus" }, failed.detail);
         const auto unknown = Page::_ParseSidebarHistoryActivation(
             R"({"activation_id":"activation-1","state":"unknown","action":"resume_cli","accepted":false,"detail":"Response timed out"})", activationId);
@@ -15159,8 +15164,7 @@ namespace TerminalAppLocalTests
                  R"({"activation_id":"activation-1","state":"pending","action":"","accepted":true})",
                  R"({"activation_id":"activation-1","state":42,"action":"focus","accepted":true})",
                  R"({"activation_id":"activation-1","state":"complete","action":"focus","accepted":"true"})",
-                 R"({"activation_id":"activation-1","state":"complete","action":"focus","accepted":true,"detail":{}})",
-                 R"({"activation_id":"activation-1","state":"complete","action":"resume_cli","accepted":false,"error_reported_in_pane":"true"})" })
+                 R"({"activation_id":"activation-1","state":"complete","action":"focus","accepted":true,"detail":{}})" })
         {
             const auto result = Page::_ParseSidebarHistoryActivation(json, activationId);
             VERIFY_IS_TRUE(result.state == State::Unknown);

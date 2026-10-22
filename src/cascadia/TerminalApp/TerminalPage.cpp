@@ -7577,7 +7577,6 @@ namespace winrt::TerminalApp::implementation
             !response["activation_id"].isString() || response["activation_id"].asString() != winrt::to_string(activationId) ||
             !response["accepted"].isBool() || !response["action"].isString() ||
             (response.isMember("state") && !response["state"].isString()) ||
-            (response.isMember("error_reported_in_pane") && !response["error_reported_in_pane"].isBool()) ||
             (!response["detail"].isNull() && !response["detail"].isString()))
         {
             _agentPaneLog("invalid sidebar activation receipt: " + errors);
@@ -7588,10 +7587,7 @@ namespace winrt::TerminalApp::implementation
         const auto state = response.get("state", "complete").asString();
         if (state == "complete")
         {
-            return { State::Complete,
-                     response["accepted"].asBool(),
-                     winrt::to_hstring(response.get("detail", "").asString()),
-                     response.get("error_reported_in_pane", false).asBool() };
+            return { State::Complete, response["accepted"].asBool(), winrt::to_hstring(response.get("detail", "").asString()) };
         }
         if (state == "pending" && !response["accepted"].asBool())
         {
@@ -7664,7 +7660,7 @@ namespace winrt::TerminalApp::implementation
         {
             // Closing/reopening invalidates the UI callback, not the operation ID.
             page->_ReconcileSidebarHistoryActivation(request, result);
-            if (page->_CompleteSidebarHistoryActivation(activationSerial, result.accepted, result.detail, result.errorReportedInPane))
+            if (page->_CompleteSidebarHistoryActivation(activationSerial, result.accepted, result.detail))
             {
                 page->_StartSidebarHistoryRefreshTimer();
                 page->_RequestSidebarHistoryRefresh(false);
@@ -7672,21 +7668,19 @@ namespace winrt::TerminalApp::implementation
         }
     }
 
-    bool TerminalPage::_CompleteSidebarHistoryActivation(const uint64_t activationSerial, const bool accepted, const winrt::hstring& detail, const bool errorReportedInPane)
+    bool TerminalPage::_CompleteSidebarHistoryActivation(const uint64_t activationSerial, const bool accepted, const winrt::hstring& detail)
     {
+        if (!accepted)
+        {
+            _agentPaneLog("sidebar activation not accepted serial=" + std::to_string(activationSerial) +
+                          " detail=" + (detail.empty() ? std::string{ "unavailable" } : winrt::to_string(detail)));
+        }
         if (_historyActivationSerial != activationSerial || !_AreRecentAgentSessionsVisible())
         {
             return false;
         }
         _tabStrip.HistoryActivating(false);
-        if (accepted || errorReportedInPane)
-        {
-            _tabStrip.HistoryError(L"");
-        }
-        else
-        {
-            _tabStrip.HistoryError(detail.empty() ? RS_(L"VerticalTabsHistoryActivationError") : detail);
-        }
+        _tabStrip.HistoryError(L"");
         return true;
     }
 
