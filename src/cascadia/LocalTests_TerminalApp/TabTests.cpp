@@ -6935,7 +6935,7 @@ namespace TerminalAppLocalTests
                 LR"({
                     "actions": [
                         { "command": "toggleSidebarAgentsOnly", "id": "Terminal.ToggleSidebarAgentsOnly", "keys": "ctrl+shift+g" },
-                        { "command": "toggleSidebarRecentAgentSessions", "id": "Terminal.ToggleSidebarRecentAgentSessions", "keys": "ctrl+shift+r" }
+                        { "command": "openAgentSessions", "id": "Terminal.OpenAgentSessions", "keys": "ctrl+shift+/" }
                     ]
                 })"
             };
@@ -6986,10 +6986,24 @@ namespace TerminalAppLocalTests
                 VERIFY_ARE_EQUAL(chord.empty() ? Visibility::Collapsed : Visibility::Visible, shortcut.Visibility());
             };
             verifyHint(L"Ctrl+Shift+S");
+            verifyFilterHints(L"Ctrl+Shift+G", L"Ctrl+Shift+/");
+            const auto recentChord = KeyChordSerialization::FromString(L"ctrl+shift+/");
+            const auto customRecentChord = KeyChordSerialization::FromString(L"ctrl+shift+r");
+            actionMap.RegisterKeyBinding(customRecentChord, ActionAndArgs{ ShortcutAction::ToggleSidebarRecentAgentSessions, nullptr });
+            page->_RefreshUIForSettingsReload();
+            verifyFilterHints(L"Ctrl+Shift+G", L"Ctrl+Shift+/");
+            actionMap.DeleteKeyBinding(recentChord);
+            page->_RefreshUIForSettingsReload();
             verifyFilterHints(L"Ctrl+Shift+G", L"Ctrl+Shift+R");
+            actionMap.DeleteKeyBinding(customRecentChord);
+            page->_RefreshUIForSettingsReload();
+            verifyFilterHints(L"Ctrl+Shift+G", {});
+            actionMap.RegisterKeyBinding(recentChord, ActionAndArgs{ ShortcutAction::OpenAgentSessions, nullptr });
+            page->_RefreshUIForSettingsReload();
+            verifyFilterHints(L"Ctrl+Shift+G", L"Ctrl+Shift+/");
             page->_OnVerticalRailCollapseRequested(nullptr, nullptr);
             verifyHint(L"Ctrl+Shift+S");
-            verifyFilterHints(L"Ctrl+Shift+G", L"Ctrl+Shift+R");
+            verifyFilterHints(L"Ctrl+Shift+G", L"Ctrl+Shift+/");
 
             actionMap.RebindKeys(initial, rebound);
             page->_RefreshUIForSettingsReload();
@@ -7009,12 +7023,12 @@ namespace TerminalAppLocalTests
             verifyHint({});
 
             actionMap.AddKeyBinding(KeyChordSerialization::FromString(L"ctrl+shift+j"), L"Terminal.ToggleSidebarAgentsOnly");
-            actionMap.AddKeyBinding(KeyChordSerialization::FromString(L"ctrl+shift+k"), L"Terminal.ToggleSidebarRecentAgentSessions");
+            actionMap.AddKeyBinding(KeyChordSerialization::FromString(L"ctrl+shift+k"), L"Terminal.OpenAgentSessions");
             page->_RefreshUIForSettingsReload();
             verifyFilterHints(L"Ctrl+Shift+J", L"Ctrl+Shift+K");
 
             actionMap.DeleteKeyBinding(KeyChordSerialization::FromString(L"ctrl+shift+g"));
-            actionMap.DeleteKeyBinding(KeyChordSerialization::FromString(L"ctrl+shift+r"));
+            actionMap.DeleteKeyBinding(KeyChordSerialization::FromString(L"ctrl+shift+/"));
             page->_RefreshUIForSettingsReload();
             verifyFilterHints(L"Ctrl+Shift+J", L"Ctrl+Shift+K");
             actionMap.DeleteKeyBinding(KeyChordSerialization::FromString(L"ctrl+shift+j"));
@@ -7023,7 +7037,7 @@ namespace TerminalAppLocalTests
             verifyFilterHints({}, {});
 
             actionMap.RegisterKeyBinding(KeyChordSerialization::FromString(L"ctrl+shift+g"), ActionAndArgs{ ShortcutAction::CopyText, nullptr });
-            actionMap.RegisterKeyBinding(KeyChordSerialization::FromString(L"ctrl+shift+r"), ActionAndArgs{ ShortcutAction::CopyText, nullptr });
+            actionMap.RegisterKeyBinding(KeyChordSerialization::FromString(L"ctrl+shift+/"), ActionAndArgs{ ShortcutAction::CopyText, nullptr });
             page->_RefreshUIForSettingsReload();
             verifyFilterHints({}, {});
 
@@ -7032,13 +7046,13 @@ namespace TerminalAppLocalTests
             agentsAlias.GenerateID();
             actionMap.AddAction(agentsAlias, KeyChordSerialization::FromString(L"ctrl+shift+u"));
             const auto recentAlias = Command::NewUserCommand();
-            recentAlias.ActionAndArgs(ActionAndArgs{ ShortcutAction::ToggleSidebarRecentAgentSessions, nullptr });
+            recentAlias.ActionAndArgs(ActionAndArgs{ ShortcutAction::OpenAgentSessions, nullptr });
             recentAlias.GenerateID();
             actionMap.AddAction(recentAlias, KeyChordSerialization::FromString(L"ctrl+shift+v"));
             page->_RefreshUIForSettingsReload();
             verifyFilterHints(L"Ctrl+Shift+U", L"Ctrl+Shift+V");
             actionMap.AddKeyBinding(KeyChordSerialization::FromString(L"ctrl+shift+g"), L"Terminal.ToggleSidebarAgentsOnly");
-            actionMap.AddKeyBinding(KeyChordSerialization::FromString(L"ctrl+shift+r"), L"Terminal.ToggleSidebarRecentAgentSessions");
+            actionMap.AddKeyBinding(KeyChordSerialization::FromString(L"ctrl+shift+/"), L"Terminal.OpenAgentSessions");
             page->_RefreshUIForSettingsReload();
             verifyFilterHints(L"Ctrl+Shift+U", L"Ctrl+Shift+V");
             actionMap.AddKeyBinding(KeyChordSerialization::FromString(L"ctrl+shift+w"), agentsAlias.ID());
@@ -11035,7 +11049,7 @@ namespace TerminalAppLocalTests
             std::wstring{ L"sessions list --json --include-status --master \"\\\\.\\pipe\\wta-master-owned fixture\"" },
             Page::_BuildSessionsListArguments(pipe));
         VERIFY_ARE_EQUAL(
-            std::wstring{ L"sessions list --json --include-status" },
+            std::wstring{ L"sessions list --json --include-status --master \"\"" },
             Page::_BuildSessionsListArguments({}));
     }
 
@@ -13183,7 +13197,7 @@ namespace TerminalAppLocalTests
                 filters.ShowRecentAgentSessions(true);
                 VERIFY_IS_TRUE(page->_tabStrip.SearchQuery().empty());
                 VERIFY_IS_TRUE(page->_AreRecentAgentSessionsVisible());
-                const auto request = page->_PrepareSidebarHistoryActivation(item);
+                const auto request = page->_PrepareSidebarHistoryActivation(item, L"\\\\.\\pipe\\wta-master-normal");
                 VERIFY_IS_FALSE(request.statusOnly);
                 page->_tabStrip.HistoryLoading(true);
                 page->_tabStrip.HistoryActivating(true);
@@ -13225,7 +13239,7 @@ namespace TerminalAppLocalTests
                 VERIFY_IS_TRUE(page->_tabStrip.HistoryError().empty());
 
                 // Prepare the native retry without launching WTA: query the receipt instead of dispatching the request again.
-                const auto retry = page->_PrepareSidebarHistoryActivation(item);
+                const auto retry = page->_PrepareSidebarHistoryActivation(item, L"\\\\.\\pipe\\wta-master-normal");
                 VERIFY_IS_TRUE(retry.statusOnly);
                 VERIFY_ARE_EQUAL(request.id, retry.id);
                 VERIFY_ARE_EQUAL(request.arguments, retry.arguments);
@@ -17069,34 +17083,42 @@ namespace TerminalAppLocalTests
             item.AgentId(L"copilot");
             item.AgentSource(L"host");
             page->_tabStrip.HistoryActive(true);
-            const auto first = page->_PrepareSidebarHistoryActivation(item);
+            const std::wstring normalMaster{ L"\\\\.\\pipe\\wta-master-normal" };
+            const std::wstring adminMaster{ L"\\\\.\\pipe\\wta-master-admin" };
+            const auto first = page->_PrepareSidebarHistoryActivation(item, normalMaster);
+            VERIFY_IS_TRUE(first.arguments.find(L"--master \"" + normalMaster + L"\"") != std::wstring::npos);
+            const auto admin = page->_PrepareSidebarHistoryActivation(item, adminMaster);
+            VERIFY_IS_FALSE(admin.statusOnly);
+            VERIFY_ARE_NOT_EQUAL(first.id, admin.id);
+            VERIFY_IS_TRUE(admin.arguments.find(L"--master \"" + adminMaster + L"\"") != std::wstring::npos);
+            VERIFY_ARE_EQUAL(admin.id, page->_PrepareSidebarHistoryActivation(item, adminMaster).id);
             VERIFY_IS_FALSE(first.statusOnly);
             VERIFY_IS_FALSE(first.id.empty());
             page->_ReconcileSidebarHistoryActivation(first, {});
             page->_CloseSidebarHistory(false);
             page->_tabStrip.HistoryActive(true);
             item.Title(L"Updated title");
-            const auto retry = page->_PrepareSidebarHistoryActivation(item);
+            const auto retry = page->_PrepareSidebarHistoryActivation(item, normalMaster);
             VERIFY_IS_TRUE(retry.statusOnly);
             VERIFY_ARE_EQUAL(first.id, retry.id);
             VERIFY_ARE_EQUAL(first.arguments, retry.arguments);
             page->_ReconcileSidebarHistoryActivation(retry, { State::Pending, false, {} });
-            VERIFY_ARE_EQUAL(first.id, page->_PrepareSidebarHistoryActivation(item).id);
+            VERIFY_ARE_EQUAL(first.id, page->_PrepareSidebarHistoryActivation(item, normalMaster).id);
 
             item.AgentId(L"claude");
-            const auto otherProvider = page->_PrepareSidebarHistoryActivation(item);
+            const auto otherProvider = page->_PrepareSidebarHistoryActivation(item, normalMaster);
             VERIFY_IS_FALSE(otherProvider.statusOnly);
             VERIFY_ARE_NOT_EQUAL(first.id, otherProvider.id);
             item.AgentId(L"copilot");
             item.AgentSource(L"wsl");
             item.WslDistro(L"Ubuntu");
-            const auto wsl = page->_PrepareSidebarHistoryActivation(item);
+            const auto wsl = page->_PrepareSidebarHistoryActivation(item, normalMaster);
             VERIFY_ARE_NOT_EQUAL(first.id, wsl.id);
             item.WslDistro(L"Debian");
-            const auto otherDistro = page->_PrepareSidebarHistoryActivation(item);
+            const auto otherDistro = page->_PrepareSidebarHistoryActivation(item, normalMaster);
             VERIFY_ARE_NOT_EQUAL(wsl.id, otherDistro.id);
             item.SessionUniverse(L"other-universe");
-            VERIFY_ARE_NOT_EQUAL(otherDistro.id, page->_PrepareSidebarHistoryActivation(item).id);
+            VERIFY_ARE_NOT_EQUAL(otherDistro.id, page->_PrepareSidebarHistoryActivation(item, normalMaster).id);
 
             item.AgentSource(L"host");
             item.WslDistro(L"");
@@ -17105,15 +17127,15 @@ namespace TerminalAppLocalTests
             // but may not clear a later operation for the same row.
             page->_CloseSidebarHistory(false);
             page->_ReconcileSidebarHistoryActivation(first, { State::Complete, true, {} });
-            const auto next = page->_PrepareSidebarHistoryActivation(item);
+            const auto next = page->_PrepareSidebarHistoryActivation(item, normalMaster);
             VERIFY_IS_FALSE(next.statusOnly);
             VERIFY_ARE_NOT_EQUAL(first.id, next.id);
             page->_ReconcileSidebarHistoryActivation(first, { State::Complete, true, {} });
-            VERIFY_ARE_EQUAL(next.id, page->_PrepareSidebarHistoryActivation(item).id);
+            VERIFY_ARE_EQUAL(next.id, page->_PrepareSidebarHistoryActivation(item, normalMaster).id);
             page->_ReconcileSidebarHistoryActivation(next, { State::Complete, false, L"Rejected" });
-            VERIFY_IS_FALSE(page->_PrepareSidebarHistoryActivation(item).statusOnly);
+            VERIFY_IS_FALSE(page->_PrepareSidebarHistoryActivation(item, normalMaster).statusOnly);
             item.AgentId(L"claude");
-            VERIFY_ARE_EQUAL(otherProvider.id, page->_PrepareSidebarHistoryActivation(item).id);
+            VERIFY_ARE_EQUAL(otherProvider.id, page->_PrepareSidebarHistoryActivation(item, normalMaster).id);
         });
     }
 

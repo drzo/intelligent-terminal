@@ -2184,6 +2184,33 @@ namespace winrt::TerminalApp::implementation
         VisibleFieldsChanged.raise(*this, nullptr);
     }
 
+    void TabStrip::OnDisplayOptionsOpened(IInspectable const&, IInspectable const&)
+    {
+        _displayOptionsKeyDownRevoker.revoke();
+        // The flyout's input route does not pass through the sidebar's visual tree.
+        for (auto parent = WUX::Media::VisualTreeHelper::GetParent(AgentsOnlyFilterMenuItem());
+             parent;
+             parent = WUX::Media::VisualTreeHelper::GetParent(parent))
+        {
+            if (const auto presenter = parent.try_as<WUX::Controls::MenuFlyoutPresenter>())
+            {
+                _displayOptionsKeyDownRevoker = presenter.PreviewKeyDown(auto_revoke, [weakThis{ get_weak() }](auto&&, const auto& e) {
+                    if (const auto self = weakThis.get())
+                    {
+                        self->DisplayOptionsKeyDown.raise(*self, e);
+                    }
+                });
+                return;
+            }
+        }
+        LOG_HR_MSG(E_UNEXPECTED, "Sidebar Display options presenter was not found.");
+    }
+
+    void TabStrip::OnDisplayOptionsClosed(IInspectable const&, IInspectable const&)
+    {
+        _displayOptionsKeyDownRevoker.revoke();
+    }
+
     void TabStrip::OnRichTabMetadataFlyoutClosing(
         IInspectable const&,
         WUX::Controls::Primitives::FlyoutBaseClosingEventArgs const& e)

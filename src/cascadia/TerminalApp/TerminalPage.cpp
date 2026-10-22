@@ -807,6 +807,12 @@ namespace winrt::TerminalApp::implementation
         _tabStrip.KeyDown({ get_weak(), &TerminalPage::_KeyDownHandler });
         _tabStrip.PreviewKeyDown({ get_weak(), &TerminalPage::_SidebarNavigationKeyDown });
         _tabRow.PreviewKeyDown({ get_weak(), &TerminalPage::_SidebarNavigationKeyDown });
+        winrt::get_self<implementation::TabStrip>(_tabStrip)->DisplayOptionsKeyDown([weakThis{ get_weak() }](auto&&, const auto& e) {
+            if (const auto page = weakThis.get(); page && page->_isVerticalLayout && !e.Handled())
+            {
+                page->_DispatchKeyEvent(e, KeyDispatchScope::SidebarFilters);
+            }
+        });
         _tabStrip.HistoryActivationRequested([weakThis{ get_weak() }](auto&&, const auto& args) {
             if (const auto page = weakThis.get(); page && args)
             {
@@ -2267,6 +2273,7 @@ namespace winrt::TerminalApp::implementation
         }
 
         cmdline += L" delegate";
+        cmdline += L" --master " + quoteArg(SharedWta::Instance().MasterPipeName());
         if (!agentCliPath.empty())
         {
             cmdline += L" --agent " + quoteArg(std::wstring_view{ agentCliPath });
@@ -6607,11 +6614,15 @@ namespace winrt::TerminalApp::implementation
         const auto actionMap = _settings.ActionMap();
         for (const auto& [elementName, action] : {
                  std::pair{ L"AgentsOnlyFilterMenuItem", ShortcutAction::ToggleSidebarAgentsOnly },
-                 std::pair{ L"RecentAgentSessionsFilterMenuItem", ShortcutAction::ToggleSidebarRecentAgentSessions } })
+                 std::pair{ L"RecentAgentSessionsFilterMenuItem", ShortcutAction::OpenAgentSessions } })
         {
             if (const auto item = _tabStrip.FindName(elementName).try_as<WUX::Controls::ToggleMenuFlyoutItem>())
             {
-                const auto chord = _GetEffectiveKeyBindingForAction(actionMap, action);
+                auto chord = _GetEffectiveKeyBindingForAction(actionMap, action);
+                if (!chord && action == ShortcutAction::OpenAgentSessions)
+                {
+                    chord = _GetEffectiveKeyBindingForAction(actionMap, ShortcutAction::ToggleSidebarRecentAgentSessions);
+                }
                 winrt::hstring shortcut;
                 if (chord)
                 {
@@ -7393,12 +7404,9 @@ namespace winrt::TerminalApp::implementation
     std::wstring TerminalPage::_BuildSessionsListArguments(const std::wstring_view masterPipe)
     {
         std::wstring arguments{ L"sessions list --json --include-status" };
-        if (!masterPipe.empty())
-        {
-            arguments.append(L" --master \"");
-            arguments.append(masterPipe);
-            arguments.push_back(L'"');
-        }
+        arguments.append(L" --master \"");
+        arguments.append(masterPipe);
+        arguments.push_back(L'"');
         return arguments;
     }
 
@@ -7573,7 +7581,7 @@ namespace winrt::TerminalApp::implementation
         }
     }
 
-    TerminalPage::_SidebarHistoryActivationRequest TerminalPage::_PrepareSidebarHistoryActivation(TerminalApp::TabStripHistoryItem const& item)
+    TerminalPage::_SidebarHistoryActivationRequest TerminalPage::_PrepareSidebarHistoryActivation(TerminalApp::TabStripHistoryItem const& item, const std::wstring_view masterPipe)
     {
         const auto windowId = _WindowProperties.WindowId();
         const auto quote = [](std::wstring_view value) {
@@ -7603,7 +7611,8 @@ namespace winrt::TerminalApp::implementation
         };
 
         std::wstring args{
-            L"sessions activate --json --session-id " + quote(item.SessionId()) +
+            L"sessions activate --json --master " + quote(masterPipe) +
+            L" --session-id " + quote(item.SessionId()) +
             L" --provider " + quote(item.AgentId()) +
             L" --location " + quote(item.AgentSource()) +
             L" --window-id " + std::to_wstring(windowId)
@@ -7683,7 +7692,7 @@ namespace winrt::TerminalApp::implementation
 
         const auto weakThis = get_weak();
         const auto dispatcher = Dispatcher();
-        const auto request = _PrepareSidebarHistoryActivation(item);
+        const auto request = _PrepareSidebarHistoryActivation(item, SharedWta::Instance().MasterPipeName());
         auto args = request.arguments;
         args.append(L" --activation-id \"").append(request.id.c_str()).append(L"\"");
         if (request.statusOnly)
@@ -11645,15 +11654,15 @@ namespace winrt::TerminalApp::implementation
     // - <none>
     void TerminalPage::_KeyDownHandler(const Windows::Foundation::IInspectable& /*sender*/, const Windows::UI::Xaml::Input::KeyRoutedEventArgs& e)
     {
-        _DispatchKeyEvent(e, false);
+        _DispatchKeyEvent(e, KeyDispatchScope::All);
     }
 
     void TerminalPage::_SidebarNavigationKeyDown(const Windows::Foundation::IInspectable& /*sender*/, const Windows::UI::Xaml::Input::KeyRoutedEventArgs& e)
     {
-        _DispatchKeyEvent(e, true);
+        _DispatchKeyEvent(e, KeyDispatchScope::SidebarNavigation);
     }
 
-    void TerminalPage::_DispatchKeyEvent(const Windows::UI::Xaml::Input::KeyRoutedEventArgs& e, const bool sidebarNavigationOnly)
+    void TerminalPage::_DispatchKeyEvent(const Windows::UI::Xaml::Input::KeyRoutedEventArgs& e, const KeyDispatchScope scope)
     {
         const auto keyStatus = e.KeyStatus();
         const auto vkey = gsl::narrow_cast<WORD>(e.OriginalKey());
@@ -11711,9 +11720,13 @@ namespace winrt::TerminalApp::implementation
         const auto action = cmd.ActionAndArgs();
         const auto sidebarNavigation = action.Action() == ShortcutAction::NextSidebarTab ||
                                        action.Action() == ShortcutAction::PrevSidebarTab;
+        const auto sidebarFilter = action.Action() == ShortcutAction::ToggleSidebarAgentsOnly ||
+                                   action.Action() == ShortcutAction::OpenAgentSessions ||
+                                   action.Action() == ShortcutAction::ToggleSidebarRecentAgentSessions;
         // TabRow forwards KeyUp for legacy commands; navigation already ran on PreviewKeyDown.
-        if ((sidebarNavigationOnly && !sidebarNavigation) ||
-            (sidebarNavigation && keyStatus.IsKeyReleased))
+        if ((scope == KeyDispatchScope::SidebarNavigation && !sidebarNavigation) ||
+            (scope == KeyDispatchScope::SidebarFilters && !sidebarFilter) ||
+            ((sidebarNavigation || scope == KeyDispatchScope::SidebarFilters) && keyStatus.IsKeyReleased))
         {
             return;
         }

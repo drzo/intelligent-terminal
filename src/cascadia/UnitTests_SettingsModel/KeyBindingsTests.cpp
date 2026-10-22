@@ -924,7 +924,6 @@ namespace SettingsModelUnitTests
         verifyBinding(L"ctrl+f", L"Terminal.TabSearch");
         verifyBinding(L"ctrl+shift+f", L"Terminal.FindText");
         verifyBinding(L"ctrl+shift+g", L"Terminal.ToggleSidebarAgentsOnly");
-        verifyBinding(L"ctrl+shift+r", L"Terminal.ToggleSidebarRecentAgentSessions");
         verifyBinding(L"ctrl+alt+down", L"Terminal.NextSidebarTab");
         verifyBinding(L"ctrl+alt+up", L"Terminal.PrevSidebarTab");
         verifyBinding(L"ctrl+tab", L"Terminal.NextTab");
