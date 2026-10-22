@@ -23349,7 +23349,11 @@ namespace TerminalAppLocalTests
 
     void TabTests::SplitActionDoesNotRetainAgentIdentity()
     {
-        for (const auto splitMode : { SplitType::Duplicate, SplitType::Profile })
+        for (const auto& [splitMode, splitDirection] : {
+                 std::pair{ SplitType::Duplicate, SplitDirection::Right },
+                 std::pair{ SplitType::Duplicate, SplitDirection::Down },
+                 std::pair{ SplitType::Profile, SplitDirection::Right },
+                 std::pair{ SplitType::Profile, SplitDirection::Down } })
         {
             for (const auto explicitDirectory : { false, true })
             {
@@ -23373,7 +23377,7 @@ namespace TerminalAppLocalTests
                     {
                         contentArgs.StartingDirectory(winrt::hstring{ wil::ExpandEnvironmentStringsW<std::wstring>(L"%SystemRoot%") });
                     }
-                    SplitPaneArgs splitArgs{ splitMode, SplitDirection::Right, .5f, contentArgs };
+                    SplitPaneArgs splitArgs{ splitMode, splitDirection, .5f, contentArgs };
                     ActionEventArgs agentSplit{ splitArgs };
                     page->_HandleSplitPane(nullptr, agentSplit);
                     VERIFY_IS_TRUE(agentSplit.Handled());
