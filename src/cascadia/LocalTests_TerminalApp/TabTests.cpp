@@ -651,6 +651,7 @@ namespace TerminalAppLocalTests
         TEST_METHOD(RichTabMetadataExpandsVerticalRow);
         TEST_METHOD(RichTabManifestAcceptsCamelCaseFieldIds);
         TEST_METHOD(RichTabRequestIncludesFirstPartyFields);
+        TEST_METHOD(RichTabAgentStatusHidesNonLiveSessions);
         TEST_METHOD(VisibleFieldsDoNotFilterTabs);
 
         TEST_METHOD(CreateSimpleTerminalXamlType);
@@ -22474,6 +22475,47 @@ namespace TerminalAppLocalTests
         VERIFY_IS_TRUE(static_cast<bool>(serialized));
         VERIFY_IS_TRUE(serialized.value->find(R"("agentStatus":"\u6b63\u5728\u5de5\u4f5c")") != std::string::npos ||
                        serialized.value->find("\"agentStatus\":\"\xE6\xAD\xA3\xE5\x9C\xA8\xE5\xB7\xA5\xE4\xBD\x9C\"") != std::string::npos);
+    }
+
+    void TabTests::RichTabAgentStatusHidesNonLiveSessions()
+    {
+        using Page = winrt::TerminalApp::implementation::TerminalPage;
+        auto page = _commonSetup(nullptr, nullptr, std::nullopt, true);
+
+        TestOnUIThread([&]() {
+            const auto control = page->_GetFocusedTabImpl()->GetActiveTerminalControl();
+            const auto paneId = control.Connection().SessionId();
+            const auto paneIdString = winrt::to_string(::Microsoft::Console::Utils::GuidToPlainString(paneId));
+            page->_paneAgentSessions[paneId] = { L"restored-session", L"copilot", {} };
+            VERIFY_IS_TRUE(page->_ApplyAgentSessionStatusDelta(
+                "restored-session", "", "copilot", uint64_t{ 1000 }, "Historical"));
+
+            const auto verifyStatus = [&](const std::string_view status) {
+                const auto info = page->_RichTabAgentInfoForControl(control);
+                VERIFY_IS_TRUE(info.has_value());
+                VERIFY_ARE_EQUAL(std::string{ status }, info->status);
+                const auto fields = page->_BuildRichTabFirstPartyFields(control);
+                if (status == "Historical" || status == "Ended")
+                {
+                    VERIFY_IS_FALSE(fields.contains("agentStatus"));
+                    VERIFY_IS_FALSE(fields.contains("agentStatusId"));
+                }
+                else
+                {
+                    VERIFY_ARE_EQUAL(winrt::to_string(Page::_SidebarHistoryStatusText(status)), fields.at("agentStatus"));
+                    VERIFY_ARE_EQUAL(std::string{ status }, fields.at("agentStatusId"));
+                }
+            };
+            verifyStatus("Historical");
+
+            uint64_t activity = 1000;
+            for (const auto status : { "Idle", "Working", "Attention", "Error", "InUse", "Ended", "Historical", "Idle" })
+            {
+                VERIFY_IS_TRUE(page->_ApplyAgentSessionStatusDelta(
+                    "restored-session", paneIdString, "copilot", ++activity, status));
+                verifyStatus(status);
+            }
+        });
     }
 
     void TabTests::RichTabMetadataSelectionIsLimitedToTwo()

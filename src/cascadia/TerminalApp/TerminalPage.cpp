@@ -12702,7 +12702,8 @@ namespace winrt::TerminalApp::implementation
     std::unordered_map<std::string, std::string> TerminalPage::_BuildRichTabFirstPartyFields(const TermControl& control)
     {
         std::unordered_map<std::string, std::string> firstPartyFields;
-        if (const auto agentInfo = _RichTabAgentInfoForControl(control))
+        if (const auto agentInfo = _RichTabAgentInfoForControl(control);
+            agentInfo && agentInfo->status != "Historical" && agentInfo->status != "Ended")
         {
             firstPartyFields.emplace("agentStatus", winrt::to_string(_SidebarHistoryStatusText(agentInfo->status)));
             firstPartyFields.emplace("agentStatusId", agentInfo->status);
