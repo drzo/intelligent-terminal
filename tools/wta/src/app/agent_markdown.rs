@@ -762,7 +762,15 @@ mod tests {
     fn agent_markdown_code_blocks_hide_fences_and_preserve_syntax_colors() {
         for language in ["rust", "not-a-language", ""] {
             let source = format!(
-                "Before\n\n```{language}\nfn main() {{\n    println!(\"```\");\n}}\n```\n\nAfter"
+                r#"Before
+
+```{language}
+fn main() {{
+    println!("```");
+}}
+```
+
+After"#
             );
             let result = render_batch(BatchJob {
                 sources: vec![Arc::from(source)].into(),
