@@ -303,9 +303,13 @@ function Invoke-TestTabHeaderContextMenu {
             if ($h.Vertical) {
                 $anchors = @($parts | Where-Object { $_.Current.AutomationId -eq 'TabGroupToggleButton' })
                 if (-not $anchors.Count) { $anchors = @($parts | Where-Object { $_.Current.AutomationId -eq 'TabCloseButton' }) }
+                if (-not $anchors.Count) { $anchors = @($parts | Where-Object {
+                    $_.Current.ControlType -eq [Windows.Automation.ControlType]::Text -and
+                    $_.Current.Name -eq $h.Text.Current.Name
+                }) }
                 if ($anchors.Count -ne 1) { throw 'Canonical top header band is ambiguous or unavailable.' }
                 $anchor = $anchors[0].Current.BoundingRectangle
-                $band = [Windows.Rect]::new($band.Left, $anchor.Top, $band.Width, $anchor.Height)
+                $band = [Windows.Rect]::new($band.Left, $anchor.Top, $band.Width, [Math]::Max(28, $anchor.Height))
             }
             $actions = @($parts | Where-Object { $_.Current.ControlType -eq [Windows.Automation.ControlType]::Button } |
                 ForEach-Object { $_.Current.BoundingRectangle })

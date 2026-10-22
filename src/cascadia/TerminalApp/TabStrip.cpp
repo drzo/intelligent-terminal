@@ -266,6 +266,25 @@ namespace winrt::TerminalApp::implementation
         IconSource(::Microsoft::Terminal::UI::AgentIcons::SourceForIconElement(value));
     }
 
+    void TabStripPaneItem::UpdateCloseVisibility(bool railCollapsed)
+    {
+        CloseVisibility(!railCollapsed && (ActiveIndicatorVisibility() == Visibility::Visible || _pointerOver || _keyboardFocused) ?
+                            Visibility::Visible :
+                            Visibility::Collapsed);
+    }
+
+    void TabStripPaneItem::SetPointerOver(bool pointerOver, bool railCollapsed)
+    {
+        _pointerOver = pointerOver;
+        UpdateCloseVisibility(railCollapsed);
+    }
+
+    void TabStripPaneItem::SetKeyboardFocused(bool focused, bool railCollapsed)
+    {
+        _keyboardFocused = focused;
+        UpdateCloseVisibility(railCollapsed);
+    }
+
     TabStripDisplayItem::TabStripDisplayItem(MUX::Controls::TabViewItem tab,
                                              IInspectable header) :
         _tab{ std::move(tab) },
@@ -360,8 +379,28 @@ namespace winrt::TerminalApp::implementation
         }
         _publishHints(verticalPresentation);
         HeaderVisibility(railCollapsed ? Visibility::Collapsed : Visibility::Visible);
-        CloseVisibility(!railCollapsed && _tab.IsClosable() ? Visibility::Visible : Visibility::Collapsed);
+        UpdateCloseVisibility(railCollapsed);
         UpdatePresentation(railCollapsed, verticalPresentation);
+    }
+
+    void TabStripDisplayItem::UpdateCloseVisibility(bool railCollapsed)
+    {
+        CloseVisibility(!railCollapsed && _tab.IsClosable() &&
+                                (SelectionVisibility() == Visibility::Visible || _pointerOver || _keyboardFocused) ?
+                            Visibility::Visible :
+                            Visibility::Collapsed);
+    }
+
+    void TabStripDisplayItem::SetPointerOver(bool pointerOver, bool railCollapsed)
+    {
+        _pointerOver = pointerOver;
+        UpdateCloseVisibility(railCollapsed);
+    }
+
+    void TabStripDisplayItem::SetKeyboardFocused(bool focused, bool railCollapsed)
+    {
+        _keyboardFocused = focused;
+        UpdateCloseVisibility(railCollapsed);
     }
 
     void TabStripDisplayItem::SetSidebarHints(std::optional<std::pair<hstring, hstring>> hints, bool verticalPresentation)
@@ -706,6 +745,14 @@ namespace winrt::TerminalApp::implementation
             if (const auto self = weakThis.get())
             {
                 self->_refreshRealizedPaneRowVisuals(self->_highContrast);
+                for (uint32_t index = 0; index < self->_displayItems.Size(); ++index)
+                {
+                    const auto display = self->_displayItems.GetAt(index);
+                    if (const auto container = self->ItemsList().ContainerFromItem(display).try_as<FrameworkElement>())
+                    {
+                        self->_updateDisplayItemVisuals(container, display);
+                    }
+                }
             }
         });
         Unloaded([weakThis{ get_weak() }](auto&&, auto&&) {
@@ -870,11 +917,12 @@ namespace winrt::TerminalApp::implementation
         _refreshDisplayItemVisuals(display);
     }
 
-    static void _updatePaneSelection(TerminalApp::TabStripDisplayItem const& display, const bool isSelected)
+    static void _updatePaneSelection(TerminalApp::TabStripDisplayItem const& display, const bool isSelected, const bool railCollapsed)
     {
         for (const auto& pane : display.PaneItems())
         {
             pane.ActiveIndicatorVisibility(isSelected && pane.IsActive() ? Visibility::Visible : Visibility::Collapsed);
+            winrt::get_self<TabStripPaneItem>(pane)->UpdateCloseVisibility(railCollapsed);
         }
     }
 
@@ -953,7 +1001,7 @@ namespace winrt::TerminalApp::implementation
         {
             pane.HighlightQuery(display.SearchText());
         }
-        _updatePaneSelection(display, SelectedItem() == display.Tab());
+        _updatePaneSelection(display, SelectedItem() == display.Tab(), _isRailCollapsed);
         display.IsGroup(isGroup);
         winrt::get_self<TabStripDisplayItem>(display)->HeaderProgressProjectedToPaneRows(headerProgressProjectedToPaneRows);
         winrt::get_self<TabStripDisplayItem>(display)->SyncTabPresentation(_isRailCollapsed, _isVerticalPresentation);
@@ -1046,14 +1094,59 @@ namespace winrt::TerminalApp::implementation
         }
     }
 
-    static std::optional<Windows::UI::Color> _tabSelectionColor(MUX::Controls::TabViewItem const& tab)
+    static std::optional<Windows::UI::Color> _tabSelectionColor(MUX::Controls::TabViewItem const& tab, const bool selected)
     {
-        if (const auto brush = tab ? tab.Background().try_as<WUX::Media::SolidColorBrush>() : nullptr;
+        if (!tab)
+        {
+            return std::nullopt;
+        }
+        if (selected)
+        {
+            const auto themes = tab.Resources().ThemeDictionaries();
+            const auto themeKey = box_value(tab.ActualTheme() == ElementTheme::Light ? L"Light" : L"Dark");
+            if (themes.HasKey(themeKey))
+            {
+                const auto resources = themes.Lookup(themeKey).try_as<ResourceDictionary>();
+                const auto colorKey = box_value(L"TabViewItemHeaderBackgroundSelected");
+                if (resources && resources.HasKey(colorKey))
+                {
+                    if (const auto brush = resources.Lookup(colorKey).try_as<WUX::Media::SolidColorBrush>();
+                        brush && brush.Color().A != 0 && brush.Opacity() > 0)
+                    {
+                        return brush.Color();
+                    }
+                }
+            }
+        }
+        if (const auto brush = tab.Background().try_as<WUX::Media::SolidColorBrush>();
             brush && brush.Color().A != 0 && brush.Opacity() > 0)
         {
             return brush.Color();
         }
         return std::nullopt;
+    }
+
+    static WUX::Media::SolidColorBrush _tabHoverBrush(MUX::Controls::TabViewItem const& tab)
+    {
+        if (tab)
+        {
+            const auto themes = tab.Resources().ThemeDictionaries();
+            const auto themeKey = box_value(tab.ActualTheme() == ElementTheme::Light ? L"Light" : L"Dark");
+            if (themes.HasKey(themeKey))
+            {
+                const auto resources = themes.Lookup(themeKey).try_as<ResourceDictionary>();
+                const auto colorKey = box_value(L"TabViewItemHeaderBackgroundPointerOver");
+                if (resources && resources.HasKey(colorKey))
+                {
+                    const auto brush = resources.Lookup(colorKey).try_as<WUX::Media::SolidColorBrush>();
+                    if (brush && brush.Color().A != 0 && brush.Opacity() > 0)
+                    {
+                        return brush;
+                    }
+                }
+            }
+        }
+        return nullptr;
     }
 
     static Windows::UI::Color _tabSelectionForeground(const Windows::UI::Color color) noexcept
@@ -1164,6 +1257,10 @@ namespace winrt::TerminalApp::implementation
                 {
                     selectionBackground.Background(WUX::Media::SolidColorBrush{ Windows::UI::Colors::Transparent() });
                 }
+                if (const auto hoverBackground = grid.FindName(L"TabHoverBackground").try_as<WUX::Controls::Border>())
+                {
+                    hoverBackground.Opacity(0.0);
+                }
                 return;
             }
             const auto toggle = grid.FindName(L"TabGroupToggleButton").try_as<WUX::Controls::Control>();
@@ -1176,11 +1273,49 @@ namespace winrt::TerminalApp::implementation
                     ToolTipService::SetToolTip(toggle, box_value(label));
                 }
             }
-            const auto tabColor = _tabSelectionColor(display.Tab());
-            const auto selected = display.SelectionVisibility() == Visibility::Visible;
+            const auto isGroup = display.IsGroup();
+            const auto hoverBrush = !isGroup && !_highContrast ? _tabHoverBrush(display.Tab()) : nullptr;
+            const auto hovered = hoverBrush && winrt::get_self<TabStripDisplayItem>(display)->IsPointerOver();
+            const auto selected = !isGroup && display.SelectionVisibility() == Visibility::Visible;
+            if (const auto hoverBackground = grid.FindName(L"TabHoverBackground").try_as<WUX::Controls::Border>())
+            {
+                hoverBackground.Background(hoverBrush ? hoverBrush : ThemeLookup(Application::Current().Resources(), grid.ActualTheme(),
+                                                                                  box_value(L"TabViewItemHeaderBackgroundPointerOver")).as<WUX::Media::Brush>());
+                hoverBackground.Opacity(!_highContrast && !selected &&
+                                                winrt::get_self<TabStripDisplayItem>(display)->IsPointerOver() ?
+                                            1.0 :
+                                            0.0);
+            }
+            if (const auto container = ItemsList().ContainerFromItem(display);
+                container)
+            {
+                if (const auto presenter = _findNamedElement(container, L"SidebarItemPresenter").try_as<Primitives::ListViewItemPresenter>())
+                {
+                    const auto marker = box_value(L"SidebarThemedHover");
+                    if (!_highContrast)
+                    {
+                        presenter.PointerOverBackground(WUX::Media::SolidColorBrush{ Windows::UI::Colors::Transparent() });
+                        if (!presenter.Resources().HasKey(marker))
+                        {
+                            presenter.Resources().Insert(marker, box_value(true));
+                        }
+                    }
+                    else if (presenter.Resources().HasKey(marker))
+                    {
+                        presenter.PointerOverBackground(ThemeLookup(Application::Current().Resources(), grid.ActualTheme(),
+                                                                    box_value(L"TabViewItemHeaderBackgroundPointerOver")).as<WUX::Media::Brush>());
+                        presenter.Resources().Remove(marker);
+                    }
+                }
+            }
+            if (const auto nativeSelection = grid.FindName(L"TabSelectionBackground").try_as<WUX::Controls::Border>())
+            {
+                nativeSelection.Visibility(isGroup ? Visibility::Collapsed : display.SelectionVisibility());
+            }
+            const auto tabColor = isGroup ? std::nullopt : _tabSelectionColor(display.Tab(), selected);
             if (selectionBackground)
             {
-                const auto showColor = tabColor && (selected || !_highContrast);
+                const auto showColor = tabColor && (selected || !_highContrast) && !(!selected && hovered);
                 WUX::Media::SolidColorBrush brush{ showColor ? *tabColor : Windows::UI::Colors::Transparent() };
                 if (showColor && !selected)
                 {
@@ -1192,9 +1327,11 @@ namespace winrt::TerminalApp::implementation
             const auto header = grid.FindName(L"TabHeaderPresenter").try_as<WUX::Controls::Control>();
             const auto close = grid.FindName(L"TabCloseButton").try_as<WUX::Controls::Control>();
             const auto iconPresenter = grid.FindName(L"TabIconPresenter").try_as<ContentPresenter>();
-            if (tabColor && selected)
+            const auto foregroundColor = selected ? tabColor :
+                                                    hovered ? std::make_optional(hoverBrush.Color()) : std::nullopt;
+            if (foregroundColor)
             {
-                const auto foreground = WUX::Media::SolidColorBrush{ _tabSelectionForeground(*tabColor) };
+                const auto foreground = WUX::Media::SolidColorBrush{ _tabSelectionForeground(*foregroundColor) };
                 for (const auto& control : { header, toggle, close })
                 {
                     if (control)
@@ -1233,8 +1370,59 @@ namespace winrt::TerminalApp::implementation
         }
 
         const auto button = root.FindName(L"PaneActivateButton").try_as<WUX::Controls::Control>();
+        const auto active = pane.ActiveIndicatorVisibility() == Visibility::Visible;
+        const auto color = pane.ActiveIndicatorVisibility() == Visibility::Visible ?
+                               _tabSelectionColor(pane.Tab(), true) :
+                               std::nullopt;
+        const auto hoverBrush = !active && !highContrastActive ? _tabHoverBrush(pane.Tab()) : nullptr;
+        const auto hovered = hoverBrush && winrt::get_self<TabStripPaneItem>(pane)->IsPointerOver();
+        if (const auto background = root.FindName(L"PaneColorSelectionBackground").try_as<WUX::Controls::Border>())
+        {
+            background.Background(WUX::Media::SolidColorBrush{ color.value_or(Windows::UI::Colors::Transparent()) });
+        }
+        const auto foreground = color ? WUX::Media::SolidColorBrush{ _tabSelectionForeground(*color) } :
+                                         hovered ? WUX::Media::SolidColorBrush{ _tabSelectionForeground(hoverBrush.Color()) } : nullptr;
+        for (const auto name : { L"PaneActivateButton", L"PaneCloseButton", L"PaneTitleText", L"PaneMetadataText" })
+        {
+            if (const auto control = root.FindName(name).try_as<WUX::Controls::Control>())
+            {
+                if (foreground)
+                {
+                    control.Foreground(foreground);
+                }
+                else
+                {
+                    control.ClearValue(WUX::Controls::Control::ForegroundProperty());
+                }
+            }
+        }
         const auto presenter = root.FindName(L"PaneIconPresenter").try_as<ContentPresenter>();
         _bindMonochromeIconForeground(presenter, button);
+        if (const auto hover = root.FindName(L"PaneHoverBackground").try_as<UIElement>())
+        {
+            if (const auto border = hover.try_as<WUX::Controls::Border>())
+            {
+                const auto marker = box_value(L"SidebarThemedHover");
+                if (hoverBrush)
+                {
+                    border.Background(hoverBrush);
+                    if (!border.Resources().HasKey(marker))
+                    {
+                        border.Resources().Insert(marker, box_value(true));
+                    }
+                }
+                else if (border.Resources().HasKey(marker))
+                {
+                    border.Background(ThemeLookup(Application::Current().Resources(), root.ActualTheme(),
+                                                  box_value(L"TabViewItemHeaderBackgroundPointerOver")).as<WUX::Media::Brush>());
+                    border.Resources().Remove(marker);
+                }
+            }
+            hover.Opacity(pane.ActiveIndicatorVisibility() == Visibility::Visible ||
+                                  !winrt::get_self<TabStripPaneItem>(pane)->IsPointerOver() ?
+                              0.0 :
+                              1.0);
+        }
 
         const auto updateRing = [&](WUX::Controls::Control const& ring) {
             if (!ring)
@@ -1333,12 +1521,24 @@ namespace winrt::TerminalApp::implementation
             _updateSidebarRowToolTipPlacement(root);
             if (const auto display = root.DataContext().try_as<TerminalApp::TabStripDisplayItem>())
             {
+                winrt::get_self<TabStripDisplayItem>(display)->SetPointerOver(false, _isRailCollapsed);
                 _updateDisplayItemVisuals(root, display);
                 if (const auto close = root.FindName(L"TabCloseButton").try_as<FrameworkElement>())
                 {
                     WUX::Automation::AutomationProperties::SetName(close, RS_(L"TabClose"));
                     ToolTipService::SetToolTip(close, box_value(RS_(L"TabCloseToolTip")));
                 }
+            }
+        }
+    }
+
+    void TabStrip::OnTabHeaderUnloaded(IInspectable const& sender, RoutedEventArgs const&)
+    {
+        if (const auto root = sender.try_as<FrameworkElement>())
+        {
+            if (const auto display = root.DataContext().try_as<TerminalApp::TabStripDisplayItem>())
+            {
+                winrt::get_self<TabStripDisplayItem>(display)->SetPointerOver(false, _isRailCollapsed);
             }
         }
     }
@@ -1353,12 +1553,67 @@ namespace winrt::TerminalApp::implementation
 
     void TabStrip::OnSidebarRowPointerEntered(IInspectable const& sender, Input::PointerRoutedEventArgs const&)
     {
-        _updateSidebarRowToolTipPlacement(sender.as<FrameworkElement>());
+        const auto row = sender.as<FrameworkElement>();
+        _updateSidebarRowToolTipPlacement(row);
+        if (const auto display = row.DataContext().try_as<TerminalApp::TabStripDisplayItem>())
+        {
+            winrt::get_self<TabStripDisplayItem>(display)->SetPointerOver(true, _isRailCollapsed);
+            _updateDisplayItemVisuals(row, display);
+        }
+    }
+
+    void TabStrip::OnSidebarRowPointerExited(IInspectable const& sender, Input::PointerRoutedEventArgs const& e)
+    {
+        const auto row = sender.as<FrameworkElement>();
+        const auto position = e.GetCurrentPoint(row).Position();
+        if (position.X >= 0 && position.X < row.ActualWidth() &&
+            position.Y >= 0 && position.Y < row.ActualHeight())
+        {
+            return;
+        }
+        if (const auto display = row.DataContext().try_as<TerminalApp::TabStripDisplayItem>())
+        {
+            winrt::get_self<TabStripDisplayItem>(display)->SetPointerOver(false, _isRailCollapsed);
+            _updateDisplayItemVisuals(row, display);
+        }
     }
 
     void TabStrip::OnSidebarRowGotFocus(IInspectable const& sender, RoutedEventArgs const&)
     {
         _updateSidebarRowToolTipPlacement(sender.as<FrameworkElement>());
+    }
+
+    void TabStrip::OnSidebarListFocusChanged(IInspectable const&, RoutedEventArgs const&)
+    {
+        TerminalApp::TabStripDisplayItem focused{ nullptr };
+        if (const auto root = XamlRoot())
+        {
+            auto current = WUX::Input::FocusManager::GetFocusedElement(root).try_as<DependencyObject>();
+            for (; current; current = WUX::Media::VisualTreeHelper::GetParent(current))
+            {
+                if (const auto container = current.try_as<ListViewItem>())
+                {
+                    const auto display = container.Content().try_as<TerminalApp::TabStripDisplayItem>();
+                    if (display && ItemsList().ContainerFromItem(display) == container)
+                    {
+                        focused = display;
+                    }
+                    break;
+                }
+            }
+        }
+        if (const auto previous = _focusedCloseDisplay.get(); previous != focused)
+        {
+            if (previous)
+            {
+                winrt::get_self<TabStripDisplayItem>(previous)->SetKeyboardFocused(false, _isRailCollapsed);
+            }
+            _focusedCloseDisplay = focused ? winrt::make_weak(focused) : winrt::weak_ref<TerminalApp::TabStripDisplayItem>{};
+            if (focused)
+            {
+                winrt::get_self<TabStripDisplayItem>(focused)->SetKeyboardFocused(true, _isRailCollapsed);
+            }
+        }
     }
 
     void TabStrip::_updateSidebarRowToolTipPlacement(FrameworkElement const& row)
@@ -1413,6 +1668,7 @@ namespace winrt::TerminalApp::implementation
         {
             if (const auto pane = root.DataContext().try_as<TerminalApp::TabStripPaneItem>())
             {
+                winrt::get_self<TabStripPaneItem>(pane)->SetPointerOver(false, _isRailCollapsed);
                 if (const auto title = _findNamedElement(root, L"PaneTitleText").try_as<TerminalApp::HighlightedTextControl>())
                 {
                     title.Text(pane.Title());
@@ -1430,6 +1686,42 @@ namespace winrt::TerminalApp::implementation
 
                 _updatePaneRowVisuals(root, pane);
             }
+        }
+    }
+
+    void TabStrip::OnPaneRowUnloaded(IInspectable const& sender, RoutedEventArgs const&)
+    {
+        if (const auto root = sender.try_as<FrameworkElement>())
+        {
+            if (const auto pane = root.DataContext().try_as<TerminalApp::TabStripPaneItem>())
+            {
+                const auto impl = winrt::get_self<TabStripPaneItem>(pane);
+                impl->SetPointerOver(false, _isRailCollapsed);
+                impl->SetKeyboardFocused(false, _isRailCollapsed);
+            }
+        }
+    }
+
+    void TabStrip::OnPaneRowFocusChanged(IInspectable const& sender, RoutedEventArgs const&)
+    {
+        const auto row = sender.as<FrameworkElement>();
+        if (const auto pane = row.DataContext().try_as<TerminalApp::TabStripPaneItem>())
+        {
+            bool focused = false;
+            if (const auto root = row.XamlRoot())
+            {
+                for (auto current = WUX::Input::FocusManager::GetFocusedElement(root).try_as<DependencyObject>();
+                     current;
+                     current = WUX::Media::VisualTreeHelper::GetParent(current))
+                {
+                    if (current == row)
+                    {
+                        focused = true;
+                        break;
+                    }
+                }
+            }
+            winrt::get_self<TabStripPaneItem>(pane)->SetKeyboardFocused(focused, _isRailCollapsed);
         }
     }
 
@@ -1675,7 +1967,7 @@ namespace winrt::TerminalApp::implementation
     {
         WUX::Media::Brush background{ nullptr };
         WUX::Media::Brush foreground{ nullptr };
-        if (const auto color = _tabSelectionColor(tab))
+        if (const auto color = _tabSelectionColor(tab, true))
         {
             background = WUX::Media::SolidColorBrush{ *color };
             foreground = WUX::Media::SolidColorBrush{ _tabSelectionForeground(*color) };
@@ -2325,6 +2617,16 @@ namespace winrt::TerminalApp::implementation
         const auto display = e.InRecycleQueue() ? nullptr : e.Item().try_as<TerminalApp::TabStripDisplayItem>();
         const auto history = e.InRecycleQueue() ? nullptr : e.Item().try_as<TerminalApp::TabStripHistoryItem>();
         const auto header = !e.InRecycleQueue() && e.Item() == _historySectionItem;
+        if (!display)
+        {
+            if (const auto presenter = _findNamedElement(container, L"SidebarItemPresenter").try_as<Primitives::ListViewItemPresenter>();
+                presenter && presenter.Resources().HasKey(box_value(L"SidebarThemedHover")))
+            {
+                presenter.PointerOverBackground(ThemeLookup(Application::Current().Resources(), container.ActualTheme(),
+                                                            box_value(L"TabViewItemHeaderBackgroundPointerOver")).as<WUX::Media::Brush>());
+                presenter.Resources().Remove(box_value(L"SidebarThemedHover"));
+            }
+        }
         container.IsTabStop(!header);
         // History keeps the previous row geometry; it isn't indented under the header.
         container.Margin(history || header ? Thickness{ 0 } : Thickness{ 6, 4, 6, 4 });
@@ -2434,6 +2736,10 @@ namespace winrt::TerminalApp::implementation
             if (const auto display = _displayItemAt(index))
             {
                 winrt::get_self<TabStripDisplayItem>(display)->SyncTabPresentation(_isRailCollapsed, _isVerticalPresentation);
+                for (const auto& pane : display.PaneItems())
+                {
+                    winrt::get_self<TabStripPaneItem>(pane)->UpdateCloseVisibility(_isRailCollapsed);
+                }
             }
         }
 
@@ -3500,7 +3806,8 @@ namespace winrt::TerminalApp::implementation
             if (const auto display = removed.try_as<TerminalApp::TabStripDisplayItem>())
             {
                 display.SelectionVisibility(Visibility::Collapsed);
-                _updatePaneSelection(display, false);
+                winrt::get_self<TabStripDisplayItem>(display)->UpdateCloseVisibility(_isRailCollapsed);
+                _updatePaneSelection(display, false, _isRailCollapsed);
                 _refreshDisplayItemVisuals(display);
             }
         }
@@ -3513,7 +3820,8 @@ namespace winrt::TerminalApp::implementation
             if (const auto display = added.try_as<TerminalApp::TabStripDisplayItem>())
             {
                 display.SelectionVisibility(Visibility::Visible);
-                _updatePaneSelection(display, true);
+                winrt::get_self<TabStripDisplayItem>(display)->UpdateCloseVisibility(_isRailCollapsed);
+                _updatePaneSelection(display, true, _isRailCollapsed);
                 _refreshDisplayItemVisuals(display);
             }
         }
@@ -3605,7 +3913,13 @@ namespace winrt::TerminalApp::implementation
     {
         if (const auto root = sender.try_as<FrameworkElement>())
         {
-            if (const auto background = root.FindName(L"PaneHoverBackground").try_as<UIElement>())
+            const auto pane = root.DataContext().try_as<TerminalApp::TabStripPaneItem>();
+            if (pane)
+            {
+                winrt::get_self<TabStripPaneItem>(pane)->SetPointerOver(true, _isRailCollapsed);
+                _updatePaneRowVisuals(root, pane);
+            }
+            else if (const auto background = root.FindName(L"PaneHoverBackground").try_as<UIElement>())
             {
                 background.Opacity(1.0);
             }
@@ -3613,11 +3927,25 @@ namespace winrt::TerminalApp::implementation
     }
 
     void TabStrip::OnPanePointerExited(IInspectable const& sender,
-                                       WUX::Input::PointerRoutedEventArgs const&)
+                                       WUX::Input::PointerRoutedEventArgs const& e)
     {
         if (const auto root = sender.try_as<FrameworkElement>())
         {
-            if (const auto background = root.FindName(L"PaneHoverBackground").try_as<UIElement>())
+            if (e)
+            {
+                const auto position = e.GetCurrentPoint(root).Position();
+                if (position.X >= 0 && position.X < root.ActualWidth() &&
+                    position.Y >= 0 && position.Y < root.ActualHeight())
+                {
+                    return;
+                }
+            }
+            if (const auto pane = root.DataContext().try_as<TerminalApp::TabStripPaneItem>())
+            {
+                winrt::get_self<TabStripPaneItem>(pane)->SetPointerOver(false, _isRailCollapsed);
+                _updatePaneRowVisuals(root, pane);
+            }
+            else if (const auto background = root.FindName(L"PaneHoverBackground").try_as<UIElement>())
             {
                 background.Opacity(0.0);
             }

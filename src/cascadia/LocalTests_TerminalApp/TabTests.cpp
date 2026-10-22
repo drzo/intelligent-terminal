@@ -528,6 +528,7 @@ namespace TerminalAppLocalTests
         TEST_METHOD(VerticalTabThemeChangesDoNotReprojectPanes);
         TEST_METHOD(VerticalTabColorsFollowSidebarTheme);
         TEST_METHOD(VerticalTabStripUsesNativeInteractionStates);
+        TEST_METHOD(VerticalTabStripCloseAffordanceTracksRowState);
         TEST_METHOD(VerticalTabStripRefreshesHighContrastColors);
         TEST_METHOD(VerticalTabGroupingIgnoresAgentPane);
         TEST_METHOD(AgentViewFiltersSplitPaneChildren);
@@ -6423,7 +6424,44 @@ namespace TerminalAppLocalTests
                     VERIFY_ARE_EQUAL(40.0f, dragBounds.Height);
                     VERIFY_IS_TRUE(dragBounds.X >= 40.0f);
                     VERIFY_ARE_EQUAL(buttonBounds.X, dragBounds.X + dragBounds.Width);
+                    VERIFY_ARE_EQUAL(71.0f, buttonBounds.Width);
                     VERIFY_IS_TRUE(row->VerticalNewTabButton().IsHitTestVisible());
+                    VERIFY_IS_TRUE(buttonBounds.X + buttonBounds.Width <= width - 12.0f);
+                    VERIFY_IS_TRUE(buttonBounds.Y >= 4.0f);
+                    VERIFY_IS_TRUE(buttonBounds.Y + buttonBounds.Height <= chrome.ActualHeight() - 4.0f);
+                    const auto newTab = row->VerticalNewTabButton();
+                    newTab.ApplyTemplate();
+                    const auto buttonRoot = Media::VisualTreeHelper::GetChild(newTab, 0).as<Grid>();
+                    const auto primaryBackground = buttonRoot.FindName(L"PrimaryBackgroundGrid").as<Grid>();
+                    const auto secondaryBackground = buttonRoot.FindName(L"SecondaryBackgroundGrid").as<Grid>();
+                    const auto primaryButton = buttonRoot.FindName(L"PrimaryButton").as<Button>();
+                    const auto secondaryButton = buttonRoot.FindName(L"SecondaryButton").as<Button>();
+                    const auto primaryBounds = bounds(primaryBackground);
+                    const auto secondaryBounds = bounds(secondaryBackground);
+                    VERIFY_ARE_EQUAL(buttonBounds.X, primaryBounds.X);
+                    VERIFY_ARE_EQUAL(primaryBounds.X + primaryBounds.Width, secondaryBounds.X);
+                    VERIFY_ARE_EQUAL(buttonBounds.X + buttonBounds.Width, secondaryBounds.X + secondaryBounds.Width);
+                    VERIFY_ARE_EQUAL(buttonBounds.Y, primaryBounds.Y);
+                    VERIFY_ARE_EQUAL(buttonBounds.Height, primaryBounds.Height);
+                    VERIFY_ARE_EQUAL(buttonBounds.Y, secondaryBounds.Y);
+                    VERIFY_ARE_EQUAL(buttonBounds.Height, secondaryBounds.Height);
+                    VERIFY_IS_TRUE(newTab.CornerRadius().TopLeft > 0);
+                    VERIFY_ARE_EQUAL(newTab.CornerRadius(), primaryBackground.CornerRadius());
+                    VERIFY_ARE_EQUAL(newTab.CornerRadius(), secondaryBackground.CornerRadius());
+                    VERIFY_ARE_EQUAL(Thickness{}, primaryButton.Padding());
+                    VERIFY_ARE_EQUAL(Thickness{}, secondaryButton.Padding());
+                    const auto chevron = secondaryButton.Content().as<FrameworkElement>();
+                    const auto chevronBounds = bounds(chevron);
+                    VERIFY_ARE_EQUAL(secondaryBounds.X + secondaryBounds.Width / 2,
+                                     chevronBounds.X + chevronBounds.Width / 2);
+                    for (const auto state : { L"PrimaryPointerOver", L"SecondaryPointerOver" })
+                    {
+                        VERIFY_IS_TRUE(VisualStateManager::GoToState(newTab, state, false));
+                        VERIFY_ARE_EQUAL(buttonBounds.X, bounds(primaryBackground).X);
+                        VERIFY_ARE_EQUAL(buttonBounds.X + buttonBounds.Width,
+                                         bounds(secondaryBackground).X + bounds(secondaryBackground).Width);
+                    }
+                    VERIFY_IS_TRUE(VisualStateManager::GoToState(newTab, L"Normal", false));
                     if (elevated)
                     {
                         const auto shieldBounds = bounds(row->ElevationShieldIcon());
@@ -6432,7 +6470,7 @@ namespace TerminalAppLocalTests
                     else
                     {
                         VERIFY_ARE_EQUAL(40.0f, dragBounds.X);
-                        VERIFY_ARE_EQUAL(static_cast<float>(width - 108), dragBounds.Width);
+                        VERIFY_ARE_EQUAL(static_cast<float>(width - 123), dragBounds.Width);
                     }
                 }
             }
@@ -15400,6 +15438,16 @@ namespace TerminalAppLocalTests
             });
             const auto templateRoot = container.ContentTemplateRoot().as<StackPanel>();
             const auto headerRoot = templateRoot.Children().GetAt(0).as<Grid>();
+            const auto groupHover = headerRoot.FindName(L"TabHoverBackground").as<Border>();
+            const auto groupSelection = headerRoot.FindName(L"TabColorSelectionBackground").as<Border>();
+            VERIFY_ARE_EQUAL(groupSelection.ActualWidth(), groupHover.ActualWidth());
+            VERIFY_ARE_EQUAL(groupSelection.ActualHeight(), groupHover.ActualHeight());
+            stripImpl->OnSidebarRowPointerEntered(headerRoot, nullptr);
+            VERIFY_ARE_EQUAL(winrt::Windows::UI::ViewManagement::AccessibilitySettings{}.HighContrast() ? 0.0 : 1.0,
+                             groupHover.Opacity());
+            winrt::get_self<winrt::TerminalApp::implementation::TabStripDisplayItem>(display)->SetPointerOver(false, false);
+            stripImpl->RefreshTabColor(tab);
+            VERIFY_ARE_EQUAL(0.0, groupHover.Opacity());
             const auto iconPresenter = headerRoot.FindName(L"TabIconPresenter").as<ContentPresenter>();
             const auto headerPresenter = headerRoot.FindName(L"TabHeaderPresenter").as<winrt::TerminalApp::TabHeaderControl>();
             VERIFY_ARE_EQUAL(Visibility::Collapsed, iconPresenter.Visibility());
@@ -15424,11 +15472,39 @@ namespace TerminalAppLocalTests
             const auto paneList = templateRoot.Children().GetAt(1).as<ItemsControl>();
             const auto firstPaneContainer = paneList.ContainerFromIndex(0).as<ContentPresenter>();
             const auto firstPaneRoot = Media::VisualTreeHelper::GetChild(firstPaneContainer, 0).as<Grid>();
+            const auto secondPaneContainer = paneList.ContainerFromIndex(1).as<ContentPresenter>();
+            const auto secondPaneRoot = Media::VisualTreeHelper::GetChild(secondPaneContainer, 0).as<Grid>();
             const auto firstPaneBackground = firstPaneRoot.FindName(L"PaneActiveBackground").as<Border>();
+            const auto firstPaneHover = firstPaneRoot.FindName(L"PaneHoverBackground").as<Border>();
+            VERIFY_ARE_EQUAL(firstPaneBackground.ActualWidth(), firstPaneHover.ActualWidth());
+            VERIFY_ARE_EQUAL(firstPaneBackground.ActualHeight(), firstPaneHover.ActualHeight());
+            VERIFY_ARE_EQUAL(firstPaneBackground.TransformToVisual(firstPaneRoot).TransformPoint({ 0, 0 }),
+                             firstPaneHover.TransformToVisual(firstPaneRoot).TransformPoint({ 0, 0 }));
             const auto firstPaneActivateButton = firstPaneRoot.FindName(L"PaneActivateButton").as<Button>();
+            const auto firstPaneClose = firstPaneRoot.FindName(L"PaneCloseButton").as<Button>();
+            const auto secondPaneActivateButton = secondPaneRoot.FindName(L"PaneActivateButton").as<Button>();
+            const auto secondPaneClose = secondPaneRoot.FindName(L"PaneCloseButton").as<Button>();
             VERIFY_ARE_EQUAL(Visibility::Visible, firstPaneBackground.Visibility());
             VERIFY_ARE_EQUAL(firstPaneRoot.ActualWidth(), firstPaneBackground.ActualWidth());
             VERIFY_ARE_EQUAL(firstPaneRoot.ActualWidth(), firstPaneActivateButton.ActualWidth());
+            const auto tabSelection = headerRoot.FindName(L"TabSelectionBackground").as<Border>();
+            VERIFY_ARE_EQUAL(tabSelection.Background().as<Media::SolidColorBrush>().Color(),
+                             firstPaneBackground.Background().as<Media::SolidColorBrush>().Color());
+            VERIFY_ARE_EQUAL(Visibility::Visible, firstPaneClose.Visibility());
+            VERIFY_ARE_EQUAL(Visibility::Collapsed, secondPaneClose.Visibility());
+            VERIFY_IS_TRUE(firstPaneClose.Margin().Top >= 4);
+            VERIFY_IS_TRUE(secondPaneClose.Margin().Top >= 4);
+            stripImpl->OnPanePointerEntered(firstPaneRoot, nullptr);
+            VERIFY_ARE_EQUAL(0.0, firstPaneHover.Opacity());
+            stripImpl->OnPanePointerEntered(secondPaneRoot, nullptr);
+            VERIFY_ARE_EQUAL(Visibility::Visible, secondPaneClose.Visibility());
+            stripImpl->OnPanePointerExited(secondPaneRoot, nullptr);
+            VERIFY_ARE_EQUAL(Visibility::Collapsed, secondPaneClose.Visibility());
+            VERIFY_IS_TRUE(secondPaneActivateButton.Focus(FocusState::Keyboard));
+            VERIFY_ARE_EQUAL(Visibility::Visible, secondPaneClose.Visibility());
+            VERIFY_IS_TRUE(stripImpl->SearchTabsButton().Focus(FocusState::Keyboard));
+            VERIFY_ARE_EQUAL(Visibility::Collapsed, secondPaneClose.Visibility());
+            VERIFY_ARE_EQUAL(Visibility::Visible, firstPaneClose.Visibility());
             uint32_t collectionChanges = 0;
             const auto changed = display.PaneItems().VectorChanged(winrt::auto_revoke, [&](auto&&, auto&&) {
                 ++collectionChanges;
@@ -21374,13 +21450,15 @@ namespace TerminalAppLocalTests
             const auto sidebarTabColor = [&](const uint32_t index) {
                 return headerGrid(index).FindName(L"TabColorSelectionBackground").as<Border>().Background().as<Media::SolidColorBrush>().Color();
             };
-            const auto verifyNativeBackground = [&]() {
+            const auto verifyThemedBackground = [&]() {
                 const auto grid = headerGrid(0);
                 VERIFY_ARE_EQUAL(uint8_t{ 0 }, grid.Background().as<Media::SolidColorBrush>().Color().A);
-                VERIFY_ARE_EQUAL(uint8_t{ 0 }, sidebarTabColor(0).A);
+                const auto selectedBrush = grid.FindName(L"TabColorSelectionBackground").as<Border>().Background().as<Media::SolidColorBrush>();
+                VERIFY_ARE_EQUAL(terminalColor, til::color{ selectedBrush.Color() });
+                VERIFY_ARE_EQUAL(1.0, selectedBrush.Opacity());
                 VERIFY_ARE_EQUAL(Visibility::Visible, grid.FindName(L"TabSelectionBackground").as<Border>().Visibility());
                 const auto header = grid.FindName(L"TabHeaderPresenter").as<winrt::TerminalApp::TabHeaderControl>();
-                VERIFY_IS_TRUE(header.ReadLocalValue(Control::ForegroundProperty()) == DependencyProperty::UnsetValue());
+                VERIFY_IS_TRUE(header.ReadLocalValue(Control::ForegroundProperty()) != DependencyProperty::UnsetValue());
                 const auto icon = grid.FindName(L"TabIconPresenter").as<ContentPresenter>().Content().as<IconElement>();
                 VERIFY_IS_NOT_NULL(icon.Foreground());
                 VERIFY_ARE_EQUAL(header.Foreground().as<Media::SolidColorBrush>().Color(), icon.Foreground().as<Media::SolidColorBrush>().Color());
@@ -21405,7 +21483,7 @@ namespace TerminalAppLocalTests
                 page->RequestedTheme(theme);
                 tab->ThemeColor(ThemeColor::FromTerminalBackground(), nullptr, til::color{});
                 VERIFY_ARE_EQUAL(theme, headerGrid(0).ActualTheme());
-                verifyNativeBackground();
+                verifyThemedBackground();
                 for (const auto color : { winrt::Windows::UI::Colors::Black(), winrt::Windows::UI::Colors::White() })
                 {
                     tab->SetRuntimeTabColor(color);
@@ -21415,7 +21493,7 @@ namespace TerminalAppLocalTests
                     VERIFY_ARE_EQUAL(color == winrt::Windows::UI::Colors::Black() ? winrt::Windows::UI::Colors::White() : winrt::Windows::UI::Colors::Black(),
                                      icon.Foreground().as<Media::SolidColorBrush>().Color());
                     tab->ResetRuntimeTabColor();
-                    verifyNativeBackground();
+                    verifyThemedBackground();
                 }
             }
 
@@ -21424,7 +21502,7 @@ namespace TerminalAppLocalTests
             VERIFY_ARE_EQUAL(terminalColor, til::color{ selectedTabColor(tab->TabViewItem()) });
             VERIFY_IS_TRUE(page->_ApplyTabLayout(TabLayout::Vertical));
             page->_CompleteTabLayoutChange(page->_tabLayoutGeneration);
-            verifyNativeBackground();
+            verifyThemedBackground();
 
             NewTerminalArgs args;
             args.Profile(L"colored");
@@ -21458,6 +21536,127 @@ namespace TerminalAppLocalTests
             VERIFY_IS_TRUE(page->_ApplyTabLayout(TabLayout::Vertical));
             page->_CompleteTabLayoutChange(page->_tabLayoutGeneration);
             VERIFY_ARE_EQUAL(winrt::Windows::UI::Colors::Red(), sidebarTabColor(1));
+
+            const auto strip = winrt::get_self<winrt::TerminalApp::implementation::TabStrip>(page->_tabStrip);
+            const auto display = strip->DisplayItemForTab(tab->TabViewItem());
+            const auto horizontalHover = tab->TabViewItem().Resources().ThemeDictionaries()
+                                             .Lookup(winrt::box_value(L"Dark")).as<ResourceDictionary>()
+                                             .Lookup(winrt::box_value(L"TabViewItemHeaderBackgroundPointerOver")).as<Media::SolidColorBrush>();
+            const auto findPresenter = [](const auto& self, const DependencyObject& element) -> Primitives::ListViewItemPresenter {
+                if (const auto presenter = element.try_as<Primitives::ListViewItemPresenter>())
+                {
+                    return presenter;
+                }
+                for (int32_t index = 0; index < Media::VisualTreeHelper::GetChildrenCount(element); ++index)
+                {
+                    if (const auto presenter = self(self, Media::VisualTreeHelper::GetChild(element, index)))
+                    {
+                        return presenter;
+                    }
+                }
+                return nullptr;
+            };
+            const auto parentPresenter = findPresenter(findPresenter, page->_tabStrip.ContainerFromIndex(0));
+            VERIFY_IS_NOT_NULL(parentPresenter);
+            if (!highContrast)
+            {
+                strip->OnSidebarRowPointerEntered(headerGrid(0), nullptr);
+                const auto hover = parentPresenter.PointerOverBackground().as<Media::SolidColorBrush>();
+                VERIFY_ARE_EQUAL(horizontalHover.Color(), hover.Color());
+                VERIFY_ARE_EQUAL(horizontalHover.Opacity(), hover.Opacity());
+                winrt::get_self<winrt::TerminalApp::implementation::TabStripDisplayItem>(display)->SetPointerOver(false, false);
+                strip->RefreshTabColor(tab->TabViewItem());
+            }
+            page->_SelectTab(0);
+            if (!highContrast)
+            {
+                const auto coloredHover = coloredTab->TabViewItem().Resources().ThemeDictionaries()
+                                              .Lookup(winrt::box_value(L"Dark")).as<ResourceDictionary>()
+                                              .Lookup(winrt::box_value(L"TabViewItemHeaderBackgroundPointerOver")).as<Media::SolidColorBrush>();
+                const auto coloredPresenter = findPresenter(findPresenter, page->_tabStrip.ContainerFromIndex(1));
+                VERIFY_IS_NOT_NULL(coloredPresenter);
+                strip->OnSidebarRowPointerEntered(headerGrid(1), nullptr);
+                const auto hover = coloredPresenter.PointerOverBackground().as<Media::SolidColorBrush>();
+                VERIFY_ARE_EQUAL(coloredHover.Color(), hover.Color());
+                VERIFY_ARE_EQUAL(coloredHover.Opacity(), hover.Opacity());
+                VERIFY_ARE_EQUAL(uint8_t{ 0 }, sidebarTabColor(1).A);
+                winrt::get_self<winrt::TerminalApp::implementation::TabStripDisplayItem>(
+                    strip->DisplayItemForTab(coloredTab->TabViewItem()))->SetPointerOver(false, false);
+                strip->RefreshTabColor(coloredTab->TabViewItem());
+            }
+            const auto originalPaneId = tab->GetRootPane()->Id().value();
+            const auto secondPane = page->_MakePane(nullptr, page->_GetFocusedTab(), nullptr);
+            VERIFY_IS_TRUE(page->_SplitPane(tab, SplitDirection::Right, 0.5f, secondPane));
+            const auto paneList = page->_tabStrip.ContainerFromIndex(0).as<ListViewItem>()
+                                      .ContentTemplateRoot().as<StackPanel>().Children().GetAt(1).as<ItemsControl>();
+            const auto verifyPaneColors = [&](const til::color expected) {
+                page->UpdateLayout();
+                VERIFY_ARE_EQUAL(2u, display.PaneItems().Size());
+                VERIFY_ARE_EQUAL(Visibility::Collapsed,
+                                 headerGrid(0).FindName(L"TabSelectionBackground").as<Border>().Visibility());
+                VERIFY_ARE_EQUAL(uint8_t{ 0 }, sidebarTabColor(0).A);
+                VERIFY_IS_TRUE(headerGrid(0).FindName(L"TabHeaderPresenter").as<winrt::TerminalApp::TabHeaderControl>()
+                                   .ReadLocalValue(Control::ForegroundProperty()) == DependencyProperty::UnsetValue());
+                for (uint32_t index = 0; index < display.PaneItems().Size(); ++index)
+                {
+                    const auto pane = display.PaneItems().GetAt(index);
+                    const auto root = Media::VisualTreeHelper::GetChild(paneList.ContainerFromIndex(index), 0).as<Grid>();
+                    const auto selected = root.FindName(L"PaneActiveBackground").as<Border>();
+                    const auto colored = root.FindName(L"PaneColorSelectionBackground").as<Border>();
+                    const auto isActive = pane.ActiveIndicatorVisibility() == Visibility::Visible;
+                    VERIFY_ARE_EQUAL(isActive ? Visibility::Visible : Visibility::Collapsed, selected.Visibility());
+                    VERIFY_ARE_EQUAL(isActive ? expected : til::color{ winrt::Windows::UI::Colors::Transparent() },
+                                     til::color{ colored.Background().as<Media::SolidColorBrush>().Color() });
+                    if (isActive)
+                    {
+                        const auto title = root.FindName(L"PaneTitleText").as<winrt::TerminalApp::HighlightedTextControl>();
+                        VERIFY_IS_TRUE(title.ReadLocalValue(Control::ForegroundProperty()) != DependencyProperty::UnsetValue());
+                    }
+                }
+            };
+            verifyPaneColors(terminalColor);
+            VERIFY_IS_TRUE(tab->FocusPane(originalPaneId));
+            verifyPaneColors(terminalColor);
+            VERIFY_IS_TRUE(tab->FocusPane(secondPane->Id().value()));
+            verifyPaneColors(terminalColor);
+            tab->SetRuntimeTabColor(winrt::Windows::UI::Colors::Blue());
+            verifyPaneColors(winrt::Windows::UI::Colors::Blue());
+            tab->ResetRuntimeTabColor();
+            verifyPaneColors(terminalColor);
+            if (!highContrast)
+            {
+                strip->OnSidebarRowPointerEntered(headerGrid(0), nullptr);
+                const auto nativeHover = ThemeLookup(Application::Current().Resources(), headerGrid(0).ActualTheme(),
+                                                     winrt::box_value(L"TabViewItemHeaderBackgroundPointerOver")).as<Media::SolidColorBrush>();
+                VERIFY_ARE_EQUAL(nativeHover.Color(), parentPresenter.PointerOverBackground().as<Media::SolidColorBrush>().Color());
+                for (uint32_t index = 0; index < display.PaneItems().Size(); ++index)
+                {
+                    if (display.PaneItems().GetAt(index).ActiveIndicatorVisibility() == Visibility::Visible)
+                    {
+                        continue;
+                    }
+                    const auto root = Media::VisualTreeHelper::GetChild(paneList.ContainerFromIndex(index), 0).as<Grid>();
+                    strip->OnPanePointerEntered(root, nullptr);
+                    const auto hover = root.FindName(L"PaneHoverBackground").as<Border>().Background().as<Media::SolidColorBrush>();
+                    VERIFY_ARE_EQUAL(horizontalHover.Color(), hover.Color());
+                    VERIFY_ARE_EQUAL(horizontalHover.Opacity(), hover.Opacity());
+                }
+                tab->ThemeColor(nullptr, nullptr, til::color{});
+                page->UpdateLayout();
+                const auto defaultHover = ThemeLookup(Application::Current().Resources(), headerGrid(0).ActualTheme(),
+                                                      winrt::box_value(L"TabViewItemHeaderBackgroundPointerOver")).as<Media::SolidColorBrush>();
+                VERIFY_ARE_EQUAL(defaultHover.Color(), parentPresenter.PointerOverBackground().as<Media::SolidColorBrush>().Color());
+                for (uint32_t index = 0; index < display.PaneItems().Size(); ++index)
+                {
+                    if (display.PaneItems().GetAt(index).ActiveIndicatorVisibility() == Visibility::Collapsed)
+                    {
+                        const auto root = Media::VisualTreeHelper::GetChild(paneList.ContainerFromIndex(index), 0).as<Grid>();
+                        const auto hover = root.FindName(L"PaneHoverBackground").as<Border>().Background().as<Media::SolidColorBrush>();
+                        VERIFY_ARE_EQUAL(defaultHover.Color(), hover.Color());
+                        VERIFY_ARE_EQUAL(defaultHover.Opacity(), hover.Opacity());
+                    }
+                }
+            }
         });
     }
 
@@ -21477,6 +21676,7 @@ namespace TerminalAppLocalTests
             strip.TabItems().Append(tab);
             Window::Current().Content(strip);
             Window::Current().Activate();
+            strip.SelectedItem(tab);
             strip.UpdateLayout();
 
             const auto impl = winrt::get_self<winrt::TerminalApp::implementation::TabStrip>(strip);
@@ -21496,14 +21696,25 @@ namespace TerminalAppLocalTests
             const auto headerGrid = root.Children().GetAt(0).as<Grid>();
             const auto selectionBackground = headerGrid.FindName(L"TabSelectionBackground").as<Border>();
             const auto colorSelectionBackground = headerGrid.FindName(L"TabColorSelectionBackground").as<Border>();
+            const auto hoverBackground = headerGrid.FindName(L"TabHoverBackground").as<Border>();
             VERIFY_IS_NOT_NULL(selectionBackground);
             VERIFY_IS_NOT_NULL(colorSelectionBackground);
+            VERIFY_IS_NOT_NULL(hoverBackground);
+            VERIFY_ARE_EQUAL(selectionBackground.ActualWidth(), hoverBackground.ActualWidth());
+            VERIFY_ARE_EQUAL(selectionBackground.ActualHeight(), hoverBackground.ActualHeight());
+            VERIFY_ARE_EQUAL(selectionBackground.TransformToVisual(headerGrid).TransformPoint({ 0, 0 }),
+                             hoverBackground.TransformToVisual(headerGrid).TransformPoint({ 0, 0 }));
             VERIFY_ARE_EQUAL(CornerRadiusHelper::FromUniformRadius(6), headerGrid.CornerRadius());
             strip.SelectedItem(nullptr);
+            const auto highContrast = winrt::Windows::UI::ViewManagement::AccessibilitySettings{}.HighContrast();
             VERIFY_ARE_EQUAL(uint8_t{ 0 }, headerGrid.Background().as<Media::SolidColorBrush>().Color().A);
             VERIFY_ARE_EQUAL(Visibility::Collapsed, selectionBackground.Visibility());
+            impl->OnSidebarRowPointerEntered(headerGrid, nullptr);
+            VERIFY_ARE_EQUAL(highContrast ? 0.0 : 1.0, hoverBackground.Opacity());
+            winrt::get_self<winrt::TerminalApp::implementation::TabStripDisplayItem>(impl->DisplayItemForTab(tab))->SetPointerOver(false, false);
+            impl->RefreshTabColor(tab);
+            VERIFY_ARE_EQUAL(0.0, hoverBackground.Opacity());
             VERIFY_IS_TRUE(header.ReadLocalValue(Control::ForegroundProperty()) == DependencyProperty::UnsetValue());
-            const auto highContrast = winrt::Windows::UI::ViewManagement::AccessibilitySettings{}.HighContrast();
 
             for (const auto color : { winrt::Windows::UI::Colors::Black(), winrt::Windows::UI::Colors::White() })
             {
@@ -21521,6 +21732,10 @@ namespace TerminalAppLocalTests
                 }
                 strip.SelectedItem(tab);
                 VERIFY_ARE_EQUAL(Visibility::Visible, selectionBackground.Visibility());
+                impl->OnSidebarRowPointerEntered(headerGrid, nullptr);
+                VERIFY_ARE_EQUAL(0.0, hoverBackground.Opacity());
+                winrt::get_self<winrt::TerminalApp::implementation::TabStripDisplayItem>(impl->DisplayItemForTab(tab))->SetPointerOver(false, false);
+                impl->RefreshTabColor(tab);
                 VERIFY_ARE_EQUAL(color, colorSelectionBackground.Background().as<Media::SolidColorBrush>().Color());
                 VERIFY_ARE_EQUAL(1.0, colorSelectionBackground.Background().as<Media::SolidColorBrush>().Opacity());
                 strip.SelectedItem(nullptr);
@@ -21568,10 +21783,40 @@ namespace TerminalAppLocalTests
             VERIFY_IS_TRUE(presenter.ContentTemplate() == winrt::get_self<winrt::TerminalApp::implementation::TabStripItemTemplateSelector>(
                 impl->ItemsList().ItemTemplateSelector().as<winrt::TerminalApp::TabStripItemTemplateSelector>())->LiveTemplate);
             VERIFY_ARE_EQUAL(container.CornerRadius(), presenter.CornerRadius());
-            for (const auto brush : { presenter.PointerOverBackground(), presenter.PressedBackground() })
+            for (const auto theme : { ElementTheme::Light, ElementTheme::Dark })
             {
-                VERIFY_IS_TRUE(brush.as<Media::SolidColorBrush>().Color().A > 0);
+                strip.RequestedTheme(theme);
+                strip.UpdateLayout();
+                VERIFY_ARE_EQUAL(theme, headerGrid.ActualTheme());
+                const auto expectedSelected = ThemeLookup(Application::Current().Resources(), theme,
+                                                          winrt::box_value(L"ListViewItemBackgroundSelected")).as<Media::SolidColorBrush>();
+                const auto expectedHover = ThemeLookup(Application::Current().Resources(), theme,
+                                                       winrt::box_value(L"TabViewItemHeaderBackgroundPointerOver")).as<Media::SolidColorBrush>();
+                const auto actualHover = presenter.PointerOverBackground().as<Media::SolidColorBrush>();
+                const auto rowHover = hoverBackground.Background().as<Media::SolidColorBrush>();
+                VERIFY_ARE_EQUAL(expectedSelected.Color(), selectionBackground.Background().as<Media::SolidColorBrush>().Color());
+                VERIFY_ARE_EQUAL(expectedHover.Color(), rowHover.Color());
+                VERIFY_ARE_EQUAL(expectedHover.Opacity(), rowHover.Opacity());
+                VERIFY_ARE_EQUAL(highContrast ? expectedHover.Color().A : uint8_t{ 0 }, actualHover.Color().A);
+                const auto backdrop = ThemeLookup(Application::Current().Resources(), theme,
+                                                  winrt::box_value(L"TabViewBackground")).as<Media::SolidColorBrush>();
+                const auto composite = [&](const Media::SolidColorBrush& brush) {
+                    auto color = til::color{ brush.Color() };
+                    color.a = static_cast<uint8_t>(std::lround(color.a * brush.Opacity()));
+                    return color.layer_over(til::color{ backdrop.Color() });
+                };
+                VERIFY_ARE_EQUAL(composite(expectedHover), composite(rowHover));
             }
+            strip.RequestedTheme(ElementTheme::Default);
+            if (highContrast)
+            {
+                VERIFY_IS_TRUE(presenter.PointerOverBackground().as<Media::SolidColorBrush>().Color().A > 0);
+            }
+            else
+            {
+                VERIFY_ARE_EQUAL(uint8_t{ 0 }, presenter.PointerOverBackground().as<Media::SolidColorBrush>().Color().A);
+            }
+            VERIFY_IS_TRUE(presenter.PressedBackground().as<Media::SolidColorBrush>().Color().A > 0);
             for (const auto brush : {
                      presenter.SelectedBackground(),
                      presenter.SelectedPointerOverBackground(),
@@ -21607,6 +21852,115 @@ namespace TerminalAppLocalTests
             const auto replacementGrid = replacementRoot.Children().GetAt(0).as<Grid>();
             const auto replacementColor = replacementGrid.FindName(L"TabColorSelectionBackground").as<Border>();
             VERIFY_ARE_EQUAL(uint8_t{ 0 }, replacementColor.Background().as<Media::SolidColorBrush>().Color().A);
+        });
+    }
+
+    void TabTests::VerticalTabStripCloseAffordanceTracksRowState()
+    {
+        TestOnUIThread([&]() {
+            winrt::TerminalApp::TabStrip strip;
+            strip.Width(240);
+            strip.Height(220);
+            winrt::MUX::Controls::TabViewItem first;
+            winrt::TerminalApp::TabHeaderControl firstHeader;
+            firstHeader.Title(L"First tab");
+            first.Header(firstHeader);
+            winrt::MUX::Controls::TabViewItem second;
+            winrt::TerminalApp::TabHeaderControl secondHeader;
+            secondHeader.Title(L"Second tab");
+            second.Header(secondHeader);
+            second.IsClosable(false);
+            strip.TabItems().Append(first);
+            strip.TabItems().Append(second);
+            Window::Current().Content(strip);
+            Window::Current().Activate();
+            strip.SelectedItem(nullptr);
+            strip.UpdateLayout();
+
+            const auto impl = winrt::get_self<winrt::TerminalApp::implementation::TabStrip>(strip);
+            const auto row = [&](uint32_t index) {
+                return strip.ContainerFromIndex(index).as<ListViewItem>().ContentTemplateRoot().as<StackPanel>().Children().GetAt(0).as<Grid>();
+            };
+            const auto firstRow = row(0);
+            const auto secondRow = row(1);
+            const auto firstClose = firstRow.FindName(L"TabCloseButton").as<Button>();
+            const auto secondClose = secondRow.FindName(L"TabCloseButton").as<Button>();
+            const auto secondDisplay = impl->DisplayItemForTab(second);
+
+            VERIFY_ARE_EQUAL(Visibility::Collapsed, firstClose.Visibility());
+            VERIFY_ARE_EQUAL(Visibility::Collapsed, secondClose.Visibility());
+            VERIFY_IS_TRUE(firstClose.Margin().Top >= 4);
+            VERIFY_IS_TRUE(firstClose.Margin().Right >= 4);
+            const auto verifyCloseInteractionBackground = [](const Button& close) {
+                close.ApplyTemplate();
+                const auto findPresenter = [](const auto& self, const DependencyObject& element) -> ContentPresenter {
+                    if (const auto presenter = element.try_as<ContentPresenter>())
+                    {
+                        return presenter;
+                    }
+                    for (int32_t index = 0; index < Media::VisualTreeHelper::GetChildrenCount(element); ++index)
+                    {
+                        if (const auto presenter = self(self, Media::VisualTreeHelper::GetChild(element, index)))
+                        {
+                            return presenter;
+                        }
+                    }
+                    return nullptr;
+                };
+                const auto presenter = findPresenter(findPresenter, close);
+                VERIFY_IS_NOT_NULL(presenter);
+                for (const auto state : { L"PointerOver", L"Pressed" })
+                {
+                    VERIFY_IS_TRUE(VisualStateManager::GoToState(close, state, false));
+                    const auto background = presenter.Background().as<Media::SolidColorBrush>();
+                    VERIFY_IS_TRUE(background.Color().A > 0 && background.Opacity() > 0);
+                }
+                VERIFY_IS_TRUE(VisualStateManager::GoToState(close, L"Normal", false));
+            };
+            strip.SelectedItem(first);
+            verifyCloseInteractionBackground(firstClose);
+            const auto panes = winrt::single_threaded_vector<winrt::TerminalApp::TabStripPaneItem>(
+                { winrt::make<winrt::TerminalApp::implementation::TabStripPaneItem>(first, 1, L"", L"First pane", true),
+                  winrt::make<winrt::TerminalApp::implementation::TabStripPaneItem>(first, 2, L"", L"Second pane", false) });
+            strip.SetPaneItems(first, panes, true);
+            strip.UpdateLayout();
+            const auto paneList = strip.ContainerFromIndex(0).as<ListViewItem>().ContentTemplateRoot().as<StackPanel>().Children().GetAt(1).as<ItemsControl>();
+            const auto paneRoot = Media::VisualTreeHelper::GetChild(paneList.ContainerFromIndex(0), 0).as<Grid>();
+            const auto paneClose = paneRoot.FindName(L"PaneCloseButton").as<Button>();
+            VERIFY_ARE_EQUAL(Visibility::Visible, paneClose.Visibility());
+            verifyCloseInteractionBackground(paneClose);
+            strip.SetPaneItems(first, nullptr, false);
+            strip.SelectedItem(nullptr);
+            second.IsClosable(true);
+            winrt::get_self<winrt::TerminalApp::implementation::TabStripDisplayItem>(secondDisplay)->SyncTabPresentation(false, true);
+            VERIFY_IS_TRUE(strip.ContainerFromIndex(1).as<ListViewItem>().Focus(FocusState::Keyboard));
+            VERIFY_ARE_EQUAL(Visibility::Visible, secondClose.Visibility());
+            VERIFY_IS_TRUE(impl->SearchTabsButton().Focus(FocusState::Keyboard));
+            VERIFY_ARE_EQUAL(Visibility::Collapsed, secondClose.Visibility());
+            second.IsClosable(false);
+            winrt::get_self<winrt::TerminalApp::implementation::TabStripDisplayItem>(secondDisplay)->SyncTabPresentation(false, true);
+            impl->OnSidebarRowPointerEntered(firstRow, nullptr);
+            VERIFY_ARE_EQUAL(Visibility::Visible, firstClose.Visibility());
+            impl->OnSidebarRowPointerEntered(secondRow, nullptr);
+            VERIFY_ARE_EQUAL(Visibility::Collapsed, secondClose.Visibility());
+            strip.SelectedItem(first);
+            VERIFY_ARE_EQUAL(Visibility::Visible, firstClose.Visibility());
+            strip.SelectedItem(second);
+            VERIFY_ARE_EQUAL(Visibility::Collapsed, secondClose.Visibility());
+
+            strip.SelectedItem(first);
+            const auto firstDisplay = impl->DisplayItemForTab(first);
+            firstDisplay.HeaderMinHeight(56);
+            strip.UpdateLayout();
+            VERIFY_IS_TRUE(firstRow.ActualHeight() >= 56);
+            const auto closeTop = firstClose.TransformToVisual(firstRow).TransformPoint({ 0, 0 }).Y;
+            VERIFY_IS_TRUE(closeTop <= 8);
+            VERIFY_IS_TRUE(firstClose.TransformToVisual(firstRow).TransformPoint({ 0, 0 }).X + firstClose.ActualWidth() <= firstRow.ActualWidth());
+
+            strip.IsRailCollapsed(true);
+            VERIFY_ARE_EQUAL(Visibility::Collapsed, firstClose.Visibility());
+            strip.IsRailCollapsed(false);
+            VERIFY_ARE_EQUAL(Visibility::Visible, firstClose.Visibility());
         });
     }
 

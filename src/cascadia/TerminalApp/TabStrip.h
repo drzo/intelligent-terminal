@@ -143,6 +143,7 @@ namespace winrt::TerminalApp::implementation
         WINRT_OBSERVABLE_PROPERTY(winrt::hstring, Title, PropertyChanged.raise);
         WINRT_OBSERVABLE_PROPERTY(bool, IsActive, PropertyChanged.raise, false);
         WINRT_OBSERVABLE_PROPERTY(winrt::Windows::UI::Xaml::Visibility, ActiveIndicatorVisibility, PropertyChanged.raise, winrt::Windows::UI::Xaml::Visibility::Collapsed);
+        WINRT_OBSERVABLE_PROPERTY(winrt::Windows::UI::Xaml::Visibility, CloseVisibility, PropertyChanged.raise, winrt::Windows::UI::Xaml::Visibility::Collapsed);
         WINRT_OBSERVABLE_PROPERTY(winrt::hstring, MetadataText, PropertyChanged.raise);
         WINRT_OBSERVABLE_PROPERTY(winrt::hstring, AutomationName, PropertyChanged.raise);
         WINRT_OBSERVABLE_PROPERTY(winrt::Windows::UI::Xaml::Visibility, MetadataVisibility, PropertyChanged.raise, winrt::Windows::UI::Xaml::Visibility::Collapsed);
@@ -155,6 +156,10 @@ namespace winrt::TerminalApp::implementation
         winrt::Windows::UI::Xaml::Controls::IconElement CreateIcon(winrt::Windows::Foundation::IInspectable const& source) const;
         winrt::Microsoft::UI::Xaml::Controls::IconSource IconSource() const noexcept { return _iconSource; }
         void IconSource(winrt::Windows::Foundation::IInspectable const& value);
+        void UpdateCloseVisibility(bool railCollapsed);
+        void SetPointerOver(bool pointerOver, bool railCollapsed);
+        void SetKeyboardFocused(bool focused, bool railCollapsed);
+        bool IsPointerOver() const noexcept { return _pointerOver; }
         WINRT_OBSERVABLE_PROPERTY(winrt::hstring, HighlightQuery, PropertyChanged.raise);
         WINRT_OBSERVABLE_PROPERTY(uint64_t, ProgressState, PropertyChanged.raise, 0);
         WINRT_OBSERVABLE_PROPERTY(bool, IsProgressRingActive, PropertyChanged.raise, false);
@@ -169,6 +174,8 @@ namespace winrt::TerminalApp::implementation
         uint32_t _contentId{};
         winrt::hstring _iconPath;
         winrt::Microsoft::UI::Xaml::Controls::IconSource _iconSource{ nullptr };
+        bool _pointerOver{ false };
+        bool _keyboardFocused{ false };
     };
 
     struct TabStripDisplayItem : TabStripDisplayItemT<TabStripDisplayItem>
@@ -198,7 +205,7 @@ namespace winrt::TerminalApp::implementation
         WINRT_OBSERVABLE_PROPERTY(bool, IsGroup, PropertyChanged.raise, false);
         WINRT_OBSERVABLE_PROPERTY(bool, IsPinned, PropertyChanged.raise, false);
         WINRT_OBSERVABLE_PROPERTY(winrt::Windows::UI::Xaml::Visibility, HeaderVisibility, PropertyChanged.raise, winrt::Windows::UI::Xaml::Visibility::Visible);
-        WINRT_OBSERVABLE_PROPERTY(winrt::Windows::UI::Xaml::Visibility, CloseVisibility, PropertyChanged.raise, winrt::Windows::UI::Xaml::Visibility::Visible);
+        WINRT_OBSERVABLE_PROPERTY(winrt::Windows::UI::Xaml::Visibility, CloseVisibility, PropertyChanged.raise, winrt::Windows::UI::Xaml::Visibility::Collapsed);
         WINRT_OBSERVABLE_PROPERTY(winrt::Windows::UI::Xaml::Visibility, SelectionVisibility, PropertyChanged.raise, winrt::Windows::UI::Xaml::Visibility::Collapsed);
         WINRT_OBSERVABLE_PROPERTY(winrt::Windows::UI::Xaml::Visibility, GroupVisibility, PropertyChanged.raise, winrt::Windows::UI::Xaml::Visibility::Collapsed);
         WINRT_OBSERVABLE_PROPERTY(winrt::Windows::UI::Xaml::Visibility, ChildrenVisibility, PropertyChanged.raise, winrt::Windows::UI::Xaml::Visibility::Collapsed);
@@ -213,6 +220,10 @@ namespace winrt::TerminalApp::implementation
 
     public:
         void SyncTabPresentation(bool railCollapsed, bool verticalPresentation);
+        void UpdateCloseVisibility(bool railCollapsed);
+        void SetPointerOver(bool pointerOver, bool railCollapsed);
+        void SetKeyboardFocused(bool focused, bool railCollapsed);
+        bool IsPointerOver() const noexcept { return _pointerOver; }
         void SetSidebarHints(std::optional<std::pair<winrt::hstring, winrt::hstring>> hints, bool verticalPresentation);
         void SyncIcon(winrt::hstring const& iconPath);
         void SyncIcon(winrt::hstring const& iconPath, winrt::Microsoft::UI::Xaml::Controls::IconSource const& source);
@@ -223,6 +234,8 @@ namespace winrt::TerminalApp::implementation
 
     private:
         winrt::Microsoft::UI::Xaml::Controls::TabViewItem _tab{ nullptr };
+        bool _pointerOver{ false };
+        bool _keyboardFocused{ false };
         winrt::Windows::Foundation::Collections::IObservableVector<TerminalApp::TabStripPaneItem> _paneItems{ nullptr };
         std::optional<winrt::hstring> _iconPath;
         TerminalApp::TabHeaderPresentation _header{ nullptr };
@@ -480,18 +493,28 @@ namespace winrt::TerminalApp::implementation
                                         winrt::Windows::UI::Xaml::Controls::ContainerContentChangingEventArgs const& e);
         void OnTabHeaderLoaded(winrt::Windows::Foundation::IInspectable const& sender,
                                winrt::Windows::UI::Xaml::RoutedEventArgs const& e);
+        void OnTabHeaderUnloaded(winrt::Windows::Foundation::IInspectable const& sender,
+                                 winrt::Windows::UI::Xaml::RoutedEventArgs const& e);
         void OnSidebarRowSizeChanged(winrt::Windows::Foundation::IInspectable const& sender,
                                     winrt::Windows::UI::Xaml::SizeChangedEventArgs const& e);
         void OnSidebarRowPointerEntered(winrt::Windows::Foundation::IInspectable const& sender,
                                        winrt::Windows::UI::Xaml::Input::PointerRoutedEventArgs const& e);
+        void OnSidebarRowPointerExited(winrt::Windows::Foundation::IInspectable const& sender,
+                                      winrt::Windows::UI::Xaml::Input::PointerRoutedEventArgs const& e);
         void OnSidebarRowGotFocus(winrt::Windows::Foundation::IInspectable const& sender,
                                  winrt::Windows::UI::Xaml::RoutedEventArgs const& e);
+        void OnSidebarListFocusChanged(winrt::Windows::Foundation::IInspectable const& sender,
+                                       winrt::Windows::UI::Xaml::RoutedEventArgs const& e);
         void OnRowHeaderLoaded(winrt::Windows::Foundation::IInspectable const& sender,
                                winrt::Windows::UI::Xaml::RoutedEventArgs const& e);
         void OnHeaderRenameEnded(winrt::Windows::Foundation::IInspectable const& sender,
                                  winrt::Windows::Foundation::IInspectable const& args);
         void OnPaneRowLoaded(winrt::Windows::Foundation::IInspectable const& sender,
                              winrt::Windows::UI::Xaml::RoutedEventArgs const& e);
+        void OnPaneRowUnloaded(winrt::Windows::Foundation::IInspectable const& sender,
+                               winrt::Windows::UI::Xaml::RoutedEventArgs const& e);
+        void OnPaneRowFocusChanged(winrt::Windows::Foundation::IInspectable const& sender,
+                                   winrt::Windows::UI::Xaml::RoutedEventArgs const& e);
         void OnGroupToggleClick(winrt::Windows::Foundation::IInspectable const& sender,
                                 winrt::Windows::UI::Xaml::RoutedEventArgs const& e);
         void OnPanePointerEntered(winrt::Windows::Foundation::IInspectable const& sender,
@@ -586,6 +609,7 @@ namespace winrt::TerminalApp::implementation
         bool _richTabMetadataControlsVisible{ true };
         winrt::Windows::Foundation::Collections::IObservableVector<winrt::Windows::Foundation::IInspectable> _tabItems{ nullptr };
         winrt::Windows::Foundation::Collections::IObservableVector<TerminalApp::TabStripDisplayItem> _displayItems{ nullptr };
+        winrt::weak_ref<TerminalApp::TabStripDisplayItem> _focusedCloseDisplay;
         winrt::Windows::Foundation::Collections::IObservableVector<winrt::Windows::Foundation::IInspectable> _viewportItems{ nullptr };
         winrt::Windows::Foundation::IInspectable _historySectionItem{ nullptr };
         winrt::weak_ref<winrt::Windows::UI::Xaml::Controls::Grid> _historySection;
