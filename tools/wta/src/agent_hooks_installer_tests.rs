@@ -154,16 +154,12 @@ fn restage_bundle_dir_replaces_stale_contents() {
 }
 
 fn write_opencode_test_bundle(root: &Path, js: &str) {
-    fs::write(root.join(OPENCODE_PLUGIN_JS), js).unwrap();
-    fs::create_dir_all(root.join(OPENCODE_SUPPORT_DIR)).unwrap();
+    fs::create_dir_all(root.join("v1")).unwrap();
+    fs::create_dir_all(root.join("shared")).unwrap();
+    fs::write(root.join("v1").join(OPENCODE_PLUGIN_JS), js).unwrap();
     fs::write(
-        root.join(OPENCODE_SUPPORT_DIR).join(OPENCODE_TUI_JS),
-        OPENCODE_TUI_JS_CONTENT,
-    )
-    .unwrap();
-    fs::write(
-        root.join(OPENCODE_SUPPORT_DIR).join(OPENCODE_RPC_JS),
-        OPENCODE_RPC_JS_CONTENT,
+        root.join("shared").join("bridge.js"),
+        OPENCODE_BRIDGE_JS_CONTENT,
     )
     .unwrap();
     fs::write(
@@ -822,7 +818,7 @@ fn copy_opencode_bundle_installs_managed_files() {
     let home = unique_dir("opencode-home");
     write_opencode_test_bundle(&source, OPENCODE_PLUGIN_JS_CONTENT);
 
-    copy_opencode_bundle(&source, &home, OpenCodeLayout::V1).unwrap();
+    copy_opencode_bundle(&source, &home).unwrap();
 
     let installed = opencode_plugins_dir(&home);
     let support_dir = opencode_support_dir(&home);
@@ -831,151 +827,6 @@ fn copy_opencode_bundle_installs_managed_files() {
         OPENCODE_PLUGIN_JS_CONTENT
     );
     assert!(support_dir.join(OPENCODE_MANIFEST).is_file());
-    assert_eq!(
-        fs::read_to_string(support_dir.join(OPENCODE_TUI_JS)).unwrap(),
-        OPENCODE_TUI_JS_CONTENT
-    );
-    assert_eq!(
-        fs::read_to_string(support_dir.join(OPENCODE_RPC_JS)).unwrap(),
-        OPENCODE_RPC_JS_CONTENT
-    );
-    assert!(!support_dir.join(OPENCODE_SERVER_JS).exists());
-}
-
-#[test]
-fn opencode_major_version_selects_loader_layout() {
-    assert_eq!(
-        parse_opencode_layout("opencode v2.0.24\n"),
-        Some(OpenCodeLayout::V2)
-    );
-    assert_eq!(parse_opencode_layout("1.17.18"), Some(OpenCodeLayout::V1));
-    assert_eq!(
-        parse_opencode_layout("INFO refreshing\n1.1.36\n"),
-        Some(OpenCodeLayout::V1)
-    );
-    assert_eq!(parse_opencode_layout("unrecognized"), None);
-}
-
-#[test]
-fn opencode_v2_install_migrates_v1_and_copies_both_rpc_imports() {
-    let source = unique_dir("opencode-v2-source");
-    let home = unique_dir("opencode-v2-home");
-    write_opencode_test_bundle(&source, OPENCODE_PLUGIN_JS_CONTENT);
-    copy_opencode_bundle(&source, &home, OpenCodeLayout::V1).unwrap();
-    let plugins = opencode_plugins_dir(&home);
-    let support = opencode_support_dir(&home);
-
-    copy_opencode_bundle(&source, &home, OpenCodeLayout::V2).unwrap();
-    assert!(!plugins.join(OPENCODE_PLUGIN_JS).exists());
-    assert_eq!(
-        fs::read_to_string(support.join(OPENCODE_SERVER_JS)).unwrap(),
-        OPENCODE_PLUGIN_JS_CONTENT
-    );
-    assert_eq!(
-        fs::read_to_string(support.join(OPENCODE_SUPPORT_DIR).join(OPENCODE_RPC_JS)).unwrap(),
-        OPENCODE_RPC_JS_CONTENT
-    );
-    assert_eq!(
-        fs::read_to_string(support.join(OPENCODE_RPC_JS)).unwrap(),
-        OPENCODE_RPC_JS_CONTENT
-    );
-    assert!(
-        opencode_status_for_layout(true, None, Some(&home), Some(OpenCodeLayout::V2))
-            .plugin_installed
-    );
-    assert_eq!(
-        read_installed_opencode_for_layout(&home, Some(OpenCodeLayout::V2))
-            .unwrap()
-            .unwrap()
-            .version,
-        Some("0.1.3".parse().unwrap()),
-    );
-    assert!(
-        !opencode_status_for_layout(true, None, Some(&home), Some(OpenCodeLayout::V1))
-            .plugin_installed
-    );
-
-    fs::remove_file(support.join(OPENCODE_SUPPORT_DIR).join(OPENCODE_RPC_JS)).unwrap();
-    assert!(
-        read_installed_opencode_for_layout(&home, Some(OpenCodeLayout::V2))
-            .unwrap()
-            .unwrap()
-            .version
-            .is_none()
-    );
-    copy_opencode_bundle(&source, &home, OpenCodeLayout::V2).unwrap();
-    copy_opencode_bundle(&source, &home, OpenCodeLayout::V1).unwrap();
-    assert!(plugins.join(OPENCODE_PLUGIN_JS).is_file());
-    assert!(!support.join(OPENCODE_SERVER_JS).exists());
-    assert!(!support.join(OPENCODE_SUPPORT_DIR).exists());
-}
-
-#[test]
-fn opencode_v2_refuses_foreign_entrypoints_and_uninstall_preserves_them() {
-    let source = unique_dir("opencode-v2-collision-source");
-    let home = unique_dir("opencode-v2-collision-home");
-    write_opencode_test_bundle(&source, OPENCODE_PLUGIN_JS_CONTENT);
-    let support = opencode_support_dir(&home);
-    fs::create_dir_all(&support).unwrap();
-    fs::write(support.join(OPENCODE_MANIFEST), OPENCODE_PLUGIN_JSON).unwrap();
-    fs::write(support.join(OPENCODE_SERVER_JS), "user plugin").unwrap();
-    assert_eq!(
-        copy_opencode_bundle(&source, &home, OpenCodeLayout::V2)
-            .unwrap_err()
-            .kind(),
-        std::io::ErrorKind::AlreadyExists,
-    );
-    assert_eq!(
-        opencode_uninstall(Some(&home)).plugin_uninstalled,
-        Some(false)
-    );
-    assert_eq!(
-        fs::read_to_string(support.join(OPENCODE_SERVER_JS)).unwrap(),
-        "user plugin"
-    );
-}
-
-#[test]
-fn opencode_v2_refuses_foreign_nested_dependency() {
-    let source = unique_dir("opencode-v2-nested-collision-source");
-    let home = unique_dir("opencode-v2-nested-collision-home");
-    write_opencode_test_bundle(&source, OPENCODE_PLUGIN_JS_CONTENT);
-    let support = opencode_support_dir(&home);
-    let nested = support.join(OPENCODE_SUPPORT_DIR);
-    fs::create_dir_all(&nested).unwrap();
-    fs::write(support.join(OPENCODE_MANIFEST), OPENCODE_PLUGIN_JSON).unwrap();
-    fs::write(nested.join(OPENCODE_RPC_JS), "user dependency").unwrap();
-
-    assert_eq!(
-        copy_opencode_bundle(&source, &home, OpenCodeLayout::V2)
-            .unwrap_err()
-            .kind(),
-        std::io::ErrorKind::AlreadyExists
-    );
-    assert_eq!(
-        opencode_uninstall(Some(&home)).plugin_uninstalled,
-        Some(false)
-    );
-    assert_eq!(
-        fs::read_to_string(nested.join(OPENCODE_RPC_JS)).unwrap(),
-        "user dependency"
-    );
-}
-
-#[test]
-fn opencode_v2_incomplete_bundle_preserves_legacy_entrypoint() {
-    let source = unique_dir("opencode-v2-incomplete-source");
-    let home = unique_dir("opencode-v2-incomplete-home");
-    write_opencode_test_bundle(&source, OPENCODE_PLUGIN_JS_CONTENT);
-    copy_opencode_bundle(&source, &home, OpenCodeLayout::V1).unwrap();
-    fs::remove_file(source.join(OPENCODE_MANIFEST)).unwrap();
-
-    assert!(copy_opencode_bundle(&source, &home, OpenCodeLayout::V2).is_err());
-    let plugins = opencode_plugins_dir(&home);
-    assert!(plugins.join(OPENCODE_PLUGIN_JS).is_file());
-    assert!(!opencode_support_dir(&home)
-        .join(OPENCODE_SERVER_JS)
-        .exists());
 }
 
 #[test]
@@ -1002,7 +853,7 @@ fn copy_opencode_bundle_preserves_non_managed_collision() {
     fs::create_dir_all(&installed).unwrap();
     fs::write(installed.join(OPENCODE_PLUGIN_JS), "user plugin").unwrap();
 
-    let error = copy_opencode_bundle(&source, &home, OpenCodeLayout::V1).unwrap_err();
+    let error = copy_opencode_bundle(&source, &home).unwrap_err();
 
     assert_eq!(error.kind(), std::io::ErrorKind::AlreadyExists);
     assert_eq!(
@@ -1020,7 +871,7 @@ fn copy_opencode_bundle_rejects_non_file_plugin_collision() {
     let installed_js = opencode_plugins_dir(&home).join(OPENCODE_PLUGIN_JS);
     fs::create_dir_all(&installed_js).unwrap();
 
-    let error = copy_opencode_bundle(&source, &home, OpenCodeLayout::V1).unwrap_err();
+    let error = copy_opencode_bundle(&source, &home).unwrap_err();
 
     assert_eq!(error.kind(), std::io::ErrorKind::AlreadyExists);
     assert!(error.to_string().contains("not a regular managed file"));
@@ -1037,7 +888,7 @@ fn copy_opencode_bundle_preserves_non_managed_support_directory() {
     fs::create_dir_all(&support_dir).unwrap();
     fs::write(support_dir.join("user.txt"), "keep").unwrap();
 
-    let error = copy_opencode_bundle(&source, &home, OpenCodeLayout::V1).unwrap_err();
+    let error = copy_opencode_bundle(&source, &home).unwrap_err();
 
     assert_eq!(error.kind(), std::io::ErrorKind::AlreadyExists);
     assert_eq!(
@@ -1050,33 +901,13 @@ fn copy_opencode_bundle_preserves_non_managed_support_directory() {
 }
 
 #[test]
-fn copy_opencode_bundle_preserves_non_managed_tui_file() {
-    let source = unique_dir("opencode-tui-collision-source");
-    let home = unique_dir("opencode-tui-collision-home");
-    write_opencode_test_bundle(&source, OPENCODE_PLUGIN_JS_CONTENT);
-    let support = opencode_support_dir(&home);
-    fs::create_dir_all(&support).unwrap();
-    fs::write(support.join(OPENCODE_MANIFEST), OPENCODE_PLUGIN_JSON).unwrap();
-    fs::write(support.join(OPENCODE_TUI_JS), "user plugin").unwrap();
-
-    let error = copy_opencode_bundle(&source, &home, OpenCodeLayout::V1).unwrap_err();
-    assert_eq!(error.kind(), std::io::ErrorKind::AlreadyExists);
-    assert_eq!(
-        fs::read_to_string(support.join(OPENCODE_TUI_JS)).unwrap(),
-        "user plugin"
-    );
-    assert!(!opencode_plugins_dir(&home)
-        .join(OPENCODE_PLUGIN_JS)
-        .exists());
-}
-
-#[test]
 fn copy_opencode_bundle_rolls_back_partial_first_install() {
     let source = unique_dir("opencode-partial-source");
     let home = unique_dir("opencode-partial-home");
-    fs::write(source.join(OPENCODE_PLUGIN_JS), OPENCODE_PLUGIN_JS_CONTENT).unwrap();
+    write_opencode_test_bundle(&source, OPENCODE_PLUGIN_JS_CONTENT);
+    fs::remove_file(source.join(OPENCODE_MANIFEST)).unwrap();
 
-    assert!(copy_opencode_bundle(&source, &home, OpenCodeLayout::V1).is_err());
+    assert!(copy_opencode_bundle(&source, &home).is_err());
     assert!(!opencode_support_dir(&home).exists());
     assert!(!opencode_plugins_dir(&home)
         .join(OPENCODE_PLUGIN_JS)
@@ -1087,19 +918,8 @@ fn copy_opencode_bundle_rolls_back_partial_first_install() {
         r#"{"name":"wt-agent-hooks","version":"0.1.3","managed_by":"Intelligent Terminal: wt-agent-hooks"}"#,
     )
     .unwrap();
-    fs::create_dir_all(source.join(OPENCODE_SUPPORT_DIR)).unwrap();
-    fs::write(
-        source.join(OPENCODE_SUPPORT_DIR).join(OPENCODE_TUI_JS),
-        OPENCODE_TUI_JS_CONTENT,
-    )
-    .unwrap();
-    fs::write(
-        source.join(OPENCODE_SUPPORT_DIR).join(OPENCODE_RPC_JS),
-        OPENCODE_RPC_JS_CONTENT,
-    )
-    .unwrap();
 
-    copy_opencode_bundle(&source, &home, OpenCodeLayout::V1).unwrap();
+    copy_opencode_bundle(&source, &home).unwrap();
     assert!(opencode_support_dir(&home)
         .join(OPENCODE_MANIFEST)
         .is_file());
@@ -1124,7 +944,7 @@ fn copy_opencode_bundle_repairs_managed_install_with_bad_manifest() {
     fs::write(support.join(OPENCODE_MANIFEST), "incomplete").unwrap();
     fs::write(support.join(OPENCODE_LEGACY_BRIDGE_PS1), "stale bridge").unwrap();
 
-    copy_opencode_bundle(&source, &home, OpenCodeLayout::V1).unwrap();
+    copy_opencode_bundle(&source, &home).unwrap();
 
     assert_eq!(
         read_version_field(&support.join(OPENCODE_MANIFEST)),
@@ -1144,12 +964,7 @@ fn opencode_status_requires_complete_managed_install() {
     )
     .unwrap();
 
-    let partial = opencode_status_for_layout(
-        true,
-        Some("opencode.exe".into()),
-        Some(&home),
-        Some(OpenCodeLayout::V1),
-    );
+    let partial = opencode_status(true, Some("opencode.exe".into()), Some(&home));
     assert!(partial.marketplace_registered);
     assert!(!partial.marketplace_path_valid);
     assert!(!partial.plugin_installed);
@@ -1161,46 +976,13 @@ fn opencode_status_requires_complete_managed_install() {
         r#"{"name":"wt-agent-hooks","version":"0.1.3","managed_by":"Intelligent Terminal: wt-agent-hooks"}"#,
     )
     .unwrap();
-    let complete = opencode_status_for_layout(
-        true,
-        Some("opencode.exe".into()),
-        Some(&home),
-        Some(OpenCodeLayout::V1),
-    );
-    assert!(!complete.plugin_installed);
-    assert!(
-        read_installed_opencode_for_layout(&home, Some(OpenCodeLayout::V1))
-            .unwrap()
-            .unwrap()
-            .version
-            .is_none()
-    );
-    fs::write(support_dir.join(OPENCODE_TUI_JS), OPENCODE_TUI_JS_CONTENT).unwrap();
-    let complete = opencode_status_for_layout(
-        true,
-        Some("opencode.exe".into()),
-        Some(&home),
-        Some(OpenCodeLayout::V1),
-    );
-    assert!(!complete.plugin_installed);
-    fs::write(support_dir.join(OPENCODE_RPC_JS), OPENCODE_RPC_JS_CONTENT).unwrap();
-    let complete = opencode_status_for_layout(
-        true,
-        Some("opencode.exe".into()),
-        Some(&home),
-        Some(OpenCodeLayout::V1),
-    );
+    let complete = opencode_status(true, Some("opencode.exe".into()), Some(&home));
     assert!(complete.marketplace_path_valid);
     assert!(complete.plugin_installed);
     assert!(complete.plugin_enabled);
 
     fs::remove_file(installed.join(OPENCODE_PLUGIN_JS)).unwrap();
-    let support_only = opencode_status_for_layout(
-        true,
-        Some("opencode.exe".into()),
-        Some(&home),
-        Some(OpenCodeLayout::V1),
-    );
+    let support_only = opencode_status(true, Some("opencode.exe".into()), Some(&home));
     assert!(support_only.marketplace_registered);
     assert!(!support_only.marketplace_path_valid);
     assert!(!support_only.plugin_installed);
@@ -1217,19 +999,10 @@ fn opencode_same_name_manifest_without_marker_is_not_managed() {
     )
     .unwrap();
 
-    let status = opencode_status_for_layout(
-        true,
-        Some("opencode.exe".into()),
-        Some(&home),
-        Some(OpenCodeLayout::V1),
-    );
+    let status = opencode_status(true, Some("opencode.exe".into()), Some(&home));
     assert!(!status.marketplace_registered);
     assert!(!status.plugin_installed);
-    assert!(
-        read_installed_opencode_for_layout(&home, Some(OpenCodeLayout::V1))
-            .unwrap()
-            .is_none()
-    );
+    assert!(read_installed_opencode(&home).unwrap().is_none());
 
     let uninstall = opencode_uninstall(Some(&home));
     assert_eq!(uninstall.plugin_uninstalled, Some(false));
@@ -1242,14 +1015,13 @@ fn opencode_uninstall_removes_only_managed_files() {
     let managed_dir = opencode_plugins_dir(&managed_home);
     let source = unique_dir("opencode-uninstall-source");
     write_opencode_test_bundle(&source, OPENCODE_PLUGIN_JS_CONTENT);
-    copy_opencode_bundle(&source, &managed_home, OpenCodeLayout::V1).unwrap();
+    copy_opencode_bundle(&source, &managed_home).unwrap();
     let support_dir = opencode_support_dir(&managed_home);
     fs::write(support_dir.join("user.txt"), "keep").unwrap();
 
     let result = opencode_uninstall(Some(&managed_home));
     assert_eq!(result.plugin_uninstalled, Some(true));
     assert!(!managed_dir.join(OPENCODE_PLUGIN_JS).exists());
-    assert!(!support_dir.join(OPENCODE_TUI_JS).exists());
     assert_eq!(
         fs::read_to_string(support_dir.join("user.txt")).unwrap(),
         "keep"
@@ -1266,46 +1038,6 @@ fn opencode_uninstall_removes_only_managed_files() {
         fs::read_to_string(user_dir.join(OPENCODE_PLUGIN_JS)).unwrap(),
         "user plugin"
     );
-}
-
-#[test]
-fn opencode_v2_uninstall_removes_nested_rpc_but_preserves_foreign_files() {
-    let source = unique_dir("opencode-v2-uninstall-source");
-    let home = unique_dir("opencode-v2-uninstall-home");
-    write_opencode_test_bundle(&source, OPENCODE_PLUGIN_JS_CONTENT);
-    copy_opencode_bundle(&source, &home, OpenCodeLayout::V2).unwrap();
-    let support = opencode_support_dir(&home);
-    fs::write(support.join("user.txt"), "keep").unwrap();
-
-    assert!(opencode_uninstall(Some(&home)).succeeded());
-    assert!(!support.join(OPENCODE_SERVER_JS).exists());
-    assert!(!support.join(OPENCODE_SUPPORT_DIR).exists());
-    assert!(!support.join(OPENCODE_TUI_JS).exists());
-    assert_eq!(
-        fs::read_to_string(support.join("user.txt")).unwrap(),
-        "keep"
-    );
-}
-
-#[test]
-fn opencode_uninstall_removes_rpc_when_tui_is_missing() {
-    let source = unique_dir("opencode-uninstall-rpc-source");
-    let home = unique_dir("opencode-uninstall-rpc-home");
-    write_opencode_test_bundle(&source, OPENCODE_PLUGIN_JS_CONTENT);
-    copy_opencode_bundle(&source, &home, OpenCodeLayout::V1).unwrap();
-    let support = opencode_support_dir(&home);
-    fs::remove_file(support.join(OPENCODE_TUI_JS)).unwrap();
-    assert!(support.join(OPENCODE_RPC_JS).is_file());
-
-    let result = opencode_uninstall(Some(&home));
-
-    assert!(result.succeeded());
-    assert_eq!(result.plugin_uninstalled, Some(true));
-    assert!(!support.join(OPENCODE_RPC_JS).exists());
-    assert!(!support.join(OPENCODE_MANIFEST).exists());
-    assert!(!opencode_plugins_dir(&home)
-        .join(OPENCODE_PLUGIN_JS)
-        .exists());
 }
 
 #[test]
@@ -1331,7 +1063,7 @@ fn opencode_uninstall_preserves_ownership_markers_after_manifest_failure() {
     let home = unique_dir("opencode-uninstall-failure");
     let source = unique_dir("opencode-uninstall-failure-source");
     write_opencode_test_bundle(&source, OPENCODE_PLUGIN_JS_CONTENT);
-    copy_opencode_bundle(&source, &home, OpenCodeLayout::V1).unwrap();
+    copy_opencode_bundle(&source, &home).unwrap();
     let plugins = opencode_plugins_dir(&home);
     let support = opencode_support_dir(&home);
     fs::remove_file(support.join(OPENCODE_MANIFEST)).unwrap();
@@ -1356,27 +1088,23 @@ fn read_installed_opencode_uses_managed_manifest_version() {
     let installed = opencode_plugins_dir(&home);
     let source = unique_dir("opencode-installed-source");
     write_opencode_test_bundle(&source, OPENCODE_PLUGIN_JS_CONTENT);
-    copy_opencode_bundle(&source, &home, OpenCodeLayout::V1).unwrap();
+    copy_opencode_bundle(&source, &home).unwrap();
 
-    let info = read_installed_opencode_for_layout(&home, Some(OpenCodeLayout::V1))
+    let info = read_installed_opencode(&home)
         .expect("probe succeeds")
         .expect("managed plugin is installed");
     assert_eq!(info.version, Some("0.1.3".parse().unwrap()));
     assert!(info.enabled);
 
     fs::remove_file(installed.join(OPENCODE_PLUGIN_JS)).unwrap();
-    let support_only = read_installed_opencode_for_layout(&home, Some(OpenCodeLayout::V1))
+    let support_only = read_installed_opencode(&home)
         .expect("probe succeeds")
         .expect("managed support manifest is repairable");
     assert_eq!(support_only.version, None);
 
     fs::remove_file(opencode_support_dir(&home).join(OPENCODE_MANIFEST)).unwrap();
     fs::write(installed.join(OPENCODE_PLUGIN_JS), "user plugin").unwrap();
-    assert!(
-        read_installed_opencode_for_layout(&home, Some(OpenCodeLayout::V1))
-            .unwrap()
-            .is_none()
-    );
+    assert!(read_installed_opencode(&home).unwrap().is_none());
 }
 
 /// Uninstall must sweep the active `hook-bundle-staging\<cli>\`
@@ -1479,18 +1207,13 @@ const COPILOT_MARKETPLACE_JSON: &str =
     include_str!("../wt-agent-hooks/copilot/.github/plugin/marketplace.json");
 
 const OPENCODE_PLUGIN_JS_CONTENT: &str =
-    include_str!("../wt-agent-hooks/opencode/wt-agent-hooks.js");
-const OPENCODE_TUI_JS_CONTENT: &str =
-    include_str!("../wt-agent-hooks/opencode/wt-agent-hooks/tui.js");
-const OPENCODE_RPC_JS_CONTENT: &str =
-    include_str!("../wt-agent-hooks/opencode/wt-agent-hooks/rpc.js");
+    include_str!("../wt-agent-hooks/opencode/v1/wt-agent-hooks.js");
+const OPENCODE_BRIDGE_JS_CONTENT: &str =
+    include_str!("../wt-agent-hooks/opencode/shared/bridge.js");
 const OPENCODE_PLUGIN_JSON: &str = include_str!("../wt-agent-hooks/opencode/plugin.json");
 
-/// Every manifest-driven CLI invokes the native wtcli bridge directly; no
-/// PowerShell script and no batch launcher sits in between anymore. Copilot
-/// additionally *names* a shell — its `powershell` / `bash` command fields —
-/// but that is a routing declaration, not a second process: the field value
-/// still runs `wtcli.exe` inside the shell the CLI already started.
+/// Every manifest-driven CLI invokes the native wtcli bridge without an
+/// intermediate script or batch launcher. Copilot also skips the hook shell.
 #[test]
 fn bundle_files_are_well_formed() {
     for hooks in [
@@ -1499,7 +1222,10 @@ fn bundle_files_are_well_formed() {
         GEMINI_HOOKS_JSON,
         CODEX_HOOKS_JSON,
     ] {
-        assert!(hooks.contains("wtcli.exe agent-hook"));
+        let doc: Value = serde_json::from_str(hooks).expect("valid hook JSON");
+        assert!(doc["hooks"].is_object());
+        assert!(hooks.contains("wtcli.exe"));
+        assert!(hooks.contains("agent-hook"));
         for banned in [
             "send-event.ps1",
             ".ps1",
@@ -1519,7 +1245,6 @@ fn bundle_files_are_well_formed() {
 #[test]
 fn bundle_hooks_thread_cli_source() {
     assert!(CLAUDE_HOOKS_JSON.contains("--cli-source claude"));
-    assert!(COPILOT_HOOKS_JSON.contains("--cli-source copilot"));
     assert!(GEMINI_HOOKS_JSON.contains("--cli-source gemini"));
     assert!(CODEX_HOOKS_JSON.contains("--cli-source codex"));
 
@@ -1548,7 +1273,7 @@ fn bundle_hooks_thread_cli_source() {
 /// might dispatch it through, and which shell that is has repeatedly turned out
 /// to be something we guessed wrong:
 ///
-/// * **Copilot** — PowerShell 7+, per GitHub's hooks documentation.
+/// * **Copilot** — no shell; its `exec` / `args` contract is checked separately.
 /// * **Codex** — hooks use the session's selected shell, which can be
 ///   PowerShell or cmd.exe on Windows. `commandWindows` does not select one.
 /// * **Gemini** — PowerShell; `hookRunner.ts` resolves ComSpec-powershell →
@@ -1562,10 +1287,7 @@ fn bundle_hooks_thread_cli_source() {
 /// bash's MSYS path conversion, which turns `/c` into a Windows path so
 /// `cmd.exe` starts interactively and never runs the bridge.
 ///
-/// This covers the `command` field, which is the spelling every CLI falls back
-/// to. Copilot layers documented `powershell` / `bash` fields on top of it —
-/// those are checked by `copilot_shell_variants_match_their_own_shell`, since
-/// each is dispatched only by the shell it names.
+/// This covers shell-based `command` fields, not Copilot's direct executable.
 /// Bundles whose `command` is deliberately written for one shell only, with the
 /// shell it targets. Claude declares this with a `shell` field; Codex uses
 /// `commandWindows` for both Windows shells and a POSIX `command` elsewhere. Gemini has no
@@ -1674,34 +1396,38 @@ fn hook_commands_are_shell_agnostic() {
     }
 }
 
-/// Copilot's `preToolUse` is fail-closed: a hook that exits non-zero denies
-/// every tool call for the rest of the session. A portable `command` cannot be
-/// guarded — no single spelling both runs everywhere and survives a missing
-/// bridge — so shipping one would leave an unguarded path that only has to be
-/// taken once to brick a session.
-///
-/// Measured on Copilot CLI 1.0.81-0: each of `powershell`, `bash` and `command`
-/// delivers events when it is the only field present, and a handler with none
-/// of them is a silent no-op that does NOT deny. So dropping `command` costs
-/// nothing today and degrades fail-open if the per-shell fields ever stop being
-/// honoured.
 #[test]
-fn copilot_ships_no_unguarded_fallback_command() {
+fn copilot_hooks_use_direct_exec_with_matching_event_args() {
     let doc: Value = serde_json::from_str(COPILOT_HOOKS_JSON).unwrap();
-    for matchers in doc["hooks"].as_object().unwrap().values() {
-        for matcher in matchers.as_array().unwrap() {
-            for hook in matcher["hooks"].as_array().unwrap() {
-                assert!(
-                    hook.get("command").is_none(),
-                    "copilot must not ship a bare `command`: {hook}"
+    let events = [
+        ("SessionStart", "agent.session.start"),
+        ("SessionEnd", "agent.session.end"),
+        ("Notification", "agent.notification"),
+        ("UserPromptSubmit", "agent.prompt.submit"),
+        ("PostToolUse", "agent.tool.finished"),
+        ("StopFailure", "agent.error"),
+        ("Stop", "agent.stop"),
+    ];
+    assert_eq!(doc["hooks"].as_object().unwrap().len(), events.len());
+    for (event, topic) in events {
+        let matchers = doc["hooks"][event].as_array().expect("lifecycle event");
+        assert!(!matchers.is_empty(), "{event} needs a hook matcher");
+        for matcher in matchers {
+            let hooks = matcher["hooks"].as_array().unwrap();
+            assert!(!hooks.is_empty(), "{event} needs a hook handler");
+            for hook in hooks {
+                assert_eq!(hook["type"], "command");
+                assert_eq!(hook["exec"], "wtcli.exe");
+                assert_eq!(
+                    hook["args"],
+                    serde_json::json!(["agent-hook", "--cli-source", "copilot", "--event", topic]),
+                    "{event} must preserve the native hook routing"
                 );
-                for field in ["powershell", "bash"] {
-                    let guarded = hook.get(field).and_then(Value::as_str).unwrap_or_else(|| {
-                        panic!("copilot handler is missing its `{field}` command: {hook}")
-                    });
+                assert_eq!(hook["timeoutSec"], 5);
+                for field in ["command", "powershell", "bash", "shell"] {
                     assert!(
-                        guarded.ends_with("exit 0"),
-                        "copilot `{field}` command must force a zero exit: {guarded}"
+                        hook.get(field).is_none(),
+                        "Copilot exec hooks must not also select a shell via {field}: {hook}"
                     );
                 }
             }
@@ -1722,7 +1448,7 @@ fn is_shell_agnostic(command: &str) -> bool {
 }
 
 /// A shell an agent CLI might dispatch its `hooks.json` `command` string
-/// through. Claude uses bash; Copilot and Gemini use PowerShell; Codex uses
+/// through. Claude uses bash; Gemini uses PowerShell; Codex uses
 /// the session's shell on Windows.
 #[derive(Clone, Copy, Debug)]
 enum HookShell {
@@ -2040,16 +1766,14 @@ fn bundled_hook_commands_run_in_every_shell() {
 /// that exit 1 denies every tool call ("Denied by preToolUse hook … (hook
 /// errored)") until the user finds and removes the stale plugin themselves.
 ///
-/// Copilot's schema fixes that without going back to guessing which shell runs
-/// the command: explicit `powershell` / `bash` fields take precedence over
-/// `command` on their own platform, so each variant can absorb a missing bridge
-/// in that shell's own syntax and still exit 0. Substituting a name that cannot
-/// resolve keeps the check deterministic on machines where Terminal *is*
-/// installed.
+/// Copilot no longer subscribes to per-tool hooks and invokes the bridge
+/// without a shell. For the remaining shell-based providers, substituting a
+/// name that cannot resolve keeps the check deterministic on machines where
+/// Terminal *is* installed.
 /// Claude has no `powershell` / `bash` field pair, but it does document a
-/// `shell` field — so it pins bash and guards inside `command` instead. Same
-/// contract as Copilot's variants: an uninstalled Terminal must not turn every
-/// hook into a failure the user has to diagnose.
+/// `shell` field — so it pins bash and guards inside `command` instead.
+/// An uninstalled Terminal must not turn every hook into a failure the user
+/// has to diagnose.
 ///
 /// Pinning matters. Claude defaults to bash but falls back to PowerShell when
 /// Git Bash is absent, and a guard written for the wrong shell is noisy even on
@@ -2196,35 +1920,40 @@ fn claude_hooks_exit_zero_when_the_bridge_is_missing() {
 }
 
 #[test]
-fn copilot_hook_variants_exit_zero_when_the_bridge_is_missing() {
-    let variants = hook_shell_variants(COPILOT_HOOKS_JSON);
-    assert!(
-        !variants.is_empty(),
-        "copilot must ship per-shell hook commands so a missing bridge cannot deny tool calls"
-    );
-    for (shell, command) in variants {
-        let uninstalled = command.replace("wtcli.exe", MISSING_BRIDGE);
-        let Some(out) = run_hook_command(shell, &uninstalled) else {
-            continue;
-        };
-        assert!(
-            out.status.success(),
-            "copilot {shell:?} hook must exit 0 with no bridge installed: {uninstalled}\nstderr: {}",
-            String::from_utf8_lossy(&out.stderr)
-        );
-        assert!(
-            out.stdout.is_empty() && out.stderr.is_empty(),
-            "copilot {shell:?} hook must stay silent with no bridge installed: {uninstalled}\nstdout: {}\nstderr: {}",
-            String::from_utf8_lossy(&out.stdout),
-            String::from_utf8_lossy(&out.stderr)
-        );
+fn copilot_native_hooks_exit_zero_without_terminal_identity() {
+    if !hook_bridge_on_path() {
+        return;
+    }
+    let doc: Value = serde_json::from_str(COPILOT_HOOKS_JSON).unwrap();
+    for matchers in doc["hooks"].as_object().unwrap().values() {
+        for matcher in matchers.as_array().unwrap() {
+            for hook in matcher["hooks"].as_array().unwrap() {
+                let args: Vec<_> = hook["args"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .map(|arg| arg.as_str().unwrap())
+                    .collect();
+                let out = std::process::Command::new(hook["exec"].as_str().unwrap())
+                    .args(args)
+                    .env_remove("WT_COM_CLSID")
+                    .env_remove("WT_SESSION")
+                    .output()
+                    .expect("native hook bridge should start without a shell");
+                assert!(
+                    out.status.success() && out.stdout.is_empty() && out.stderr.is_empty(),
+                    "native hook must silently skip a session without Terminal identity: {hook}\n\
+                     stdout: {}\nstderr: {}",
+                    String::from_utf8_lossy(&out.stdout),
+                    String::from_utf8_lossy(&out.stderr)
+                );
+            }
+        }
     }
 }
 
-/// Negative control for the test above, and the reason Copilot ships no bare
-/// `command` at all: the unguarded spelling is exactly what fails once the
-/// bridge is gone. Pinning that documented failure proves the guards are what
-/// prevents the denial, not some property the bare spelling already had.
+/// Negative control for the shell guards: an unguarded command fails once
+/// the bridge is gone.
 ///
 /// The string is built here rather than read from the bundle. Reading it back
 /// would tie this control to a field Copilot no longer ships, and a control
@@ -2239,41 +1968,6 @@ fn bare_hook_command_still_fails_when_the_bridge_is_missing() {
         !out.status.success(),
         "the bare command spelling is expected to fail without a bridge: {command}"
     );
-}
-
-/// Each per-shell variant must be written in the syntax of the shell it is
-/// dispatched through, still reach the same bridge invocation as `command`, and
-/// end by forcing a successful exit — that final `exit 0` is what stops a
-/// fail-closed `preToolUse` hook from denying tool calls.
-#[test]
-fn copilot_shell_variants_match_their_own_shell() {
-    for (shell, command) in hook_shell_variants(COPILOT_HOOKS_JSON) {
-        assert!(
-            command.contains("wtcli.exe agent-hook --cli-source copilot --event "),
-            "{shell:?} variant must invoke the same bridge as `command`: {command}"
-        );
-        assert!(
-            command.ends_with("; exit 0"),
-            "{shell:?} variant must end by forcing exit 0: {command}"
-        );
-        match shell {
-            HookShell::PowerShell => {
-                assert!(
-                    command.starts_with("try { wtcli.exe "),
-                    "the PowerShell variant must swallow CommandNotFoundException: {command}"
-                );
-                assert!(
-                    powershell_parses(&command),
-                    "the PowerShell variant must parse under PowerShell: {command}"
-                );
-            }
-            HookShell::Bash => assert!(
-                command.starts_with("command -v wtcli.exe >/dev/null 2>&1 && "),
-                "the bash variant must probe for the bridge before running it: {command}"
-            ),
-            HookShell::Cmd => panic!("no hook field is dispatched through cmd.exe"),
-        }
-    }
 }
 
 /// `pwsh` where available, else Windows PowerShell — both parse the constructs
@@ -2401,9 +2095,8 @@ fn previous_hook_command_spellings_are_rejected() {
     }
 }
 
-/// Both CLIs must carry the common event set, and neither may subscribe a
-/// per-tool-call hook. `ErrorOccurred` must NOT appear (undocumented legacy
-/// name; the documented equivalent is `StopFailure`).
+/// Both CLIs carry the common event set. Only Copilot subscribes tool returns;
+/// PreToolUse remains absent and ErrorOccurred is not a supported event name.
 #[test]
 fn claude_and_copilot_carry_full_event_catalog() {
     const COMMON_EVENTS: &[&str] = &[
@@ -2414,22 +2107,8 @@ fn claude_and_copilot_carry_full_event_catalog() {
         "StopFailure",
         "Stop",
     ];
-    // Copilot's `PreToolUse` was the last per-tool-call subscription, kept for
-    // the Attention path that `app.rs` synthesizes when `tool_name` is a
-    // user-input tool. Copilot 1.0.81-2 fires `Notification` for the same
-    // question — both carrying the question text, ~0.9s apart — so the tool
-    // hook only bought a duplicate. It cost a PowerShell start per tool call
-    // (~536 ms measured, ~388 ms of it `pwsh` startup) on the fail-closed path,
-    // where the CLI blocks until the hook returns. The completion events went
-    // earlier for the same reason: `app.rs` discards them because `agent.stop`
-    // owns the turn-end.
-    //
-    // Turn-level Working is unaffected: `UserPromptSubmit` already maps to
-    // `ToolStarting`. What is given up is per-tool granularity in the session
-    // row — the tool's name, not its status.
-    const NO_PER_TOOL_EVENTS: &[&str] = &[
+    const UNSUBSCRIBED_EVENTS: &[&str] = &[
         "PreToolUse",
-        "PostToolUse",
         "PostToolUseFailure",
         "BeforeTool",
         "AfterTool",
@@ -2448,21 +2127,38 @@ fn claude_and_copilot_carry_full_event_catalog() {
             !hooks.contains("\"ErrorOccurred\":"),
             "{label} hooks.json still references undocumented ErrorOccurred"
         );
-        for event in NO_PER_TOOL_EVENTS {
+        for event in UNSUBSCRIBED_EVENTS {
             assert!(
                 !hooks.contains(&format!("\"{event}\":")),
-                "{label} hooks.json subscribes {event}, which fires once per tool \
-                 call and costs a shell start each time; the Attention path it \
-                 used to serve is covered by Notification"
+                "{label} hooks.json must not subscribe {event}"
             );
+        }
+        let doc: Value = serde_json::from_str(hooks).unwrap();
+        if label == "copilot" {
+            let handlers = doc["hooks"]["PostToolUse"][0]["hooks"].as_array().unwrap();
+            assert!(!handlers.is_empty());
+            for handler in handlers {
+                assert_eq!(
+                    handler["args"],
+                    serde_json::json!([
+                        "agent-hook",
+                        "--cli-source",
+                        "copilot",
+                        "--event",
+                        "agent.tool.finished"
+                    ])
+                );
+            }
+        } else {
+            assert!(doc["hooks"].get("PostToolUse").is_none());
         }
     }
 }
 
-/// Drops the fields that carry each CLI's own uninstall-resilience layer, so
+/// Drops the fields that carry each CLI's own execution mechanism, so
 /// the parity check below compares the shared event structure rather than
-/// failing on plumbing that is necessarily per-CLI: Copilot expresses it with
-/// `powershell` / `bash` / `timeoutSec` and ships no portable `command` at all,
+/// failing on plumbing that is necessarily per-CLI: Copilot uses
+/// `exec` / `args` / `timeoutSec` without a shell,
 /// Claude by pinning `shell` and guarding inside `command`.
 fn strip_per_cli_hook_fields(value: &mut Value) {
     match value {
@@ -2472,7 +2168,15 @@ fn strip_per_cli_hook_fields(value: &mut Value) {
             }
         }
         Value::Object(values) => {
-            for field in ["command", "powershell", "bash", "timeoutSec", "shell"] {
+            for field in [
+                "command",
+                "powershell",
+                "bash",
+                "timeoutSec",
+                "shell",
+                "exec",
+                "args",
+            ] {
                 values.remove(field);
             }
             for value in values.values_mut() {
@@ -2483,7 +2187,7 @@ fn strip_per_cli_hook_fields(value: &mut Value) {
     }
 }
 
-/// Claude's CwdChanged hook has no Copilot equivalent; all shared hooks retain parity.
+/// CLI-specific hooks are excluded; all shared hooks retain parity.
 #[test]
 fn claude_and_copilot_hooks_json_are_parity_identical() {
     let mut normalized_claude: Value = serde_json::from_str(CLAUDE_HOOKS_JSON).unwrap();
@@ -2497,6 +2201,11 @@ fn claude_and_copilot_hooks_json_are_parity_identical() {
         .as_object_mut()
         .unwrap()
         .remove("CwdChanged");
+    assert!(normalized_copilot["hooks"]
+        .as_object_mut()
+        .unwrap()
+        .remove("PostToolUse")
+        .is_some());
     strip_per_cli_hook_fields(&mut normalized_claude);
     strip_per_cli_hook_fields(&mut normalized_copilot);
 
@@ -2549,10 +2258,10 @@ fn copilot_uses_native_plugin_layout() {
 fn native_hook_bundle_versions_match_their_marketplaces() {
     let manifests = [
         ("claude", CLAUDE_PLUGIN_JSON, "0.1.9"),
-        ("copilot", COPILOT_PLUGIN_JSON, "0.1.7"),
+        ("copilot", COPILOT_PLUGIN_JSON, "0.1.9"),
         ("gemini", GEMINI_EXTENSION_JSON, "0.1.7"),
         ("codex", CODEX_PLUGIN_JSON, "0.1.9"),
-        ("opencode", OPENCODE_PLUGIN_JSON, "0.1.16"),
+        ("opencode", OPENCODE_PLUGIN_JSON, "0.1.17"),
         (
             "antigravity",
             include_str!("../wt-agent-hooks/antigravity/intelligent-terminal.json"),
@@ -2594,20 +2303,20 @@ fn native_hook_bundle_versions_match_their_marketplaces() {
 #[test]
 fn opencode_plugin_has_runtime_guards_and_source_tag() {
     assert!(OPENCODE_PLUGIN_JS_CONTENT.contains(OPENCODE_MANAGED_MARKER));
-    assert!(OPENCODE_PLUGIN_JS_CONTENT.contains("process.env.WT_COM_CLSID"));
-    assert!(OPENCODE_PLUGIN_JS_CONTENT.contains("process.env.WT_SESSION"));
-    assert!(OPENCODE_PLUGIN_JS_CONTENT.contains("process.env.OPENCODE_CLIENT"));
-    assert!(OPENCODE_PLUGIN_JS_CONTENT.contains("\"acp\""));
-    assert!(OPENCODE_PLUGIN_JS_CONTENT.contains("\"wtcli.exe\""));
-    assert!(OPENCODE_PLUGIN_JS_CONTENT.contains("\"agent-hook\""));
-    assert!(!OPENCODE_PLUGIN_JS_CONTENT.contains("powershell"));
-    assert!(OPENCODE_PLUGIN_JS_CONTENT.contains("new TextEncoder().encode"));
-    assert!(OPENCODE_PLUGIN_JS_CONTENT.contains("\"opencode\""));
+    assert!(OPENCODE_BRIDGE_JS_CONTENT.contains("process.env.WT_COM_CLSID"));
+    assert!(OPENCODE_BRIDGE_JS_CONTENT.contains("process.env.WT_SESSION"));
+    assert!(OPENCODE_BRIDGE_JS_CONTENT.contains("process.env.OPENCODE_CLIENT"));
+    assert!(OPENCODE_BRIDGE_JS_CONTENT.contains("\"acp\""));
+    assert!(OPENCODE_BRIDGE_JS_CONTENT.contains("\"wtcli.exe\""));
+    assert!(OPENCODE_BRIDGE_JS_CONTENT.contains("\"agent-hook\""));
+    assert!(!OPENCODE_BRIDGE_JS_CONTENT.contains("powershell"));
+    assert!(OPENCODE_BRIDGE_JS_CONTENT.contains("new TextEncoder().encode"));
+    assert!(OPENCODE_BRIDGE_JS_CONTENT.contains("\"opencode\""));
     assert!(OPENCODE_PLUGIN_JS_CONTENT.contains("agent.session.start"));
-    assert!(OPENCODE_PLUGIN_JS_CONTENT.contains("value.data?.message"));
-    assert!(OPENCODE_PLUGIN_JS_CONTENT.contains("if (!sessionID) return"));
+    assert!(OPENCODE_BRIDGE_JS_CONTENT.contains("value.data?.message"));
+    assert!(OPENCODE_PLUGIN_JS_CONTENT.contains("!sessionID"));
     assert!(OPENCODE_PLUGIN_JS_CONTENT.contains("info.title !== previous.title"));
-    assert!(OPENCODE_PLUGIN_JS_CONTENT.contains("rootSessions.get(sessionID).cwd"));
+    assert!(OPENCODE_PLUGIN_JS_CONTENT.contains("roots.get(id)?.cwd"));
 }
 
 #[test]
@@ -5145,14 +4854,11 @@ fn decide_skip_disabled_takes_precedence_over_live() {
 /// pre-1.0.81-8 CLI still has.
 #[test]
 fn decide_upgrades_copied_copilot_install() {
-    let info = installed("0.1.0", true);
+    let manifest: Value = serde_json::from_str(COPILOT_PLUGIN_JSON).unwrap();
+    let bundled_version = manifest["version"].as_str().unwrap().parse().unwrap();
+    let info = installed("0.1.8", true);
     assert!(!info.loads_live);
-    let a = decide_upgrade(
-        CliKind::Copilot,
-        Some("0.1.6".parse().unwrap()),
-        Some(&info),
-        None,
-    );
+    let a = decide_upgrade(CliKind::Copilot, Some(bundled_version), Some(&info), None);
     assert_eq!(a, UpgradeAction::UpdatePlugin);
 }
 

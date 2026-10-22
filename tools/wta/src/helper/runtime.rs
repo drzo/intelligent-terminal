@@ -780,6 +780,7 @@ async fn run_acp_app(
                         shell_mgr_for_pipe,
                         wt_connected,
                         false, // first connection; first-login authentication is an explicit UI action
+                        false, // initial startup never resets the retry budget
                         None,
                         proposal_channels_for_pipe,
                     )
@@ -1170,6 +1171,7 @@ async fn run_acp_app(
                     selected_index: 0,
                     preflight: app::PreflightResult {
                         agent_id: String::new(),
+                        acp_bootstrap_available: false,
                         display_name: String::new(),
                         cli_status: app::CheckStatus::Skipped,
                         cli_path: None,

@@ -42,9 +42,35 @@ namespace winrt::TerminalApp::implementation
         Microsoft::Terminal::Control::ControlInteractivity CreateAgentCliCore(const Microsoft::Terminal::Control::IControlSettings& settings,
                                                                               const Microsoft::Terminal::Control::IControlAppearance& unfocusedAppearance,
                                                                               const Microsoft::Terminal::TerminalConnection::ITerminalConnection& connection,
-                                                                              const winrt::hstring& providerId);
+                                                                              const winrt::hstring& providerId,
+                                                                              const std::string& nativeAgentLaunchLocation = {});
         winrt::hstring NativeAgentProviderId(uint64_t contentId) const;
         winrt::hstring NativeAgentProviderIdForPane(const winrt::guid& paneId) const;
+        struct NativeAgentObservationIdentity
+        {
+            winrt::hstring providerId;
+            uint64_t modeEpoch{ 0 };
+            uint64_t windowId{ 0 };
+            std::string tabId;
+            std::string agentSessionId;
+            std::string location;
+            bool initialAdmission{ false };
+            uint64_t receiverGeneration{ 0 };
+            std::string qualifiedSessionId;
+            std::string qualifiedLocation;
+            uint64_t paneCreatedAtMs{ 0 };
+            uint64_t paneCreationSequence{ 0 };
+        };
+        void SetExplicitNativeAgentProvider(uint64_t contentId, const winrt::hstring& providerId);
+        bool RefineNativeAgentLaunchLocation(uint64_t contentId, const winrt::hstring& providerId, const std::string& location);
+        std::optional<NativeAgentObservationIdentity> NativeAgentObservationForContent(uint64_t contentId) const;
+        NativeAgentObservationIdentity AdmitNativeAgentObservation(uint64_t contentId, uint64_t windowId, const std::string& tabId, const std::string& agentSessionId, const std::string& location, bool reset, uint64_t receiverGeneration = 0);
+        void RetainQualifiedNativeAgentIdentity(uint64_t contentId, uint64_t modeEpoch, const std::string& sessionId, const std::string& location);
+        void RemoveNativeAgentObservation(uint64_t contentId);
+        void RestartNativeAgentConnectionTracking(uint64_t contentId);
+        void SetNativeAgentSessionEventsEnabled(bool enabled);
+        void MarkAgentHelper(uint64_t contentId);
+        bool AcceptsAgentSessionEvents(const winrt::guid& paneId) const;
 
         struct PaneAgentSession
         {
@@ -90,6 +116,7 @@ namespace winrt::TerminalApp::implementation
             winrt::hstring universe;
             bool identityQualified{};
             bool interactiveResume{};
+            bool explicitNativeAgent{};
             bool resumeCommandlineTrusted{};
             bool awaitingSessionStart{};
             bool sessionStartConfirmed{};
@@ -162,9 +189,20 @@ namespace winrt::TerminalApp::implementation
         struct TerminalContent
         {
             Microsoft::Terminal::Control::ControlInteractivity core;
+            winrt::hstring nativeAgentProviderId;
+            uint64_t paneCreatedAtMs;
+            uint64_t paneCreationSequence;
+            std::string nativeAgentLaunchLocation;
+            NativeAgentObservationIdentity observation;
+            bool observationAdmitted{ false };
+            bool agentHelper{ false };
         };
         std::unordered_map<uint64_t, TerminalContent> _content;
         std::unordered_map<winrt::guid, PaneMetadata> _paneMetadata;
+        bool _nativeAgentSessionEventsEnabled{ true };
+        uint64_t _nativeAgentObservationGeneration{ 0 };
+        uint64_t _nativeAgentPaneCreationSequence{ 0 };
+
         struct KeptGroup
         {
             winrt::TerminalApp::TerminalPage owner{ nullptr };

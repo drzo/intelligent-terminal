@@ -257,24 +257,6 @@
     <value>Git 변경 사항</value>
     <comment>Option that shows the Git working tree change summary in sidebar tab rows.</comment>
   </data>
-  <data name="VerticalTabsFilterStatusSingle" xml:space="preserve">
-    <value>에이전트 세션 1개 표시 중</value>
-  </data>
-  <data name="VerticalTabsFilterStatusPlural" xml:space="preserve">
-    <value>에이전트 세션 {0}개 표시 중</value>
-  </data>
-  <data name="VerticalTabsFilterCurrentHidden.[using:Windows.UI.Xaml.Automation]AutomationProperties.Name" xml:space="preserve">
-    <value>현재 탭이 이 필터에 의해 숨겨져 있습니다</value>
-  </data>
-  <data name="VerticalTabsFilterCurrentHidden.[using:Windows.UI.Xaml.Controls]ToolTipService.ToolTip" xml:space="preserve">
-    <value>현재 탭이 이 필터에 의해 숨겨져 있습니다</value>
-  </data>
-  <data name="VerticalTabsFilterShowAll.[using:Windows.UI.Xaml.Automation]AutomationProperties.Name" xml:space="preserve">
-    <value>모든 탭 표시</value>
-  </data>
-  <data name="VerticalTabsFilterShowAll.[using:Windows.UI.Xaml.Controls]ToolTipService.ToolTip" xml:space="preserve">
-    <value>모든 탭 표시</value>
-  </data>
   <data name="VerticalTabsHistoryButton.[using:Windows.UI.Xaml.Automation]AutomationProperties.Name" xml:space="preserve">
     <value>에이전트</value>
     <comment>Accessible name of the toolbar button that opens the Agents sidebar view. Agents are AI agents, not human representatives; the view lists their live and historical sessions.</comment>
@@ -1737,10 +1719,22 @@ In this context, "agent" refers to an AI agent (e.g. Copilot, Claude, Gemini), n
   </data>
   <data name="SidebarIntroductionTitle" xml:space="preserve">
     <value>탭을 더 스마트하게 관리하는 방법</value>
-    <comment>Title of the once-only sidebar introduction teaching tip shown after the new default layout is available.</comment>
+    <comment>Title of the once-only sidebar introduction teaching tip: a smarter way to manage tabs.</comment>
   </data>
   <data name="SidebarIntroductionDescription" xml:space="preserve">
-    <value>이제 탭과 에이전트 세션이 사이드바에 표시됩니다. 사이드바 표시 옵션을 사용하여 탭 세부 정보를 선택하세요. 가로 탭으로 돌아가려면 탭을 마우스 오른쪽 단추로 클릭하세요.</value>
-    <comment>Body of the once-only sidebar introduction teaching tip. Sidebar display options refers to the sidebar toolbar button with that tooltip. Explain where to customize visible tab details and how to return to the horizontal tab layout using a tab's context menu. Agents means AI agents, not people.</comment>
+    <value>탭과 에이전트를 더욱 풍부하게 활용할 수 있는 새로운 사이드바를 만나보세요. 탭 보기와 에이전트 보기 간에 전환하세요. 가로 탭으로 돌아가려면 탭을 마우스 오른쪽 단추로 클릭하세요.</value>
+    <comment>Body of the once-only sidebar introduction teaching tip. Agents means AI agents, not people. Tab and agent views refer to the sidebar filters; right-click a tab to return to the horizontal layout.</comment>
+  </data>
+  <data name="SidebarIntroductionNewBadge" xml:space="preserve">
+    <value>새 기능</value>
+    <comment>Short badge shown beside the sidebar introduction title to indicate the new sidebar.</comment>
+  </data>
+  <data name="HorizontalTabsIntroductionTitle" xml:space="preserve">
+    <value>탭을 더 스마트하게 관리하는 방법을 사용해 보세요</value>
+    <comment>Title of the introduction tooltip shown in the horizontal tab layout. Invites the user to try the vertical tab layout for managing terminal tabs.</comment>
+  </data>
+  <data name="HorizontalTabsIntroductionDescription" xml:space="preserve">
+    <value>세로 탭으로 전환하여 에이전트 활동을 한눈에 확인하세요. 탭을 마우스 오른쪽 단추로 클릭하고 {0}을 선택하세요.</value>
+    <comment>Description of the introduction tooltip shown in the horizontal tab layout. Agent activity means the activity of AI agents, not people. Vertical tabs means the tab layout in the sidebar. {0} is the already-localized "Switch to sidebar" command label from the tab's right-click context menu (SwitchToVerticalTabsText); insert it unchanged and do not translate it here.</comment>
   </data>
 </root>

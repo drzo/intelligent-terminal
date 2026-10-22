@@ -42,6 +42,7 @@ colorbrewer
 commandlines
 consvc
 contextualizing
+cooldown
 copyable
 crossterm
 Crossterm
@@ -201,6 +202,7 @@ Remappings
 reparents
 reparses
 replacen
+reqwest
 reserialization
 reserializes
 respawned
@@ -220,6 +222,7 @@ rubyw
 runtimes
 rustc
 rustflags
+rustls
 rustup
 sandboxing
 screenshots
@@ -235,6 +238,7 @@ sids
 SIGKILLs
 signtool
 slnt
+snwprintf
 spams
 splitn
 splitw

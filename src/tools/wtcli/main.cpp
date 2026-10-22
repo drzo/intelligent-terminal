@@ -1386,7 +1386,18 @@ int wmain(int argc, wchar_t** argv)
         sink.attach(new EventSink([&](const std::string& eventUtf8) {
             if (!wtcli::MatchesEventFilter(eventUtf8, listenTarget, listenEventFilter))
                 return;
-            printf("%s\n", eventUtf8.c_str());
+            std::string formattedJson;
+            const auto result = wtcli::FormatListenEvent(eventUtf8, jsonMode, formattedJson);
+            if (result == wtcli::ListenEventFormatResult::InvalidJson)
+            {
+                fprintf(stderr, "[wtcli] listen: invalid event JSON; forwarding unchanged\n");
+            }
+            else if (result == wtcli::ListenEventFormatResult::InvalidTimestamp)
+            {
+                fprintf(stderr, "[wtcli] listen: unsupported hook timestamp; forwarding unchanged\n");
+            }
+            const auto& output = result == wtcli::ListenEventFormatResult::Normalized ? formattedJson : eventUtf8;
+            printf("%s\n", output.c_str());
             fflush(stdout);
         }));
 

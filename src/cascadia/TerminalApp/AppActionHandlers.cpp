@@ -182,6 +182,18 @@ namespace winrt::TerminalApp::implementation
         }
     }
 
+    void TerminalPage::_HandleNextSidebarTab(const IInspectable& /*sender*/,
+                                             const ActionEventArgs& args)
+    {
+        args.Handled(_SelectAdjacentSidebarTab(true));
+    }
+
+    void TerminalPage::_HandlePrevSidebarTab(const IInspectable& /*sender*/,
+                                             const ActionEventArgs& args)
+    {
+        args.Handled(_SelectAdjacentSidebarTab(false));
+    }
+
     void TerminalPage::_HandleSendInput(const IInspectable& sender,
                                         const ActionEventArgs& args)
     {
@@ -290,11 +302,15 @@ namespace winrt::TerminalApp::implementation
 
             const auto& activeTab{ _senderOrFocusedTab(sender) };
             auto contentArgs = realArgs.ContentArgs();
-            winrt::TerminalApp::Tab duplicateFromTab{ realArgs.SplitMode() == SplitType::Duplicate ? _GetFocusedTab() : nullptr };
+            winrt::TerminalApp::Tab duplicateFromTab{ nullptr };
+            if (realArgs.SplitMode() == SplitType::Duplicate && activeTab)
+            {
+                duplicateFromTab = *activeTab;
+            }
             if (realArgs.SplitMode() == SplitType::Profile && activeTab)
             {
                 const auto decision = ::Microsoft::Terminal::ProfileSplits::Resolve(
-                    _settings, activeTab->GetFocusedProfile(), contentArgs);
+                    _settings, _SourceTerminalProfileForTab(activeTab), contentArgs);
                 if (decision.duplicate)
                 {
                     duplicateFromTab = *activeTab;
@@ -316,17 +332,6 @@ namespace winrt::TerminalApp::implementation
                     const auto terminalArgs = contentArgs.try_as<NewTerminalArgs>();
                     NewTerminalArgs splitArgs{ terminalArgs ? terminalArgs.Copy().as<NewTerminalArgs>() : NewTerminalArgs{} };
                     splitArgs.Profile(::Microsoft::Console::Utils::GuidToString(decision.target.Guid()));
-                    if (splitArgs.StartingDirectory().empty())
-                    {
-                        if (const auto control = activeTab->GetActiveTerminalControl())
-                        {
-                            const auto directory = control.WorkingDirectory();
-                            if (::Microsoft::Console::Utils::IsValidDirectory(directory.c_str()))
-                            {
-                                splitArgs.StartingDirectory(directory);
-                            }
-                        }
-                    }
                     contentArgs = splitArgs;
                 }
             }
@@ -344,6 +349,7 @@ namespace winrt::TerminalApp::implementation
                 return;
             }
 
+            contentArgs = _PrepareSplitDirectory(activeTab, contentArgs, duplicateFromTab != nullptr);
             args.Handled(_SplitPane(activeTab,
                                    realArgs.SplitDirection(),
                                    // This is safe, we're already filtering so the value is (0, 1)
@@ -994,10 +1000,25 @@ namespace winrt::TerminalApp::implementation
     void TerminalPage::_HandleTabSearch(const IInspectable& /*sender*/,
                                         const ActionEventArgs& args)
     {
-        const auto p = LoadCommandPalette();
-        p.SetTabs(_tabs, _mruTabs);
-        p.EnableTabSearchMode();
-        p.Visibility(Visibility::Visible);
+        if (_isVerticalLayout && _isVerticalRailVisible)
+        {
+            _sidebarHotkeyReturnControl = {};
+            if (_isVerticalRailCollapsed)
+            {
+                _OnVerticalRailCollapseRequested(nullptr, nullptr);
+            }
+            if (!winrt::get_self<implementation::TabStrip>(_tabStrip)->FocusTabSearch())
+            {
+                LOG_HR(E_FAIL);
+            }
+        }
+        else
+        {
+            const auto p = LoadCommandPalette();
+            p.SetTabs(_tabs, _mruTabs);
+            p.EnableTabSearchMode();
+            p.Visibility(Visibility::Visible);
+        }
 
         args.Handled(true);
     }

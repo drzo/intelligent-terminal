@@ -1,5 +1,6 @@
 BeforeAll {
-    $script:root = Join-Path $PSScriptRoot ('..\artifacts\sidebar-report-selftest-' + [guid]::NewGuid().ToString('N'))
+    $artifactRoot = if ($env:ITE2E_ARTIFACT_ROOT) { $env:ITE2E_ARTIFACT_ROOT } else { Join-Path $PSScriptRoot '..\artifacts' }
+    $script:root = Join-Path $artifactRoot ('sidebar-report-selftest-' + [guid]::NewGuid().ToString('N'))
     New-Item -ItemType Directory -Path $script:root | Out-Null
     $script:titles = @(
         'Sidebar plus always creates the default profile',
@@ -9,6 +10,7 @@ BeforeAll {
         'Recent Sessions collapses without hiding live agents',
         'Sidebar upgrade migrates Horizontal only once',
         'Sidebar introduction is independent of completed migration',
+        'Horizontal rollout introduces vertical tabs only once',
         'Sidebar migration persistence failure warns and retries without false completion',
         'Absent Sidebar upgrade flags migrate once without bypassing fresh FRE',
         'Collapsed Sidebar defers its pending introduction until visible',
@@ -17,7 +19,8 @@ BeforeAll {
         'Collapsing focused Recent Sessions preserves the active shell',
         'Agents live tab mutations reconcile rows without refreshing history',
         'Mixed Sidebar keyboard crosses the Recent Sessions boundary without activation',
-        'Sidebar header search and options show their actual action tooltips'
+        'Sidebar header search and options show their actual action tooltips',
+        'Sidebar navigation hotkeys cycle through displayed tabs'
     )
     $cases = $script:titles | ForEach-Object {
         '<test-case name="Synthetic report contract.' + [Security.SecurityElement]::Escape($_) +
@@ -32,6 +35,13 @@ BeforeAll {
 }
 AfterAll { Remove-Item -LiteralPath $script:root -Recurse -Force }
 Describe 'Sidebar release-report contracts without product activation' {
+    It 'assigns a unique stable ID to displayed-tab navigation' {
+        $lines = Get-Content -LiteralPath (Join-Path $PSScriptRoot '..\..\..\doc\release-check-list.md')
+        $navigation = @($lines | Where-Object { $_.Contains('**Sidebar navigation hotkeys cycle through displayed tabs:') })
+        $navigation | Should -HaveCount 1
+        $navigation[0] | Should -Match '^- \[[ xX]\] `C459`'
+        @($lines | Where-Object { $_ -match '^-\s+\[[ xX]\]\s+`C459`' }) | Should -HaveCount 1
+    }
     It 'assigns new sidebar scope cases unique stable IDs' {
         $text = Get-Content (Join-Path $PSScriptRoot '..\..\..\doc\release-check-list.md') -Raw
         $ids = [regex]::Matches($text, '(?m)^- \[[ x!]\] `(?<id>C\d+)`') |

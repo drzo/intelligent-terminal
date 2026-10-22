@@ -414,24 +414,6 @@
     <value>Git փոփոխությունները</value>
     <comment>Option that shows the Git working tree change summary in sidebar tab rows.</comment>
   </data>
-  <data name="VerticalTabsFilterStatusSingle" xml:space="preserve">
-    <value>Ցուցադրվում է գործակալի 1 նստաշրջան</value>
-  </data>
-  <data name="VerticalTabsFilterStatusPlural" xml:space="preserve">
-    <value>Ցուցադրվում է գործակալի {0} նստաշրջան</value>
-  </data>
-  <data name="VerticalTabsFilterCurrentHidden.[using:Windows.UI.Xaml.Automation]AutomationProperties.Name" xml:space="preserve">
-    <value>Ընթացիկ ներդիրը թաքցված է այս զտիչով</value>
-  </data>
-  <data name="VerticalTabsFilterCurrentHidden.[using:Windows.UI.Xaml.Controls]ToolTipService.ToolTip" xml:space="preserve">
-    <value>Ընթացիկ ներդիրը թաքցված է այս զտիչով</value>
-  </data>
-  <data name="VerticalTabsFilterShowAll.[using:Windows.UI.Xaml.Automation]AutomationProperties.Name" xml:space="preserve">
-    <value>Ցուցադրել բոլոր ներդիրները</value>
-  </data>
-  <data name="VerticalTabsFilterShowAll.[using:Windows.UI.Xaml.Controls]ToolTipService.ToolTip" xml:space="preserve">
-    <value>Ցուցադրել բոլոր ներդիրները</value>
-  </data>
   <data name="VerticalTabsHistoryButton.[using:Windows.UI.Xaml.Automation]AutomationProperties.Name" xml:space="preserve">
     <value>Ագենտներ</value>
     <comment>Accessible name of the toolbar button that opens the Agents sidebar view. Agents are AI agents, not human representatives; the view lists their live and historical sessions.</comment>
@@ -690,10 +672,22 @@
   </data>
   <data name="SidebarIntroductionTitle" xml:space="preserve">
     <value>Ներդիրները կառավարելու ավելի խելացի եղանակ</value>
-    <comment>Title of the once-only sidebar introduction teaching tip shown after the new default layout is available.</comment>
+    <comment>Title of the once-only sidebar introduction teaching tip: a smarter way to manage tabs.</comment>
   </data>
   <data name="SidebarIntroductionDescription" xml:space="preserve">
-    <value>Ձեր ներդիրներն ու ագենտների նստաշրջաններն այժմ կողային վահանակում են։ Ներդիրների մանրամասներն ընտրելու համար օգտագործեք Կողային վահանակի ցուցադրման ընտրանքներ կոճակը։ Հորիզոնական ներդիրներին վերադառնալու համար աջ սեղմեք ներդիրի վրա։</value>
-    <comment>Body of the once-only sidebar introduction teaching tip. Sidebar display options refers to the sidebar toolbar button with that tooltip. Explain where to customize visible tab details and how to return to the horizontal tab layout using a tab's context menu. Agents means AI agents, not people.</comment>
+    <value>Ծանոթացեք նոր կողային վահանակին՝ ներդիրների և ագենտների համար ավելի շատ հնարավորություններով։ Անցեք ներդիրների և ագենտների տեսքերի միջև։ Հորիզոնական ներդիրներին վերադառնալու համար աջ սեղմեք ներդիրի վրա։</value>
+    <comment>Body of the once-only sidebar introduction teaching tip. Agents means AI agents, not people. Tab and agent views refer to the sidebar filters; right-click a tab to return to the horizontal layout.</comment>
+  </data>
+  <data name="SidebarIntroductionNewBadge" xml:space="preserve">
+    <value>Նոր</value>
+    <comment>Short badge shown beside the sidebar introduction title to indicate the new sidebar.</comment>
+  </data>
+  <data name="HorizontalTabsIntroductionTitle" xml:space="preserve">
+    <value>Փորձեք ներդիրները կառավարելու ավելի խելացի եղանակներ</value>
+    <comment>Title of the introduction tooltip shown in the horizontal tab layout. Invites the user to try the vertical tab layout for managing terminal tabs.</comment>
+  </data>
+  <data name="HorizontalTabsIntroductionDescription" xml:space="preserve">
+    <value>Անցեք ուղղահայաց ներդիրների՝ ձեր ագենտների գործունեությունը մեկ հայացքով տեսնելու համար։ Աջ սեղմեք ներդիրի վրա և ընտրեք {0}։</value>
+    <comment>Description of the introduction tooltip shown in the horizontal tab layout. Agent activity means the activity of AI agents, not people. Vertical tabs means the tab layout in the sidebar. {0} is the already-localized "Switch to sidebar" command label from the tab's right-click context menu (SwitchToVerticalTabsText); insert it unchanged and do not translate it here.</comment>
   </data>
 </root>

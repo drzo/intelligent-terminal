@@ -2852,6 +2852,10 @@
     <value>Выберите модель, которую использует этот агент.</value>
     <comment>Supplementary description for the model setting.</comment>
   </data>
+  <data name="AIAgents_AcpErrorDetails.Header" xml:space="preserve">
+    <value>Сведения об ошибке</value>
+    <comment>Header of a read-only, selectable text field showing safely filtered native startup diagnostics separately from the localized failure summary.</comment>
+  </data>
   <data name="AIAgents_DelegateAgent.Header" xml:space="preserve">
     <value>CLI агента</value>
     <comment>{Locked="CLI"} Header for the agent CLI selector in Settings &gt; Agents &gt; Command palette. Here "agent" means an AI intelligent agent (e.g. Copilot, Claude, Gemini), not a proxy or human agent. CLI means command-line interface.</comment>
@@ -3081,5 +3085,25 @@ Alt+Shift+/ ввести запрос; Alt+Shift+B запустить без н�
   <data name="AIAgents_RenderAgentMarkdown.HelpText" xml:space="preserve">
     <value>Форматировать ответы ИИ-агента после окончания потоковой передачи, включая ответы в сохранённой истории.</value>
     <comment>Description of the reply-formatting toggle, shared by Settings and first-run setup. Only AI agent replies are formatted; live text stays literal. Stopped replies include completed, canceled, or failed responses. History means saved conversations, not shell command history.</comment>
+  </data>
+  <data name="AIAgents_AcpPreparing.Text" xml:space="preserve">
+    <value>Подготовка и проверка подключения ACP...</value>
+    <comment>Progress shown while preparing required ACP dependencies and checking the connection. Does not sign in or send a model prompt. {Locked="ACP"}</comment>
+  </data>
+  <data name="AIAgents_AcpPreparationFailed.Text" xml:space="preserve">
+    <value>Не удалось установить сервер ACP агента.</value>
+    <comment>Factual summary shown when the separate ACP server cannot be installed. Native error details appear below; do not add remediation or retry advice. {Locked="ACP"}</comment>
+  </data>
+  <data name="AIAgents_AcpStartupFailed.Text" xml:space="preserve">
+    <value>Не удалось запустить подключение ACP.</value>
+    <comment>Factual summary shown when ACP startup fails. Native error details appear below; do not add remediation or retry advice. {Locked="ACP"}</comment>
+  </data>
+  <data name="AIAgents_AcpCleanupFailed.Text" xml:space="preserve">
+    <value>Не удалось подтвердить завершение процессов ACP. Автоматический запуск остановлен.</value>
+    <comment>Shown when the previous ACP process tree could not be confirmed stopped. Automatic startup must not continue. {Locked="ACP"}</comment>
+  </data>
+  <data name="AIAgents_RetryAcpPreparation.Content" xml:space="preserve">
+    <value>Повторить попытку</value>
+    <comment>Button in AI Agents Settings that explicitly retries ACP setup after a failure without changing the selected agent. {Locked="ACP"}</comment>
   </data>
 </root>

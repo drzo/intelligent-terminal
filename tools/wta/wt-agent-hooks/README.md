@@ -24,22 +24,30 @@ wt-agent-hooks/
 │   ├── .github/plugin/marketplace.json      # Copilot-native marketplace
 │   └── wt-agent-hooks/
 │       ├── plugin.json                      # Copilot-native root manifest
-│       └── hooks/hooks.json                 # --cli-source copilot, per-shell fields
+│       └── hooks/hooks.json                 # --cli-source copilot, direct exec + args
 ├── gemini-extension/                       # passed to `gemini extensions install`
 │   ├── gemini-extension.json
 │   └── hooks/hooks.json                    # 7 native hook commands
 ├── codex/                                  # passed to `codex plugin marketplace add`
 │   └── wt-agent-hooks/hooks/hooks.json     # native hook commands
-├── opencode/                                # copied to OpenCode's global plugins dir
+├── opencode/                                # selected by the installed CLI version
 │   ├── plugin.json                          # managed bundle version
-│   └── wt-agent-hooks.js                    # OpenCode V1/V2 plugin
+│   ├── shared/bridge.js                     # common native wtcli transport
+│   ├── v1/wt-agent-hooks.js                  # V1 function entrypoint
+│   └── v2/                                  # V2 local package with server + client
+│       ├── package.json                     # exports "." and "./tui"
+│       ├── wt-agent-hooks.js                # server hooks, explicit pane bindings
+│       ├── server.js                        # local-directory discovery entrypoint
+│       ├── tui.js                           # client sends pane/session identity
+│       └── rpc.js                           # versioned client/server contract
 └── hook-debug/                             # dev utility, not part of the install bundle
     └── state-logger.ps1
 ```
 
 Every integration dispatches through the native `wtcli agent-hook` command,
 invoked directly from `hooks.json` with no script or batch launcher in between.
-Claude and Copilot share the same non-version plugin metadata and event schema.
+Claude and Copilot share non-version plugin metadata and common lifecycle hooks;
+Copilot additionally subscribes a successful tool-return hook.
 
 Hook versions are independent per provider. Bump only the manifest for the
 provider whose installed payload changes; for Claude and Copilot, also update
@@ -80,12 +88,40 @@ second `install` is a no-op once the plugin is registered.
 flow as a manual recovery path when status cannot observe the real problem.
 
 OpenCode has no separate hook marketplace. `wta hooks install --cli opencode`
-copies `wt-agent-hooks.js` into `%XDG_CONFIG_HOME%\opencode\plugins\` when
-`XDG_CONFIG_HOME` is set, or `%USERPROFILE%\.config\opencode\plugins\`
-otherwise. It keeps its ownership/version manifest in a dedicated
-`wt-agent-hooks\` support subdirectory and refuses to overwrite a same-name
-JavaScript plugin that does not contain Intelligent Terminal's managed-file
-marker.
+resolves the actual host executable and probes `--version` with a five-second
+timeout, including cleanup of that probe's npm-shim descendants. Only major
+versions 1 and 2 are accepted; unknown versions fail explicitly without changing
+the installed plugin. Detection does not use ACP's protocol version.
+
+The global plugin directory is `%XDG_CONFIG_HOME%\opencode\plugins\` when
+`XDG_CONFIG_HOME` is set, or `%USERPROFILE%\.config\opencode\plugins\` otherwise.
+V1 installs a function-exporting `wt-agent-hooks.js` there, including support for
+V1 releases older than 1.18.29, with its bridge in `wt-agent-hooks\bridge.js`.
+V2 installs one local package in `wt-agent-hooks\`, whose `package.json` exports
+both server and TUI entrypoints. Switching versions removes the other
+auto-discovered entrypoint, rather than loading two plugins.
+
+The support directory's `plugin.json` records ownership, bundle version, and
+`api_variant: "v1" | "v2"`. Reconciliation checks the required variant even when
+the bundle version is unchanged, so CLI upgrades and downgrades trigger repair.
+The public JSON status keeps schema v5 and stays provider-neutral: compatibility
+failures use the existing `plugin_enabled` and `detection_fallback` fields, without an
+agent-specific object. With `WTA_LOG=debug`, hook diagnostics record detected
+versions and required/installed API variants; probe failures also log a warning.
+Unknown or mismatched variants are never reported enabled. Foreign files are
+preserved; the completion manifest is committed last, and partial managed
+installations remain repairable.
+
+The V2 pane-binding RPC contract is a plain JSON Schema object. Its installed
+local package does not require a separate `@opencode/plugin` SDK installation.
+
+OpenCode session management supports the default host `opencode` executable
+only, whether it is V1 or V2. Version detection, hook installation, ACP history
+and CLI resume follow that default. It does not enumerate another installed
+version or choose a different executable for each session. After changing the
+default version, restart Intelligent Terminal so its resident ACP connection
+and hook adapter are refreshed. Resume is limited to conversations accessible
+to the selected version; another version's history is not merged into it.
 
 Bundle resolution chain (first hit wins, see
 `agent_hooks_installer::bundle::candidate_roots`):
@@ -133,7 +169,7 @@ Antigravity's Windows hook executor splits the command into argv without strippi
 quote characters. Keep the script after PowerShell's `-Command` **unquoted**:
 PowerShell joins those arguments into a script. Quoting the entire script instead
 makes PowerShell evaluate a string literal and print the script rather than execute
-it. This uses the same readable `try`/`catch` guard as the Copilot, Codex, and Gemini
+it. This uses the same readable `try`/`catch` guard as the Codex and Gemini
 hooks, with no Base64 or additional launcher:
 
 ```text
@@ -177,6 +213,7 @@ names. Event vocabularies differ per CLI:
 | `agent.notification`    | `Notification`         | `Notification`         | `Notification`   |
 | `agent.prompt.submit`   | `UserPromptSubmit`     | `UserPromptSubmit`     | `BeforeAgent`    |
 | `agent.tool.starting`   | *(not subscribed)*     | *(not subscribed)*     | `BeforeTool`     |
+| `agent.tool.finished`   | *(not subscribed)*     | `PostToolUse`          | *(not emitted)*  |
 | `agent.error`           | `StopFailure`          | `StopFailure`          | *(not emitted)*  |
 | `agent.stop`            | `Stop`                 | `Stop`                 | `AfterAgent`     |
 | `agent.subagent.stop`   | *(not subscribed)*     | *(not subscribed)*     | *(not emitted)*  |
@@ -187,11 +224,34 @@ error" — earlier wta builds shipped an undocumented `ErrorOccurred` name
 which is no longer used. Gemini's manifest has no native equivalents for
 the failure topics, so those rows are silent on Gemini.
 
-Copilot's `shell_completed` notification reports background command completion,
-not a request for input. WTA recognises both `notificationType` and
-`notification_type` for this notification and leaves the session status unchanged.
-It does not clear an existing approval/question wait or add approval-completion
-tracking; other notification and lifecycle behavior remains unchanged.
+Copilot background shell/agent completion notifications are informational and
+leave the existing status unchanged, including an unanswered approval/question.
+Both `notificationType` and `notification_type` are recognised. Its permission
+and question notifications still mark the session Attention (Waiting for input).
+
+**Copilot activity is hook-only once hooks own the session.** A notification
+that enters Attention (Waiting for input) starts a 30-second receipt-time
+cooldown for that session. All successful `PostToolUse` returns during that
+window are ignored, regardless of tool name or provider timestamp. Another
+blocking notification restarts the window; informational notifications do not.
+Ignored returns do not extend it or change the waiting reason, current tool,
+binding, or activity time. The deadline is retained in session snapshots.
+
+Only `Stop` ends the turn as Idle, including during the cooldown. A new prompt,
+errors, and session/pane closure retain their normal transitions. Expiry alone
+does not change status: a subsequent successful tool return can restore Working
+(Active), but a source timestamp older than the newest waiting notification is
+still ignored. Numeric Unix milliseconds and RFC 3339 source timestamps are
+supported through `9999-12-31T23:59:59.999Z` (`253402300799999` Unix milliseconds).
+Out-of-range source times are treated as invalid, including RFC 3339 offsets
+that cross that UTC boundary. Missing/invalid source timestamps do not bypass
+the receipt-time cooldown. Late returns do not reactivate Idle, Error, or closed sessions.
+This is deliberately session-level,
+time-window behavior, not per-request approval matching. A quick approval can
+remain Waiting until a later accepted event or Stop, and an unrelated parallel
+tool returning after the cooldown can still replace an unanswered wait. No
+transcript permission events are mixed into a hook-owned session. The original
+hookless file-watcher fallback remains unchanged.
 
 Two topics keep a routing arm in `app.rs` that outlives their subscription in
 the Claude and Copilot bundles: `agent.subagent.stop`, which no shipped manifest
@@ -200,18 +260,15 @@ claims at all, and `agent.tool.starting`, which Gemini still sends as
 described below. The arms stay so a CLI that adds the event later, or a bundle a
 user installed earlier, is routed rather than mis-handled.
 
-**Tool-completion events are deliberately not subscribed.** `app.rs` discards
-`agent.tool.finished` / `agent.tool.failed`: tool completion does not end a
-turn, so `agent.stop` owns the transition back to Idle. Subscribing them cost a
-shell spawn plus a COM round trip *per tool call*, only to be dropped — so
-Copilot's `PostToolUse` / `PostToolUseFailure`, Gemini's `AfterTool`, and
-OpenCode's `tool.execute.after` were removed. The routing arm remains so an
-older installed bundle that still emits them is ignored rather than mis-routed.
+**Other providers keep their existing tool-completion behavior.** `app.rs`
+discards their `agent.tool.finished` / `agent.tool.failed` events because tool
+completion does not end a turn. Copilot deliberately pays the per-tool native
+process and COM round-trip cost to recover activity without reading permission
+records from files; no hook shell is started, and tool completion does not map to Idle.
 
-**Copilot's `PreToolUse` went the same way, one release later** — note this is
-narrower than the rule above: `agent.tool.starting` is still subscribed by
-Gemini (`BeforeTool`) and OpenCode (`tool.execute.before`), and `app.rs` still
-routes it. Copilot kept it for the Attention path `app.rs` synthesizes when
+**Copilot's `PreToolUse` remains unsubscribed**: `agent.tool.starting` is still
+subscribed by Gemini (`BeforeTool`) and OpenCode (`tool.execute.before`), and
+`app.rs` still routes it. Copilot kept it for the Attention path `app.rs` synthesizes when
 `tool_name` names a user-input tool, which was the only signal available while
 Copilot's `Notification` hook did not cover questions. It does now: on 1.0.81-2
 a single `AskUserQuestion` produces both the tool hook and a `Notification`,
@@ -221,32 +278,61 @@ hook, so the CLI blocks on it. Turn-level Working is unaffected because
 `UserPromptSubmit` already maps to `ToolStarting`; what is given up is the
 tool's name in the session row, not its status.
 
-OpenCode uses a plugin definition with a V1 `server()` entrypoint and a V2
-`setup()` entrypoint rather than a hook manifest. Both forward prompt, tool,
-session lifecycle, and permission/question events to the same WTA topics.
-Child sessions with `parentID` are ignored so OpenCode's internal subagents
-do not create extra rows.
+OpenCode has separate V1 and V2 adapters rather than a hook manifest. V1 returns
+its callbacks from a named function export. V2 registers hooks and consumes
+`event.data` through `setup(ctx)`. Both use the canonical `opencode` source and
+the same WTA topics; root-session filtering excludes internal child sessions.
 OpenCode's explicit session titles reach both the helper and master registry;
 rename events replace the previous title, while prompts without a title retain
 it. Other providers keep their existing title/history behavior.
 
-The V1 server path has been checked with OpenCode 1.17.20 and 1.18.16; older
-loaders that accept only function exports are not supported. The V2 entrypoint
-targets the `id`/`setup()` plugin API; the original loading report used
-OpenCode 2.0.22. Automated real-server evidence records the CLI version actually
-tested and does not imply V2 acceptance when run with a V1 CLI. Entry selection
-belongs to OpenCode's loader, not a version probe inside this plugin.
-Hook attribution uses the server process's inherited
-`WT_SESSION`; location filtering does not establish ownership for multiple
-Terminal clients sharing one external server.
+### OpenCode V2 client/server ownership
 
-Run the dependency-free Windows component regressions from the repository root:
+The V2 server is shared by local CLI clients. Its startup environment cannot
+identify the pane that submitted a later prompt; matching a directory cannot
+distinguish two panes in the same project either.
+
+The bundled TUI entrypoint therefore explicitly calls the server plugin's
+`wt-agent-hooks` binding RPC with the client ID, pane `WT_SESSION`, COM CLSID,
+binding generation, and the root session currently displayed by that client.
+OpenCode's native tab list is persisted in shared storage, so it
+does not establish pane ownership: two TUIs in the same directory can list
+each other's sessions. Background native tabs are not bound to the current
+pane; changing its route releases the previous binding and binds the new root,
+and returning home releases it without claiming sessions from shared tabs.
+Requests are scoped to the session's location. Server callbacks publish
+RPC signals with revision numbers only to the owning clients. Each TUI invokes its own
+`WTCLI_PATH` bridge with its pane environment; the shared server's `WT_SESSION`
+is never used. Viewing the same session in another pane explicitly transfers
+ownership. An evicted client cannot reclaim it merely by polling.
+
+The client reconciles snapshots every 30 seconds and on reconnect, preserving
+busy, idle, attention, error, cwd, title and deletion changes even when a signal
+was missed. Every successful binding also reconciles an idle snapshot, including
+returning from home or opening the session in a new TUI after execution finished
+while detached. A newer working signal still takes precedence over that snapshot.
+Route changes and cleanup unbind the pane without deleting the
+server session or cancelling execution. Detached observers still report real
+deletions, including after server restart. Server unload does not pretend that
+every client exited, and generations fence stale bind/unbind responses.
+Neither RPC nor bridge failure interrupts normal chat or ACP history discovery.
+
+The sidecar is invisible and uses OpenCode's automatic `./tui` loading; no
+`cli.json` or user configuration is rewritten. It covers the full interactive
+TUI. Non-TUI clients, including `opencode run` and `mini`, must explicitly call
+the same RPC to participate; this package does not inject an identity into
+those upstream commands or infer one from cwd. They can still execute and
+appear in ACP history without live hook status. Host installation does not
+claim to configure WSL plugin stores.
+
+Adapter component checks (no model calls or Terminal configuration edits):
 
 ```powershell
-node --test test\e2e\selftests\OpenCodeHooks.test.mjs
+node --experimental-vm-modules --test tools\wta\tests\opencode-hooks.test.mjs
+node --experimental-vm-modules --test test\e2e\selftests\OpenCodeHooks.test.mjs
+cargo test --target x86_64-pc-windows-msvc --manifest-path tools\wta\Cargo.toml opencode
 ```
-
-These execute both entrypoints with controlled SDK inputs and capture bridge
+These execute both versioned entrypoints with controlled SDK inputs and capture bridge
 requests. The packaged delivery tests are documented in `test\e2e\README.md`;
 controlled SDK inputs do not substitute for validation of a real V2 loader.
 
@@ -260,6 +346,8 @@ References:
 - Claude: <https://docs.claude.com/en/docs/claude-code/hooks>
 - Gemini: <https://github.com/google-gemini/gemini-cli/blob/main/docs/hooks/reference.md>
 - OpenCode: <https://opencode.ai/docs/plugins/>
+- OpenCode V2 migration: <https://opencode.ai/v2/docs/build/plugins/migrate-v1/>
+- OpenCode V2 plugin RPC: <https://opencode.ai/v2/docs/build/plugins/rpc/>
 
 ## Hook bridge
 
@@ -325,7 +413,7 @@ an expression, no `cmd.exe` metacharacters, and nothing bash rewrites.
 
 | CLI | Hook shell | How we know |
 | --- | --- | --- |
-| Copilot | PowerShell 7+ | GitHub hooks documentation |
+| Copilot | None (`exec` + `args`) | [GitHub hooks documentation](https://docs.github.com/en/copilot/reference/hooks-reference#command-hooks) |
 | Codex | Session-selected shell | `commandWindows` selects the text, not the shell; Windows sessions may run hooks through PowerShell or cmd.exe |
 | Gemini | PowerShell | `hookRunner.ts` → `getShellConfiguration()` resolves ComSpec-powershell → `pwsh.exe` → `powershell.exe`, with no `cmd.exe` branch |
 | Claude | **bash** (`/usr/bin/bash`) | its own debug log reports `/usr/bin/bash: line 1: …` |
@@ -348,65 +436,47 @@ worked.
 
 `wtcli.exe` reaches `PATH` through the MSIX app-execution alias, which uninstall
 deletes — but the hook config stays registered with each CLI. From that moment
-the *shell*, not the bridge, decides the hook's exit code, and a missing command
-makes it 1. Copilot's `preToolUse` hook is fail-closed, so every tool call in
-every later session is denied:
+the hook runner, not the bridge, decides how to report a missing command.
+Copilot's `preToolUse` hook is fail-closed, so subscribing an unguarded bridge
+to that event could deny tool calls in every later session:
 
 ```
 ✗ Echo a probe marker string (shell)
   └ Denied by preToolUse hook from "…" (hook errored)
 ```
 
-The fix does not require guessing a shell after all. Copilot's command hooks
-take **`powershell` and `bash` fields**, and measurement shows the field name
-*selects* the interpreter rather than merely matching a fixed one: with only
-`bash` present the events still arrive on Windows, which could not happen if
-Copilot always used PowerShell — `command -v` short-circuits there and the
-bridge would never run. Each spelling therefore only has to be valid in the one
-shell that names it:
+### Copilot runs without a hook shell
 
-| Field | Command |
-| --- | --- |
-| `powershell` | `try { wtcli.exe agent-hook --cli-source copilot --event <topic> } catch { }; exit 0` |
-| `bash` | `command -v wtcli.exe >/dev/null 2>&1 && wtcli.exe agent-hook --cli-source copilot --event <topic>; exit 0` |
-| `command` | **not shipped** — see below |
+Copilot subscribes only to `SessionStart`, `SessionEnd`, `Notification`,
+`UserPromptSubmit`, `PostToolUse`, `StopFailure`, and `Stop`, never `PreToolUse`
+or other tool-permission events. All seven handlers use the documented
+direct-executable form:
 
-`try`/`catch` is what makes the PowerShell form work: a missing native command
-raises a catchable `CommandNotFoundException`, and the trailing `exit 0`
-overrides a non-zero exit from the bridge itself. Both keep passing the hook
-JSON on stdin, since PowerShell hands its own stdin to the native child.
+```json
+{
+  "type": "command",
+  "exec": "wtcli.exe",
+  "args": ["agent-hook", "--cli-source", "copilot", "--event", "agent.session.start"],
+  "timeoutSec": 5
+}
+```
 
-### Why Copilot ships no `command` at all
+This removes the PowerShell or bash startup from every callback. Copilot passes
+the hook JSON directly to the native process on stdin; arguments do not pass
+through shell parsing. `exec` must not be combined with `command`, `powershell`,
+or `bash`. Use a Copilot CLI version that supports `exec` and `args`; the local
+validation version is 1.0.98. No shell fallback is shipped.
 
-A portable `command` cannot be guarded: no single spelling both runs in every
-shell and survives a missing bridge (the `cmd /c "… & exit 0"` form is
-self-guarding but is destroyed by bash's MSYS path conversion, which rewrites
-`/c` into a Windows path so `cmd.exe` starts interactively and never runs the
-bridge — and that happens whether or not the bridge exists). Shipping an
-unguarded fallback next to a **fail-closed** `preToolUse` hook leaves a path
-that only has to be taken once to deny every tool call for the rest of a
-session.
+An isolated Copilot CLI 1.0.98 prompt delivered native session-start, prompt,
+stop, and session-end callbacks with the expected argument vector and JSON
+stdin. The same prompt still completed when every hook executable was missing.
 
-Measured on Copilot CLI 1.0.81-0, one field at a time, with delivery as the
-oracle:
-
-| Fields present | Events delivered | Tool calls denied |
-| --- | --- | --- |
-| `powershell` only | 5 | no |
-| `bash` only | 5 | no |
-| `command` only | 5 | no |
-| none | **0** | **no** |
-
-The last row is the one that decides it: a handler with nothing runnable is a
-silent no-op, not an error. So dropping `command` costs nothing today — the
-per-shell fields deliver exactly as before — and if a future Copilot ever stops
-honouring those fields, the hook degrades fail-**open** (no events) instead of
-fail-closed (no tools).
-
-Verified against Copilot CLI 1.0.81-0: the bare spelling denies tool calls once
-the bridge is missing, and the per-shell fields do not. `timeoutSec: 5` bounds
-the other fail-closed edge — a hung COM call — and a hook *timeout* was measured
-to be fail-open, so shortening it only reduces the stall.
+The native bridge already stays silent and exits successfully when Terminal
+identity is absent or event forwarding fails. If `wtcli.exe` itself is missing,
+it cannot start and Copilot can report a hook error; the removed shell guards
+no longer hide that error. Keep these handlers off fail-closed tool-permission
+events. The existing five-second timeout still bounds a hung bridge, and the
+CLI's plugin manager can remove a stale hook registration.
 
 Claude has no `powershell` / `bash` field pair, but it does document a `shell`
 field accepting `"bash"` or `"powershell"`, so it pins the shell and guards
@@ -471,7 +541,7 @@ Current state with the bridge missing:
 
 | CLI | Mechanism | Result |
 | --- | --- | --- |
-| Copilot | `powershell` / `bash` fields, no bare `command` | exit 0, silent |
+| Copilot | Direct `exec` + `args` | CLI logs the launch failure; session continues (fail-open) |
 | Claude | `shell: "bash"` + `command -v` guard | exit 0, silent |
 | Gemini | PowerShell guard in `command` | exit 0, silent |
 | Codex | POSIX guard in `command`, cmd.exe wrapper in `commandWindows` | exit 0, silent in both Windows shells |
@@ -528,10 +598,11 @@ Gemini has no marketplace concept and reads the extension folder directly.
   without `WT_SESSION`, including WTA's shared ACP processes. Agent-pane
   sessions are already tracked through ACP; only interactive CLI sessions in
   regular terminal panes produce hook-backed rows.
-- **OpenCode ACP sessions are intentionally ignored by the plugin.** The
-  plugin requires both `WT_COM_CLSID` and `WT_SESSION`; the shared ACP process
-  used by the agent pane is already tracked through ACP and must not create a
-  duplicate hook-backed row.
+- **OpenCode ACP sessions are intentionally ignored by both adapters.**
+  `OPENCODE_CLIENT=acp` suppresses V1 hooks and the V2 TUI sidecar. The V2 server
+  registers its binding RPC regardless of its startup environment and forwards
+  only explicitly bound client sessions. V1 additionally requires local Terminal context.
+  Agent-pane sessions remain tracked by ACP, never by the shell hook bridge.
 - **MSIX install paths include the package version.** They change on every
   upgrade, which is why `agent_hooks_installer` re-runs marketplace
   registration on every wta startup and strips stale entries before

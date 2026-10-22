@@ -531,24 +531,6 @@
     <value>GitTM बदलता</value>
     <comment>Option that shows the Git working tree change summary in sidebar tab rows.</comment>
   </data>
-  <data name="VerticalTabsFilterStatusSingle" xml:space="preserve">
-    <value>1 एजंट सत्र दाखयता</value>
-  </data>
-  <data name="VerticalTabsFilterStatusPlural" xml:space="preserve">
-    <value>{0} एजंट सत्रां दाखयतात</value>
-  </data>
-  <data name="VerticalTabsFilterCurrentHidden.[using:Windows.UI.Xaml.Automation]AutomationProperties.Name" xml:space="preserve">
-    <value>सध्याचो टॅब ह्या फिल्टरान लिपयला</value>
-  </data>
-  <data name="VerticalTabsFilterCurrentHidden.[using:Windows.UI.Xaml.Controls]ToolTipService.ToolTip" xml:space="preserve">
-    <value>सध्याचो टॅब ह्या फिल्टरान लिपयला</value>
-  </data>
-  <data name="VerticalTabsFilterShowAll.[using:Windows.UI.Xaml.Automation]AutomationProperties.Name" xml:space="preserve">
-    <value>सगळे टॅब दाखयात</value>
-  </data>
-  <data name="VerticalTabsFilterShowAll.[using:Windows.UI.Xaml.Controls]ToolTipService.ToolTip" xml:space="preserve">
-    <value>सगळे टॅब दाखयात</value>
-  </data>
   <data name="VerticalTabsHistoryButton.[using:Windows.UI.Xaml.Automation]AutomationProperties.Name" xml:space="preserve">
     <value>एजंट</value>
     <comment>Accessible name of the toolbar button that opens the Agents sidebar view. Agents are AI agents, not human representatives; the view lists their live and historical sessions.</comment>
@@ -807,10 +789,22 @@
   </data>
   <data name="SidebarIntroductionTitle" xml:space="preserve">
     <value>टॅबांचे वेवस्थापन करपाची चड हुशार पद्दत</value>
-    <comment>Title of the once-only sidebar introduction teaching tip shown after the new default layout is available.</comment>
+    <comment>Title of the once-only sidebar introduction teaching tip: a smarter way to manage tabs.</comment>
   </data>
   <data name="SidebarIntroductionDescription" xml:space="preserve">
-    <value>तुमचे टॅब आनी एजंट सत्रां आतां बाजूच्या पट्टींत आसात. टॅबांचे तपशील निवडपाक बाजूच्या पट्टीचे प्रदर्शन पर्याय वापरात. आडव्या टॅबांक परत वचपाक टॅबाचेर उजवो क्लिक करात.</value>
-    <comment>Body of the once-only sidebar introduction teaching tip. Sidebar display options refers to the sidebar toolbar button with that tooltip. Explain where to customize visible tab details and how to return to the horizontal tab layout using a tab's context menu. Agents means AI agents, not people.</comment>
+    <value>टॅब आनी एजंटां खातीर चड सुविधा आशिल्लो नवो बाजूचो पट्टो पळयात. टॅब आनी एजंट दृश्यां मदीं बदल करात. आडव्या टॅबांक परत वचपाक टॅबाचेर उजवो क्लिक करात.</value>
+    <comment>Body of the once-only sidebar introduction teaching tip. Agents means AI agents, not people. Tab and agent views refer to the sidebar filters; right-click a tab to return to the horizontal layout.</comment>
+  </data>
+  <data name="SidebarIntroductionNewBadge" xml:space="preserve">
+    <value>नवें</value>
+    <comment>Short badge shown beside the sidebar introduction title to indicate the new sidebar.</comment>
+  </data>
+  <data name="HorizontalTabsIntroductionTitle" xml:space="preserve">
+    <value>टॅबांचे वेवस्थापन करपाच्यो चड हुशार पद्दती वापरून पळयात</value>
+    <comment>Title of the introduction tooltip shown in the horizontal tab layout. Invites the user to try the vertical tab layout for managing terminal tabs.</comment>
+  </data>
+  <data name="HorizontalTabsIntroductionDescription" xml:space="preserve">
+    <value>तुमच्या एजंटांची हालचाल एकाच नदरेन पळोवपाक उब्या टॅबांक बदलात. टॅबाचेर उजवो क्लिक करात आनी {0} वेंचात.</value>
+    <comment>Description of the introduction tooltip shown in the horizontal tab layout. Agent activity means the activity of AI agents, not people. Vertical tabs means the tab layout in the sidebar. {0} is the already-localized "Switch to sidebar" command label from the tab's right-click context menu (SwitchToVerticalTabsText); insert it unchanged and do not translate it here.</comment>
   </data>
 </root>

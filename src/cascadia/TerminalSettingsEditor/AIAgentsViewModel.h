@@ -97,6 +97,12 @@ namespace winrt::Microsoft::Terminal::Settings::Editor::implementation
     public:
         AIAgentsViewModel(Model::GlobalAppSettings globalSettings);
         ~AIAgentsViewModel();
+        bool IsAcpPreparing() const noexcept { return _acpPreparing; }
+        bool AcpPreparationFailed() const noexcept { return _acpPreparationFailed; }
+        winrt::hstring AcpPreparationErrorText() const { return _acpPreparationErrorText; }
+        winrt::hstring AcpPreparationErrorDetails() const { return _acpPreparationErrorDetails; }
+        bool HasAcpPreparationErrorDetails() const noexcept { return _acpPreparationFailed && !_acpPreparationErrorDetails.empty(); }
+        void RetryAcpPreparation() { _TriggerAcpModelProbe(true); }
 
         using ViewModelHelper<AIAgentsViewModel>::PropertyChanged;
 
@@ -226,14 +232,18 @@ namespace winrt::Microsoft::Terminal::Settings::Editor::implementation
         // Settings, without waiting for the agent pane to be rebuilt.
         // See `_TriggerAcpModelProbe` in the .cpp for the full flow.
         bool _acpProbing{ false };
+        bool _acpPreparing{ false };
+        bool _acpPreparationFailed{ false };
+        winrt::hstring _acpPreparationErrorText;
+        winrt::hstring _acpPreparationErrorDetails;
         // Generation counter: bumped each time _TriggerAcpModelProbe
         // fires. An in-flight probe checks this before publishing its
         // result and bails if a newer trigger has superseded it (user
         // picked a different agent while we were still talking to the
         // previous one).
         uint64_t _acpProbeGeneration{ 0 };
-        void _TriggerAcpModelProbe();
-        winrt::fire_and_forget _RunAcpModelProbeAsync(winrt::hstring agentId, std::wstring agentCmdline, uint64_t generation, uint64_t cacheRevision);
+        void _TriggerAcpModelProbe(bool retryStartup = false);
+        winrt::fire_and_forget _RunAcpModelProbeAsync(winrt::hstring agentId, std::wstring agentCmdline, uint64_t generation, uint64_t cacheRevision, bool retryStartup);
         // Mirror of TerminalPage::_ResolveEffectiveAgentCliPath. Kept
         // here (rather than in inc/) because the Settings UI sits in
         // a separate project and can't include TerminalApp headers.
