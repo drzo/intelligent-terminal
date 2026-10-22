@@ -13418,7 +13418,8 @@ namespace winrt::TerminalApp::implementation
                             {
                                 page->_CompleteInteractiveResumeBinding(paneIdStr, tabIdStr);
                             }
-                            if (seqStr == "osc:133;A")
+                            if (seqStr == "osc:133;A" &&
+                                page->_settings.GlobalSettings().EffectiveAgentSessionManagementEnabled())
                             {
                                 if (const auto paneId = _TryParsePaneSessionId(paneIdStr))
                                 {

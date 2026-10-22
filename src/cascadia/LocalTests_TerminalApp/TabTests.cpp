@@ -22504,8 +22504,12 @@ namespace TerminalAppLocalTests
             uint64_t contentId{ 0 };
             const auto initialized = std::make_shared<::details::Event>();
             VERIFY_IS_TRUE(initialized->IsValid());
+            const auto promptSeen = std::make_shared<::details::Event>();
+            VERIFY_IS_TRUE(promptSeen->IsValid());
+            winrt::event_token promptToken{};
             const auto paneUIThreadCleanup = wil::scope_exit([&]() {
                 RunOnUIThread([&]() {
+                    page->ProtocolVtSequenceReceived(promptToken);
                     control = nullptr;
                     pane.reset();
                 });
@@ -22523,6 +22527,19 @@ namespace TerminalAppLocalTests
                 control.Initialized([initialized](auto&&, auto&&) { initialized->Set(); });
                 VERIFY_IS_NOT_NULL(page->_CreateNewTabFromPane(pane));
                 page->UpdateLayout();
+                promptToken = page->ProtocolVtSequenceReceived([promptSeen, paneId](auto&&, const winrt::hstring& payload) {
+                    Json::Value event;
+                    Json::CharReaderBuilder reader;
+                    std::string errors;
+                    std::istringstream stream{ winrt::to_string(payload) };
+                    if (Json::parseFromStream(reader, stream, &event, &errors) &&
+                        event["method"] == "vt_sequence" &&
+                        event["params"]["pane_id"] == _formatPaneId(paneId) &&
+                        event["params"]["sequence"] == "osc:133;A")
+                    {
+                        promptSeen->Set();
+                    }
+                });
             });
             VERIFY_ARE_EQUAL(static_cast<DWORD>(WAIT_OBJECT_0), WaitForSingleObject(initialized->m_handle, 10000));
             TestOnUIThread([&]() {
@@ -22531,8 +22548,19 @@ namespace TerminalAppLocalTests
                 page->_TryPublishInteractiveResumeBinding(
                     control, _formatPaneId(paneId), {}, L"copilot", L"11111111-2222-3333-4444-555555555555");
                 _applyNativeRegistrySnapshot(page, control, "Attention");
-                constexpr std::u16string_view complete{ u"\x1b]133;D;0\x1b\\" };
+                constexpr std::u16string_view complete{ u"\x1b]133;D;0\x1b\\\x1b]133;A\x1b\\" };
                 connection->TerminalOutput.raise(winrt::array_view<const char16_t>{ complete.data(), complete.data() + complete.size() });
+            });
+            VERIFY_ARE_EQUAL(static_cast<DWORD>(WAIT_OBJECT_0), WaitForSingleObject(promptSeen->m_handle, 10000));
+            TestOnUIThread([&]() {
+                VERIFY_IS_TRUE(_paneHasSession(page->_manager, paneId));
+                VERIFY_ARE_EQUAL(std::string{ "Attention" }, page->_RichTabAgentInfoForControl(control)->status);
+                const auto actions = page->_BuildPersistedTabActions(page->_GetFocusedTabImpl().get(), false);
+                VERIFY_ARE_EQUAL(size_t{ 1 }, actions.size());
+                const auto resume = ::Microsoft::Terminal::AgentPaneRestore::ParseResumeCommandline(
+                    _getTerminalArgs(actions.at(0)).Commandline());
+                VERIFY_ARE_EQUAL(std::wstring{ L"11111111-2222-3333-4444-555555555555" }, resume.sessionId);
+                VERIFY_ARE_EQUAL(std::wstring{ L"copilot" }, resume.agent);
                 connection->TransitionTo(finalState);
             });
             _waitForContentTransferReviewUI([&]() {

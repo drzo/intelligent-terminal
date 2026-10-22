@@ -135,7 +135,7 @@ with an existing attention reason or input-tool context; its matching completion
 or a new prompt supplies the transition. Focusing the tab only dismisses its
 bell indicator, not its registry activity. OSC 9;4;0 alone clears progress to Idle and does not
 prove that the process has ended. With Sessions OFF, only disappearance of the pane ID ends native
-ownership. OSC 133;D and a retained pane's Closed/Failed connection do not prove
+ownership. OSC 133;A, OSC 133;D, and a retained pane's Closed/Failed connection do not prove
 the agent has ended, and do not expire status, provider identity, or explicit
 resume bindings. This pane-presence status is deliberately not a process-liveness
 claim. Changing Sessions clears OFF observation ownership and invalidates queued
