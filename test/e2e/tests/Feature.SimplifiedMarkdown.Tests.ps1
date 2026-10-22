@@ -3,6 +3,11 @@
 # No provider prompts or authenticated history are used. The selection case requires
 # an accessible clipboard; failure to preserve it is a setup failure, never a pass.
 
+param(
+    [ValidateSet('Campbell', 'One Half Light')]
+    [string]$ColorScheme = 'Campbell'
+)
+
 Describe 'Feature: simplified agent Markdown' -Tag 'Feature', 'SimplifiedMarkdown' {
     BeforeAll {
         Import-Module (Join-Path $PSScriptRoot '..\ItE2E\ItE2E.psd1') -Force
@@ -158,6 +163,7 @@ Describe 'Feature: simplified agent Markdown' -Tag 'Feature', 'SimplifiedMarkdow
                 )
                 profiles = @{
                     defaults = @{
+                        colorScheme = $ColorScheme
                         environment = @{
                             PATH = "$($script:target.InstallLocation);$env:PATH"
                             WT_WTCLI_PATH = $script:target.WtcliPath
@@ -359,8 +365,6 @@ Describe 'Feature: simplified agent Markdown' -Tag 'Feature', 'SimplifiedMarkdow
 
 **MD_BOLD**
 
-Rust syntax highlighting:
-
 ```rust
 fn main() {
     let value = 1;
@@ -368,19 +372,19 @@ fn main() {
 }
 ```
 
-Python syntax highlighting:
-
 ```python
 def greet(name):
     # Keep indentation and syntax colors.
     return f"Hello, {name}!"
 ```
 
-Unknown language uses ordinary code styling:
-
 ```not-a-language
     plain code remains readable
 ```
+
+> ```rust
+> let quoted_value = 2;
+> ```
 '@
         $null = Start-MarkdownReply -Marker $marker -Text $reply
         Wait-MarkdownText -Literal '**MD_BOLD**'
@@ -398,6 +402,7 @@ Unknown language uses ordinary code styling:
         $text.Contains('let value = 1;') | Should -BeTrue
         $text.Contains('def greet(name):') | Should -BeTrue
         $text.Contains('plain code remains readable') | Should -BeTrue
+        $text.Contains('> let quoted_value = 2;') | Should -BeTrue
         Save-MarkdownEvidence completed-markdown
     }
 
