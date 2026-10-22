@@ -147,7 +147,7 @@ namespace winrt::TerminalApp::implementation
             }
         };
         std::optional<PaneMetadata> MetadataForPane(const winrt::guid& paneId) const;
-        void ResetPaneConnection(uint64_t contentId, const winrt::guid& paneId);
+        void ResetPaneConnection(uint64_t contentId, const winrt::guid& paneId, const std::optional<PaneMetadata>& resumeBinding = std::nullopt);
         void BindPaneSession(const winrt::guid& paneId, const PaneAgentSession& session, const winrt::hstring& source = {}, const winrt::hstring& distro = {}, const winrt::hstring& universe = {}, bool interactiveResume = false);
         void EndPaneSession(const winrt::guid& paneId, const winrt::hstring& sessionId = {}, const winrt::hstring& agent = {}, const winrt::hstring& source = {}, const winrt::hstring& distro = {}, std::optional<winrt::hstring> universe = winrt::hstring{});
         void SetPaneConnectionState(const winrt::guid& paneId, bool failed);

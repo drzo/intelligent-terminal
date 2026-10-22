@@ -77,8 +77,15 @@ and remains eligible for its direct session events.
 
 Explicit native resume ownership is retained in the shared pane metadata,
 including across window transfers. Disabling Sessions discards hook-derived
-bindings but preserves explicit resume bindings; connection restarts rekey the
-metadata before the replacement CLI starts.
+bindings but preserves a live launch-owned pane's agent eligibility and explicit
+resume bindings. Repeating the same mode synchronization from another window
+does not retire metadata again or revive ended/closed panes. OFF observations
+use the shared launch provider, including provider refinements admitted while ON.
+Connection restarts rekey metadata before the replacement CLI starts. When the
+replacement executes the identical command, an explicit selected resume retains
+its qualified source, distro, universe, exact command and command trust in either
+mode; activity, failure/closed state and session-start confirmation reset.
+Discovered identities and bindings for a different command are not inherited.
 
 Terminal publishes raw observations through the existing COM event channel;
 no new COM interface or polling loop is introduced. WTA applies them in its

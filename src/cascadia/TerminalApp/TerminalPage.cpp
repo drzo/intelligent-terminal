@@ -16854,43 +16854,23 @@ namespace winrt::TerminalApp::implementation
         const auto manager = winrt::get_self<ContentManager>(_manager);
         const auto nativeFallback = !_settings.GlobalSettings().EffectiveAgentSessionManagementEnabled() &&
                                     !manager->NativeAgentProviderId(termControl.ContentId()).empty();
-        std::optional<_PaneAgentSession> resumeBinding;
-        std::string resumeLocation;
+        std::optional<ContentManager::PaneMetadata> resumeBinding;
         const auto oldPaneId = _FindSessionIdForControl(termControl);
+        const auto oldConnection = termControl.Connection().try_as<TerminalConnection::ConptyConnection>();
+        const auto newConnection = connection.try_as<TerminalConnection::ConptyConnection>();
+        if (const auto paneId = _TryParsePaneSessionId(oldPaneId);
+            paneId && oldConnection && newConnection && oldConnection.Commandline() == newConnection.Commandline())
+        {
+            if (const auto metadata = _MetadataForPane(*paneId);
+                metadata && metadata->explicitNativeAgent && !metadata->session.sessionId.empty())
+            {
+                resumeBinding = metadata;
+            }
+        }
         if (nativeFallback)
         {
-            const auto oldConnection = termControl.Connection().try_as<TerminalConnection::ConptyConnection>();
-            const auto newConnection = connection.try_as<TerminalConnection::ConptyConnection>();
             if (const auto paneId = _TryParsePaneSessionId(oldPaneId))
             {
-                if (oldConnection && newConnection && oldConnection.Commandline() == newConnection.Commandline())
-                {
-                    _PreserveNativeAgentIdentity(termControl);
-                    const auto identity = manager->NativeAgentObservationForContent(termControl.ContentId());
-                    if (const auto metadata = _MetadataForPane(*paneId);
-                        metadata && metadata->HasSession() && metadata->explicitNativeAgent)
-                    {
-                        resumeBinding = metadata->session;
-                    }
-                    else if (identity && !identity->qualifiedSessionId.empty() && !identity->qualifiedLocation.empty())
-                    {
-                        auto backend = ::Microsoft::Terminal::Settings::Model::AgentPaneBackend::Host(
-                            std::wstring_view{ identity->providerId });
-                        if (identity->qualifiedLocation.starts_with("wsl:"))
-                        {
-                            const auto distro = winrt::to_hstring(identity->qualifiedLocation.substr(4));
-                            backend = ::Microsoft::Terminal::Settings::Model::AgentPaneBackend::Wsl(
-                                std::wstring_view{ distro }, std::wstring_view{ identity->providerId });
-                        }
-                        resumeBinding = _PaneAgentSession{
-                            winrt::to_hstring(identity->qualifiedSessionId), identity->providerId, oldConnection.Commandline(), winrt::hstring{ backend }, termControl.WorkingDirectory()
-                        };
-                    }
-                    if (identity)
-                    {
-                        resumeLocation = identity->qualifiedLocation;
-                    }
-                }
                 _PublishNativeAgentObservation(termControl, "removed");
                 _TryRaiseTerminalEndStateEvent(oldPaneId, "closed", _FindTabIdForControl(termControl));
                 _ForgetPaneAgentIdentity(*paneId);
@@ -16904,24 +16884,41 @@ namespace winrt::TerminalApp::implementation
         // would corrupt input/output for the new shell process.
         termControl.HardResetWithoutErase();
         termControl.Connection(connection);
-        manager->ResetPaneConnection(termControl.ContentId(), connection.SessionId());
+        manager->ResetPaneConnection(termControl.ContentId(), connection.SessionId(), resumeBinding);
+        if (const auto paneId = _TryParsePaneSessionId(oldPaneId))
+        {
+            _pendingRestoredSessionBindings.erase(*paneId);
+            if (resumeBinding)
+            {
+                const auto& session = resumeBinding->session;
+                auto backend = session.backend;
+                if (resumeBinding->source == L"wsl")
+                {
+                    backend = winrt::hstring{ ::Microsoft::Terminal::Settings::Model::AgentPaneBackend::Wsl(
+                        std::wstring_view{ resumeBinding->wslDistro }, std::wstring_view{ session.agent }) };
+                }
+                else if (resumeBinding->source == L"host")
+                {
+                    backend = winrt::hstring{ ::Microsoft::Terminal::Settings::Model::AgentPaneBackend::Host(
+                        std::wstring_view{ session.agent }) };
+                }
+                _pendingRestoredSessionBindings.insert_or_assign(
+                    connection.SessionId(),
+                    _PendingRestoredSessionBinding{ session.sessionId, session.agent, session.cwd, backend, resumeBinding->universe });
+            }
+        }
         if (nativeFallback)
         {
-            if (resumeBinding && !manager->NativeAgentProviderId(termControl.ContentId()).empty())
-            {
-                if (!resumeLocation.empty())
-                {
-                    manager->RefineNativeAgentLaunchLocation(termControl.ContentId(), resumeBinding->agent, resumeLocation);
-                }
-                if (const auto paneId = _TryParsePaneSessionId(_FindSessionIdForControl(termControl)))
-                {
-                    manager->BindPaneSession(*paneId, *resumeBinding, {}, {}, {}, true);
-                    manager->SetExplicitNativeAgentProvider(termControl.ContentId(), resumeBinding->agent);
-                }
-            }
             _PublishNativeAgentObservation(termControl, "reset", false, std::nullopt, true);
             _AttachOrUpdateRichTabControl(termControl);
             _ApplyTabListProjection();
+        }
+        if (resumeBinding)
+        {
+            if (const auto tab = _FindTabByStableId(winrt::to_hstring(_FindTabIdForControl(termControl))))
+            {
+                _NotifyRestoredSessionBindings(tab);
+            }
         }
         connection.Start();
     }

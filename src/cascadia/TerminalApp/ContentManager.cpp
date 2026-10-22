@@ -184,8 +184,9 @@ namespace winrt::TerminalApp::implementation
         std::lock_guard lock{ _mutex };
         if (const auto it = _content.find(contentId);
             it != _content.end() && !location.empty() && !it->second.agentHelper &&
-            !it->second.nativeAgentProviderId.empty() &&
-            ::Microsoft::Terminal::Settings::Model::AgentRegistry::AgentIdEquals(it->second.nativeAgentProviderId, providerId) &&
+            _paneMetadata.contains(it->second.core.Core().Connection().SessionId()) &&
+            ::Microsoft::Terminal::Settings::Model::AgentRegistry::AgentIdEquals(
+                _paneMetadata.at(it->second.core.Core().Connection().SessionId()).launchProvider, providerId) &&
             it->second.nativeAgentLaunchLocation.empty() && it->second.observation.agentSessionId.empty() &&
             it->second.observation.qualifiedSessionId.empty() &&
             (it->second.observation.location.empty() || it->second.observation.location == location))
@@ -209,7 +210,8 @@ namespace winrt::TerminalApp::implementation
             const auto metadata = _paneMetadata.find(it->second.core.Core().Connection().SessionId());
             const auto provider = metadata != _paneMetadata.end() && metadata->second.explicitNativeAgent &&
                                           metadata->second.HasAgent() && !agentSessionId.empty() ?
-                                      metadata->second.session.agent : it->second.nativeAgentProviderId;
+                                      metadata->second.session.agent :
+                                      metadata != _paneMetadata.end() ? metadata->second.launchProvider : winrt::hstring{};
             if (provider.empty())
             {
                 return {};
@@ -284,12 +286,13 @@ namespace winrt::TerminalApp::implementation
     {
         _CheckThread();
         std::lock_guard lock{ _mutex };
-        if (_nativeAgentSessionEventsEnabled != enabled)
+        if (_nativeAgentSessionEventsEnabled == enabled)
         {
-            for (auto& [id, content] : _content)
-            {
-                content.observation = {};
-            }
+            return;
+        }
+        for (auto& [id, content] : _content)
+        {
+            content.observation = {};
         }
         _nativeAgentSessionEventsEnabled = enabled;
         if (!enabled)
@@ -302,8 +305,15 @@ namespace winrt::TerminalApp::implementation
                     metadata.eventJson.clear();
                     if (!metadata.explicitNativeAgent)
                     {
+                        const auto retainLaunch = metadata.HasAgent() && !metadata.connectionClosed &&
+                                                  !metadata.launchProvider.empty();
                         _RetirePaneSession(metadata);
-                        metadata.state = PaneAgentState::Ended;
+                        metadata.state = retainLaunch ? PaneAgentState::Starting : PaneAgentState::Ended;
+                        metadata.activity.clear();
+                        if (retainLaunch)
+                        {
+                            metadata.session.agent = metadata.launchProvider;
+                        }
                     }
                 }
             }
@@ -486,7 +496,7 @@ namespace winrt::TerminalApp::implementation
         return it == _paneMetadata.end() ? std::nullopt : std::optional{ it->second };
     }
 
-    void ContentManager::ResetPaneConnection(const uint64_t contentId, const winrt::guid& paneId)
+    void ContentManager::ResetPaneConnection(const uint64_t contentId, const winrt::guid& paneId, const std::optional<PaneMetadata>& resumeBinding)
     {
         winrt::guid previousId{};
         {
@@ -501,6 +511,20 @@ namespace winrt::TerminalApp::implementation
             metadata.launchProvider = it->second.launchProvider;
             metadata.session.agent = metadata.launchProvider;
             metadata.state = metadata.launchProvider.empty() ? PaneAgentState::Unknown : PaneAgentState::Starting;
+            if (resumeBinding && resumeBinding->contentId == contentId &&
+                resumeBinding->explicitNativeAgent && !resumeBinding->session.sessionId.empty())
+            {
+                metadata.session = resumeBinding->session;
+                metadata.source = resumeBinding->source;
+                metadata.wslDistro = resumeBinding->wslDistro;
+                metadata.universe = resumeBinding->universe;
+                metadata.identityQualified = resumeBinding->identityQualified;
+                metadata.interactiveResume = resumeBinding->interactiveResume;
+                metadata.explicitNativeAgent = true;
+                metadata.resumeCommandlineTrusted = resumeBinding->resumeCommandlineTrusted;
+                metadata.awaitingSessionStart = true;
+                metadata.state = PaneAgentState::Starting;
+            }
             _paneMetadata.erase(it);
             _paneMetadata.insert_or_assign(paneId, std::move(metadata));
         }
