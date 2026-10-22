@@ -1136,12 +1136,13 @@ namespace winrt::TerminalApp::implementation
             State state{ State::Unknown };
             bool accepted{ false };
             winrt::hstring detail;
+            bool errorReportedInPane{ false };
         };
         _SidebarHistoryActivationRequest _PrepareSidebarHistoryActivation(TerminalApp::TabStripHistoryItem const& item);
         static _SidebarHistoryActivationResult _ParseSidebarHistoryActivation(const std::string& output, const winrt::hstring& activationId);
         void _ReconcileSidebarHistoryActivation(const _SidebarHistoryActivationRequest& request, const _SidebarHistoryActivationResult& result);
         safe_void_coroutine _ActivateSidebarHistoryItem(TerminalApp::TabStripHistoryItem item);
-        bool _CompleteSidebarHistoryActivation(uint64_t activationSerial, bool accepted, const winrt::hstring& detail);
+        bool _CompleteSidebarHistoryActivation(uint64_t activationSerial, bool accepted, const winrt::hstring& detail, bool errorReportedInPane = false);
         bool _IsCollapsedVerticalRail() const noexcept
         {
             return _isVerticalLayout &&

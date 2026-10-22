@@ -13009,6 +13009,7 @@ async fn sidebar_cli_resume_startup_failure_before_create_returns_stays_historic
     )
     .await;
     assert!(!response.accepted);
+    assert!(response.error_reported_in_pane);
     assert_eq!(
         response.state,
         crate::session_registry::SessionActivationState::Complete
@@ -13351,6 +13352,7 @@ async fn sidebar_activation_receipt_capacity_preserves_pending_operations() {
                         action: String::new(),
                         accepted: false,
                         detail: None,
+                        error_reported_in_pane: false,
                     },
                     params: pending,
                 },
