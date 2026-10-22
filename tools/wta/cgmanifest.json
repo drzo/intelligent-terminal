@@ -59,15 +59,6 @@
       "component": {
         "type": "cargo",
         "cargo": {
-          "name": "ansi-to-tui",
-          "version": "8.0.1"
-        }
-      }
-    },
-    {
-      "component": {
-        "type": "cargo",
-        "cargo": {
           "name": "anstream",
           "version": "0.6.21"
         }
@@ -1463,15 +1454,6 @@
       "component": {
         "type": "cargo",
         "cargo": {
-          "name": "nom",
-          "version": "8.0.0"
-        }
-      }
-    },
-    {
-      "component": {
-        "type": "cargo",
-        "cargo": {
           "name": "normpath",
           "version": "1.5.1"
         }
@@ -2284,15 +2266,6 @@
         "cargo": {
           "name": "simd-adler32",
           "version": "0.3.9"
-        }
-      }
-    },
-    {
-      "component": {
-        "type": "cargo",
-        "cargo": {
-          "name": "simdutf8",
-          "version": "0.1.5"
         }
       }
     },

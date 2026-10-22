@@ -6,12 +6,12 @@
 #[cfg(feature = "highlight-code")]
 use std::sync::LazyLock;
 
-#[cfg(feature = "highlight-code")]
-use ansi_to_tui::IntoText;
 use pulldown_cmark::{CodeBlockKind, CowStr, Event};
+#[cfg(feature = "highlight-code")]
+use ratatui_core::style::{Color, Style};
 use ratatui_core::text::{Line, Span};
 #[cfg(feature = "highlight-code")]
-use syntect::{easy::HighlightLines, parsing::SyntaxSet, util::as_24_bit_terminal_escaped};
+use syntect::{easy::HighlightLines, parsing::SyntaxSet};
 #[cfg(feature = "highlight-code")]
 use tracing::{debug, instrument, warn};
 
@@ -100,6 +100,8 @@ where
             let content = line.strip_suffix('\n').unwrap_or(line);
             let content = content.strip_suffix('\r').unwrap_or(content);
             let style = self.inline_styles.last().copied().unwrap_or_default();
+            #[cfg(feature = "highlight-code")]
+            let style = style.patch(self.styles.code());
             self.push_line(Line::from(Span::styled(content.to_owned(), style)));
         }
         self.needs_newline = false;
@@ -116,16 +118,28 @@ where
         let Some(highlighter) = &mut self.code_highlighter else {
             return false;
         };
-        // Preserve the existing behavior: highlighting or conversion failures omit the line.
+        // Preserve the existing behavior: highlighting failures omit the line.
         let Ok(parts) = highlighter.highlight_line(line, &SYNTAX_SET) else {
             return true;
         };
-        let Ok(text) = as_24_bit_terminal_escaped(&parts, true).into_text() else {
-            return true;
-        };
-        for line in text.lines {
-            self.push_line(line);
-        }
+        let spans = parts
+            .into_iter()
+            .filter_map(|(style, content)| {
+                // Syntect needs line endings for parsing, but Ratatui lines do not include them.
+                let content = content.strip_suffix('\n').unwrap_or(content);
+                let content = content.strip_suffix('\r').unwrap_or(content);
+                if content.is_empty() {
+                    return None;
+                }
+                let foreground = style.foreground;
+                let background = style.background;
+                let style = Style::default()
+                    .fg(Color::Rgb(foreground.r, foreground.g, foreground.b))
+                    .bg(Color::Rgb(background.r, background.g, background.b));
+                Some(Span::styled(content.to_owned(), style))
+            })
+            .collect::<Vec<_>>();
+        self.push_line(Line::from(spans));
         true
     }
 

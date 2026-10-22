@@ -816,6 +816,18 @@ After"#
                 }
             } else {
                 assert!(colors.is_empty(), "Unknown code must keep upstream styling");
+                let code_line = rows
+                    .iter()
+                    .find(|line| line.to_string().contains("fn main()"))
+                    .unwrap();
+                assert!(
+                    code_line
+                        .spans
+                        .iter()
+                        .filter(|span| !span.content.trim().is_empty())
+                        .all(|span| span.style.add_modifier.contains(Modifier::DIM)),
+                    "Ordinary code must retain its code style: {code_line:?}"
+                );
             }
         }
     }
@@ -855,6 +867,28 @@ After"#
                 "language={language:?}, row={code_line:?}"
             );
         }
+        let source = "```rust\nlet text = \"\u{1b}[31mLITERAL_ANSI\u{1b}[0m\";\n```";
+        let parsed = from_str_with_options(source, &Options::new(PaneStyles));
+        assert!(
+            parsed
+                .to_string()
+                .contains("\u{1b}[31mLITERAL_ANSI\u{1b}[0m"),
+            "Syntax highlighting must not interpret literal ANSI escapes: {parsed:?}"
+        );
+        let result = render_batch(BatchJob {
+            sources: vec![Arc::from(source)].into(),
+            width: 90,
+            generation: 1,
+        });
+        let text = result.rows.unwrap()[0]
+            .iter()
+            .map(Line::to_string)
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(
+            text.contains("[31mLITERAL_ANSI[0m") && !text.contains('\u{1b}'),
+            "Literal escape-sequence text must survive projection: {text:?}"
+        );
     }
 
     #[test]

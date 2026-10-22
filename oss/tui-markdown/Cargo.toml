@@ -50,16 +50,11 @@ rustdoc-args = [
 default = ["highlight-code"]
 highlight-code = [
     "dep:syntect",
-    "dep:ansi-to-tui",
 ]
 
 [lib]
 name = "tui_markdown"
 path = "src/lib.rs"
-
-[dependencies.ansi-to-tui]
-version = "8"
-optional = true
 
 [dependencies.document-features]
 version = "0.2.11"

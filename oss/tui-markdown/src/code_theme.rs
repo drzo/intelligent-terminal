@@ -237,7 +237,7 @@ mod tests {
         let rendered = from_str_with_options("```rust\nfn main() {}\n```", &options);
         insta::assert_debug_snapshot!(
             rendered.lines[1].spans[0],
-            @r#"Span::from("fn").fg(Color::Rgb(255, 255, 255))"#
+            @r#"Span::from("fn").fg(Color::Rgb(255, 255, 255)).bg(Color::Rgb(0, 0, 0))"#
         );
     }
 
@@ -249,7 +249,7 @@ mod tests {
         let rendered = from_str_with_options("```rust\nfn main() {}\n```", &options);
         insta::assert_debug_snapshot!(
             rendered.lines[1].spans[0],
-            @r#"Span::from("fn").fg(Color::Rgb(255, 255, 255))"#
+            @r#"Span::from("fn").fg(Color::Rgb(255, 255, 255)).bg(Color::Rgb(0, 0, 0))"#
         );
     }
 

@@ -596,7 +596,6 @@ if it were canonical for the whole group.
 - **agent-client-protocol-schema** v1.4.0 -- [https://github.com/agentclientprotocol/agent-client-protocol](https://github.com/agentclientprotocol/agent-client-protocol) -- `Apache-2.0`
 - **aho-corasick** v1.1.4 -- [https://github.com/BurntSushi/aho-corasick](https://github.com/BurntSushi/aho-corasick) -- `MIT OR Unlicense`
 - **allocator-api2** v0.2.21 -- [https://github.com/zakarumych/allocator-api2](https://github.com/zakarumych/allocator-api2) -- `Apache-2.0 OR MIT`
-- **ansi-to-tui** v8.0.1 -- [https://github.com/ratatui/ansi-to-tui](https://github.com/ratatui/ansi-to-tui) -- `MIT`
 - **anstream** v0.6.21 -- [https://github.com/rust-cli/anstyle.git](https://github.com/rust-cli/anstyle.git) -- `Apache-2.0 OR MIT`
 - **anstyle** v1.0.13 -- [https://github.com/rust-cli/anstyle.git](https://github.com/rust-cli/anstyle.git) -- `Apache-2.0 OR MIT`
 - **anstyle-parse** v0.2.7 -- [https://github.com/rust-cli/anstyle.git](https://github.com/rust-cli/anstyle.git) -- `Apache-2.0 OR MIT`
@@ -752,7 +751,6 @@ if it were canonical for the whole group.
 - **mio** v1.1.1 -- [https://github.com/tokio-rs/mio](https://github.com/tokio-rs/mio) -- `MIT`
 - **moxcms** v0.8.1 -- [https://github.com/awxkee/moxcms.git](https://github.com/awxkee/moxcms.git) -- `Apache-2.0 OR BSD-3-Clause`
 - **nom** v7.1.3 -- [https://github.com/Geal/nom](https://github.com/Geal/nom) -- `MIT`
-- **nom** v8.0.0 -- [https://github.com/rust-bakery/nom](https://github.com/rust-bakery/nom) -- `MIT`
 - **normpath** v1.5.1 -- [https://github.com/dylni/normpath](https://github.com/dylni/normpath) -- `Apache-2.0 OR MIT`
 - **notify** v6.1.1 -- [https://github.com/notify-rs/notify.git](https://github.com/notify-rs/notify.git) -- `CC0-1.0`
 - **nu-ansi-term** v0.50.3 -- [https://github.com/nushell/nu-ansi-term](https://github.com/nushell/nu-ansi-term) -- `MIT`
@@ -844,7 +842,6 @@ if it were canonical for the whole group.
 - **sharded-slab** v0.1.7 -- [https://github.com/hawkw/sharded-slab](https://github.com/hawkw/sharded-slab) -- `MIT`
 - **shell-words** v1.1.1 -- [https://github.com/tmiasko/shell-words](https://github.com/tmiasko/shell-words) -- `Apache-2.0 OR MIT`
 - **simd-adler32** v0.3.9 -- [https://github.com/mcountryman/simd-adler32](https://github.com/mcountryman/simd-adler32) -- `MIT`
-- **simdutf8** v0.1.5 -- [https://github.com/rusticstuff/simdutf8](https://github.com/rusticstuff/simdutf8) -- `Apache-2.0 OR MIT`
 - **siphasher** v1.0.2 -- [https://github.com/jedisct1/rust-siphash](https://github.com/jedisct1/rust-siphash) -- `Apache-2.0 OR MIT`
 - **slab** v0.4.12 -- [https://github.com/tokio-rs/slab](https://github.com/tokio-rs/slab) -- `MIT`
 - **smallvec** v1.15.1 -- [https://github.com/servo/rust-smallvec](https://github.com/servo/rust-smallvec) -- `Apache-2.0 OR MIT`
@@ -975,7 +972,7 @@ THE SOFTWARE IS PROVIDED "AS IS" AND THE AUTHOR DISCLAIMS ALL WARRANTIES WITH RE
 
 ### `Apache-2.0`
 
-Applies to 231 crate(s) (directly or via composite identifiers): adler2 v2.0.1, agent-client-protocol v1.3.0, agent-client-protocol-derive v1.3.0, agent-client-protocol-schema v1.4.0, allocator-api2 v0.2.21, anstream v0.6.21, anstyle v1.0.13, anstyle-parse v0.2.7, ... (+223 more)
+Applies to 230 crate(s) (directly or via composite identifiers): adler2 v2.0.1, agent-client-protocol v1.3.0, agent-client-protocol-derive v1.3.0, agent-client-protocol-schema v1.4.0, allocator-api2 v0.2.21, anstream v0.6.21, anstyle v1.0.13, anstyle-parse v0.2.7, ... (+222 more)
 
 _Canonical text reproduced from upstream `SPDX:Apache-2.0`:_
 
@@ -1385,7 +1382,7 @@ _Canonical text reproduced from upstream `SPDX:LLVM-exception`:_
 
 ### `MIT`
 
-Applies to 328 crate(s) (directly or via composite identifiers): adler2 v2.0.1, aho-corasick v1.1.4, allocator-api2 v0.2.21, ansi-to-tui v8.0.1, anstream v0.6.21, anstyle v1.0.13, anstyle-parse v0.2.7, anstyle-query v1.1.5, ... (+320 more)
+Applies to 325 crate(s) (directly or via composite identifiers): adler2 v2.0.1, aho-corasick v1.1.4, allocator-api2 v0.2.21, anstream v0.6.21, anstyle v1.0.13, anstyle-parse v0.2.7, anstyle-query v1.1.5, anstyle-wincon v3.0.11, ... (+317 more)
 
 _Canonical text reproduced from upstream `SPDX:MIT`:_
 
@@ -1531,7 +1528,6 @@ Copyright (c) 2021 Parker Timmerman
 Copyright (c) 2021 RustCrypto Developers
 Copyright (c) 2021 Stephen M. Coakley
 Copyright (c) 2021-2022 The Nushell Project Developers
-Copyright (c) 2021-2024 Uttarayan Mondal
 Copyright (c) 2023 Dirkjan Ochtman <dirkjan@ochtman.nl>
 Copyright (c) 2023 Jacob Pratt
 Copyright (c) 2023 Jacob Pratt et al.
