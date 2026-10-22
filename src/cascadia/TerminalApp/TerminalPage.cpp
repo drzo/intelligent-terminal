@@ -6605,7 +6605,11 @@ namespace winrt::TerminalApp::implementation
         {
             if (const auto item = _tabStrip.FindName(elementName).try_as<WUX::Controls::ToggleMenuFlyoutItem>())
             {
-                const auto chord = _GetEffectiveKeyBindingForAction(actionMap, action);
+                auto chord = _GetEffectiveKeyBindingForAction(actionMap, action);
+                if (!chord && action == ShortcutAction::OpenAgentSessions)
+                {
+                    chord = _GetEffectiveKeyBindingForAction(actionMap, ShortcutAction::ToggleSidebarRecentAgentSessions);
+                }
                 winrt::hstring shortcut;
                 if (chord)
                 {
