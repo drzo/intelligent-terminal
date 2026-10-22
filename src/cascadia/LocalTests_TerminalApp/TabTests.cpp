@@ -5883,7 +5883,6 @@ namespace TerminalAppLocalTests
             "showTabsInTitlebar": false,
             "tabLayout": "vertical",
             "sidebarShowAgentsOnly": true,
-            "sidebarShowRecentAgentSessions": true,
             "profiles": [{
                 "name": "profile0",
                 "guid": "{6239a42c-1111-49a3-80bd-e8fdd045185c}",
@@ -5906,6 +5905,7 @@ namespace TerminalAppLocalTests
             const auto strip = winrt::get_self<winrt::TerminalApp::implementation::TabStrip>(page->_tabStrip);
             VERIFY_IS_TRUE(filters.ShowAgentsOnly());
             VERIFY_IS_TRUE(filters.ShowRecentAgentSessions());
+            VERIFY_IS_TRUE(strip->RecentAgentSessionsFilterMenuItem().IsChecked());
             VERIFY_ARE_EQUAL(Visibility::Visible, strip->AgentsOnlyIndicator().Visibility());
             VERIFY_ARE_EQUAL(TabStripFilterMode::AgentsOnly, page->_tabFilterMode);
             VERIFY_ARE_EQUAL(before, til::io::read_file_as_utf8_string_if_exists(settingsPath));
@@ -5922,6 +5922,7 @@ namespace TerminalAppLocalTests
                     page->SetSettings(reloaded, false);
                     VERIFY_ARE_EQUAL(agentsOnly, filters.ShowAgentsOnly());
                     VERIFY_ARE_EQUAL(recentSessions, filters.ShowRecentAgentSessions());
+                    VERIFY_ARE_EQUAL(recentSessions, strip->RecentAgentSessionsFilterMenuItem().IsChecked());
                     VERIFY_ARE_EQUAL(agentsOnly ? Visibility::Visible : Visibility::Collapsed,
                                      strip->AgentsOnlyIndicator().Visibility());
                     VERIFY_ARE_EQUAL(agentsOnly ? TabStripFilterMode::AgentsOnly : TabStripFilterMode::AllTabs, page->_tabFilterMode);
@@ -6005,25 +6006,27 @@ namespace TerminalAppLocalTests
             auto temporaryPath = settingsPath;
             temporaryPath += L".tmp";
             const auto cleanup = wil::scope_exit([&]() { std::filesystem::remove(temporaryPath); });
+            globals.ClearSidebarShowRecentAgentSessions();
 
             for (const auto explicitValue : { false, true })
             {
                 if (explicitValue)
                 {
                     globals.SidebarShowAgentsOnly(true);
-                    globals.SidebarShowRecentAgentSessions(true);
+                    globals.SidebarShowRecentAgentSessions(false);
                 }
+                const auto recentSessions = globals.SidebarShowRecentAgentSessions();
                 page->_ApplySidebarFilterSettings();
                 VERIFY_IS_TRUE(page->_settings.WriteSettingsToDisk());
                 const auto before = til::io::read_file_as_utf8_string_if_exists(settingsPath);
                 wil::unique_hfile lock{ CreateFileW(settingsPath.c_str(), GENERIC_READ, FILE_SHARE_READ, nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr) };
                 VERIFY_IS_TRUE(static_cast<bool>(lock));
                 filters.ShowAgentsOnly(!explicitValue);
-                filters.ShowRecentAgentSessions(!explicitValue);
+                filters.ShowRecentAgentSessions(!recentSessions);
                 VERIFY_ARE_EQUAL(explicitValue, filters.ShowAgentsOnly());
-                VERIFY_ARE_EQUAL(explicitValue, filters.ShowRecentAgentSessions());
+                VERIFY_ARE_EQUAL(recentSessions, filters.ShowRecentAgentSessions());
                 VERIFY_ARE_EQUAL(explicitValue, globals.SidebarShowAgentsOnly());
-                VERIFY_ARE_EQUAL(explicitValue, globals.SidebarShowRecentAgentSessions());
+                VERIFY_ARE_EQUAL(recentSessions, globals.SidebarShowRecentAgentSessions());
                 VERIFY_ARE_EQUAL(explicitValue, globals.HasSidebarShowAgentsOnly());
                 VERIFY_ARE_EQUAL(explicitValue, globals.HasSidebarShowRecentAgentSessions());
                 VERIFY_ARE_EQUAL(before, til::io::read_file_as_utf8_string_if_exists(settingsPath));
@@ -22966,6 +22969,7 @@ namespace TerminalAppLocalTests
         {
             "defaultProfile": "{6239a42c-1111-49a3-80bd-e8fdd045185c}",
             "showTabsInTitlebar": false,
+            "sidebarShowRecentAgentSessions": false,
             "profiles": [
                 {
                     "name" : "profile0",
