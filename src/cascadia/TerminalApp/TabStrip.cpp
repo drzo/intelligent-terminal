@@ -753,6 +753,19 @@ namespace winrt::TerminalApp::implementation
                         self->_updateDisplayItemVisuals(container, display);
                     }
                 }
+                for (uint32_t index = 0; index < self->ItemsList().Items().Size(); ++index)
+                {
+                    if (!self->ItemsList().Items().GetAt(index).try_as<TerminalApp::TabStripDisplayItem>())
+                    {
+                        if (const auto container = self->ItemsList().ContainerFromIndex(index))
+                        {
+                            if (const auto presenter = _findNamedElement(container, L"SidebarItemPresenter").try_as<Primitives::ListViewItemPresenter>())
+                            {
+                                presenter.PointerOverBackground(self->SidebarDefaultHoverBrush().Background());
+                            }
+                        }
+                    }
+                }
             }
         });
         Unloaded([weakThis{ get_weak() }](auto&&, auto&&) {
@@ -1276,15 +1289,17 @@ namespace winrt::TerminalApp::implementation
             const auto isGroup = display.IsGroup();
             const auto hoverBrush = !isGroup && !_highContrast ? _tabHoverBrush(display.Tab()) : nullptr;
             const auto hovered = hoverBrush && winrt::get_self<TabStripDisplayItem>(display)->IsPointerOver();
-            const auto selected = !isGroup && display.SelectionVisibility() == Visibility::Visible;
+            const auto selected = display.SelectionVisibility() == Visibility::Visible &&
+                                  (!isGroup || display.ChildrenVisibility() != Visibility::Visible);
+            const auto pointerOver = winrt::get_self<TabStripDisplayItem>(display)->IsPointerOver();
             if (const auto hoverBackground = grid.FindName(L"TabHoverBackground").try_as<WUX::Controls::Border>())
             {
-                hoverBackground.Background(hoverBrush ? hoverBrush : ThemeLookup(Application::Current().Resources(), grid.ActualTheme(),
-                                                                                  box_value(L"TabViewItemHeaderBackgroundPointerOver")).as<WUX::Media::Brush>());
-                hoverBackground.Opacity(!_highContrast && !selected &&
-                                                winrt::get_self<TabStripDisplayItem>(display)->IsPointerOver() ?
-                                            1.0 :
-                                            0.0);
+                hoverBackground.Opacity(!_highContrast && !selected && pointerOver && !hoverBrush ? 1.0 : 0.0);
+            }
+            if (const auto colorHover = grid.FindName(L"TabColorHoverBackground").try_as<WUX::Controls::Border>())
+            {
+                colorHover.Background(hoverBrush);
+                colorHover.Opacity(!_highContrast && !selected && pointerOver && hoverBrush ? 1.0 : 0.0);
             }
             if (const auto container = ItemsList().ContainerFromItem(display);
                 container)
@@ -1300,19 +1315,21 @@ namespace winrt::TerminalApp::implementation
                             presenter.Resources().Insert(marker, box_value(true));
                         }
                     }
-                    else if (presenter.Resources().HasKey(marker))
+                    else
                     {
-                        presenter.PointerOverBackground(ThemeLookup(Application::Current().Resources(), grid.ActualTheme(),
-                                                                    box_value(L"TabViewItemHeaderBackgroundPointerOver")).as<WUX::Media::Brush>());
-                        presenter.Resources().Remove(marker);
+                        presenter.PointerOverBackground(grid.FindName(L"TabHoverBackground").as<WUX::Controls::Border>().Background());
+                        if (presenter.Resources().HasKey(marker))
+                        {
+                            presenter.Resources().Remove(marker);
+                        }
                     }
                 }
             }
             if (const auto nativeSelection = grid.FindName(L"TabSelectionBackground").try_as<WUX::Controls::Border>())
             {
-                nativeSelection.Visibility(isGroup ? Visibility::Collapsed : display.SelectionVisibility());
+                nativeSelection.Visibility(selected ? Visibility::Visible : Visibility::Collapsed);
             }
-            const auto tabColor = isGroup ? std::nullopt : _tabSelectionColor(display.Tab(), selected);
+            const auto tabColor = isGroup && !selected ? std::nullopt : _tabSelectionColor(display.Tab(), selected);
             if (selectionBackground)
             {
                 const auto showColor = tabColor && (selected || !_highContrast) && !(!selected && hovered);
@@ -1400,28 +1417,13 @@ namespace winrt::TerminalApp::implementation
         _bindMonochromeIconForeground(presenter, button);
         if (const auto hover = root.FindName(L"PaneHoverBackground").try_as<UIElement>())
         {
-            if (const auto border = hover.try_as<WUX::Controls::Border>())
+            const auto showHover = !active && winrt::get_self<TabStripPaneItem>(pane)->IsPointerOver();
+            hover.Opacity(showHover && !hoverBrush ? 1.0 : 0.0);
+            if (const auto colorHover = root.FindName(L"PaneColorHoverBackground").try_as<WUX::Controls::Border>())
             {
-                const auto marker = box_value(L"SidebarThemedHover");
-                if (hoverBrush)
-                {
-                    border.Background(hoverBrush);
-                    if (!border.Resources().HasKey(marker))
-                    {
-                        border.Resources().Insert(marker, box_value(true));
-                    }
-                }
-                else if (border.Resources().HasKey(marker))
-                {
-                    border.Background(ThemeLookup(Application::Current().Resources(), root.ActualTheme(),
-                                                  box_value(L"TabViewItemHeaderBackgroundPointerOver")).as<WUX::Media::Brush>());
-                    border.Resources().Remove(marker);
-                }
+                colorHover.Background(hoverBrush);
+                colorHover.Opacity(showHover && hoverBrush ? 1.0 : 0.0);
             }
-            hover.Opacity(pane.ActiveIndicatorVisibility() == Visibility::Visible ||
-                                  !winrt::get_self<TabStripPaneItem>(pane)->IsPointerOver() ?
-                              0.0 :
-                              1.0);
         }
 
         const auto updateRing = [&](WUX::Controls::Control const& ring) {
@@ -2622,8 +2624,7 @@ namespace winrt::TerminalApp::implementation
             if (const auto presenter = _findNamedElement(container, L"SidebarItemPresenter").try_as<Primitives::ListViewItemPresenter>();
                 presenter && presenter.Resources().HasKey(box_value(L"SidebarThemedHover")))
             {
-                presenter.PointerOverBackground(ThemeLookup(Application::Current().Resources(), container.ActualTheme(),
-                                                            box_value(L"TabViewItemHeaderBackgroundPointerOver")).as<WUX::Media::Brush>());
+                presenter.PointerOverBackground(SidebarDefaultHoverBrush().Background());
                 presenter.Resources().Remove(box_value(L"SidebarThemedHover"));
             }
         }
@@ -2740,6 +2741,7 @@ namespace winrt::TerminalApp::implementation
                 {
                     winrt::get_self<TabStripPaneItem>(pane)->UpdateCloseVisibility(_isRailCollapsed);
                 }
+                _refreshDisplayItemVisuals(display);
             }
         }
 

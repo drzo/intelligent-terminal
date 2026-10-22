@@ -332,6 +332,10 @@
             <RowDefinition Height="Auto" />
             <RowDefinition Height="*" />
         </Grid.RowDefinitions>
+        <Border x:Name="SidebarDefaultHoverBrush"
+                Background="{ThemeResource TabViewItemHeaderBackgroundPointerOver}"
+                IsHitTestVisible="False"
+                Visibility="Collapsed" />
 
         <Grid x:Name="TopChrome"
               Grid.Row="0"
@@ -566,6 +570,11 @@
                                     CornerRadius="{StaticResource SidebarTabCornerRadius}"
                                     IsHitTestVisible="False"
                                     Opacity="0" />
+                            <Border x:Name="TabColorHoverBackground"
+                                    Grid.ColumnSpan="3"
+                                    CornerRadius="{StaticResource SidebarTabCornerRadius}"
+                                    IsHitTestVisible="False"
+                                    Opacity="0" />
                             <Border x:Name="TabSelectionBackground"
                                     Grid.ColumnSpan="3"
                                     Background="{ThemeResource ListViewItemBackgroundSelected}"
@@ -703,6 +712,11 @@
                                         <Border x:Name="PaneHoverBackground"
                                                 Grid.ColumnSpan="2"
                                                 Background="{ThemeResource TabViewItemHeaderBackgroundPointerOver}"
+                                                CornerRadius="{StaticResource SidebarTabCornerRadius}"
+                                                IsHitTestVisible="False"
+                                                Opacity="0" />
+                                        <Border x:Name="PaneColorHoverBackground"
+                                                Grid.ColumnSpan="2"
                                                 CornerRadius="{StaticResource SidebarTabCornerRadius}"
                                                 IsHitTestVisible="False"
                                                 Opacity="0" />
