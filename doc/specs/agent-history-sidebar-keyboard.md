@@ -101,11 +101,11 @@ instead of letting unordered snapshot rows repeatedly change the icon.
 | `Ctrl+Shift+/` | Toggle **Recent agent sessions** without changing **Agents only** or the search query in vertical layout; horizontal Agent Pane sessions behavior is unchanged. |
 | `Ctrl+Shift+S` | Enter the sidebar by focusing its upper-left toggle without opening search, or collapse it and return to the previous input when focus is already inside. |
 | `Ctrl+F` | Open/focus shared sidebar search; in horizontal layout, open the existing tab-search palette. |
+| `Ctrl+Shift+.` | Show/hide the independent Agent Pane; its behavior is unchanged. |
 
 Ctrl+Shift+G and Ctrl+Shift+/ also work while Sidebar Display options is open.
 Their menu hints follow effective user bindings. Ctrl+Shift+R is no longer
 assigned to a sidebar filter by default; explicit user bindings are preserved.
-| `Ctrl+Shift+.` | Show/hide the independent Agent Pane; its behavior is unchanged. |
 
 In horizontal layout, `Ctrl+Shift+S` remains a consumed no-op: no layout/chrome
 change and no input leakage into the terminal. User bindings can override or
