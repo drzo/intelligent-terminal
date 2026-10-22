@@ -731,6 +731,8 @@ namespace TerminalAppLocalTests
         TEST_METHOD(TryDuplicateBadTab);
         TEST_METHOD(TryDuplicateBadPane);
         TEST_METHOD(ProfileAwareSplitPreservesExplicitTargets);
+        TEST_METHOD(SplitActionDoesNotRetainAgentIdentity);
+        TEST_METHOD(NewTabActionDoesNotRetainDefaultAgentIdentity);
         TEST_METHOD(SplitDirectoryFollowsShellAndAgentSources);
         TEST_METHOD(SplitDirectoryPreservesExplicitAndRestoreArguments);
         TEST_METHOD(SplitDirectoryDuplicatePreservesElevation);
@@ -23343,6 +23345,85 @@ namespace TerminalAppLocalTests
                 VERIFY_ARE_EQUAL(explicitTarget.Guid(), page->_GetFocusedTabImpl()->GetFocusedProfile().Guid());
             }));
         }
+    }
+
+    void TabTests::SplitActionDoesNotRetainAgentIdentity()
+    {
+        for (const auto splitMode : { SplitType::Duplicate, SplitType::Profile })
+        {
+            for (const auto explicitDirectory : { false, true })
+            {
+                auto page = _commonSetup(nullptr, nullptr, std::nullopt, true);
+                TestOnUIThread([&]() {
+                    const auto shellTab = page->_GetFocusedTabImpl();
+                    shellTab->SuppressAgentPrewarm();
+                    const auto shellProfile = shellTab->GetFocusedProfile();
+                    const auto shellIcon = shellProfile.Icon().Resolved();
+                    const auto agentProfile = page->_settings.ActiveProfiles().GetAt(1);
+                    agentProfile.AgentProfileId(L"copilot");
+                    agentProfile.Commandline(L"cmd.exe /d /k");
+                    NewTerminalArgs agentArgs;
+                    agentArgs.Profile(Utils::GuidToString(agentProfile.Guid()));
+                    VERIFY_SUCCEEDED(page->_OpenNewTab(agentArgs));
+                    const auto agentTab = page->_GetFocusedTabImpl();
+                    agentTab->SuppressAgentPrewarm();
+
+                    NewTerminalArgs contentArgs;
+                    if (explicitDirectory)
+                    {
+                        contentArgs.StartingDirectory(winrt::hstring{ wil::ExpandEnvironmentStringsW<std::wstring>(L"%SystemRoot%") });
+                    }
+                    SplitPaneArgs splitArgs{ splitMode, SplitDirection::Right, .5f, contentArgs };
+                    ActionEventArgs agentSplit{ splitArgs };
+                    page->_HandleSplitPane(nullptr, agentSplit);
+                    VERIFY_IS_TRUE(agentSplit.Handled());
+                    const auto manager = winrt::get_self<winrt::TerminalApp::implementation::ContentManager>(page->_manager);
+                    VERIFY_ARE_EQUAL(winrt::hstring{ L"copilot" }, manager->NativeAgentProviderId(agentTab->GetActiveTerminalControl().ContentId()));
+                    VERIFY_IS_TRUE(contentArgs.NativeAgentProviderId().empty());
+
+                    page->_SelectTab(0);
+                    ActionEventArgs shellSplit{ splitArgs };
+                    page->_HandleSplitPane(nullptr, shellSplit);
+                    VERIFY_IS_TRUE(shellSplit.Handled());
+                    VERIFY_ARE_EQUAL(2, shellTab->GetLeafPaneCount());
+                    VERIFY_ARE_EQUAL(shellProfile.Guid(), shellTab->GetFocusedProfile().Guid());
+                    VERIFY_IS_TRUE(manager->NativeAgentProviderId(shellTab->GetActiveTerminalControl().ContentId()).empty());
+                    VERIFY_ARE_EQUAL(shellIcon, shellTab->Icon());
+                    page->_RefreshTabStripPaneItems(shellTab);
+                    const auto strip = winrt::get_self<winrt::TerminalApp::implementation::TabStrip>(page->_tabStrip);
+                    const auto display = strip->DisplayItemForTab(shellTab->TabViewItem());
+                    VERIFY_ARE_EQUAL(2u, display.PaneItems().Size());
+                    for (const auto& item : display.PaneItems())
+                    {
+                        VERIFY_ARE_EQUAL(shellIcon, winrt::get_self<winrt::TerminalApp::implementation::TabStripPaneItem>(item)->IconPath());
+                    }
+                });
+            }
+        }
+    }
+
+    void TabTests::NewTabActionDoesNotRetainDefaultAgentIdentity()
+    {
+        auto page = _commonSetup();
+        TestOnUIThread([&]() {
+            const auto shellProfile = page->_GetFocusedTabImpl()->GetFocusedProfile();
+            const auto agentProfile = page->_settings.ActiveProfiles().GetAt(1);
+            agentProfile.AgentProfileId(L"copilot");
+            agentProfile.Commandline(L"cmd.exe /d /k");
+            NewTerminalArgs contentArgs;
+            page->_settings.GlobalSettings().DefaultProfile(agentProfile.Guid());
+            VERIFY_SUCCEEDED(page->_OpenNewTab(contentArgs));
+            const auto manager = winrt::get_self<winrt::TerminalApp::implementation::ContentManager>(page->_manager);
+            VERIFY_ARE_EQUAL(winrt::hstring{ L"copilot" }, manager->NativeAgentProviderId(page->_GetActiveControl().ContentId()));
+            VERIFY_IS_TRUE(contentArgs.NativeAgentProviderId().empty());
+
+            page->_settings.GlobalSettings().DefaultProfile(shellProfile.Guid());
+            VERIFY_SUCCEEDED(page->_OpenNewTab(contentArgs));
+            const auto shellTab = page->_GetFocusedTabImpl();
+            VERIFY_ARE_EQUAL(shellProfile.Guid(), shellTab->GetFocusedProfile().Guid());
+            VERIFY_IS_TRUE(manager->NativeAgentProviderId(shellTab->GetActiveTerminalControl().ContentId()).empty());
+            VERIFY_ARE_EQUAL(shellProfile.Icon().Resolved(), shellTab->Icon());
+        });
     }
 
     void TabTests::TryZoomPane()
