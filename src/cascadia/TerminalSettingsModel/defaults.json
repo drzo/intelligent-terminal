@@ -777,7 +777,6 @@
         { "keys": "ctrl+shift+/", "id": "Terminal.OpenAgentSessions" },
         { "keys": "ctrl+shift+s", "id": "Terminal.ToggleSidebar" },
         { "keys": "ctrl+shift+g", "id": "Terminal.ToggleSidebarAgentsOnly" },
-        { "keys": "ctrl+shift+r", "id": "Terminal.ToggleSidebarRecentAgentSessions" },
         { "keys": "ctrl+alt+period", "id": "Terminal.TriggerAutofix" },
 
         // Tab Management

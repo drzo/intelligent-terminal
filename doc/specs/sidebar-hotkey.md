@@ -138,5 +138,21 @@ the tab switcher and leave horizontal-layout input unhandled.
 The default command IDs are `Terminal.NextSidebarTab` and
 `Terminal.PrevSidebarTab`. User rebinding, command overrides and explicit
 unbinding retain normal action-map precedence. Existing `nextTab`/`prevTab`,
-numeric tab shortcuts, Escape and the deferred filter-shortcut group keep their
-existing behavior.
+numeric tab shortcuts and Escape keep their existing behavior.
+
+## Sidebar Display options shortcuts
+
+| Default shortcut | Behavior in Sidebar layout |
+| --- | --- |
+| Ctrl+Shift+G | Toggle Agents only without changing the Recent preference or search query. |
+| Ctrl+Shift+/ | Toggle Agent recent sessions without changing the Agents-only preference or search query. |
+
+Both shortcuts work while Sidebar Display options is expanded, including when
+the other filter item owns keyboard focus. Each press changes its preference
+once and updates the native checked state. The menu displays the effective
+configured shortcuts rather than fixed default text.
+
+Ctrl+Shift+R has no default sidebar-filter binding. Explicit user bindings and
+unbindings retain normal action-map precedence. Horizontal Agent Pane session
+behavior, other flyouts/dialogs, native mouse/Space/Enter activation, Escape,
+metadata-toggle behavior, terminal input and selection remain unchanged.
