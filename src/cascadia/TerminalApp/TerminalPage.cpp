@@ -2255,6 +2255,7 @@ namespace winrt::TerminalApp::implementation
         }
 
         cmdline += L" delegate";
+        cmdline += L" --master " + quoteArg(SharedWta::Instance().MasterPipeName());
         if (!agentCliPath.empty())
         {
             cmdline += L" --agent " + quoteArg(std::wstring_view{ agentCliPath });
@@ -7385,12 +7386,9 @@ namespace winrt::TerminalApp::implementation
     std::wstring TerminalPage::_BuildSessionsListArguments(const std::wstring_view masterPipe)
     {
         std::wstring arguments{ L"sessions list --json --include-status" };
-        if (!masterPipe.empty())
-        {
-            arguments.append(L" --master \"");
-            arguments.append(masterPipe);
-            arguments.push_back(L'"');
-        }
+        arguments.append(L" --master \"");
+        arguments.append(masterPipe);
+        arguments.push_back(L'"');
         return arguments;
     }
 
@@ -7522,7 +7520,7 @@ namespace winrt::TerminalApp::implementation
         }
     }
 
-    TerminalPage::_SidebarHistoryActivationRequest TerminalPage::_PrepareSidebarHistoryActivation(TerminalApp::TabStripHistoryItem const& item)
+    TerminalPage::_SidebarHistoryActivationRequest TerminalPage::_PrepareSidebarHistoryActivation(TerminalApp::TabStripHistoryItem const& item, const std::wstring_view masterPipe)
     {
         const auto windowId = _WindowProperties.WindowId();
         const auto quote = [](std::wstring_view value) {
@@ -7552,7 +7550,8 @@ namespace winrt::TerminalApp::implementation
         };
 
         std::wstring args{
-            L"sessions activate --json --session-id " + quote(item.SessionId()) +
+            L"sessions activate --json --master " + quote(masterPipe) +
+            L" --session-id " + quote(item.SessionId()) +
             L" --provider " + quote(item.AgentId()) +
             L" --location " + quote(item.AgentSource()) +
             L" --window-id " + std::to_wstring(windowId)
@@ -7632,7 +7631,7 @@ namespace winrt::TerminalApp::implementation
 
         const auto weakThis = get_weak();
         const auto dispatcher = Dispatcher();
-        const auto request = _PrepareSidebarHistoryActivation(item);
+        const auto request = _PrepareSidebarHistoryActivation(item, SharedWta::Instance().MasterPipeName());
         auto args = request.arguments;
         args.append(L" --activation-id \"").append(request.id.c_str()).append(L"\"");
         if (request.statusOnly)
