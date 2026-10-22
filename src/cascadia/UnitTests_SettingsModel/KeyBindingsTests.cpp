@@ -924,7 +924,6 @@ namespace SettingsModelUnitTests
         verifyBinding(L"ctrl+f", L"Terminal.TabSearch");
         verifyBinding(L"ctrl+shift+f", L"Terminal.FindText");
         verifyBinding(L"ctrl+shift+g", L"Terminal.ToggleSidebarAgentsOnly");
-        VERIFY_IS_NULL(actionMap.GetActionByKeyChord(KeyChordSerialization::FromString(L"ctrl+shift+r")));
         verifyBinding(L"ctrl+alt+down", L"Terminal.NextSidebarTab");
         verifyBinding(L"ctrl+alt+up", L"Terminal.PrevSidebarTab");
         verifyBinding(L"ctrl+tab", L"Terminal.NextTab");

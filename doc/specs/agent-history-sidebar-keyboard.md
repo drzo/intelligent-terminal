@@ -104,8 +104,7 @@ instead of letting unordered snapshot rows repeatedly change the icon.
 | `Ctrl+Shift+.` | Show/hide the independent Agent Pane; its behavior is unchanged. |
 
 Ctrl+Shift+G and Ctrl+Shift+/ also work while Sidebar Display options is open.
-Their menu hints follow effective user bindings. Ctrl+Shift+R is no longer
-assigned to a sidebar filter by default; explicit user bindings are preserved.
+Their menu hints follow effective user bindings and explicit unbinding.
 
 In horizontal layout, `Ctrl+Shift+S` remains a consumed no-op: no layout/chrome
 change and no input leakage into the terminal. User bindings can override or

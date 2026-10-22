@@ -1543,16 +1543,6 @@ Describe 'Feature: combined Agents sidebar' -Tag @('Feature', 'CombinedAgentsSid
                 if ($peer -and -not $peer.Current.IsOffscreen) { $peer }
             }
             $agentsItem.SetFocus()
-            Send-WtWindowKey -App $script:app -Vk 0x52 -Ctrl -Shift -RequireForeground | Out-Null
-            $changedByRemovedChord = Test-Until -TimeoutSec 1 -IntervalSec 0.1 -Condition {
-                foreach ($id in @('AgentsOnlyFilterMenuItem', 'RecentAgentSessionsFilterMenuItem')) {
-                    if ((Get-CombinedElement $id).GetCurrentPattern(
-                            [Windows.Automation.TogglePattern]::Pattern).Current.ToggleState -ne
-                            [Windows.Automation.ToggleState]::Off) { return $true }
-                }
-                $false
-            }
-            $changedByRemovedChord | Should -BeFalse -Because 'Ctrl+Shift+R is not a default sidebar shortcut'
             Send-WtWindowKey -App $script:app -Vk 0x1B -RequireForeground | Out-Null
             Wait-Until -TimeoutSec 5 -Because 'Escape restores focus to the current Display options button' -Condition {
                 $button = Get-CombinedElement FilterTabsButton
