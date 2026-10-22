@@ -732,6 +732,8 @@ namespace TerminalAppLocalTests
         TEST_METHOD(TryDuplicateBadTab);
         TEST_METHOD(TryDuplicateBadPane);
         TEST_METHOD(ProfileAwareSplitPreservesExplicitTargets);
+        TEST_METHOD(SplitActionDoesNotRetainAgentIdentity);
+        TEST_METHOD(NewTabActionDoesNotRetainDefaultAgentIdentity);
         TEST_METHOD(SplitDirectoryFollowsShellAndAgentSources);
         TEST_METHOD(SplitDirectoryPreservesExplicitAndRestoreArguments);
         TEST_METHOD(SplitDirectoryDuplicatePreservesElevation);
@@ -5897,7 +5899,6 @@ namespace TerminalAppLocalTests
             "showTabsInTitlebar": false,
             "tabLayout": "vertical",
             "sidebarShowAgentsOnly": true,
-            "sidebarShowRecentAgentSessions": true,
             "profiles": [{
                 "name": "profile0",
                 "guid": "{6239a42c-1111-49a3-80bd-e8fdd045185c}",
@@ -5920,6 +5921,7 @@ namespace TerminalAppLocalTests
             const auto strip = winrt::get_self<winrt::TerminalApp::implementation::TabStrip>(page->_tabStrip);
             VERIFY_IS_TRUE(filters.ShowAgentsOnly());
             VERIFY_IS_TRUE(filters.ShowRecentAgentSessions());
+            VERIFY_IS_TRUE(strip->RecentAgentSessionsFilterMenuItem().IsChecked());
             VERIFY_ARE_EQUAL(Visibility::Visible, strip->AgentsOnlyIndicator().Visibility());
             VERIFY_ARE_EQUAL(TabStripFilterMode::AgentsOnly, page->_tabFilterMode);
             VERIFY_ARE_EQUAL(before, til::io::read_file_as_utf8_string_if_exists(settingsPath));
@@ -5936,6 +5938,7 @@ namespace TerminalAppLocalTests
                     page->SetSettings(reloaded, false);
                     VERIFY_ARE_EQUAL(agentsOnly, filters.ShowAgentsOnly());
                     VERIFY_ARE_EQUAL(recentSessions, filters.ShowRecentAgentSessions());
+                    VERIFY_ARE_EQUAL(recentSessions, strip->RecentAgentSessionsFilterMenuItem().IsChecked());
                     VERIFY_ARE_EQUAL(agentsOnly ? Visibility::Visible : Visibility::Collapsed,
                                      strip->AgentsOnlyIndicator().Visibility());
                     VERIFY_ARE_EQUAL(agentsOnly ? TabStripFilterMode::AgentsOnly : TabStripFilterMode::AllTabs, page->_tabFilterMode);
@@ -6019,25 +6022,27 @@ namespace TerminalAppLocalTests
             auto temporaryPath = settingsPath;
             temporaryPath += L".tmp";
             const auto cleanup = wil::scope_exit([&]() { std::filesystem::remove(temporaryPath); });
+            globals.ClearSidebarShowRecentAgentSessions();
 
             for (const auto explicitValue : { false, true })
             {
                 if (explicitValue)
                 {
                     globals.SidebarShowAgentsOnly(true);
-                    globals.SidebarShowRecentAgentSessions(true);
+                    globals.SidebarShowRecentAgentSessions(false);
                 }
+                const auto recentSessions = globals.SidebarShowRecentAgentSessions();
                 page->_ApplySidebarFilterSettings();
                 VERIFY_IS_TRUE(page->_settings.WriteSettingsToDisk());
                 const auto before = til::io::read_file_as_utf8_string_if_exists(settingsPath);
                 wil::unique_hfile lock{ CreateFileW(settingsPath.c_str(), GENERIC_READ, FILE_SHARE_READ, nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr) };
                 VERIFY_IS_TRUE(static_cast<bool>(lock));
                 filters.ShowAgentsOnly(!explicitValue);
-                filters.ShowRecentAgentSessions(!explicitValue);
+                filters.ShowRecentAgentSessions(!recentSessions);
                 VERIFY_ARE_EQUAL(explicitValue, filters.ShowAgentsOnly());
-                VERIFY_ARE_EQUAL(explicitValue, filters.ShowRecentAgentSessions());
+                VERIFY_ARE_EQUAL(recentSessions, filters.ShowRecentAgentSessions());
                 VERIFY_ARE_EQUAL(explicitValue, globals.SidebarShowAgentsOnly());
-                VERIFY_ARE_EQUAL(explicitValue, globals.SidebarShowRecentAgentSessions());
+                VERIFY_ARE_EQUAL(recentSessions, globals.SidebarShowRecentAgentSessions());
                 VERIFY_ARE_EQUAL(explicitValue, globals.HasSidebarShowAgentsOnly());
                 VERIFY_ARE_EQUAL(explicitValue, globals.HasSidebarShowRecentAgentSessions());
                 VERIFY_ARE_EQUAL(before, til::io::read_file_as_utf8_string_if_exists(settingsPath));
@@ -22980,6 +22985,7 @@ namespace TerminalAppLocalTests
         {
             "defaultProfile": "{6239a42c-1111-49a3-80bd-e8fdd045185c}",
             "showTabsInTitlebar": false,
+            "sidebarShowRecentAgentSessions": false,
             "profiles": [
                 {
                     "name" : "profile0",
@@ -23492,6 +23498,89 @@ namespace TerminalAppLocalTests
                 VERIFY_ARE_EQUAL(explicitTarget.Guid(), page->_GetFocusedTabImpl()->GetFocusedProfile().Guid());
             }));
         }
+    }
+
+    void TabTests::SplitActionDoesNotRetainAgentIdentity()
+    {
+        for (const auto& [splitMode, splitDirection] : {
+                 std::pair{ SplitType::Duplicate, SplitDirection::Right },
+                 std::pair{ SplitType::Duplicate, SplitDirection::Down },
+                 std::pair{ SplitType::Profile, SplitDirection::Right },
+                 std::pair{ SplitType::Profile, SplitDirection::Down } })
+        {
+            for (const auto explicitDirectory : { false, true })
+            {
+                auto page = _commonSetup(nullptr, nullptr, std::nullopt, true);
+                TestOnUIThread([&]() {
+                    const auto shellTab = page->_GetFocusedTabImpl();
+                    shellTab->SuppressAgentPrewarm();
+                    const auto shellProfile = shellTab->GetFocusedProfile();
+                    const auto shellIcon = shellProfile.Icon().Resolved();
+                    const auto agentProfile = page->_settings.ActiveProfiles().GetAt(1);
+                    agentProfile.AgentProfileId(L"copilot");
+                    agentProfile.Commandline(L"cmd.exe /d /k");
+                    NewTerminalArgs agentArgs;
+                    agentArgs.Profile(Utils::GuidToString(agentProfile.Guid()));
+                    VERIFY_SUCCEEDED(page->_OpenNewTab(agentArgs));
+                    const auto agentTab = page->_GetFocusedTabImpl();
+                    agentTab->SuppressAgentPrewarm();
+
+                    NewTerminalArgs contentArgs;
+                    if (explicitDirectory)
+                    {
+                        contentArgs.StartingDirectory(winrt::hstring{ wil::ExpandEnvironmentStringsW<std::wstring>(L"%SystemRoot%") });
+                    }
+                    SplitPaneArgs splitArgs{ splitMode, splitDirection, .5f, contentArgs };
+                    ActionEventArgs agentSplit{ splitArgs };
+                    page->_HandleSplitPane(nullptr, agentSplit);
+                    VERIFY_IS_TRUE(agentSplit.Handled());
+                    const auto manager = winrt::get_self<winrt::TerminalApp::implementation::ContentManager>(page->_manager);
+                    VERIFY_ARE_EQUAL(winrt::hstring{ L"copilot" }, manager->NativeAgentProviderId(agentTab->GetActiveTerminalControl().ContentId()));
+                    VERIFY_IS_TRUE(contentArgs.NativeAgentProviderId().empty());
+
+                    page->_SelectTab(0);
+                    ActionEventArgs shellSplit{ splitArgs };
+                    page->_HandleSplitPane(nullptr, shellSplit);
+                    VERIFY_IS_TRUE(shellSplit.Handled());
+                    VERIFY_ARE_EQUAL(2, shellTab->GetLeafPaneCount());
+                    VERIFY_ARE_EQUAL(shellProfile.Guid(), shellTab->GetFocusedProfile().Guid());
+                    VERIFY_IS_TRUE(manager->NativeAgentProviderId(shellTab->GetActiveTerminalControl().ContentId()).empty());
+                    VERIFY_ARE_EQUAL(shellIcon, shellTab->Icon());
+                    page->_RefreshTabStripPaneItems(shellTab);
+                    const auto strip = winrt::get_self<winrt::TerminalApp::implementation::TabStrip>(page->_tabStrip);
+                    const auto display = strip->DisplayItemForTab(shellTab->TabViewItem());
+                    VERIFY_ARE_EQUAL(2u, display.PaneItems().Size());
+                    for (const auto& item : display.PaneItems())
+                    {
+                        VERIFY_ARE_EQUAL(shellIcon, winrt::get_self<winrt::TerminalApp::implementation::TabStripPaneItem>(item)->IconPath());
+                    }
+                });
+            }
+        }
+    }
+
+    void TabTests::NewTabActionDoesNotRetainDefaultAgentIdentity()
+    {
+        auto page = _commonSetup();
+        TestOnUIThread([&]() {
+            const auto shellProfile = page->_GetFocusedTabImpl()->GetFocusedProfile();
+            const auto agentProfile = page->_settings.ActiveProfiles().GetAt(1);
+            agentProfile.AgentProfileId(L"copilot");
+            agentProfile.Commandline(L"cmd.exe /d /k");
+            NewTerminalArgs contentArgs;
+            page->_settings.GlobalSettings().DefaultProfile(agentProfile.Guid());
+            VERIFY_SUCCEEDED(page->_OpenNewTab(contentArgs));
+            const auto manager = winrt::get_self<winrt::TerminalApp::implementation::ContentManager>(page->_manager);
+            VERIFY_ARE_EQUAL(winrt::hstring{ L"copilot" }, manager->NativeAgentProviderId(page->_GetActiveControl().ContentId()));
+            VERIFY_IS_TRUE(contentArgs.NativeAgentProviderId().empty());
+
+            page->_settings.GlobalSettings().DefaultProfile(shellProfile.Guid());
+            VERIFY_SUCCEEDED(page->_OpenNewTab(contentArgs));
+            const auto shellTab = page->_GetFocusedTabImpl();
+            VERIFY_ARE_EQUAL(shellProfile.Guid(), shellTab->GetFocusedProfile().Guid());
+            VERIFY_IS_TRUE(manager->NativeAgentProviderId(shellTab->GetActiveTerminalControl().ContentId()).empty());
+            VERIFY_ARE_EQUAL(shellProfile.Icon().Resolved(), shellTab->Icon());
+        });
     }
 
     void TabTests::TryZoomPane()

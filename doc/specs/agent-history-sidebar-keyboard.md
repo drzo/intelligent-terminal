@@ -26,9 +26,10 @@ changes the initial `tabLayout`; subsequent user choices, horizontal agent-sessi
 behavior, and other agent/delegation shortcuts remain supported.
 
 The two filter preferences are saved independently in `settings.json` as
-`sidebarShowAgentsOnly` and `sidebarShowRecentAgentSessions` (both default to
-`false`). Sidebar menu changes and toggle actions save the selected preference;
-new windows and application restarts restore it. Editing these settings also
+`sidebarShowAgentsOnly` (default `false`) and
+`sidebarShowRecentAgentSessions` (default `true`). Sidebar menu changes and toggle
+actions save the selected preference; new windows and application restarts
+restore it. Editing these settings also
 updates open windows through the existing settings reload path. Search queries
 and their temporary scope overrides are not persisted, and switching layouts
 does not clear the saved preferences. A failed save restores the previous

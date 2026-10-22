@@ -113,7 +113,7 @@ namespace winrt::TerminalApp::implementation
             const auto settings{ Settings::TerminalSettings::CreateWithNewTerminalArgs(_settings, newTerminalArgs) };
 
             // Try to handle auto-elevation
-            if (!newTerminalArgs.ContentId() && _maybeElevate(newTerminalArgs, settings, profile))
+            if (!newTerminalArgs.ContentId() && _maybeElevate(newTerminalArgs.Copy().as<NewTerminalArgs>(), settings, profile))
             {
                 return S_OK;
             }
