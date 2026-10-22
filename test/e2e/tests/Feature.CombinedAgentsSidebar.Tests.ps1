@@ -585,7 +585,12 @@ Describe 'Feature: combined Agents sidebar' -Tag @('Feature', 'CombinedAgentsSid
                 }
             }
         function Get-CombinedFilterState {
-            Invoke-UiElement -App $script:app -Selector FilterTabsButton | Out-Null
+            $button = Wait-Until -TimeoutSec 10 -Because 'the current owned Display options button is available' -Condition {
+                $peer = Get-CombinedElement FilterTabsButton
+                if ($peer -and -not $peer.Current.IsOffscreen -and $peer.Current.IsEnabled) { $peer }
+            }
+            $button.Current.ProcessId | Should -Be $script:app.Pid
+            $button.GetCurrentPattern([Windows.Automation.InvokePattern]::Pattern).Invoke()
             try {
                 $state = @{}
                 foreach ($id in @('AgentsOnlyFilterMenuItem', 'RecentAgentSessionsFilterMenuItem')) {
