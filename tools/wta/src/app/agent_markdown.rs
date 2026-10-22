@@ -456,6 +456,10 @@ impl StyleSheet for PaneStyles {
         Style::new().add_modifier(Modifier::DIM)
     }
 
+    fn code_block_fence(&self) -> &str {
+        ""
+    }
+
     fn link(&self) -> Style {
         Style::new().add_modifier(Modifier::UNDERLINED)
     }
@@ -755,6 +759,42 @@ mod tests {
     }
 
     #[test]
+    fn agent_markdown_code_blocks_hide_fences_and_preserve_syntax_colors() {
+        for language in ["rust", "not-a-language", ""] {
+            let source = format!(
+                "Before\n\n```{language}\nfn main() {{\n    println!(\"```\");\n}}\n```\n\nAfter"
+            );
+            let result = render_batch(BatchJob {
+                sources: vec![Arc::from(source)].into(),
+                width: 90,
+                generation: 1,
+            });
+            let segments = result.rows.unwrap();
+            let rows = &segments[0];
+            let text = rows
+                .iter()
+                .map(|line| line.to_string().trim_end().to_owned())
+                .collect::<Vec<_>>()
+                .join("\n");
+            assert_eq!(
+                text, "● Before\n\n  fn main() {\n      println!(\"```\");\n  }\n\n  After",
+                "language={language:?}"
+            );
+            let colors = rows
+                .iter()
+                .flat_map(|line| &line.spans)
+                .filter_map(|span| span.style.fg)
+                .filter(|color| matches!(color, ratatui::style::Color::Rgb(..)))
+                .collect::<std::collections::HashSet<_>>();
+            if language == "rust" {
+                assert!(colors.len() > 1, "Rust tokens must retain syntax colors");
+            } else {
+                assert!(colors.is_empty(), "Unknown code must keep upstream styling");
+            }
+        }
+    }
+
+    #[test]
     fn agent_markdown_projection_matches_fresh_package_and_ratatui_output() {
         let sources = [
             "# Heading\r\n\r\n- [x] **Done**\r\n- [ ] pending\r\n",
@@ -809,10 +849,12 @@ mod tests {
                 Paragraph::new(rows)
                     .style(theme::AGENT_TEXT)
                     .render(area, &mut actual);
-                assert!(actual.content.iter().all(|cell| {
-                    cell.fg == ratatui::style::Color::Reset
-                        && cell.bg == ratatui::style::Color::Reset
-                }));
+                if !source.starts_with("```rust") {
+                    assert!(actual.content.iter().all(|cell| {
+                        cell.fg == ratatui::style::Color::Reset
+                            && cell.bg == ratatui::style::Color::Reset
+                    }));
+                }
                 assert_eq!(actual, expected, "width={width}, source={source:?}");
             }
         }
