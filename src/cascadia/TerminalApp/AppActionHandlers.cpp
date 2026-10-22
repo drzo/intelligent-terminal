@@ -182,6 +182,18 @@ namespace winrt::TerminalApp::implementation
         }
     }
 
+    void TerminalPage::_HandleNextSidebarTab(const IInspectable& /*sender*/,
+                                             const ActionEventArgs& args)
+    {
+        args.Handled(_SelectAdjacentSidebarTab(true));
+    }
+
+    void TerminalPage::_HandlePrevSidebarTab(const IInspectable& /*sender*/,
+                                             const ActionEventArgs& args)
+    {
+        args.Handled(_SelectAdjacentSidebarTab(false));
+    }
+
     void TerminalPage::_HandleSendInput(const IInspectable& sender,
                                         const ActionEventArgs& args)
     {
