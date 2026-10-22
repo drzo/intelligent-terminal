@@ -19,6 +19,7 @@ Describe 'Feature: Sidebar tab keyboard navigation' -Tag @('Feature', 'SidebarTa
         } -Settings @{
             language = 'en-US'
             tabLayout = 'vertical'
+            sidebarShowRecentAgentSessions = $false
             actions = @()
             keybindings = @()
             startupActions = ''
