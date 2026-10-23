@@ -235,6 +235,8 @@ Missing companions and arguments Windows PowerShell cannot preserve (empty
 strings, embedded double quotes, or whitespace-containing arguments ending in a
 backslash) fail before spawning. Native executable arguments retain their
 original shapes.
+The PowerShell child receives `-ExecutionPolicy Bypass`, without changing
+persistent policy settings or overriding higher-priority MachinePolicy/UserPolicy.
 
 Successful discovery retires custom history workers whose definitions were
 removed or whose ACP commands changed, without interrupting agent panes using

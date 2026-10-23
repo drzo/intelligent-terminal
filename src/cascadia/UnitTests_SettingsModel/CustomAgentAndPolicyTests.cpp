@@ -507,7 +507,7 @@ namespace SettingsModelUnitTests
         VERIFY_THROWS(Custom::LaunchCommand(invocation), wil::ResultException);
         std::ofstream{ root / L"agent.ps1" }
             << "$ErrorActionPreference='Stop'\n"
-               "& powershell.exe -NoLogo -NoProfile -File (Join-Path $PSScriptRoot 'capture.ps1') @args\n"
+               "& powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File (Join-Path $PSScriptRoot 'capture.ps1') @args\n"
                "exit $LASTEXITCODE\n";
         std::ofstream{ root / L"capture.ps1" }
             << "$ErrorActionPreference='Stop'\n"
@@ -542,32 +542,76 @@ namespace SettingsModelUnitTests
         {
             VERIFY_IS_TRUE(std::ranges::any_of(profiles, [&](const auto& profile) { return profile->AgentProfileId() == id; }));
         }
-        auto command = Custom::LaunchCommand(invocation);
-        wil::unique_process_information process;
-        STARTUPINFOW startup{ sizeof(startup) };
-        THROW_IF_WIN32_BOOL_FALSE(CreateProcessW(nullptr, command.data(), nullptr, nullptr, FALSE, CREATE_NO_WINDOW, nullptr, root.c_str(), &startup, &process));
-        const auto terminate = wil::scope_exit([&]() {
-            if (WaitForSingleObject(process.hProcess, 0) == WAIT_TIMEOUT)
-            {
-                LOG_IF_WIN32_BOOL_FALSE(TerminateProcess(process.hProcess, 1));
-                WaitForSingleObject(process.hProcess, 5000);
-            }
-        });
-        VERIFY_ARE_EQUAL(static_cast<DWORD>(WAIT_OBJECT_0), WaitForSingleObject(process.hProcess, 30000));
-        DWORD exitCode{};
-        THROW_IF_WIN32_BOOL_FALSE(GetExitCodeProcess(process.hProcess, &exitCode));
-        VERIFY_ARE_EQUAL(0u, exitCode);
-        std::ifstream output{ root / L"args.json" };
-        const std::string text{ std::istreambuf_iterator<char>{ output }, std::istreambuf_iterator<char>{} };
-        const auto capture = VerifyParseSucceeded(text);
-        const auto& args = capture["args"];
-        const auto& nativeArgs = capture["nativeArgs"];
-        VERIFY_ARE_EQUAL(static_cast<Json::ArrayIndex>(invocation.args.size()), args.size());
-        VERIFY_ARE_EQUAL(static_cast<Json::ArrayIndex>(invocation.args.size() + 5), nativeArgs.size());
-        for (Json::ArrayIndex i = 0; i < args.size(); ++i)
+        const auto inheritedEnvironment = GetEnvironmentStringsW();
+        THROW_LAST_ERROR_IF(!inheritedEnvironment);
+        const auto freeEnvironment = wil::scope_exit([&]() { FreeEnvironmentStringsW(inheritedEnvironment); });
+        std::vector<std::wstring> environmentEntries;
+        for (auto entry = inheritedEnvironment; *entry; entry += wcslen(entry) + 1)
         {
-            VERIFY_ARE_EQUAL(winrt::to_string(invocation.args[i]), args[i].asString());
-            VERIFY_ARE_EQUAL(winrt::to_string(invocation.args[i]), nativeArgs[i + 5].asString());
+            const std::wstring_view value{ entry };
+            if (!til::equals_insensitive_ascii(value.substr(0, value.find(L'=')), L"PSExecutionPolicyPreference"))
+            {
+                environmentEntries.emplace_back(value);
+            }
+        }
+        environmentEntries.emplace_back(L"PSExecutionPolicyPreference=Restricted");
+        std::ranges::sort(environmentEntries, [](const auto& lhs, const auto& rhs) { return _wcsicmp(lhs.c_str(), rhs.c_str()) < 0; });
+        std::vector<wchar_t> environment;
+        for (const auto& entry : environmentEntries)
+        {
+            environment.insert(environment.end(), entry.begin(), entry.end());
+            environment.push_back(L'\0');
+        }
+        environment.push_back(L'\0');
+        const auto run = [&](std::wstring command) {
+            wil::unique_process_information process;
+            STARTUPINFOW startup{ sizeof(startup) };
+            THROW_IF_WIN32_BOOL_FALSE(CreateProcessW(nullptr, command.data(), nullptr, nullptr, FALSE, CREATE_NO_WINDOW | CREATE_UNICODE_ENVIRONMENT, environment.data(), root.c_str(), &startup, &process));
+            const auto terminate = wil::scope_exit([&]() {
+                if (WaitForSingleObject(process.hProcess, 0) == WAIT_TIMEOUT)
+                {
+                    LOG_IF_WIN32_BOOL_FALSE(TerminateProcess(process.hProcess, 1));
+                    WaitForSingleObject(process.hProcess, 5000);
+                }
+            });
+            VERIFY_ARE_EQUAL(static_cast<DWORD>(WAIT_OBJECT_0), WaitForSingleObject(process.hProcess, 30000));
+            DWORD exitCode{};
+            THROW_IF_WIN32_BOOL_FALSE(GetExitCodeProcess(process.hProcess, &exitCode));
+            return exitCode;
+        };
+        const auto startupCommand = Custom::LaunchCommand(invocation);
+        const auto startupInvocation = Custom::Parse(startupCommand);
+        const auto withoutPolicy = Custom::Format({ startupInvocation.command, { L"-NoLogo", L"-NoProfile", L"-Command", startupInvocation.args.back() } });
+        VERIFY_ARE_NOT_EQUAL(0u, run(withoutPolicy));
+        VERIFY_IS_FALSE(std::filesystem::exists(root / L"args.json"));
+
+        auto resumeInvocation = invocation;
+        resumeInvocation.args[1] = L"{sessionId}";
+        Json::Value settings{ Json::objectValue };
+        Json::Value agent{ Json::objectValue };
+        agent["id"] = "custom:batch";
+        agent["cli"] = Custom::ToJson(invocation);
+        agent["resume"] = Custom::ToJson(resumeInvocation);
+        settings["customAgents"].append(agent);
+        auto resumeGlobals = winrt::make_self<implementation::GlobalAppSettings>();
+        resumeGlobals->LayerJson(settings, OriginTag::User);
+        for (const auto& command : { startupCommand, Custom::ResumeCommand(*resumeGlobals, L"custom:batch", L"abc-123") })
+        {
+            VERIFY_ARE_EQUAL(0u, run(command));
+            std::ifstream output{ root / L"args.json" };
+            const std::string text{ std::istreambuf_iterator<char>{ output }, std::istreambuf_iterator<char>{} };
+            const auto capture = VerifyParseSucceeded(text);
+            const auto& args = capture["args"];
+            const auto& nativeArgs = capture["nativeArgs"];
+            VERIFY_ARE_EQUAL(static_cast<Json::ArrayIndex>(invocation.args.size()), args.size());
+            VERIFY_ARE_EQUAL(static_cast<Json::ArrayIndex>(invocation.args.size() + 7), nativeArgs.size());
+            for (Json::ArrayIndex i = 0; i < args.size(); ++i)
+            {
+                VERIFY_ARE_EQUAL(winrt::to_string(invocation.args[i]), args[i].asString());
+                VERIFY_ARE_EQUAL(winrt::to_string(invocation.args[i]), nativeArgs[i + 7].asString());
+            }
+            output.close();
+            std::filesystem::remove(root / L"args.json");
         }
     }
 

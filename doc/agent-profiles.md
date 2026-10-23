@@ -188,6 +188,9 @@ Batch companions reject empty arguments, embedded double quotes, and arguments
 containing whitespace that end in a backslash because Windows PowerShell cannot
 preserve them when forwarding to a native process. Use a native executable
 invocation when these values are needed.
+Companion launches set execution policy only for their PowerShell child process
+so the default Restricted policy does not block installed shims. Persistent policy
+settings are unchanged; higher-priority MachinePolicy and UserPolicy still apply.
 
 `resume` requires `cli` and exactly one complete `{sessionId}` argument.
 The resume invocation is independent of the startup invocation; repeat any

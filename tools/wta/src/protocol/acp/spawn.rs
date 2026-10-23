@@ -563,6 +563,9 @@ fn batch_companion_command(
         "-NoLogo",
         "-NoProfile",
         "-NonInteractive",
+        // Process-only policy; MachinePolicy and UserPolicy still take precedence.
+        "-ExecutionPolicy",
+        "Bypass",
         "-EncodedCommand",
         &crate::osc52::base64_encode(&encoded),
     ]);
@@ -932,6 +935,41 @@ mod tests {
     async fn host_batch_and_native_spawns_preserve_native_argv() {
         use tokio::io::AsyncReadExt;
 
+        // Restrict only an isolated test process, not parallel tests in this process.
+        const ISOLATED_TEST: &str = "WTA_TEST_RESTRICTED_BATCH_ARGV";
+        let test_name = concat!(
+            module_path!(),
+            "::host_batch_and_native_spawns_preserve_native_argv"
+        )
+        .split_once("::")
+        .unwrap()
+        .1;
+        if std::env::var(ISOLATED_TEST).as_deref() != Ok(test_name) {
+            let output = tokio::time::timeout(
+                Duration::from_secs(60),
+                tokio::process::Command::new(std::env::current_exe().unwrap())
+                    .args(["--exact", test_name, "--nocapture", "--test-threads=1"])
+                    .env(ISOLATED_TEST, test_name)
+                    .env("PSExecutionPolicyPreference", "Restricted")
+                    // Restricted must probe Windows PowerShell's own policy module, not PS7's.
+                    .env_remove("PSModulePath")
+                    .kill_on_drop(true)
+                    .output(),
+            )
+            .await
+            .unwrap()
+            .unwrap();
+            assert!(
+                output.status.success(),
+                "isolated Restricted test failed: {output:?}"
+            );
+            assert!(
+                String::from_utf8_lossy(&output.stdout).contains("1 passed;"),
+                "the isolated subprocess must run the selected test: {output:?}"
+            );
+            return;
+        }
+
         let directory = Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("target")
             .join(format!("batch argv {}", uuid::Uuid::new_v4()));
@@ -963,6 +1001,44 @@ foreach (string arg in args) Console.WriteLine(Convert.ToBase64String(Encoding.U
             "& \"$PSScriptRoot\\native argv.exe\" @args\r\nexit $LASTEXITCODE\r\n",
         )
         .unwrap();
+        let launcher =
+            batch_companion_command(shim.to_str().unwrap(), &[], Some(&directory)).unwrap();
+        let launcher = launcher.as_std();
+        let policy = std::process::Command::new(launcher.get_program())
+            .args([
+                "-NoLogo",
+                "-NoProfile",
+                "-NonInteractive",
+                "-Command",
+                "Get-ExecutionPolicy; Get-ExecutionPolicy -Scope Process",
+            ])
+            .output()
+            .unwrap();
+        assert!(policy.status.success(), "{policy:?}");
+        assert_eq!(
+            String::from_utf8(policy.stdout)
+                .unwrap()
+                .lines()
+                .map(str::trim)
+                .collect::<Vec<_>>(),
+            ["Restricted", "Restricted"],
+            "the isolated child must actually enforce Restricted"
+        );
+        // Reproduce the old launcher, without its new process-scoped override.
+        let old_launcher = std::process::Command::new(launcher.get_program())
+            .args(launcher.get_args().filter(|arg| {
+                *arg != std::ffi::OsStr::new("-ExecutionPolicy")
+                    && *arg != std::ffi::OsStr::new("Bypass")
+            }))
+            .output()
+            .unwrap();
+        assert!(!old_launcher.status.success(), "{old_launcher:?}");
+        assert!(
+            String::from_utf8_lossy(&old_launcher.stderr).contains("UnauthorizedAccess"),
+            "old launcher must fail because script execution is restricted: {old_launcher:?}"
+        );
+        assert!(old_launcher.stdout.is_empty());
+        assert!(!marker.exists(), "batch shell must never run");
         let safe = [
             "argument with spaces",
             "a&b",

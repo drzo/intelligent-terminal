@@ -184,7 +184,7 @@ namespace Microsoft::Terminal::CustomAgents
                 script.append(literal(argument));
             }
             script.append(L"; exit $LASTEXITCODE");
-            return Format({ L"powershell.exe", { L"-NoLogo", L"-NoProfile", L"-Command", std::move(script) } });
+            return Format({ L"powershell.exe", { L"-NoLogo", L"-NoProfile", L"-ExecutionPolicy", L"Bypass", L"-Command", std::move(script) } });
         }
 
         return command;
