@@ -1279,6 +1279,18 @@ namespace winrt::Microsoft::Terminal::Settings::Editor::implementation
             _NotifyChanges(L"IsAddingCustomAcpAgent", L"IsCustomAcpAgentSelected", L"CustomAcpCommand", L"ShowAcpModel", L"CustomModelProviderUnsupportedMessage", L"AgentPaneYoloMode", L"CanEnableAgentPaneYoloMode", L"AgentPaneYoloModeVisibility", L"ShowGeminiYoloInfo");
             return;
         }
+        if (_isAddingCustomAcpAgent &&
+            !_editingCustomAcpAgentId.empty() &&
+            !AgentRegistry::AgentIdEquals(_editingCustomAcpAgentId, value.Id()) &&
+            AgentRegistry::AgentIdEquals(_GlobalSettings.AcpAgent(), value.Id()))
+        {
+            _editingCustomAcpAgentId = L"";
+            _customAcpCommand = L"";
+            _LoadCustomAgentEditor(L"");
+            CancelCustomAcpAgent();
+            _NotifyChanges(L"CustomAcpCommand", L"CustomAcpCommandPreview");
+            return;
+        }
         auto idStr = winrt::to_string(value.Id());
         if (idStr.starts_with("custom:"))
         {

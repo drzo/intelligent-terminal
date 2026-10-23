@@ -86,6 +86,7 @@ namespace TerminalAppLocalTests
         TEST_METHOD(TestCancelCustomAgentWithoutAvailableAcpResetsEditor);
         TEST_METHOD(TestCustomAgentEditorPreservesInternalMetadata);
         TEST_METHOD(TestCliOnlyCustomAgentEditPreservesSelectedAcpAgent);
+        TEST_METHOD(TestSelectingActiveAcpAgentCancelsCliOnlyEdit);
         TEST_METHOD(TestCustomAgentCaseVariantReplacesLegacyEntry);
         TEST_METHOD(TestStructuredCustomAgentDeletionClearsSelectedMirror);
         TEST_METHOD(TestStructuredCustomAgentDeletionPreservesSelectedMirror);
@@ -1807,6 +1808,64 @@ namespace TerminalAppLocalTests
         VERIFY_ARE_EQUAL(1u, globals.AcpCustomCommands().Size());
         VERIFY_ARE_EQUAL(legacyCommand, globals.AcpCustomCommands().GetAt(0));
         VERIFY_ARE_EQUAL(selected.Id(), viewModel.CurrentAcpAgent().Id());
+    }
+
+    void SettingsTests::TestSelectingActiveAcpAgentCancelsCliOnlyEdit()
+    {
+        for (const bool customSelected : { false, true })
+        {
+            CascadiaSettings settings{ LR"({"profiles":[{"name":"Fixture","commandline":"cmd.exe"}]})", inboxSettings };
+            auto globals = settings.GlobalSettings();
+            if (globals.IsCustomAgentPolicyLocked())
+            {
+                Log::Result(TestResults::Skipped, L"Custom agents are disabled by policy.");
+                return;
+            }
+            CustomAgent selected{ L"custom:selected-fixture", L"Selected fixture" };
+            selected.AcpCommand(L"missing-selected-fixture.exe --stdio");
+            CustomAgent cliOnly{ L"custom:cli-fixture", L"CLI fixture" };
+            cliOnly.CliCommand(L"missing-cli-fixture.exe");
+            cliOnly.ResumeCommand(L"missing-cli-fixture.exe --resume {sessionId}");
+            cliOnly.CanResumeAcpSessions(true);
+            globals.CustomAgents(winrt::single_threaded_vector<CustomAgent>({ selected, cliOnly }));
+            globals.AcpAgent(customSelected ? selected.Id() : winrt::hstring{ L"copilot" });
+            globals.AcpCustomCommand(customSelected ? selected.AcpCommand() : winrt::hstring{});
+            globals.AcpModel(L"fixture-model");
+            const auto selectedId = globals.AcpAgent();
+            const auto selectedCommand = globals.AcpCustomCommand();
+
+            Editor::AIAgentsViewModel viewModel{ globals };
+            Editor::AgentEntry cliEntry{ nullptr };
+            Editor::AgentEntry selectedEntry{ nullptr };
+            for (const auto& entry : viewModel.AcpAgentList())
+            {
+                if (entry.Id() == cliOnly.Id()) cliEntry = entry;
+                if (entry.Id() == selectedId) selectedEntry = entry;
+            }
+            VERIFY_IS_NOT_NULL(cliEntry);
+            VERIFY_IS_NOT_NULL(selectedEntry);
+            viewModel.CurrentAcpAgent(cliEntry);
+            VERIFY_IS_TRUE(viewModel.IsAddingCustomAcpAgent());
+            VERIFY_ARE_EQUAL(cliOnly.Id(), viewModel.CustomAgentId());
+            viewModel.CustomAgentName(L"Unsaved CLI name");
+            viewModel.CustomAcpCommand(L"unsaved-acp-fixture.exe --stdio");
+            viewModel.CurrentAcpAgent(selectedEntry);
+
+            VERIFY_IS_FALSE(viewModel.IsAddingCustomAcpAgent());
+            VERIFY_ARE_EQUAL(selectedId, viewModel.CurrentAcpAgent().Id());
+            VERIFY_IS_TRUE(viewModel.CustomAgentId().empty());
+            VERIFY_IS_TRUE(viewModel.CustomAgentName().empty());
+            VERIFY_IS_TRUE(viewModel.CustomAcpCommand().empty());
+            VERIFY_IS_TRUE(viewModel.CustomAgentCliCommand().empty());
+            VERIFY_IS_TRUE(viewModel.CustomAgentResumeCommand().empty());
+            VERIFY_IS_FALSE(viewModel.CustomAgentSharedSessions());
+            VERIFY_ARE_EQUAL(selectedId, globals.AcpAgent());
+            VERIFY_ARE_EQUAL(selectedCommand, globals.AcpCustomCommand());
+            VERIFY_ARE_EQUAL(L"fixture-model", globals.AcpModel());
+            VERIFY_ARE_EQUAL(2u, globals.CustomAgents().Size());
+            VERIFY_ARE_EQUAL(cliOnly.Name(), globals.CustomAgents().GetAt(1).Name());
+            VERIFY_ARE_EQUAL(cliOnly.CliCommand(), globals.CustomAgents().GetAt(1).CliCommand());
+        }
     }
 
     void SettingsTests::TestDeletingEditedCliOnlyCustomAgentResetsEditor()
