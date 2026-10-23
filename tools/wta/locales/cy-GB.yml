@@ -314,4 +314,11 @@ setup.subtitle.wsl_agent_missing: "Ni allem ddod o hyd i \"%{agent}\" yn amgylch
 commands.delegate.summary: "Dirprwywch dasg gan ddefnyddio proffil asiant"
 delegate.usage: "Rhowch dasg ar ôl /delegate. Dewisol: --profile <profile> a --target tab|pane."  # {Locked="/delegate","--profile","<profile>","--target","tab|pane"} Literal command syntax.
 delegate.started: "Dechreuwyd y dasg ddirprwyedig."
+delegate.profile_picker: "Dirprwyo i (teipiwch i chwilio: %{query})"  # Profile picker title; %{query} is the user's search text, not the task.
+delegate.placement_picker: "Agor y dasg ddirprwyedig"
+delegate.profile_label: "Dirprwyo i %{profile}"  # Clickable, one-task-only selection above the task input; %{profile} is a Terminal profile display name.
+delegate.context_hint: "Cyfeiriadur y panel gwaith cyfredol · cyd-destun y derfynell"
+delegate.draft_hint: "Tab: asiant · Shift+Tab: lleoliad · Esc: canslo"  # Keyboard shortcuts for a one-task delegation draft. {Locked="Tab","Shift+Tab","Esc"}
+delegate.task_placeholder: "Disgrifiwch y dasg i'w dirprwyo..."
+delegate.no_profiles: "Dim proffiliau asiant sy'n cyfateb."
 delegate.failed: "Methu dechrau'r dasg ddirprwyedig: %{error}"  # {Locked="%{error}"} Diagnostic text.

@@ -8,6 +8,7 @@ pub(crate) mod command_format;
 mod command_popup;
 mod config_popup;
 mod debug_panel;
+mod delegate;
 mod input;
 mod layout;
 mod line_diff;

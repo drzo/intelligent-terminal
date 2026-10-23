@@ -238,6 +238,7 @@ impl App {
             || self.help_overlay_visible
             || tab.model_picker_open
             || tab.agent_picker_open
+            || tab.delegate.picker.is_some()
             || self.command_popup_visible()
         {
             return None;
@@ -285,6 +286,7 @@ impl App {
             && tab.input_can_receive_nav_focus()
             && !self.help_overlay_visible
             && !self.command_popup_visible()
+            && tab.delegate.picker.is_none()
             && column >= area.x
             && column < area.x.saturating_add(area.width)
             && row >= area.y
@@ -617,6 +619,7 @@ impl App {
                 }
             }
             AppEvent::Mouse(mouse) => match mouse.kind {
+                _ if self.handle_delegate_mouse(mouse) => {}
                 crossterm::event::MouseEventKind::ScrollUp
                 | crossterm::event::MouseEventKind::ScrollDown
                     if self.current_tab().current_view == View::Agents =>
@@ -2128,9 +2131,36 @@ impl App {
                     self.delegate_profiles_requested = false;
                     return;
                 }
+                self.delegate_profiles_requested = false;
                 match result {
-                    Ok(profiles) => self.delegate_profiles = profiles,
+                    Ok(profiles) => {
+                        for tab in self.tab_sessions.values_mut() {
+                            if let Some(picker) = &mut tab.delegate.picker {
+                                if picker.control == delegate::DelegateControl::Profile {
+                                    let selected_id = tab
+                                        .delegate
+                                        .draft
+                                        .as_ref()
+                                        .map(|draft| draft.profile_id.as_str());
+                                    picker.selected = if picker.query.is_empty() {
+                                        profiles
+                                            .iter()
+                                            .position(|profile| {
+                                                selected_id.map_or(profile.default, |id| {
+                                                    profile.guid == id
+                                                })
+                                            })
+                                            .unwrap_or_default()
+                                    } else {
+                                        0
+                                    };
+                                }
+                            }
+                        }
+                        self.delegate_profiles = profiles;
+                    }
                     Err(error) => {
+                        self.delegate_profiles.clear();
                         tracing::error!(target: "delegate", %error, "profile discovery failed");
                         if let Some(tab) = self.tab_sessions.get_mut(&tab_id) {
                             tab.messages.push(ChatMessage::Error(
@@ -2140,9 +2170,39 @@ impl App {
                     }
                 }
             }
-            AppEvent::DelegateCompleted { tab_id, result } => {
+            AppEvent::DelegateCompleted {
+                window_id,
+                tab_id,
+                request_id,
+                result,
+            } => {
+                if window_id != self.window_id {
+                    return;
+                }
+                let Some(tab) = self.tab_sessions.get_mut(&tab_id) else {
+                    return;
+                };
+                if !tab
+                    .delegate
+                    .pending
+                    .as_ref()
+                    .is_some_and(|pending| pending.id == request_id)
+                {
+                    return;
+                }
+                let Some(pending) = tab.delegate.pending.take() else {
+                    return;
+                };
                 let message = match result {
-                    Ok(()) => ChatMessage::success(t!("delegate.started").into_owned()),
+                    Ok(()) => {
+                        tab.record_input_history(&pending.history);
+                        tab.messages.push(ChatMessage::User(pending.history));
+                        if tab.input == pending.input && tab.delegate.draft == pending.draft {
+                            tab.delegate.draft = None;
+                            tab.discard_input();
+                        }
+                        ChatMessage::success(t!("delegate.started").into_owned())
+                    }
                     Err(error) => {
                         tracing::error!(target: "delegate", %error, "delegation failed");
                         ChatMessage::Error(
@@ -2150,10 +2210,8 @@ impl App {
                         )
                     }
                 };
-                if let Some(tab) = self.tab_sessions.get_mut(&tab_id) {
-                    tab.messages.push(message);
-                    tab.scroll_to_bottom();
-                }
+                tab.messages.push(message);
+                tab.scroll_to_bottom();
             }
             AppEvent::AgentThoughtChunk { session_id, text } => {
                 if let Some(tab) = self.session_tab_mut_if_current(&session_id) {

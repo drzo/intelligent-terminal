@@ -313,4 +313,11 @@ setup.subtitle.wsl_agent_missing: "Mir konnten \"%{agent}\" net am Umeldëmfeld 
 commands.delegate.summary: "Delegéiert eng Aufgab mat engem Agentprofil"
 delegate.usage: "Gitt eng Aufgab no /delegate an. Optional: --profile <profile> an --target tab|pane."  # {Locked="/delegate","--profile","<profile>","--target","tab|pane"} Literal command syntax.
 delegate.started: "Déi delegéiert Aufgab gouf gestart."
+delegate.profile_picker: "Delegéieren un (tippt fir ze sichen: %{query})"  # Profile picker title; %{query} is the user's search text, not the task.
+delegate.placement_picker: "Delegéiert Aufgab opmaachen"
+delegate.profile_label: "Delegéieren un %{profile}"  # Clickable, one-task-only selection above the task input; %{profile} is a Terminal profile display name.
+delegate.context_hint: "Dossier vum aktuellen Aarbechtspanel · Terminalkontext"
+delegate.draft_hint: "Tab: Agent · Shift+Tab: Plazéierung · Esc: Auswiel ofbriechen"  # Keyboard shortcuts for a one-task delegation draft. {Locked="Tab","Shift+Tab","Esc"}
+delegate.task_placeholder: "Beschreift d'Aufgab, déi delegéiert soll ginn..."
+delegate.no_profiles: "Keng passend Agentprofiller."
 delegate.failed: "Déi delegéiert Aufgab konnt net gestart ginn: %{error}"  # {Locked="%{error}"} Diagnostic text.

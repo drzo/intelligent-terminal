@@ -312,4 +312,11 @@ setup.subtitle.wsl_agent_missing: "Nem találtuk a(z) \"%{agent}\" ügynököt a
 commands.delegate.summary: "Feladat delegálása ügynökprofil használatával"
 delegate.usage: "Adjon meg egy feladatot a /delegate után. Nem kötelező: --profile <profile> és --target tab|pane."  # {Locked="/delegate","--profile","<profile>","--target","tab|pane"} Literal command syntax.
 delegate.started: "A delegált feladat elindult."
+delegate.profile_picker: "Delegálás ide (gépeljen a kereséshez: %{query})"  # Profile picker title; %{query} is the user's search text, not the task.
+delegate.placement_picker: "Delegált feladat megnyitása"
+delegate.profile_label: "Delegálás ide: %{profile}"  # Clickable, one-task-only selection above the task input; %{profile} is a Terminal profile display name.
+delegate.context_hint: "Jelenlegi munkapanel könyvtára · terminálkörnyezet"
+delegate.draft_hint: "Tab: ügynök · Shift+Tab: elhelyezés · Esc: kijelölés megszakítása"  # Keyboard shortcuts for a one-task delegation draft. {Locked="Tab","Shift+Tab","Esc"}
+delegate.task_placeholder: "Írja le a delegálandó feladatot..."
+delegate.no_profiles: "Nincsenek megfelelő ügynökprofilok."
 delegate.failed: "Nem sikerült elindítani a delegált feladatot: %{error}"  # {Locked="%{error}"} Diagnostic text.

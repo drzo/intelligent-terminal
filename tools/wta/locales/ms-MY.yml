@@ -313,4 +313,11 @@ setup.subtitle.wsl_agent_missing: "Kami tidak dapat menemui \"%{agent}\" dalam p
 commands.delegate.summary: "Wakilkan tugas menggunakan profil ejen"
 delegate.usage: "Masukkan tugas selepas /delegate. Pilihan: --profile <profile> dan --target tab|pane."  # {Locked="/delegate","--profile","<profile>","--target","tab|pane"} Literal command syntax.
 delegate.started: "Tugas yang diwakilkan telah dimulakan."
+delegate.profile_picker: "Wakilkan kepada (taip untuk mencari: %{query})"  # Profile picker title; %{query} is the user's search text, not the task.
+delegate.placement_picker: "Buka tugas yang diwakilkan"
+delegate.profile_label: "Wakilkan kepada %{profile}"  # Clickable, one-task-only selection above the task input; %{profile} is a Terminal profile display name.
+delegate.context_hint: "Direktori panel kerja semasa · konteks terminal"
+delegate.draft_hint: "Tab: ejen · Shift+Tab: penempatan · Esc: batalkan pilihan"  # Keyboard shortcuts for a one-task delegation draft. {Locked="Tab","Shift+Tab","Esc"}
+delegate.task_placeholder: "Huraikan tugas yang hendak diwakilkan..."
+delegate.no_profiles: "Tiada profil ejen yang sepadan."
 delegate.failed: "Tidak dapat memulakan tugas yang diwakilkan: %{error}"  # {Locked="%{error}"} Diagnostic text.

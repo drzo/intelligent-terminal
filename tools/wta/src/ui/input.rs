@@ -45,11 +45,14 @@ pub fn render(frame: &mut Frame, app: &App, area: Rect) {
     } else {
         theme::INPUT_BORDER
     };
-    let block = Block::default()
+    let mut block = Block::default()
         .borders(Borders::ALL)
         .border_style(border_style)
         .style(Style::new().bg(theme::INPUT_BG))
         .padding(Padding::new(INPUT_LEFT_PAD, 0, 0, 0));
+    if tab.delegate.draft.is_some() {
+        block = block.title_bottom(t!("delegate.draft_hint").into_owned());
+    }
     let text_width = input_text_width(area.width);
     let viewport = input_viewport_with_max_rows(
         &tab.input,
@@ -72,11 +75,15 @@ pub fn render(frame: &mut Frame, app: &App, area: Rect) {
         // Show a placeholder reflecting connection state. The "> " is its
         // own span so the placeholder/typed text/cursor all sit in the same
         // column regardless of whether the input is empty.
-        let placeholder = match &app.state {
-            ConnectionState::Connected => t!("input.placeholder.connected").into_owned(),
-            ConnectionState::Connecting(_) => t!("input.placeholder.connecting").into_owned(),
-            ConnectionState::Disconnected => t!("input.placeholder.disconnected").into_owned(),
-            ConnectionState::Failed(_) => t!("input.placeholder.disconnected").into_owned(),
+        let placeholder = if tab.delegate.draft.is_some() {
+            t!("delegate.task_placeholder").into_owned()
+        } else {
+            match &app.state {
+                ConnectionState::Connected => t!("input.placeholder.connected").into_owned(),
+                ConnectionState::Connecting(_) => t!("input.placeholder.connecting").into_owned(),
+                ConnectionState::Disconnected => t!("input.placeholder.disconnected").into_owned(),
+                ConnectionState::Failed(_) => t!("input.placeholder.disconnected").into_owned(),
+            }
         };
         // Paint the first cell of the placeholder as the caret using reverse
         // video (swap the scheme's fg/bg) so it reads as a solid block in the

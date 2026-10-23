@@ -314,4 +314,11 @@ setup.subtitle.wsl_agent_missing: "%{distro} के लॉगिन परिव
 commands.delegate.summary: "एजेंट प्रोफ़ाइल का उपयोग करके कोई कार्य सौंपें"
 delegate.usage: "/delegate के बाद कोई कार्य दर्ज करें। वैकल्पिक: --profile <profile> और --target tab|pane।"  # {Locked="/delegate","--profile","<profile>","--target","tab|pane"} Literal command syntax.
 delegate.started: "सौंपा गया कार्य शुरू हो गया।"
+delegate.profile_picker: "इन्हें सौंपें (खोजने के लिए लिखें: %{query})"  # Profile picker title; %{query} is the user's search text, not the task.
+delegate.placement_picker: "सौंपा गया कार्य खोलें"
+delegate.profile_label: "%{profile} को सौंपें"  # Clickable, one-task-only selection above the task input; %{profile} is a Terminal profile display name.
+delegate.context_hint: "वर्तमान कार्य पैनल की डायरेक्टरी · टर्मिनल संदर्भ"
+delegate.draft_hint: "Tab: एजेंट · Shift+Tab: स्थान · Esc: चयन रद्द करें"  # Keyboard shortcuts for a one-task delegation draft. {Locked="Tab","Shift+Tab","Esc"}
+delegate.task_placeholder: "सौंपने के लिए कार्य का वर्णन करें..."
+delegate.no_profiles: "कोई मेल खाने वाली एजेंट प्रोफ़ाइल नहीं है।"
 delegate.failed: "सौंपा गया कार्य शुरू नहीं किया जा सका: %{error}"  # {Locked="%{error}"} Diagnostic text.

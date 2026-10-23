@@ -312,4 +312,11 @@ setup.subtitle.wsl_agent_missing: "%{distro} yaykuna muyuriqpi \"%{agent}\" nisq
 commands.delegate.summary: "Agente perfilwan huk ruwanata quykuy"
 delegate.usage: "/delegate qhipaman huk ruwanata qillqay. Munaspa: --profile <profile> chaymanta --target tab|pane."  # {Locked="/delegate","--profile","<profile>","--target","tab|pane"} Literal command syntax.
 delegate.started: "Qusqa ruwana qallarikurqan."
+delegate.profile_picker: "Quy kayman (maskanapaq qillqay: %{query})"  # Profile picker title; %{query} is the user's search text, not the task.
+delegate.placement_picker: "Qusqa ruwanata kichay"
+delegate.profile_label: "%{profile} nisqaman quy"  # Clickable, one-task-only selection above the task input; %{profile} is a Terminal profile display name.
+delegate.context_hint: "Kunan llamk'ana k'itipa willañiqi waqaychanan · terminalpa muyuriq willaynin"
+delegate.draft_hint: "Tab: agente · Shift+Tab: maypi churay · Esc: sayachiy"  # Keyboard shortcuts for a one-task delegation draft. {Locked="Tab","Shift+Tab","Esc"}
+delegate.task_placeholder: "Qunayki ruwanata willay..."
+delegate.no_profiles: "Tupaq agente perfilkuna mana kanchu."
 delegate.failed: "Qusqa ruwanata qallariyta mana atikurqanchu: %{error}"  # {Locked="%{error}"} Diagnostic text.

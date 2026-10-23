@@ -328,4 +328,11 @@ setup.subtitle.wsl_agent_missing: "Չհաջողվեց գտնել \"%{agent}\"-ը
 commands.delegate.summary: "Պատվիրակեք առաջադրանք՝ օգտագործելով գործակալի պրոֆիլ"
 delegate.usage: "/delegate-ից հետո մուտքագրեք առաջադրանք։ Ընտրովի՝ --profile <profile> և --target tab|pane։"  # {Locked="/delegate","--profile","<profile>","--target","tab|pane"} Literal command syntax.
 delegate.started: "Պատվիրակված առաջադրանքը մեկնարկել է։"
+delegate.profile_picker: "Պատվիրակել (որոնելու համար մուտքագրեք՝ %{query})"  # Profile picker title; %{query} is the user's search text, not the task.
+delegate.placement_picker: "Բացել պատվիրակված առաջադրանքը"
+delegate.profile_label: "Պատվիրակել՝ %{profile}"  # Clickable, one-task-only selection above the task input; %{profile} is a Terminal profile display name.
+delegate.context_hint: "Ընթացիկ աշխատանքային վահանակի գրացուցակ · տերմինալի համատեքստ"
+delegate.draft_hint: "Tab՝ գործակալ · Shift+Tab՝ տեղադրում · Esc՝ չեղարկել ընտրությունը"  # Keyboard shortcuts for a one-task delegation draft. {Locked="Tab","Shift+Tab","Esc"}
+delegate.task_placeholder: "Նկարագրեք պատվիրակվող առաջադրանքը..."
+delegate.no_profiles: "Համապատասխան գործակալի պրոֆիլներ չկան։"
 delegate.failed: "Չհաջողվեց մեկնարկել պատվիրակված առաջադրանքը՝ %{error}"  # {Locked="%{error}"} Diagnostic text.

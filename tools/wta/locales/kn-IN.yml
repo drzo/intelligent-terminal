@@ -314,4 +314,11 @@ setup.subtitle.wsl_agent_missing: "%{distro} ಲಾಗಿನ್ ಪರಿಸರ�
 commands.delegate.summary: "ಏಜೆಂಟ್ ಪ್ರೊಫೈಲ್ ಬಳಸಿ ಕಾರ್ಯವನ್ನು ನಿಯೋಜಿಸಿ"
 delegate.usage: "/delegate ನಂತರ ಕಾರ್ಯವನ್ನು ನಮೂದಿಸಿ. ಐಚ್ಛಿಕ: --profile <profile> ಮತ್ತು --target tab|pane."  # {Locked="/delegate","--profile","<profile>","--target","tab|pane"} Literal command syntax.
 delegate.started: "ನಿಯೋಜಿಸಲಾದ ಕಾರ್ಯ ಪ್ರಾರಂಭವಾಗಿದೆ."
+delegate.profile_picker: "ಇವರಿಗೆ ನಿಯೋಜಿಸಿ (ಹುಡುಕಲು ಟೈಪ್ ಮಾಡಿ: %{query})"  # Profile picker title; %{query} is the user's search text, not the task.
+delegate.placement_picker: "ನಿಯೋಜಿಸಲಾದ ಕಾರ್ಯವನ್ನು ತೆರೆಯಿರಿ"
+delegate.profile_label: "%{profile} ಗೆ ನಿಯೋಜಿಸಿ"  # Clickable, one-task-only selection above the task input; %{profile} is a Terminal profile display name.
+delegate.context_hint: "ಪ್ರಸ್ತುತ ಕೆಲಸದ ಫಲಕದ ಡೈರೆಕ್ಟರಿ · ಟರ್ಮಿನಲ್ ಸಂದರ್ಭ"
+delegate.draft_hint: "Tab: ಏಜೆಂಟ್ · Shift+Tab: ಸ್ಥಾನ · Esc: ಆಯ್ಕೆಯನ್ನು ರದ್ದುಮಾಡಿ"  # Keyboard shortcuts for a one-task delegation draft. {Locked="Tab","Shift+Tab","Esc"}
+delegate.task_placeholder: "ನಿಯೋಜಿಸಬೇಕಾದ ಕಾರ್ಯವನ್ನು ವಿವರಿಸಿ..."
+delegate.no_profiles: "ಹೊಂದಾಣಿಕೆಯಾಗುವ ಏಜೆಂಟ್ ಪ್ರೊಫೈಲ್‌ಗಳಿಲ್ಲ."
 delegate.failed: "ನಿಯೋಜಿಸಲಾದ ಕಾರ್ಯವನ್ನು ಪ್ರಾರಂಭಿಸಲು ಸಾಧ್ಯವಾಗಲಿಲ್ಲ: %{error}"  # {Locked="%{error}"} Diagnostic text.

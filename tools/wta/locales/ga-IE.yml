@@ -312,4 +312,11 @@ setup.subtitle.wsl_agent_missing: "Níorbh fhéidir linn \"%{agent}\" a aimsiú 
 commands.delegate.summary: "Tarmlig tasc le próifíl gníomhaire"
 delegate.usage: "Cuir tasc isteach i ndiaidh /delegate. Roghnach: --profile <profile> agus --target tab|pane."  # {Locked="/delegate","--profile","<profile>","--target","tab|pane"} Literal command syntax.
 delegate.started: "Tosaíodh an tasc tarmligthe."
+delegate.profile_picker: "Tarmlig chuig (clóscríobh chun cuardach a dhéanamh: %{query})"  # Profile picker title; %{query} is the user's search text, not the task.
+delegate.placement_picker: "Oscail an tasc tarmligthe"
+delegate.profile_label: "Tarmlig chuig %{profile}"  # Clickable, one-task-only selection above the task input; %{profile} is a Terminal profile display name.
+delegate.context_hint: "Comhadlann an phainéil oibre reatha · comhthéacs an teirminéil"
+delegate.draft_hint: "Tab: gníomhaire · Shift+Tab: suíomh · Esc: cealaigh"  # Keyboard shortcuts for a one-task delegation draft. {Locked="Tab","Shift+Tab","Esc"}
+delegate.task_placeholder: "Déan cur síos ar an tasc atá le tarmligean..."
+delegate.no_profiles: "Níl aon phróifílí gníomhaire comhoiriúnacha ann."
 delegate.failed: "Níorbh fhéidir an tasc tarmligthe a thosú: %{error}"  # {Locked="%{error}"} Diagnostic text.

@@ -314,4 +314,11 @@ setup.subtitle.wsl_agent_missing: "በ%{distro} የመግቢያ አካባቢ ው
 commands.delegate.summary: "የወኪል መገለጫ በመጠቀም ተግባር ይመድቡ"
 delegate.usage: "ከ /delegate በኋላ ተግባር ያስገቡ። አማራጭ፦ --profile <profile> እና --target tab|pane።"  # {Locked="/delegate","--profile","<profile>","--target","tab|pane"} Literal command syntax.
 delegate.started: "የተመደበው ተግባር ተጀምሯል።"
+delegate.profile_picker: "ተግባር የሚመደብለት (ለመፈለግ ይተይቡ፦ %{query})"  # Profile picker title; %{query} is the user's search text, not the task.
+delegate.placement_picker: "የተመደበውን ተግባር ይክፈቱ"
+delegate.profile_label: "ተግባሩን ለ %{profile} ይመድቡ"  # Clickable, one-task-only selection above the task input; %{profile} is a Terminal profile display name.
+delegate.context_hint: "የአሁኑ የሥራ ፓነል ማውጫ · የተርሚናል አውድ"
+delegate.draft_hint: "Tab: ኤጅንት · Shift+Tab: አቀማመጥ · Esc: ይቅር"  # Keyboard shortcuts for a one-task delegation draft. {Locked="Tab","Shift+Tab","Esc"}
+delegate.task_placeholder: "ለመመደብ የሚፈልጉትን ተግባር ይግለጹ..."
+delegate.no_profiles: "የሚዛመዱ የወኪል መገለጫዎች የሉም።"
 delegate.failed: "የተመደበውን ተግባር መጀመር አልተቻለም፦ %{error}"  # {Locked="%{error}"} Diagnostic text.

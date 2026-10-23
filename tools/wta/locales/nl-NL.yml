@@ -313,4 +313,11 @@ setup.subtitle.wsl_agent_missing: "We konden \"%{agent}\" niet vinden in de aanm
 commands.delegate.summary: "Een taak delegeren met een agentprofiel"
 delegate.usage: "Voer een taak in na /delegate. Optioneel: --profile <profile> en --target tab|pane."  # {Locked="/delegate","--profile","<profile>","--target","tab|pane"} Literal command syntax.
 delegate.started: "Gedelegeerde taak gestart."
+delegate.profile_picker: "Delegeren aan (typ om te zoeken: %{query})"  # Profile picker title; %{query} is the user's search text, not the task.
+delegate.placement_picker: "Gedelegeerde taak openen"
+delegate.profile_label: "Delegeren aan %{profile}"  # Clickable, one-task-only selection above the task input; %{profile} is a Terminal profile display name.
+delegate.context_hint: "Map van het huidige werkdeelvenster · terminalcontext"
+delegate.draft_hint: "Tab: agent · Shift+Tab: plaatsing · Esc: selectie annuleren"  # Keyboard shortcuts for a one-task delegation draft. {Locked="Tab","Shift+Tab","Esc"}
+delegate.task_placeholder: "Beschrijf de taak die je wilt delegeren..."
+delegate.no_profiles: "Geen overeenkomende agentprofielen."
 delegate.failed: "Kan de gedelegeerde taak niet starten: %{error}"  # {Locked="%{error}"} Diagnostic text.

@@ -312,4 +312,11 @@ setup.subtitle.wsl_agent_missing: "Kāore i kitea \"%{agent}\" i te taiao takiur
 commands.delegate.summary: "Tautapahia he tūmahi mā tētahi kōtaha māngai"
 delegate.usage: "Tāurua he tūmahi i muri i /delegate. He kōwhiringa: --profile <profile> me --target tab|pane."  # {Locked="/delegate","--profile","<profile>","--target","tab|pane"} Literal command syntax.
 delegate.started: "Kua tīmata te tūmahi i tautapahia."
+delegate.profile_picker: "Tautapa ki (patohia hei rapu: %{query})"  # Profile picker title; %{query} is the user's search text, not the task.
+delegate.placement_picker: "Whakatuwheratia te tūmahi i tautapahia"
+delegate.profile_label: "Tautapa ki %{profile}"  # Clickable, one-task-only selection above the task input; %{profile} is a Terminal profile display name.
+delegate.context_hint: "Whaiaronga o te papatohu mahi o nāianei · horopaki kāpeka"
+delegate.draft_hint: "Tab: māngai · Shift+Tab: wāhi · Esc: whakakore i te tīpakonga"  # Keyboard shortcuts for a one-task delegation draft. {Locked="Tab","Shift+Tab","Esc"}
+delegate.task_placeholder: "Whakaahuatia te tūmahi hei tautapa..."
+delegate.no_profiles: "Kāore he kōtaha māngai e ōrite ana."
 delegate.failed: "Kāore i taea te tīmata i te tūmahi i tautapahia: %{error}"  # {Locked="%{error}"} Diagnostic text.

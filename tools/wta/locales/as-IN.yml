@@ -316,4 +316,11 @@ setup.subtitle.wsl_agent_missing: "%{distro}-ৰ লগইন পৰিৱেশ
 commands.delegate.summary: "এজেণ্ট প্ৰফাইল ব্যৱহাৰ কৰি এটা কাম অৰ্পণ কৰক"
 delegate.usage: "/delegate ৰ পিছত এটা কাম লিখক। ঐচ্ছিক: --profile <profile> আৰু --target tab|pane।"  # {Locked="/delegate","--profile","<profile>","--target","tab|pane"} Literal command syntax.
 delegate.started: "অৰ্পণ কৰা কাম আৰম্ভ হৈছে।"
+delegate.profile_picker: "কাম অৰ্পণ কৰক (সন্ধান কৰিবলৈ লিখক: %{query})"  # Profile picker title; %{query} is the user's search text, not the task.
+delegate.placement_picker: "অৰ্পণ কৰা কাম খোলক"
+delegate.profile_label: "%{profile} লৈ কাম অৰ্পণ কৰক"  # Clickable, one-task-only selection above the task input; %{profile} is a Terminal profile display name.
+delegate.context_hint: "বৰ্তমানৰ কামৰ পেনেলৰ ডাইৰেক্টৰী · টাৰ্মিনেলৰ প্ৰসংগ"
+delegate.draft_hint: "Tab: এজেণ্ট · Shift+Tab: স্থান · Esc: বাতিল কৰক"  # Keyboard shortcuts for a one-task delegation draft. {Locked="Tab","Shift+Tab","Esc"}
+delegate.task_placeholder: "অৰ্পণ কৰিবলগীয়া কামৰ বিৱৰণ দিয়ক..."
+delegate.no_profiles: "কোনো মিল থকা এজেণ্ট প্ৰফাইল নাই।"
 delegate.failed: "অৰ্পণ কৰা কাম আৰম্ভ কৰিব পৰা নগ'ল: %{error}"  # {Locked="%{error}"} Diagnostic text.

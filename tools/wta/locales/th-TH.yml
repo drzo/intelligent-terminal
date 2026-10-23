@@ -313,4 +313,11 @@ setup.subtitle.wsl_agent_missing: "เราไม่พบ \"%{agent}\" ใน�
 commands.delegate.summary: "มอบหมายงานโดยใช้โปรไฟล์ตัวแทน"
 delegate.usage: "ป้อนงานหลัง /delegate ตัวเลือกเพิ่มเติม: --profile <profile> และ --target tab|pane"  # {Locked="/delegate","--profile","<profile>","--target","tab|pane"} Literal command syntax.
 delegate.started: "เริ่มงานที่มอบหมายแล้ว"
+delegate.profile_picker: "มอบหมายให้ (พิมพ์เพื่อค้นหา: %{query})"  # Profile picker title; %{query} is the user's search text, not the task.
+delegate.placement_picker: "เปิดงานที่มอบหมาย"
+delegate.profile_label: "มอบหมายให้ %{profile}"  # Clickable, one-task-only selection above the task input; %{profile} is a Terminal profile display name.
+delegate.context_hint: "ไดเรกทอรีปัจจุบันของแผงงาน · บริบทเทอร์มินัล"
+delegate.draft_hint: "Tab: ตัวแทน · Shift+Tab: ตำแหน่ง · Esc: ยกเลิก"  # Keyboard shortcuts for a one-task delegation draft. {Locked="Tab","Shift+Tab","Esc"}
+delegate.task_placeholder: "อธิบายงานที่จะมอบหมาย..."
+delegate.no_profiles: "ไม่มีโปรไฟล์ตัวแทนที่ตรงกัน"
 delegate.failed: "ไม่สามารถเริ่มงานที่มอบหมายได้: %{error}"  # {Locked="%{error}"} Diagnostic text.

@@ -315,4 +315,11 @@ setup.subtitle.wsl_agent_missing: "No hem pogut trobar \"%{agent}\" a l'entorn d
 commands.delegate.summary: "Delegueu una tasca amb un perfil d'agent"
 delegate.usage: "Introduïu una tasca després de /delegate. Opcional: --profile <profile> i --target tab|pane."  # {Locked="/delegate","--profile","<profile>","--target","tab|pane"} Literal command syntax.
 delegate.started: "S'ha iniciat la tasca delegada."
+delegate.profile_picker: "Delegueu a (escriviu per cercar: %{query})"  # Profile picker title; %{query} is the user's search text, not the task.
+delegate.placement_picker: "Obriu la tasca delegada"
+delegate.profile_label: "Delegueu a %{profile}"  # Clickable, one-task-only selection above the task input; %{profile} is a Terminal profile display name.
+delegate.context_hint: "Directori del tauler de treball actual · context del terminal"
+delegate.draft_hint: "Tab: agent · Shift+Tab: ubicació · Esc: cancel·la"  # Keyboard shortcuts for a one-task delegation draft. {Locked="Tab","Shift+Tab","Esc"}
+delegate.task_placeholder: "Descriviu la tasca que voleu delegar..."
+delegate.no_profiles: "No hi ha perfils d'agent coincidents."
 delegate.failed: "No s'ha pogut iniciar la tasca delegada: %{error}"  # {Locked="%{error}"} Diagnostic text.

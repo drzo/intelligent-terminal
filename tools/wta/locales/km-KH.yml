@@ -328,4 +328,11 @@ setup.subtitle.wsl_agent_missing: "យើងរកមិនឃើញ \"%{agent}\
 commands.delegate.summary: "ប្រគល់ភារកិច្ចដោយប្រើកម្រងព័ត៌មានភ្នាក់ងារ"
 delegate.usage: "បញ្ចូលភារកិច្ចបន្ទាប់ពី /delegate។ ជាជម្រើស៖ --profile <profile> និង --target tab|pane។"  # {Locked="/delegate","--profile","<profile>","--target","tab|pane"} Literal command syntax.
 delegate.started: "ភារកិច្ចដែលបានប្រគល់បានចាប់ផ្តើមហើយ។"
+delegate.profile_picker: "ប្រគល់ឱ្យ (វាយបញ្ចូលដើម្បីស្វែងរក៖ %{query})"  # Profile picker title; %{query} is the user's search text, not the task.
+delegate.placement_picker: "បើកភារកិច្ចដែលបានប្រគល់"
+delegate.profile_label: "ប្រគល់ឱ្យ %{profile}"  # Clickable, one-task-only selection above the task input; %{profile} is a Terminal profile display name.
+delegate.context_hint: "ថតរបស់បន្ទះការងារបច្ចុប្បន្ន · បរិបទស្ថានីយ"
+delegate.draft_hint: "Tab៖ ភ្នាក់ងារ · Shift+Tab៖ ទីតាំង · Esc៖ បោះបង់ការជ្រើសរើស"  # Keyboard shortcuts for a one-task delegation draft. {Locked="Tab","Shift+Tab","Esc"}
+delegate.task_placeholder: "ពិពណ៌នាភារកិច្ចដែលត្រូវប្រគល់..."
+delegate.no_profiles: "គ្មានកម្រងព័ត៌មានភ្នាក់ងារដែលត្រូវគ្នាទេ។"
 delegate.failed: "មិនអាចចាប់ផ្តើមភារកិច្ចដែលបានប្រគល់បានទេ៖ %{error}"  # {Locked="%{error}"} Diagnostic text.

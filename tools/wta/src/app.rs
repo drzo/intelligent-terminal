@@ -1443,7 +1443,9 @@ pub struct App {
     /// Installed subset of the host-allowed agents, refreshed by `/agent`.
     pub available_agents: Vec<AvailableAgent>,
     delegate_profiles: Vec<crate::native_profile::NativeProfile>,
-    delegate_profiles_requested: bool,
+    pub(crate) delegate_profiles_requested: bool,
+    pub(crate) delegate_control_hits: Vec<(ratatui::layout::Rect, delegate::DelegateControl)>,
+    pub(crate) delegate_control_owner: Option<(Option<String>, String)>,
     agent_source_probe_generation: u64,
     /// True when preflight detected an issue and is showing Setup screen.
     /// Prevents AgentError from overriding the preflight Setup.
@@ -1831,6 +1833,8 @@ impl App {
             available_agents: Vec::new(),
             delegate_profiles: Vec::new(),
             delegate_profiles_requested: false,
+            delegate_control_hits: Vec::new(),
+            delegate_control_owner: None,
             agent_source_probe_generation: 0,
             preflight_setup_active: false,
             agent_name: String::new(),
@@ -2014,8 +2018,8 @@ impl App {
             return;
         }
         self.pending_acp_start = false;
-        let retry_startup = self.pending_startup_retry.take()
-            == Some(self.agent_binding_generation);
+        let retry_startup =
+            self.pending_startup_retry.take() == Some(self.agent_binding_generation);
         let post_login_auth = self.needs_post_login_authenticate;
         self.needs_post_login_authenticate = false;
         let requested_auth = self
@@ -6370,10 +6374,7 @@ impl App {
         // Static command and move candidates borrow the tab's lists. Agent
         // candidates are filtered from the small cached available-agent list.
         let agent_candidates: Vec<_> = self.available_agent_command_candidates().collect();
-        let delegate_candidates = self.delegate_candidates();
-        let candidates = if !delegate_candidates.is_empty() {
-            crate::ui::PopupCandidates::Delegate(delegate_candidates)
-        } else if !agent_candidates.is_empty() {
+        let candidates = if !agent_candidates.is_empty() {
             crate::ui::PopupCandidates::Agents(agent_candidates)
         } else if !tab.move_position_candidates.is_empty() {
             crate::ui::PopupCandidates::MovePositions(tab.move_position_candidates.as_slice())
@@ -6436,10 +6437,12 @@ impl App {
 
     /// Whether the command popup is effectively visible this frame.
     pub(super) fn command_popup_visible(&self) -> bool {
-        !self.delegate_candidates().is_empty()
-            || self.current_tab().command_popup_visible()
-            || self.available_agent_command_candidates().next().is_some()
-            || !self.agent_slash_command_candidates().is_empty()
+        let tab = self.current_tab();
+        tab.delegate.draft.is_none()
+            && tab.delegate.picker.is_none()
+            && (tab.command_popup_visible()
+                || self.available_agent_command_candidates().next().is_some()
+                || !self.agent_slash_command_candidates().is_empty())
     }
 
     fn available_agent_command_candidates(&self) -> impl Iterator<Item = &AvailableAgent> {
@@ -6485,10 +6488,6 @@ impl App {
     }
 
     fn command_popup_candidate_count(&self) -> usize {
-        let delegate_count = self.delegate_candidates().len();
-        if delegate_count > 0 {
-            return delegate_count;
-        }
         let agent_count = self.available_agent_command_candidates().count();
         if agent_count > 0 {
             agent_count
@@ -6516,6 +6515,9 @@ impl App {
 
     pub(crate) fn command_ghost_suffix(&self) -> Option<&str> {
         let tab = self.current_tab();
+        if tab.delegate.draft.is_some() || tab.delegate.picker.is_some() {
+            return None;
+        }
         if tab.cursor_pos != tab.input.len() {
             return None;
         }
@@ -6537,6 +6539,9 @@ impl App {
     }
 
     pub(crate) fn prepared_command_range(&self) -> Option<std::ops::Range<usize>> {
+        if self.current_tab().delegate.draft.is_some() {
+            return None;
+        }
         let input = &self.current_tab().input;
         let trimmed = input.trim_start();
         let leading_whitespace = input.len() - trimmed.len();
@@ -6631,9 +6636,6 @@ impl App {
         //    `/he` → /help) and never submits the raw text as a prompt, so
         //    this arm is always consumed even if there is no selection.
         if self.command_popup_visible() {
-            if self.complete_delegate_candidate() {
-                return true;
-            }
             let selected_agent = self.selected_agent_command_candidate();
             if let Some(parsed) = agent_command_on_enter(&self.current_tab().input, selected_agent)
             {
@@ -6655,9 +6657,6 @@ impl App {
             if let Some(candidate) = self.selected_slash_command_candidate() {
                 let name = candidate.name().to_string();
                 if candidate.completion_behavior().prepares_free_text() {
-                    if name == "delegate" {
-                        self.request_delegate_profiles();
-                    }
                     let tab = self.current_tab_mut();
                     tab.replace_input(format!("/{name} "));
                     return true;
@@ -6676,7 +6675,7 @@ impl App {
                         spec,
                         rest: String::new(),
                     };
-                    if parsed.kind != CommandKind::Fix {
+                    if !matches!(parsed.kind, CommandKind::Fix | CommandKind::Delegate) {
                         self.current_tab_mut().discard_input();
                     }
                     self.handle_slash_command(parsed);
@@ -7181,6 +7180,8 @@ impl App {
 
     fn invalidate_input_layout(&mut self) {
         self.input_dialog_area = None;
+        self.delegate_control_hits.clear();
+        self.delegate_control_owner = None;
         for tab in self.tab_sessions.values_mut() {
             tab.input_vertical_goal = None;
         }

@@ -315,4 +315,11 @@ setup.subtitle.wsl_agent_missing: "%{distro} giriş mühitində \"%{agent}\" tap
 commands.delegate.summary: "Agent profilindən istifadə edərək tapşırıq həvalə edin"
 delegate.usage: "/delegate əmrindən sonra tapşırıq daxil edin. İstəyə bağlı: --profile <profile> və --target tab|pane."  # {Locked="/delegate","--profile","<profile>","--target","tab|pane"} Literal command syntax.
 delegate.started: "Həvalə edilmiş tapşırıq başladıldı."
+delegate.profile_picker: "Həvalə ediləcək profil (axtarmaq üçün yazın: %{query})"  # Profile picker title; %{query} is the user's search text, not the task.
+delegate.placement_picker: "Həvalə edilmiş tapşırığı açın"
+delegate.profile_label: "%{profile} profilinə həvalə edin"  # Clickable, one-task-only selection above the task input; %{profile} is a Terminal profile display name.
+delegate.context_hint: "Cari iş panelinin qovluğu · terminal konteksti"
+delegate.draft_hint: "Tab: agent · Shift+Tab: yerləşdirmə · Esc: ləğv et"  # Keyboard shortcuts for a one-task delegation draft. {Locked="Tab","Shift+Tab","Esc"}
+delegate.task_placeholder: "Həvalə ediləcək tapşırığı təsvir edin..."
+delegate.no_profiles: "Uyğun agent profilləri yoxdur."
 delegate.failed: "Həvalə edilmiş tapşırığı başlatmaq mümkün olmadı: %{error}"  # {Locked="%{error}"} Diagnostic text.

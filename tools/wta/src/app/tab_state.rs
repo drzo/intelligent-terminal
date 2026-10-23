@@ -702,7 +702,7 @@ pub struct TabSession {
     pub move_position_candidates: Vec<&'static MovePositionSpec>,
     /// Index into whichever popup candidate list is active.
     pub command_popup_selected: usize,
-    pub(crate) delegate_popup_dismissed: bool,
+    pub(crate) delegate: super::delegate::DelegateState,
 
     // Filled in Milestone 2 once each tab has its own ACP SessionId.
     #[allow(dead_code)]
@@ -1227,6 +1227,7 @@ impl TabSession {
             && !self.model_picker_open
             && !self.config_picker.is_open()
             && !self.agent_picker_open
+            && self.delegate.picker.is_none()
     }
 
     pub fn clear_recommendations(&mut self) {

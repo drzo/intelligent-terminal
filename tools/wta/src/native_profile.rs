@@ -373,75 +373,6 @@ pub(crate) fn parse(mut input: &str) -> Result<DelegateInput> {
     })
 }
 
-pub(crate) struct Completion<'a> {
-    pub start: usize,
-    pub query: &'a str,
-    pub profiles: bool,
-    pub targets: bool,
-}
-
-pub(crate) fn completion(input: &str) -> Option<Completion<'_>> {
-    let trimmed = input.trim_start();
-    let command = trimmed.strip_prefix('/')?;
-    let end = command.find(char::is_whitespace)?;
-    if !command[..end].eq_ignore_ascii_case("delegate") {
-        return None;
-    }
-    let mut rest = &command[end..];
-    let mut profiles = true;
-    let mut targets = true;
-    loop {
-        rest = rest.trim_start();
-        let start = input.len() - rest.len();
-        let (flag, after_flag) = token(rest).ok()?;
-        match flag {
-            "--profile" | "--agent" if profiles => {
-                let value = after_flag.trim_start();
-                let parsed = token(value);
-                if let Ok((_, after)) = parsed {
-                    if !after.is_empty() {
-                        rest = after;
-                        profiles = false;
-                        continue;
-                    }
-                }
-
-                return Some(Completion {
-                    start,
-                    query: value.trim_start_matches('"'),
-                    profiles: true,
-                    targets: false,
-                });
-            }
-            "--target" if targets => {
-                let value = after_flag.trim_start();
-                let (target, after) = token(value).ok()?;
-                if matches!(target, "tab" | "pane") && !after.is_empty() {
-                    rest = after;
-                    targets = false;
-                    continue;
-                }
-                return Some(Completion {
-                    start,
-                    query: value,
-                    profiles: false,
-                    targets: true,
-                });
-            }
-            "--" => return None,
-            _ if !after_flag.is_empty() => return None,
-            _ => {
-                return Some(Completion {
-                    start,
-                    query: rest,
-                    profiles,
-                    targets,
-                })
-            }
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -493,22 +424,6 @@ mod tests {
         ] {
             assert!(parse(input).is_err(), "{input}");
         }
-    }
-
-    #[test]
-    fn completion_tracks_optional_fields_and_stops_at_task_text() {
-        let initial = completion("/delegate ").unwrap();
-        assert!(initial.profiles && initial.targets);
-        let profile = completion(r#"/delegate --profile "Claude Pro"#).unwrap();
-        assert_eq!(profile.query, "Claude Pro");
-        assert!(profile.profiles && !profile.targets);
-        let target = completion("/delegate --profile {id} --target p").unwrap();
-        assert_eq!(target.query, "p");
-        assert!(!target.profiles && target.targets);
-        let after_target = completion("/delegate --target pane ").unwrap();
-        assert!(after_target.profiles && !after_target.targets);
-        assert!(completion("/delegate --profile {id} fix this").is_none());
-        assert!(completion("/delegate -- --target").is_none());
     }
 
     #[test]

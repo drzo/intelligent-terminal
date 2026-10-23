@@ -311,4 +311,11 @@ setup.subtitle.wsl_agent_missing: "[!! \u202eWe_ could not find \"%{agent}\" in 
 commands.delegate.summary: "[!! \u202eDelegate a task using an agent profile\u202c !!]"
 delegate.usage: "[!! \u202eEnter a task after \u202c/delegate\u202e. Optional: \u202c--profile <profile>\u202e and \u202c--target tab|pane\u202e.\u202c !!]"  # {Locked="/delegate","--profile","<profile>","--target","tab|pane"} Literal command syntax.
 delegate.started: "[!! \u202eDelegated task started.\u202c !!]"
+delegate.profile_picker: "[!! \u202eDelegate to (type to search: \u202c%{query}\u202e)\u202c !!]"  # Profile picker title; %{query} is the user's search text, not the task.
+delegate.placement_picker: "[!! \u202eOpen delegated task\u202c !!]"
+delegate.profile_label: "[!! \u202eDelegate to \u202c%{profile} !!]"  # Clickable, one-task-only selection above the task input; %{profile} is a Terminal profile display name.
+delegate.context_hint: "[!! \u202eCurrent work pane directory · terminal context\u202c !!]"
+delegate.draft_hint: "[!! Tab\u202e: agent · \u202cShift+Tab\u202e: placement · \u202cEsc\u202e: cancel\u202c !!]"  # Keyboard shortcuts for a one-task delegation draft. {Locked="Tab","Shift+Tab","Esc"}
+delegate.task_placeholder: "[!! \u202eDescribe the task to delegate...\u202c !!]"
+delegate.no_profiles: "[!! \u202eNo matching agent profiles.\u202c !!]"
 delegate.failed: "[!! \u202eCould not start the delegated task: \u202c%{error} !!]"  # {Locked="%{error}"} Diagnostic text.

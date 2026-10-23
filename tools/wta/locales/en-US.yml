@@ -384,5 +384,12 @@ commands.delegate.summary: "Delegate a task using an agent profile"
 # Enter the task text after the command; the profile and destination switches are optional. {Locked="/delegate","--profile","<profile>","--target","tab|pane"} are literal command syntax, not translatable labels.
 delegate.usage: "Enter a task after /delegate. Optional: --profile <profile> and --target tab|pane."
 delegate.started: "Delegated task started."
+delegate.profile_picker: "Delegate to (type to search: %{query})"  # Profile picker title; %{query} is the user's search text, not the task.
+delegate.placement_picker: "Open delegated task"
+delegate.profile_label: "Delegate to %{profile}"  # Clickable, one-task-only selection above the task input; %{profile} is a Terminal profile display name.
+delegate.context_hint: "Current work pane directory · terminal context"
+delegate.draft_hint: "Tab: agent · Shift+Tab: placement · Esc: cancel"  # Keyboard shortcuts for a one-task delegation draft. {Locked="Tab","Shift+Tab","Esc"}
+delegate.task_placeholder: "Describe the task to delegate..."
+delegate.no_profiles: "No matching agent profiles."
 # %{error} is diagnostic text describing why task startup failed; preserve it verbatim. {Locked="%{error}"}
 delegate.failed: "Could not start the delegated task: %{error}"

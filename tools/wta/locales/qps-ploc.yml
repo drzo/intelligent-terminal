@@ -314,4 +314,11 @@ setup.subtitle.wsl_agent_missing: "[Ŵé çöûĺď ñöţ ƒïñď \"%{agent}\"
 commands.delegate.summary: "[Ďéĺéğåţé å ţåśķ üśïñğ åñ åğéñţ ṕŕöƒïĺé!!!! !!!!]"
 delegate.usage: "[Éñţéŕ å ţåśķ åƒţéŕ /delegate. Öṕţïöñåĺ: --profile <profile> åñď --target tab|pane.!!!! !!!! !!!!]"  # {Locked="/delegate","--profile","<profile>","--target","tab|pane"} Literal command syntax.
 delegate.started: "[Ďéĺéğåţéď ţåśķ śţåŕţéď.!!!! !!!!]"
+delegate.profile_picker: "[Ďéĺéğåţé ţö (ţýṕé ţö śéåŕçĥ: %{query})!!!! !!!!]"  # Profile picker title; %{query} is the user's search text, not the task.
+delegate.placement_picker: "[Öṕéñ ďéĺéğåţéď ţåśķ!!!! !!!!]"
+delegate.profile_label: "[Ďéĺéğåţé ţö %{profile}!!!! !!!!]"  # Clickable, one-task-only selection above the task input; %{profile} is a Terminal profile display name.
+delegate.context_hint: "[Çüŕŕéñţ ŵöŕķ ṕåñé ďïŕéçţöŕý · ţéŕḿïñåĺ çöñţéẋţ!!!! !!!!]"
+delegate.draft_hint: "[Tab: åğéñţ · Shift+Tab: ṕĺåçéḿéñţ · Esc: çåñçéĺ!!!! !!!!]"  # Keyboard shortcuts for a one-task delegation draft. {Locked="Tab","Shift+Tab","Esc"}
+delegate.task_placeholder: "[Ďéśçŕïƀé ţĥé ţåśķ ţö ďéĺéğåţé...!!!! !!!!]"
+delegate.no_profiles: "[Ñö ḿåţçĥïñğ åğéñţ ṕŕöƒïĺéś.!!!! !!!!]"
 delegate.failed: "[Çöüĺď ñöţ śţåŕţ ţĥé ďéĺéğåţéď ţåśķ: %{error}!!!! !!!!]"  # {Locked="%{error}"} Diagnostic text.

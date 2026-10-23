@@ -313,4 +313,11 @@ setup.subtitle.wsl_agent_missing: "%{distro}-ის შესვლის გა
 commands.delegate.summary: "გადააბარეთ დავალება აგენტის პროფილის გამოყენებით"
 delegate.usage: "/delegate-ის შემდეგ შეიყვანეთ დავალება. არასავალდებულო: --profile <profile> და --target tab|pane."  # {Locked="/delegate","--profile","<profile>","--target","tab|pane"} Literal command syntax.
 delegate.started: "გადაბარებული დავალება დაიწყო."
+delegate.profile_picker: "გადაბარება (საძიებლად აკრიფეთ: %{query})"  # Profile picker title; %{query} is the user's search text, not the task.
+delegate.placement_picker: "გადაბარებული დავალების გახსნა"
+delegate.profile_label: "გადაბარება: %{profile}"  # Clickable, one-task-only selection above the task input; %{profile} is a Terminal profile display name.
+delegate.context_hint: "მიმდინარე სამუშაო პანელის საქაღალდე · ტერმინალის კონტექსტი"
+delegate.draft_hint: "Tab: აგენტი · Shift+Tab: განთავსება · Esc: არჩევის გაუქმება"  # Keyboard shortcuts for a one-task delegation draft. {Locked="Tab","Shift+Tab","Esc"}
+delegate.task_placeholder: "აღწერეთ გადასაბარებელი დავალება..."
+delegate.no_profiles: "შესაბამისი აგენტის პროფილები ვერ მოიძებნა."
 delegate.failed: "გადაბარებული დავალების დაწყება ვერ მოხერხდა: %{error}"  # {Locked="%{error}"} Diagnostic text.

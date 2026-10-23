@@ -313,4 +313,11 @@ setup.subtitle.wsl_agent_missing: "Neizdevās atrast \"%{agent}\" izplatījuma %
 commands.delegate.summary: "Deleģējiet uzdevumu, izmantojot aģenta profilu"
 delegate.usage: "Ievadiet uzdevumu pēc /delegate. Neobligāti: --profile <profile> un --target tab|pane."  # {Locked="/delegate","--profile","<profile>","--target","tab|pane"} Literal command syntax.
 delegate.started: "Deleģētais uzdevums ir sākts."
+delegate.profile_picker: "Deleģēt (rakstiet, lai meklētu: %{query})"  # Profile picker title; %{query} is the user's search text, not the task.
+delegate.placement_picker: "Atvērt deleģēto uzdevumu"
+delegate.profile_label: "Deleģēt profilam %{profile}"  # Clickable, one-task-only selection above the task input; %{profile} is a Terminal profile display name.
+delegate.context_hint: "Pašreizējā darba paneļa direktorijs · termināļa konteksts"
+delegate.draft_hint: "Tab: aģents · Shift+Tab: novietojums · Esc: atcelt atlasi"  # Keyboard shortcuts for a one-task delegation draft. {Locked="Tab","Shift+Tab","Esc"}
+delegate.task_placeholder: "Aprakstiet deleģējamo uzdevumu..."
+delegate.no_profiles: "Nav atbilstošu aģentu profilu."
 delegate.failed: "Neizdevās sākt deleģēto uzdevumu: %{error}"  # {Locked="%{error}"} Diagnostic text.

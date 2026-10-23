@@ -104,7 +104,7 @@ pub const REGISTRY: &[CommandSpec] = &[
         name: "delegate",
         summary_key: "commands.delegate.summary",
         kind: CommandKind::Delegate,
-        completion_behavior: CompletionBehavior::RequireFreeText,
+        completion_behavior: CompletionBehavior::OpenPicker,
     },
     CommandSpec {
         name: "restart",
@@ -511,9 +511,7 @@ mod tests {
 
     #[test]
     fn registry_declares_completion_behavior_for_every_command() {
-        use CompletionBehavior::{
-            ExecuteImmediately, OpenPicker, OptionalFreeText, RequireFreeText,
-        };
+        use CompletionBehavior::{ExecuteImmediately, OpenPicker, OptionalFreeText};
 
         let actual = REGISTRY
             .iter()
@@ -527,7 +525,7 @@ mod tests {
                 ("clear", ExecuteImmediately),
                 ("new", ExecuteImmediately),
                 ("fix", OptionalFreeText),
-                ("delegate", RequireFreeText),
+                ("delegate", OpenPicker),
                 ("restart", ExecuteImmediately),
                 ("stop", ExecuteImmediately),
                 ("sessions", ExecuteImmediately),

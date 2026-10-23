@@ -314,4 +314,11 @@ setup.subtitle.wsl_agent_missing: "Δεν μπορέσαμε να βρούμε �
 commands.delegate.summary: "Αναθέστε μια εργασία χρησιμοποιώντας προφίλ πράκτορα"
 delegate.usage: "Εισαγάγετε μια εργασία μετά το /delegate. Προαιρετικά: --profile <profile> και --target tab|pane."  # {Locked="/delegate","--profile","<profile>","--target","tab|pane"} Literal command syntax.
 delegate.started: "Η εργασία που ανατέθηκε ξεκίνησε."
+delegate.profile_picker: "Ανάθεση σε (πληκτρολογήστε για αναζήτηση: %{query})"  # Profile picker title; %{query} is the user's search text, not the task.
+delegate.placement_picker: "Άνοιγμα της εργασίας που ανατέθηκε"
+delegate.profile_label: "Ανάθεση σε %{profile}"  # Clickable, one-task-only selection above the task input; %{profile} is a Terminal profile display name.
+delegate.context_hint: "Κατάλογος του τρέχοντος πίνακα εργασίας · περιβάλλον τερματικού"
+delegate.draft_hint: "Tab: πράκτορας · Shift+Tab: τοποθέτηση · Esc: ακύρωση"  # Keyboard shortcuts for a one-task delegation draft. {Locked="Tab","Shift+Tab","Esc"}
+delegate.task_placeholder: "Περιγράψτε την εργασία προς ανάθεση..."
+delegate.no_profiles: "Δεν υπάρχουν προφίλ πρακτόρων που να ταιριάζουν."
 delegate.failed: "Δεν ήταν δυνατή η έναρξη της εργασίας που ανατέθηκε: %{error}"  # {Locked="%{error}"} Diagnostic text.

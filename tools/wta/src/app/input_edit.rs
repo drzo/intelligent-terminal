@@ -596,8 +596,10 @@ impl TabSession {
     /// input. Called after every input mutation. Clamps the selected
     /// index so it stays valid when the candidate list shrinks.
     pub fn refresh_command_popup(&mut self) {
-        self.delegate_popup_dismissed = false;
-        if let Some(prefix) = commands::move_position_prefix(&self.input) {
+        if self.delegate.draft.is_some() {
+            self.command_popup_candidates.clear();
+            self.move_position_candidates.clear();
+        } else if let Some(prefix) = commands::move_position_prefix(&self.input) {
             self.command_popup_candidates.clear();
             self.move_position_candidates = commands::match_move_positions(prefix);
         } else if commands::is_command_prefix(&self.input) {

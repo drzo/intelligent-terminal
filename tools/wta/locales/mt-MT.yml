@@ -312,4 +312,11 @@ setup.subtitle.wsl_agent_missing: "Ma stajniex insibu \"%{agent}\" fl-ambjent ta
 commands.delegate.summary: "Iddelega kompitu billi tuża profil ta’ aġent"
 delegate.usage: "Daħħal kompitu wara /delegate. Mhux obbligatorju: --profile <profile> u --target tab|pane."  # {Locked="/delegate","--profile","<profile>","--target","tab|pane"} Literal command syntax.
 delegate.started: "Il-kompitu ddelegat beda."
+delegate.profile_picker: "Iddelega lil (ittajpja biex tfittex: %{query})"  # Profile picker title; %{query} is the user's search text, not the task.
+delegate.placement_picker: "Iftaħ il-kompitu ddelegat"
+delegate.profile_label: "Iddelega lil %{profile}"  # Clickable, one-task-only selection above the task input; %{profile} is a Terminal profile display name.
+delegate.context_hint: "Direttorju tal-pannell tax-xogħol attwali · kuntest tat-terminal"
+delegate.draft_hint: "Tab: aġent · Shift+Tab: pożizzjoni · Esc: ikkanċella l-għażla"  # Keyboard shortcuts for a one-task delegation draft. {Locked="Tab","Shift+Tab","Esc"}
+delegate.task_placeholder: "Iddeskrivi l-kompitu li trid tiddelega..."
+delegate.no_profiles: "Ebda profil ta’ aġent li jaqbel."
 delegate.failed: "Ma setax jinbeda l-kompitu ddelegat: %{error}"  # {Locked="%{error}"} Diagnostic text.

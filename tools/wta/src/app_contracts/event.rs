@@ -12,7 +12,9 @@ pub enum AppEvent {
         result: Result<Vec<crate::native_profile::NativeProfile>, String>,
     },
     DelegateCompleted {
+        window_id: Option<String>,
         tab_id: String,
+        request_id: uuid::Uuid,
         result: Result<(), String>,
     },
     Key(KeyEvent),

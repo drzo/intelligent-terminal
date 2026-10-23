@@ -313,4 +313,11 @@ setup.subtitle.wsl_agent_missing: "Ezin izan dugu \"%{agent}\" aurkitu %{distro}
 commands.delegate.summary: "Eskuordetu zeregin bat agente-profil bat erabiliz"
 delegate.usage: "Idatzi zeregin bat /delegate komandoaren ondoren. Aukerakoa: --profile <profile> eta --target tab|pane."  # {Locked="/delegate","--profile","<profile>","--target","tab|pane"} Literal command syntax.
 delegate.started: "Eskuordetutako zeregina hasi da."
+delegate.profile_picker: "Eskuordetu honi (idatzi bilatzeko: %{query})"  # Profile picker title; %{query} is the user's search text, not the task.
+delegate.placement_picker: "Ireki eskuordetutako zeregina"
+delegate.profile_label: "Eskuordetu profil honi: %{profile}"  # Clickable, one-task-only selection above the task input; %{profile} is a Terminal profile display name.
+delegate.context_hint: "Uneko lan-panelaren direktorioa · terminalaren testuingurua"
+delegate.draft_hint: "Tab: agentea · Shift+Tab: kokapena · Esc: utzi"  # Keyboard shortcuts for a one-task delegation draft. {Locked="Tab","Shift+Tab","Esc"}
+delegate.task_placeholder: "Deskribatu eskuordetu nahi duzun zeregina..."
+delegate.no_profiles: "Ez dago bat datorren agente-profilik."
 delegate.failed: "Ezin izan da eskuordetutako zeregina hasi: %{error}"  # {Locked="%{error}"} Diagnostic text.

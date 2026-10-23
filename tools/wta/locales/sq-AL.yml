@@ -312,4 +312,11 @@ setup.subtitle.wsl_agent_missing: "Nuk mundëm të gjenim \"%{agent}\" në mjedi
 commands.delegate.summary: "Delegoni një detyrë duke përdorur një profil agjenti"
 delegate.usage: "Futni një detyrë pas /delegate. Opsionale: --profile <profile> dhe --target tab|pane."  # {Locked="/delegate","--profile","<profile>","--target","tab|pane"} Literal command syntax.
 delegate.started: "Detyra e deleguar filloi."
+delegate.profile_picker: "Delegoni te (shkruani për të kërkuar: %{query})"  # Profile picker title; %{query} is the user's search text, not the task.
+delegate.placement_picker: "Hapni detyrën e deleguar"
+delegate.profile_label: "Delegoni te %{profile}"  # Clickable, one-task-only selection above the task input; %{profile} is a Terminal profile display name.
+delegate.context_hint: "Dosja aktuale e panelit të punës · konteksti i terminalit"
+delegate.draft_hint: "Tab: agjenti · Shift+Tab: vendosja · Esc: anuloni"  # Keyboard shortcuts for a one-task delegation draft. {Locked="Tab","Shift+Tab","Esc"}
+delegate.task_placeholder: "Përshkruani detyrën për t'u deleguar..."
+delegate.no_profiles: "Nuk ka profile agjentësh që përputhen."
 delegate.failed: "Nuk mund të fillohej detyra e deleguar: %{error}"  # {Locked="%{error}"} Diagnostic text.

@@ -313,4 +313,11 @@ setup.subtitle.wsl_agent_missing: "Vi fant ikke \"%{agent}\" i påloggingsmiljø
 commands.delegate.summary: "Deleger en oppgave med en agentprofil"
 delegate.usage: "Skriv inn en oppgave etter /delegate. Valgfritt: --profile <profile> og --target tab|pane."  # {Locked="/delegate","--profile","<profile>","--target","tab|pane"} Literal command syntax.
 delegate.started: "Den delegerte oppgaven er startet."
+delegate.profile_picker: "Deleger til (skriv for å søke: %{query})"  # Profile picker title; %{query} is the user's search text, not the task.
+delegate.placement_picker: "Åpne delegert oppgave"
+delegate.profile_label: "Deleger til %{profile}"  # Clickable, one-task-only selection above the task input; %{profile} is a Terminal profile display name.
+delegate.context_hint: "Mappen til gjeldende arbeidspanel · terminalkontekst"
+delegate.draft_hint: "Tab: agent · Shift+Tab: plassering · Esc: avbryt valg"  # Keyboard shortcuts for a one-task delegation draft. {Locked="Tab","Shift+Tab","Esc"}
+delegate.task_placeholder: "Beskriv oppgaven som skal delegeres..."
+delegate.no_profiles: "Ingen samsvarende agentprofiler."
 delegate.failed: "Kunne ikke starte den delegerte oppgaven: %{error}"  # {Locked="%{error}"} Diagnostic text.

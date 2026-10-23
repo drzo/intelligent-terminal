@@ -308,4 +308,11 @@ setup.subtitle.wsl_agent_missing: "%{distro} のログイン環境で \"%{agent}
 commands.delegate.summary: "エージェントのプロファイルを使用してタスクを委任"
 delegate.usage: "/delegate の後にタスクを入力してください。省略可能: --profile <profile> と --target tab|pane。"  # {Locked="/delegate","--profile","<profile>","--target","tab|pane"} Literal command syntax.
 delegate.started: "委任されたタスクを開始しました。"
+delegate.profile_picker: "委任先 (入力して検索: %{query})"  # Profile picker title; %{query} is the user's search text, not the task.
+delegate.placement_picker: "委任したタスクを開く"
+delegate.profile_label: "%{profile} に委任"  # Clickable, one-task-only selection above the task input; %{profile} is a Terminal profile display name.
+delegate.context_hint: "現在の作業ペインのディレクトリ · ターミナルのコンテキスト"
+delegate.draft_hint: "Tab: エージェント · Shift+Tab: 配置 · Esc: 選択をキャンセル"  # Keyboard shortcuts for a one-task delegation draft. {Locked="Tab","Shift+Tab","Esc"}
+delegate.task_placeholder: "委任するタスクを記述..."
+delegate.no_profiles: "一致するエージェントのプロファイルがありません。"
 delegate.failed: "委任されたタスクを開始できませんでした: %{error}"  # {Locked="%{error}"} Diagnostic text.

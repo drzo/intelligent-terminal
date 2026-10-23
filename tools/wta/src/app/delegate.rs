@@ -1,10 +1,38 @@
 use super::*;
-use crate::native_profile::LaunchRequest;
+use crate::native_profile::{DelegateInput, LaunchRequest, NativeProfile, Placement};
 
-pub(crate) struct DelegateCandidate {
-    pub label: String,
-    pub description: String,
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct DelegateDraft {
+    pub profile_id: String,
+    pub profile_name: String,
+    pub placement: Placement,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum DelegateControl {
+    Profile,
+    Placement,
+    Pick(usize),
+}
+
+pub(crate) struct DelegatePicker {
+    pub control: DelegateControl,
+    pub query: String,
+    pub selected: usize,
+}
+
+pub(crate) struct PendingDelegate {
+    pub id: uuid::Uuid,
     pub input: String,
+    pub draft: Option<DelegateDraft>,
+    pub history: String,
+}
+
+#[derive(Default)]
+pub(crate) struct DelegateState {
+    pub draft: Option<DelegateDraft>,
+    pub picker: Option<DelegatePicker>,
+    pub pending: Option<PendingDelegate>,
 }
 
 impl App {
@@ -34,65 +62,274 @@ impl App {
         });
     }
 
-    pub(super) fn delegate_candidates(&self) -> Vec<DelegateCandidate> {
-        let tab = self.current_tab();
-        if tab.delegate_popup_dismissed || tab.cursor_pos != tab.input.len() {
+    pub(crate) fn delegate_profile_candidates(&self) -> Vec<&NativeProfile> {
+        if self.delegate_profiles_requested {
             return Vec::new();
         }
-        let Some(completion) = crate::native_profile::completion(&tab.input) else {
-            return Vec::new();
-        };
-        let prefix = &tab.input[..completion.start];
-        let query = completion.query.to_lowercase();
-        let mut candidates = Vec::new();
-        if completion.profiles {
-            for profile in &self.delegate_profiles {
-                if profile.name.to_lowercase().contains(&query)
-                    || profile.agent_id.to_lowercase().starts_with(&query)
-                    || profile.guid.to_lowercase().starts_with(&query)
-                    || "--profile".starts_with(&query)
-                    || "--agent".starts_with(&query)
-                {
-                    candidates.push(DelegateCandidate {
-                        label: profile.name.clone(),
-                        description: profile.agent_id.clone(),
-                        input: format!("{prefix}--profile {} ", profile.guid),
-                    });
-                }
-            }
-        }
-        if completion.targets {
-            for (target, key) in [
-                ("tab", "recommendations.button_open_in_new_tab"),
-                ("pane", "recommendations.button_open_in_new_panel"),
-            ] {
-                if query.is_empty() || target.starts_with(&query) || "--target".starts_with(&query)
-                {
-                    candidates.push(DelegateCandidate {
-                        label: format!("--target {target}"),
-                        description: t!(key).into_owned(),
-                        input: format!("{prefix}--target {target} "),
-                    });
-                }
-            }
-        }
-        candidates
+        let query = self
+            .current_tab()
+            .delegate
+            .picker
+            .as_ref()
+            .map(|picker| picker.query.to_lowercase())
+            .unwrap_or_default();
+        self.delegate_profiles
+            .iter()
+            .filter(|profile| {
+                profile.name.to_lowercase().contains(&query)
+                    || profile.agent_id.to_lowercase().contains(&query)
+            })
+            .collect()
     }
 
-    pub(super) fn complete_delegate_candidate(&mut self) -> bool {
-        let candidates = self.delegate_candidates();
-        let index = self
-            .current_tab()
-            .command_popup_selected
-            .min(candidates.len().saturating_sub(1));
-        let Some(candidate) = candidates.into_iter().nth(index) else {
-            return false;
+    pub(super) fn open_delegate_picker(&mut self, control: DelegateControl) {
+        if self.current_tab().delegate.pending.is_some() {
+            return;
+        }
+        self.delegate_control_hits.clear();
+        let selected = match control {
+            DelegateControl::Profile => {
+                let selected_id = self
+                    .current_tab()
+                    .delegate
+                    .draft
+                    .as_ref()
+                    .map(|draft| draft.profile_id.as_str());
+                self.delegate_profiles
+                    .iter()
+                    .position(|profile| {
+                        selected_id.map_or(profile.default, |id| profile.guid == id)
+                    })
+                    .unwrap_or_default()
+            }
+            DelegateControl::Placement => usize::from(
+                self.current_tab()
+                    .delegate
+                    .draft
+                    .as_ref()
+                    .is_some_and(|draft| draft.placement == Placement::Pane),
+            ),
+            DelegateControl::Pick(_) => return,
         };
-        self.current_tab_mut().replace_input(candidate.input);
+        let tab = self.current_tab_mut();
+        tab.clear_completed_turn_selection();
+        tab.recommendation_focus = RecommendationFocus::Input;
+        tab.delegate.picker = Some(DelegatePicker {
+            control,
+            query: String::new(),
+            selected,
+        });
+        if control == DelegateControl::Profile {
+            self.request_delegate_profiles();
+        }
+    }
+
+    pub(super) fn commit_delegate_pick(&mut self) {
+        self.delegate_control_hits.clear();
+        let Some(picker) = &self.current_tab().delegate.picker else {
+            return;
+        };
+        let control = picker.control;
+        let selected = picker.selected;
+        match control {
+            DelegateControl::Profile => {
+                let Some(profile) = self.delegate_profile_candidates().get(selected).copied()
+                else {
+                    return;
+                };
+                let profile_id = profile.guid.clone();
+                let profile_name = profile.name.clone();
+                let tab = self.current_tab_mut();
+                let placement = tab
+                    .delegate
+                    .draft
+                    .as_ref()
+                    .map(|draft| draft.placement)
+                    .unwrap_or_default();
+                if tab.delegate.draft.is_none() {
+                    tab.discard_input();
+                }
+                tab.delegate.draft = Some(DelegateDraft {
+                    profile_id,
+                    profile_name,
+                    placement,
+                });
+            }
+            DelegateControl::Placement => {
+                if let Some(draft) = &mut self.current_tab_mut().delegate.draft {
+                    draft.placement = if selected == 0 {
+                        Placement::Tab
+                    } else {
+                        Placement::Pane
+                    };
+                }
+            }
+            DelegateControl::Pick(_) => return,
+        }
+        self.current_tab_mut().delegate.picker = None;
+    }
+
+    pub(super) fn handle_delegate_key(&mut self, key: KeyEvent) -> bool {
+        if let Some(picker) = &self.current_tab().delegate.picker {
+            let count = if picker.control == DelegateControl::Profile {
+                self.delegate_profile_candidates().len()
+            } else {
+                2
+            };
+            match key.code {
+                KeyCode::Enter if key.modifiers.is_empty() => self.commit_delegate_pick(),
+                KeyCode::Esc => self.current_tab_mut().delegate.picker = None,
+                KeyCode::Up | KeyCode::Down => {
+                    if let Some(picker) = &mut self.current_tab_mut().delegate.picker {
+                        picker.selected = if key.code == KeyCode::Up {
+                            picker.selected.saturating_sub(1)
+                        } else {
+                            (picker.selected + 1).min(count.saturating_sub(1))
+                        };
+                    }
+                }
+                KeyCode::Backspace | KeyCode::Char(_)
+                    if picker.control == DelegateControl::Profile
+                        && (key.modifiers.is_empty()
+                            || key.modifiers == KeyModifiers::SHIFT
+                            || key.modifiers == (KeyModifiers::CONTROL | KeyModifiers::ALT)) =>
+                {
+                    if let Some(picker) = &mut self.current_tab_mut().delegate.picker {
+                        if let KeyCode::Char(character) = key.code {
+                            picker.query.push(character);
+                        } else {
+                            picker.query.pop();
+                        }
+                        picker.selected = 0;
+                    }
+                }
+                _ => {}
+            }
+            return true;
+        }
+        if self.current_tab().delegate.pending.is_some()
+            && key.code == KeyCode::Enter
+            && !key.modifiers.contains(KeyModifiers::SHIFT)
+        {
+            return true;
+        }
+        if self.current_tab().delegate.draft.is_none() {
+            // Tab only completes the command name; Enter opens its picker.
+            if key.code == KeyCode::Tab
+                && key.modifiers.is_empty()
+                && self
+                    .selected_slash_command_candidate()
+                    .is_some_and(|candidate| {
+                        matches!(candidate, crate::ui::CommandCandidate::Client(spec)
+                        if spec.kind == CommandKind::Delegate)
+                    })
+            {
+                self.current_tab_mut().replace_input("/delegate ".into());
+                return true;
+            }
+            return false;
+        }
+        if !self.current_tab().input_has_nav_focus() {
+            return false;
+        }
+        match key.code {
+            KeyCode::Tab => self.open_delegate_picker(DelegateControl::Profile),
+            KeyCode::BackTab => self.open_delegate_picker(DelegateControl::Placement),
+            KeyCode::Esc => {
+                self.current_tab_mut().delegate.draft = None;
+                self.current_tab_mut().refresh_command_popup();
+            }
+            KeyCode::Enter if !key.modifiers.contains(KeyModifiers::SHIFT) => {
+                let tab = self.current_tab();
+                let draft = tab
+                    .delegate
+                    .draft
+                    .as_ref()
+                    .expect("delegate draft is active");
+                if !tab.input.trim().is_empty() {
+                    self.launch_delegate(DelegateInput {
+                        profile: Some(draft.profile_id.clone()),
+                        placement: draft.placement,
+                        task: tab.input.clone(),
+                    });
+                }
+            }
+            _ => return false,
+        }
         true
     }
 
+    pub(super) fn handle_delegate_mouse(&mut self, mouse: crossterm::event::MouseEvent) -> bool {
+        use crossterm::event::{MouseButton, MouseEventKind};
+        if self.mode != AppMode::Chat
+            || self.current_tab().current_view != View::Chat
+            || self.help_overlay_visible
+            || !self.current_tab().permission.is_empty()
+            || !self.current_tab().user_input.is_empty()
+            || self.current_tab().agent_picker_open
+            || self.current_tab().model_picker_open
+            || self.current_tab().config_picker.is_open()
+        {
+            return false;
+        }
+        let picker_open = self.current_tab().delegate.picker.is_some();
+        let current_owner =
+            self.delegate_control_owner
+                .as_ref()
+                .is_some_and(|(window_id, tab_id)| {
+                    window_id == &self.window_id && tab_id == self.active_tab_key()
+                });
+        if matches!(mouse.kind, MouseEventKind::Down(MouseButton::Left)) {
+            let control = self
+                .delegate_control_hits
+                .iter()
+                .filter(|(_, control)| {
+                    current_owner
+                        && match control {
+                            DelegateControl::Pick(_) => picker_open,
+                            _ => self.current_tab().delegate.draft.is_some(),
+                        }
+                })
+                .find(|(area, _)| {
+                    area.contains(ratatui::layout::Position::new(mouse.column, mouse.row))
+                })
+                .map(|(_, control)| *control);
+            if let Some(control) = control {
+                self.cancel_completed_turn_click();
+                self.text_selection.clear();
+                match control {
+                    DelegateControl::Pick(index) => {
+                        if let Some(picker) = &mut self.current_tab_mut().delegate.picker {
+                            picker.selected = index;
+                        }
+                        self.commit_delegate_pick();
+                    }
+                    control => self.open_delegate_picker(control),
+                }
+                return true;
+            }
+        }
+        if picker_open
+            && matches!(
+                mouse.kind,
+                MouseEventKind::ScrollUp | MouseEventKind::ScrollDown
+            )
+        {
+            let code = if mouse.kind == MouseEventKind::ScrollUp {
+                KeyCode::Up
+            } else {
+                KeyCode::Down
+            };
+            self.handle_delegate_key(KeyEvent::new(code, KeyModifiers::NONE));
+        }
+        picker_open
+    }
+
     pub(super) fn cmd_delegate(&mut self, input: String) {
+        if input.trim().is_empty() {
+            self.open_delegate_picker(DelegateControl::Profile);
+            return;
+        }
         let parsed = match crate::native_profile::parse(&input) {
             Ok(parsed) => parsed,
             Err(_) => {
@@ -102,6 +339,19 @@ impl App {
                 return;
             }
         };
+        self.launch_delegate(parsed);
+    }
+
+    fn launch_delegate(&mut self, parsed: DelegateInput) {
+        if self.current_tab().delegate.pending.is_some() {
+            return;
+        }
+        if !self.current_tab().attachments.is_empty() {
+            self.current_tab_mut().messages.push(ChatMessage::warning(
+                t!("system.image_not_supported").into_owned(),
+            ));
+            return;
+        }
         let Some(tx) = self.event_tx.clone() else {
             self.current_tab_mut()
                 .messages
@@ -117,16 +367,26 @@ impl App {
                 .push(ChatMessage::Error(t!("connection.lost").into_owned()));
             return;
         }
-        let window = self.window_id.as_deref().and_then(|id| id.parse().ok());
+        let window_id = self.window_id.clone();
+        let window = window_id.as_deref().and_then(|id| id.parse().ok());
         let master = self
             .deferred_acp
             .as_ref()
             .and_then(|params| params.master_pipe_name.clone());
-        let draft = format!("/delegate {input}");
+        let id = uuid::Uuid::new_v4();
         let tab = self.current_tab_mut();
-        tab.record_input_history(&draft);
-        tab.messages.push(ChatMessage::User(draft));
-        tab.discard_input();
+        tab.delegate.pending = Some(PendingDelegate {
+            id,
+            input: tab.input.clone(),
+            draft: tab.delegate.draft.clone(),
+            history: if tab.delegate.draft.is_none() {
+                tab.input.clone()
+            } else if parsed.task.trim_start().starts_with("--") {
+                format!("/delegate -- {}", parsed.task)
+            } else {
+                format!("/delegate {}", parsed.task)
+            },
+        });
         tokio::task::spawn_local(async move {
             let result = async {
                 let created = crate::native_profile::launch(
@@ -166,7 +426,12 @@ impl App {
             }
             .await
             .map_err(|error| format!("{error:#}"));
-            let _ = tx.send(AppEvent::DelegateCompleted { tab_id, result });
+            let _ = tx.send(AppEvent::DelegateCompleted {
+                window_id,
+                tab_id,
+                request_id: id,
+                result,
+            });
         });
     }
 }

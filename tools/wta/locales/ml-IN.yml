@@ -314,4 +314,11 @@ setup.subtitle.wsl_agent_missing: "%{distro} ലോഗിൻ പരിതസ്�
 commands.delegate.summary: "ഏജന്റ് പ്രൊഫൈൽ ഉപയോഗിച്ച് ഒരു ചുമതല ഏൽപ്പിക്കുക"
 delegate.usage: "/delegate-ന് ശേഷം ഒരു ചുമതല നൽകുക. ഐച്ഛികം: --profile <profile> കൂടാതെ --target tab|pane."  # {Locked="/delegate","--profile","<profile>","--target","tab|pane"} Literal command syntax.
 delegate.started: "ഏൽപ്പിച്ച ചുമതല ആരംഭിച്ചു."
+delegate.profile_picker: "ഏൽപ്പിക്കേണ്ട ഏജന്റ് (തിരയാൻ ടൈപ്പ് ചെയ്യുക: %{query})"  # Profile picker title; %{query} is the user's search text, not the task.
+delegate.placement_picker: "ഏൽപ്പിച്ച ചുമതല തുറക്കുക"
+delegate.profile_label: "%{profile}-ന് ഏൽപ്പിക്കുക"  # Clickable, one-task-only selection above the task input; %{profile} is a Terminal profile display name.
+delegate.context_hint: "നിലവിലെ പ്രവർത്തന പാനലിന്റെ ഡയറക്‌ടറി · ടെർമിനൽ സന്ദർഭം"
+delegate.draft_hint: "Tab: ഏജന്റ് · Shift+Tab: സ്ഥാനം · Esc: തിരഞ്ഞെടുപ്പ് റദ്ദാക്കുക"  # Keyboard shortcuts for a one-task delegation draft. {Locked="Tab","Shift+Tab","Esc"}
+delegate.task_placeholder: "ഏൽപ്പിക്കേണ്ട ചുമതല വിവരിക്കുക..."
+delegate.no_profiles: "പൊരുത്തപ്പെടുന്ന ഏജന്റ് പ്രൊഫൈലുകളില്ല."
 delegate.failed: "ഏൽപ്പിച്ച ചുമതല ആരംഭിക്കാനായില്ല: %{error}"  # {Locked="%{error}"} Diagnostic text.

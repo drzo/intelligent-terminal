@@ -313,4 +313,11 @@ setup.subtitle.wsl_agent_missing: "ພວກເຮົາບໍ່ພົບ \"%{a
 commands.delegate.summary: "ມອບໝາຍວຽກໂດຍໃຊ້ໂປຣໄຟລ໌ຕົວແທນ"
 delegate.usage: "ປ້ອນວຽກຫຼັງຈາກ /delegate. ທາງເລືອກ: --profile <profile> ແລະ --target tab|pane."  # {Locked="/delegate","--profile","<profile>","--target","tab|pane"} Literal command syntax.
 delegate.started: "ວຽກທີ່ມອບໝາຍໄດ້ເລີ່ມແລ້ວ."
+delegate.profile_picker: "ມອບໝາຍໃຫ້ (ພິມເພື່ອຄົ້ນຫາ: %{query})"  # Profile picker title; %{query} is the user's search text, not the task.
+delegate.placement_picker: "ເປີດວຽກທີ່ມອບໝາຍ"
+delegate.profile_label: "ມອບໝາຍໃຫ້ %{profile}"  # Clickable, one-task-only selection above the task input; %{profile} is a Terminal profile display name.
+delegate.context_hint: "ໄດເຣັກທໍຣີຂອງແຜງວຽກປັດຈຸບັນ · ບໍລິບົດເທີມິນອລ"
+delegate.draft_hint: "Tab: ຕົວແທນ · Shift+Tab: ຕຳແໜ່ງ · Esc: ຍົກເລີກການເລືອກ"  # Keyboard shortcuts for a one-task delegation draft. {Locked="Tab","Shift+Tab","Esc"}
+delegate.task_placeholder: "ອະທິບາຍວຽກທີ່ຈະມອບໝາຍ..."
+delegate.no_profiles: "ບໍ່ມີໂປຣໄຟລ໌ຕົວແທນທີ່ກົງກັນ."
 delegate.failed: "ບໍ່ສາມາດເລີ່ມວຽກທີ່ມອບໝາຍໄດ້: %{error}"  # {Locked="%{error}"} Diagnostic text.

@@ -313,4 +313,11 @@ setup.subtitle.wsl_agent_missing: "לא הצלחנו למצוא את \"%{agent}\
 commands.delegate.summary: "האצל משימה באמצעות פרופיל סוכן"
 delegate.usage: "הזן משימה אחרי /delegate. אפשרויות נוספות: --profile <profile> וגם --target tab|pane."  # {Locked="/delegate","--profile","<profile>","--target","tab|pane"} Literal command syntax.
 delegate.started: "המשימה שהואצלה התחילה."
+delegate.profile_picker: "האצלה אל (הקלד לחיפוש: %{query})"  # Profile picker title; %{query} is the user's search text, not the task.
+delegate.placement_picker: "פתיחת המשימה שהואצלה"
+delegate.profile_label: "האצלה אל %{profile}"  # Clickable, one-task-only selection above the task input; %{profile} is a Terminal profile display name.
+delegate.context_hint: "התיקייה של חלונית העבודה הנוכחית · הקשר המסוף"
+delegate.draft_hint: "Tab: סוכן · Shift+Tab: מיקום · Esc: ביטול"  # Keyboard shortcuts for a one-task delegation draft. {Locked="Tab","Shift+Tab","Esc"}
+delegate.task_placeholder: "תאר את המשימה להאצלה..."
+delegate.no_profiles: "אין פרופילי סוכן תואמים."
 delegate.failed: "לא ניתן להתחיל את המשימה שהואצלה: %{error}"  # {Locked="%{error}"} Diagnostic text.

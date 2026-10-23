@@ -314,4 +314,11 @@ setup.subtitle.wsl_agent_missing: "Ons kon \"%{agent}\" nie in die %{distro}-aan
 commands.delegate.summary: "Delegeer 'n taak met 'n agentprofiel"
 delegate.usage: "Voer 'n taak ná /delegate in. Opsioneel: --profile <profile> en --target tab|pane."  # {Locked="/delegate","--profile","<profile>","--target","tab|pane"} Literal command syntax.
 delegate.started: "Gedelegeerde taak het begin."
+delegate.profile_picker: "Delegeer aan (tik om te soek: %{query})"  # Profile picker title; %{query} is the user's search text, not the task.
+delegate.placement_picker: "Maak gedelegeerde taak oop"
+delegate.profile_label: "Delegeer aan %{profile}"  # Clickable, one-task-only selection above the task input; %{profile} is a Terminal profile display name.
+delegate.context_hint: "Huidige werkpaneelgids · terminaalkonteks"
+delegate.draft_hint: "Tab: agent · Shift+Tab: plasing · Esc: kanselleer"  # Keyboard shortcuts for a one-task delegation draft. {Locked="Tab","Shift+Tab","Esc"}
+delegate.task_placeholder: "Beskryf die taak om te delegeer..."
+delegate.no_profiles: "Geen ooreenstemmende agentprofiele nie."
 delegate.failed: "Kon nie die gedelegeerde taak begin nie: %{error}"  # {Locked="%{error}"} Diagnostic text.

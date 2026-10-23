@@ -308,4 +308,11 @@ setup.subtitle.wsl_agent_missing: "%{distro} 로그인 환경에서 \"%{agent}\"
 commands.delegate.summary: "에이전트 프로필을 사용하여 작업 위임"
 delegate.usage: "/delegate 뒤에 작업을 입력하세요. 선택 사항: --profile <profile> 및 --target tab|pane."  # {Locked="/delegate","--profile","<profile>","--target","tab|pane"} Literal command syntax.
 delegate.started: "위임된 작업이 시작되었습니다."
+delegate.profile_picker: "위임 대상 (검색어 입력: %{query})"  # Profile picker title; %{query} is the user's search text, not the task.
+delegate.placement_picker: "위임된 작업 열기"
+delegate.profile_label: "%{profile}에 위임"  # Clickable, one-task-only selection above the task input; %{profile} is a Terminal profile display name.
+delegate.context_hint: "현재 작업 창의 디렉터리 · 터미널 컨텍스트"
+delegate.draft_hint: "Tab: 에이전트 · Shift+Tab: 배치 · Esc: 선택 취소"  # Keyboard shortcuts for a one-task delegation draft. {Locked="Tab","Shift+Tab","Esc"}
+delegate.task_placeholder: "위임할 작업을 설명하세요..."
+delegate.no_profiles: "일치하는 에이전트 프로필이 없습니다."
 delegate.failed: "위임된 작업을 시작할 수 없습니다: %{error}"  # {Locked="%{error}"} Diagnostic text.

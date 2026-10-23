@@ -313,4 +313,11 @@ setup.subtitle.wsl_agent_missing: "Kami tidak dapat menemukan \"%{agent}\" di li
 commands.delegate.summary: "Delegasikan tugas menggunakan profil agent"
 delegate.usage: "Masukkan tugas setelah /delegate. Opsional: --profile <profile> dan --target tab|pane."  # {Locked="/delegate","--profile","<profile>","--target","tab|pane"} Literal command syntax.
 delegate.started: "Tugas yang didelegasikan dimulai."
+delegate.profile_picker: "Delegasikan ke (ketik untuk mencari: %{query})"  # Profile picker title; %{query} is the user's search text, not the task.
+delegate.placement_picker: "Buka tugas yang didelegasikan"
+delegate.profile_label: "Delegasikan ke %{profile}"  # Clickable, one-task-only selection above the task input; %{profile} is a Terminal profile display name.
+delegate.context_hint: "Direktori panel kerja saat ini · konteks terminal"
+delegate.draft_hint: "Tab: agent · Shift+Tab: penempatan · Esc: batalkan pilihan"  # Keyboard shortcuts for a one-task delegation draft. {Locked="Tab","Shift+Tab","Esc"}
+delegate.task_placeholder: "Jelaskan tugas yang akan didelegasikan..."
+delegate.no_profiles: "Tidak ada profil agent yang cocok."
 delegate.failed: "Tidak dapat memulai tugas yang didelegasikan: %{error}"  # {Locked="%{error}"} Diagnostic text.

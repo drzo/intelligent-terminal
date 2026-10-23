@@ -308,4 +308,11 @@ setup.subtitle.wsl_agent_missing: "未能在 %{distro} 的登录环境中找到 
 commands.delegate.summary: "使用智能体配置文件委派任务"
 delegate.usage: "在 /delegate 后输入任务。可选参数：--profile <profile> 和 --target tab|pane。"  # {Locked="/delegate","--profile","<profile>","--target","tab|pane"} Literal command syntax.
 delegate.started: "已启动委派的任务。"
+delegate.profile_picker: "委派给（输入以搜索：%{query}）"  # Profile picker title; %{query} is the user's search text, not the task.
+delegate.placement_picker: "打开委派的任务"
+delegate.profile_label: "委派给 %{profile}"  # Clickable, one-task-only selection above the task input; %{profile} is a Terminal profile display name.
+delegate.context_hint: "当前工作窗格目录 · 终端上下文"
+delegate.draft_hint: "Tab：智能体 · Shift+Tab：放置位置 · Esc：取消"  # Keyboard shortcuts for a one-task delegation draft. {Locked="Tab","Shift+Tab","Esc"}
+delegate.task_placeholder: "描述要委派的任务..."
+delegate.no_profiles: "没有匹配的智能体配置文件。"
 delegate.failed: "无法启动委派的任务：%{error}"  # {Locked="%{error}"} Diagnostic text.

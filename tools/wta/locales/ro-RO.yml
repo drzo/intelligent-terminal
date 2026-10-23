@@ -312,4 +312,11 @@ setup.subtitle.wsl_agent_missing: "Nu am putut găsi \"%{agent}\" în mediul de 
 commands.delegate.summary: "Delegați o sarcină folosind un profil de agent"
 delegate.usage: "Introduceți o sarcină după /delegate. Opțional: --profile <profile> și --target tab|pane."  # {Locked="/delegate","--profile","<profile>","--target","tab|pane"} Literal command syntax.
 delegate.started: "Sarcina delegată a pornit."
+delegate.profile_picker: "Delegați către (tastați pentru a căuta: %{query})"  # Profile picker title; %{query} is the user's search text, not the task.
+delegate.placement_picker: "Deschideți sarcina delegată"
+delegate.profile_label: "Delegați către %{profile}"  # Clickable, one-task-only selection above the task input; %{profile} is a Terminal profile display name.
+delegate.context_hint: "Directorul curent al panoului de lucru · contextul terminalului"
+delegate.draft_hint: "Tab: agent · Shift+Tab: amplasare · Esc: anulare"  # Keyboard shortcuts for a one-task delegation draft. {Locked="Tab","Shift+Tab","Esc"}
+delegate.task_placeholder: "Descrieți sarcina de delegat..."
+delegate.no_profiles: "Niciun profil de agent corespunzător."
 delegate.failed: "Nu s-a putut porni sarcina delegată: %{error}"  # {Locked="%{error}"} Diagnostic text.

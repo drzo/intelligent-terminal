@@ -312,4 +312,11 @@ setup.subtitle.wsl_agent_missing: "Cha b' urrainn dhuinn \"%{agent}\" a lorg ann
 commands.delegate.summary: "Tiomnadh gnìomh le pròifil àidhent"
 delegate.usage: "Cuir a-steach gnìomh às dèidh /delegate. Roghainneil: --profile <profile> agus --target tab|pane."  # {Locked="/delegate","--profile","<profile>","--target","tab|pane"} Literal command syntax.
 delegate.started: "Thòisich an gnìomh a chaidh a thiomnadh."
+delegate.profile_picker: "Tiomnaich gu (sgrìobh gus lorg: %{query})"  # Profile picker title; %{query} is the user's search text, not the task.
+delegate.placement_picker: "Fosgail an gnìomh a chaidh a thiomnadh"
+delegate.profile_label: "Tiomnaich gu %{profile}"  # Clickable, one-task-only selection above the task input; %{profile} is a Terminal profile display name.
+delegate.context_hint: "Pasgan a’ phanail-obrach làithrich · co-theacs an tèirmineil"
+delegate.draft_hint: "Tab: neach-gnìomha · Shift+Tab: suidheachadh · Esc: sguir dheth"  # Keyboard shortcuts for a one-task delegation draft. {Locked="Tab","Shift+Tab","Esc"}
+delegate.task_placeholder: "Thoir tuairisgeul air a’ ghnìomh a tha ri thiomnadh..."
+delegate.no_profiles: "Chan eil pròifilean neach-gnìomha a fhreagras ris an lorg ann."
 delegate.failed: "Cha b’ urrainn dhuinn an gnìomh a chaidh a thiomnadh a thòiseachadh: %{error}"  # {Locked="%{error}"} Diagnostic text.

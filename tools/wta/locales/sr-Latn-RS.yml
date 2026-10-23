@@ -313,4 +313,11 @@ setup.subtitle.wsl_agent_missing: "Nismo mogli da pronađemo \"%{agent}\" u okru
 commands.delegate.summary: "Delegirajte zadatak pomoću profila agenta"
 delegate.usage: "Unesite zadatak nakon /delegate. Neobavezno: --profile <profile> i --target tab|pane."  # {Locked="/delegate","--profile","<profile>","--target","tab|pane"} Literal command syntax.
 delegate.started: "Delegirani zadatak je pokrenut."
+delegate.profile_picker: "Delegirajte na (kucajte za pretragu: %{query})"  # Profile picker title; %{query} is the user's search text, not the task.
+delegate.placement_picker: "Otvorite delegirani zadatak"
+delegate.profile_label: "Delegirajte na %{profile}"  # Clickable, one-task-only selection above the task input; %{profile} is a Terminal profile display name.
+delegate.context_hint: "Trenutni direktorijum radnog panela · kontekst terminala"
+delegate.draft_hint: "Tab: agent · Shift+Tab: smeštaj · Esc: otkaži"  # Keyboard shortcuts for a one-task delegation draft. {Locked="Tab","Shift+Tab","Esc"}
+delegate.task_placeholder: "Opišite zadatak za delegiranje..."
+delegate.no_profiles: "Nema odgovarajućih profila agenata."
 delegate.failed: "Nije moguće pokrenuti delegirani zadatak: %{error}"  # {Locked="%{error}"} Diagnostic text.

@@ -313,4 +313,11 @@ setup.subtitle.wsl_agent_missing: "V prihlasovacom prostredí distribúcie %{dis
 commands.delegate.summary: "Delegujte úlohu pomocou profilu agenta"
 delegate.usage: "Za /delegate zadajte úlohu. Voliteľné: --profile <profile> a --target tab|pane."  # {Locked="/delegate","--profile","<profile>","--target","tab|pane"} Literal command syntax.
 delegate.started: "Delegovaná úloha bola spustená."
+delegate.profile_picker: "Delegovať na (vyhľadajte písaním: %{query})"  # Profile picker title; %{query} is the user's search text, not the task.
+delegate.placement_picker: "Otvoriť delegovanú úlohu"
+delegate.profile_label: "Delegovať na %{profile}"  # Clickable, one-task-only selection above the task input; %{profile} is a Terminal profile display name.
+delegate.context_hint: "Aktuálny adresár pracovného panela · kontext terminálu"
+delegate.draft_hint: "Tab: agent · Shift+Tab: umiestnenie · Esc: zrušiť"  # Keyboard shortcuts for a one-task delegation draft. {Locked="Tab","Shift+Tab","Esc"}
+delegate.task_placeholder: "Opíšte úlohu na delegovanie..."
+delegate.no_profiles: "Žiadne zodpovedajúce profily agentov."
 delegate.failed: "Delegovanú úlohu sa nepodarilo spustiť: %{error}"  # {Locked="%{error}"} Diagnostic text.

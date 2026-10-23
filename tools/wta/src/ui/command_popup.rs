@@ -41,7 +41,6 @@ pub enum PopupCandidates<'a> {
     Commands(Vec<CommandCandidate<'a>>),
     MovePositions(&'a [&'static MovePositionSpec]),
     Agents(Vec<&'a AvailableAgent>),
-    Delegate(Vec<crate::app::delegate::DelegateCandidate>),
 }
 
 #[derive(Clone, Copy)]
@@ -75,7 +74,6 @@ pub fn render_popup(frame: &mut Frame, state: PopupState<'_>, input_area: Rect) 
         PopupCandidates::Commands(candidates) => candidates.len(),
         PopupCandidates::MovePositions(candidates) => candidates.len(),
         PopupCandidates::Agents(candidates) => candidates.len(),
-        PopupCandidates::Delegate(candidates) => candidates.len(),
     };
     if candidate_count == 0 {
         return None;
@@ -133,15 +131,6 @@ pub fn render_popup(frame: &mut Frame, state: PopupState<'_>, input_area: Rect) 
                 ListItem::new(Line::from(vec![
                     Span::styled(format!(" /move {:<6} ", position.name), theme::INPUT_TEXT),
                     Span::styled(format!("({})", position.alias), theme::DIM),
-                ]))
-            })
-            .collect(),
-        PopupCandidates::Delegate(candidates) => candidates
-            .iter()
-            .map(|candidate| {
-                ListItem::new(Line::from(vec![
-                    Span::styled(format!(" {}  ", candidate.label), theme::INPUT_TEXT),
-                    Span::styled(candidate.description.as_str(), theme::DIM),
                 ]))
             })
             .collect(),

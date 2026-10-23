@@ -313,4 +313,11 @@ setup.subtitle.wsl_agent_missing: "V prijavnem okolju distribucije %{distro} ni 
 commands.delegate.summary: "Dodelite opravilo s profilom agenta"
 delegate.usage: "Vnesite opravilo za /delegate. Izbirno: --profile <profile> in --target tab|pane."  # {Locked="/delegate","--profile","<profile>","--target","tab|pane"} Literal command syntax.
 delegate.started: "Dodeljeno opravilo se je začelo."
+delegate.profile_picker: "Dodeli za (vnesite za iskanje: %{query})"  # Profile picker title; %{query} is the user's search text, not the task.
+delegate.placement_picker: "Odpri dodeljeno opravilo"
+delegate.profile_label: "Dodeli za %{profile}"  # Clickable, one-task-only selection above the task input; %{profile} is a Terminal profile display name.
+delegate.context_hint: "Trenutni imenik delovnega podokna · kontekst terminala"
+delegate.draft_hint: "Tab: agent · Shift+Tab: postavitev · Esc: prekliči"  # Keyboard shortcuts for a one-task delegation draft. {Locked="Tab","Shift+Tab","Esc"}
+delegate.task_placeholder: "Opišite opravilo za dodelitev..."
+delegate.no_profiles: "Ni ustreznih profilov agentov."
 delegate.failed: "Dodeljenega opravila ni bilo mogoče začeti: %{error}"  # {Locked="%{error}"} Diagnostic text.

@@ -313,4 +313,11 @@ setup.subtitle.wsl_agent_missing: "نتوانستیم \"%{agent}\" را در م�
 commands.delegate.summary: "یک کار را با استفاده از نمایهٔ عامل واگذار کنید"
 delegate.usage: "پس از /delegate یک کار وارد کنید. اختیاری: --profile <profile> و --target tab|pane."  # {Locked="/delegate","--profile","<profile>","--target","tab|pane"} Literal command syntax.
 delegate.started: "کار واگذارشده شروع شد."
+delegate.profile_picker: "واگذاری به (برای جستجو تایپ کنید: %{query})"  # Profile picker title; %{query} is the user's search text, not the task.
+delegate.placement_picker: "باز کردن کار واگذارشده"
+delegate.profile_label: "واگذاری به %{profile}"  # Clickable, one-task-only selection above the task input; %{profile} is a Terminal profile display name.
+delegate.context_hint: "پوشهٔ پنل کار فعلی · زمینهٔ ترمینال"
+delegate.draft_hint: "Tab: عامل · Shift+Tab: محل قرارگیری · Esc: لغو"  # Keyboard shortcuts for a one-task delegation draft. {Locked="Tab","Shift+Tab","Esc"}
+delegate.task_placeholder: "کاری را که می‌خواهید واگذار کنید شرح دهید..."
+delegate.no_profiles: "هیچ نمایهٔ عامل منطبقی یافت نشد."
 delegate.failed: "شروع کار واگذارشده ممکن نشد: %{error}"  # {Locked="%{error}"} Diagnostic text.

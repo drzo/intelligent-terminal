@@ -321,4 +321,11 @@ setup.subtitle.wsl_agent_missing: "%{distro} كىرىش مۇھىتىدا \"%{age
 commands.delegate.summary: "ۋاكالەتچى ئارخىپىنى ئىشلىتىپ ۋەزىپە تاپشۇرۇڭ"
 delegate.usage: "/delegate دىن كېيىن ۋەزىپە كىرگۈزۈڭ. ئىختىيارىي: --profile <profile> ۋە --target tab|pane."  # {Locked="/delegate","--profile","<profile>","--target","tab|pane"} Literal command syntax.
 delegate.started: "تاپشۇرۇلغان ۋەزىپە باشلاندى."
+delegate.profile_picker: "تاپشۇرۇش (ئىزدەش ئۈچۈن يېزىڭ: %{query})"  # Profile picker title; %{query} is the user's search text, not the task.
+delegate.placement_picker: "تاپشۇرۇلغان ۋەزىپىنى ئېچىش"
+delegate.profile_label: "%{profile} غا تاپشۇرۇش"  # Clickable, one-task-only selection above the task input; %{profile} is a Terminal profile display name.
+delegate.context_hint: "خىزمەت تاختىسىنىڭ نۆۋەتتىكى مۇندەرىجىسى · تېرمىنال مەزمۇنى"
+delegate.draft_hint: "Tab: ۋاكالەتچى · Shift+Tab: ئورۇنلاشتۇرۇش · Esc: بىكار قىلىش"  # Keyboard shortcuts for a one-task delegation draft. {Locked="Tab","Shift+Tab","Esc"}
+delegate.task_placeholder: "تاپشۇرماقچى بولغان ۋەزىپىنى تەسۋىرلەڭ..."
+delegate.no_profiles: "ماس كېلىدىغان ۋاكالەتچى ئارخىپى يوق."
 delegate.failed: "تاپشۇرۇلغان ۋەزىپىنى باشلىغىلى بولمىدى: %{error}"  # {Locked="%{error}"} Diagnostic text.

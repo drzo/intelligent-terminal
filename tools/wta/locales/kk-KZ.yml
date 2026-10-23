@@ -313,4 +313,11 @@ setup.subtitle.wsl_agent_missing: "%{distro} кіру ортасында \"%{age
 commands.delegate.summary: "Агент профилін пайдаланып тапсырманы тапсырыңыз"
 delegate.usage: "/delegate пәрменінен кейін тапсырманы енгізіңіз. Қосымша: --profile <profile> және --target tab|pane."  # {Locked="/delegate","--profile","<profile>","--target","tab|pane"} Literal command syntax.
 delegate.started: "Тапсырылған тапсырма іске қосылды."
+delegate.profile_picker: "Тапсыру (іздеу үшін теріңіз: %{query})"  # Profile picker title; %{query} is the user's search text, not the task.
+delegate.placement_picker: "Тапсырылған тапсырманы ашу"
+delegate.profile_label: "Мына профильге тапсыру: %{profile}"  # Clickable, one-task-only selection above the task input; %{profile} is a Terminal profile display name.
+delegate.context_hint: "Ағымдағы жұмыс тақтасының каталогі · терминал контексті"
+delegate.draft_hint: "Tab: агент · Shift+Tab: орналасу · Esc: таңдаудан бас тарту"  # Keyboard shortcuts for a one-task delegation draft. {Locked="Tab","Shift+Tab","Esc"}
+delegate.task_placeholder: "Тапсырылатын тапсырманы сипаттаңыз..."
+delegate.no_profiles: "Сәйкес агент профильдері жоқ."
 delegate.failed: "Тапсырылған тапсырманы іске қосу мүмкін болмады: %{error}"  # {Locked="%{error}"} Diagnostic text.

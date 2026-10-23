@@ -790,10 +790,34 @@ profile's command. Configure those arguments in the agent profile instead.
 Profile-owned resume, continue, and session-ID arguments are preserved; a new
 session ID is pinned only when the profile has not already selected a session.
 
-In the assistant input, `/delegate ` offers profile and placement completion:
+In the assistant input, choose `/delegate` and press Enter to open a searchable
+agent-profile picker. The configured default agent is highlighted. Enter on a
+profile only selects it: the same input box then contains just the task, with
+the chosen profile and placement shown as clickable controls above it.
+Write the task and press Enter to start it. The default placement is a new tab;
+selecting a pane is optional and does not add another mandatory picker step.
+
+Tab in the slash-command menu only completes `/delegate `, so you can instead
+continue typing and send a task directly with the configured default profile:
 
 ```text
 /delegate Investigate this failure
+```
+
+While composing a selected-profile task, Tab reopens the profile picker and
+Shift+Tab opens the placement picker; either control can also be clicked.
+Reopening either picker preserves the task. Type to search profiles, use the
+arrow keys to navigate, and Enter to confirm without launching. Esc closes a
+picker without changing the task or previous selection; Esc in the task input
+cancels its one-time delegation selection and retains the text for ordinary
+chat. No cancellation submits a prompt. A successful launch clears the
+one-time selection and submitted input, while a failure keeps the draft for
+correction or retry. Edits made while a launch is pending are not discarded.
+The current assistant provider, ACP session, and history are not replaced.
+
+Advanced inline options remain supported:
+
+```text
 /delegate --profile "Claude Project" Investigate this failure
 /delegate --target pane Investigate this failure
 /delegate --profile <profile-guid> --target tab Investigate this failure
@@ -801,12 +825,12 @@ In the assistant input, `/delegate ` offers profile and placement completion:
 
 Both options are optional and may appear in either order. `--agent` is an alias
 for `--profile`; use a GUID, unique profile name, or an unambiguous provider ID.
-The picker inserts GUIDs so copied profiles with the same display name remain
-distinct. Enter or Tab on a suggestion only completes that option; entering a
-nonempty task and pressing Enter launches it. Esc dismisses the suggestions
-without deleting the draft. `--` ends option parsing for a task beginning with
-`--`. Tab is the default placement; pane placement splits the owning work pane.
-The current assistant provider, ACP session, and history are not replaced.
+The normal picker binds the exact GUID separately from the task, rather than
+inserting flags or identifiers into the input. Copies remain separate choices;
+identical display names show their profile IDs as secondary picker detail.
+`--` ends inline option parsing for a task beginning with `--`; selected-profile
+task input is always literal task text. Pane placement splits the owning work
+pane.
 
 The source terminal is resolved from the owning helper, not a later global
 active-window query. Its cwd and bounded recent output (up to 30 lines and

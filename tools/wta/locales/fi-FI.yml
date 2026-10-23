@@ -313,4 +313,11 @@ setup.subtitle.wsl_agent_missing: "Emme löytäneet agenttia \"%{agent}\" jakelu
 commands.delegate.summary: "Delegoi tehtävä agenttiprofiilin avulla"
 delegate.usage: "Kirjoita tehtävä komennon /delegate jälkeen. Valinnaiset: --profile <profile> ja --target tab|pane."  # {Locked="/delegate","--profile","<profile>","--target","tab|pane"} Literal command syntax.
 delegate.started: "Delegoitu tehtävä käynnistettiin."
+delegate.profile_picker: "Delegoi profiilille (hae kirjoittamalla: %{query})"  # Profile picker title; %{query} is the user's search text, not the task.
+delegate.placement_picker: "Avaa delegoitu tehtävä"
+delegate.profile_label: "Delegoi profiilille %{profile}"  # Clickable, one-task-only selection above the task input; %{profile} is a Terminal profile display name.
+delegate.context_hint: "Nykyisen työpaneelin hakemisto · päätteen konteksti"
+delegate.draft_hint: "Tab: agentti · Shift+Tab: sijoittelu · Esc: peruuta"  # Keyboard shortcuts for a one-task delegation draft. {Locked="Tab","Shift+Tab","Esc"}
+delegate.task_placeholder: "Kuvaile delegoitava tehtävä..."
+delegate.no_profiles: "Ei vastaavia agenttiprofiileja."
 delegate.failed: "Delegoitua tehtävää ei voitu käynnistää: %{error}"  # {Locked="%{error}"} Diagnostic text.

@@ -313,4 +313,11 @@ setup.subtitle.wsl_agent_missing: "Við fundum ekki \"%{agent}\" í innskráning
 commands.delegate.summary: "Úthlutaðu verkefni með fulltrúasniði"
 delegate.usage: "Sláðu inn verkefni á eftir /delegate. Valfrjálst: --profile <profile> og --target tab|pane."  # {Locked="/delegate","--profile","<profile>","--target","tab|pane"} Literal command syntax.
 delegate.started: "Úthlutað verkefni er hafið."
+delegate.profile_picker: "Úthluta til (sláðu inn til að leita: %{query})"  # Profile picker title; %{query} is the user's search text, not the task.
+delegate.placement_picker: "Opna úthlutað verkefni"
+delegate.profile_label: "Úthluta til %{profile}"  # Clickable, one-task-only selection above the task input; %{profile} is a Terminal profile display name.
+delegate.context_hint: "Mappa núverandi vinnuspjalds · samhengi útstöðvar"
+delegate.draft_hint: "Tab: fulltrúi · Shift+Tab: staðsetning · Esc: hætta við val"  # Keyboard shortcuts for a one-task delegation draft. {Locked="Tab","Shift+Tab","Esc"}
+delegate.task_placeholder: "Lýstu verkefninu sem á að úthluta..."
+delegate.no_profiles: "Engin fulltrúasnið passa við leitina."
 delegate.failed: "Ekki tókst að hefja úthlutaða verkefnið: %{error}"  # {Locked="%{error}"} Diagnostic text.

@@ -314,4 +314,11 @@ setup.subtitle.wsl_agent_missing: "%{distro} உள்நுழைவு சூ�
 commands.delegate.summary: "ஏஜென்ட் சுயவிவரத்தைப் பயன்படுத்தி ஒரு பணியை ஒப்படைக்கவும்"
 delegate.usage: "/delegate-க்குப் பிறகு ஒரு பணியை உள்ளிடவும். விருப்பத்தேர்வு: --profile <profile> மற்றும் --target tab|pane."  # {Locked="/delegate","--profile","<profile>","--target","tab|pane"} Literal command syntax.
 delegate.started: "ஒப்படைக்கப்பட்ட பணி தொடங்கியது."
+delegate.profile_picker: "ஒப்படைக்க (தேட தட்டச்சு செய்யவும்: %{query})"  # Profile picker title; %{query} is the user's search text, not the task.
+delegate.placement_picker: "ஒப்படைக்கப்பட்ட பணியைத் திறக்கவும்"
+delegate.profile_label: "%{profile} சுயவிவரத்திடம் ஒப்படைக்கவும்"  # Clickable, one-task-only selection above the task input; %{profile} is a Terminal profile display name.
+delegate.context_hint: "பணிப் பலகத்தின் தற்போதைய கோப்பகம் · முனையச் சூழல்"
+delegate.draft_hint: "Tab: ஏஜென்ட் · Shift+Tab: அமைவிடம் · Esc: ரத்துசெய்"  # Keyboard shortcuts for a one-task delegation draft. {Locked="Tab","Shift+Tab","Esc"}
+delegate.task_placeholder: "ஒப்படைக்க வேண்டிய பணியை விவரிக்கவும்..."
+delegate.no_profiles: "பொருந்தும் ஏஜென்ட் சுயவிவரங்கள் இல்லை."
 delegate.failed: "ஒப்படைக்கப்பட்ட பணியைத் தொடங்க முடியவில்லை: %{error}"  # {Locked="%{error}"} Diagnostic text.

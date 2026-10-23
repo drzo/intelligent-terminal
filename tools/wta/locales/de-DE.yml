@@ -315,4 +315,11 @@ setup.subtitle.wsl_agent_missing: "Wir konnten \"%{agent}\" in der Anmeldeumgebu
 commands.delegate.summary: "Eine Aufgabe mit einem Agentenprofil delegieren"
 delegate.usage: "Geben Sie nach /delegate eine Aufgabe ein. Optional: --profile <profile> und --target tab|pane."  # {Locked="/delegate","--profile","<profile>","--target","tab|pane"} Literal command syntax.
 delegate.started: "Delegierte Aufgabe gestartet."
+delegate.profile_picker: "Delegieren an (zum Suchen tippen: %{query})"  # Profile picker title; %{query} is the user's search text, not the task.
+delegate.placement_picker: "Delegierte Aufgabe öffnen"
+delegate.profile_label: "Delegieren an %{profile}"  # Clickable, one-task-only selection above the task input; %{profile} is a Terminal profile display name.
+delegate.context_hint: "Verzeichnis des aktuellen Arbeitsbereichs · Terminalkontext"
+delegate.draft_hint: "Tab: Agent · Shift+Tab: Platzierung · Esc: Abbrechen"  # Keyboard shortcuts for a one-task delegation draft. {Locked="Tab","Shift+Tab","Esc"}
+delegate.task_placeholder: "Beschreiben Sie die zu delegierende Aufgabe..."
+delegate.no_profiles: "Keine passenden Agentenprofile."
 delegate.failed: "Die delegierte Aufgabe konnte nicht gestartet werden: %{error}"  # {Locked="%{error}"} Diagnostic text.

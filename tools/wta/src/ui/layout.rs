@@ -3,8 +3,8 @@ use ratatui::prelude::*;
 
 use super::config_popup;
 use super::{
-    action_panel, agent_popup, agents_view, auth, chat, command_popup, debug_panel, input,
-    model_popup, pending_queue, permission, recommendations, setup, user_input,
+    action_panel, agent_popup, agents_view, auth, chat, command_popup, debug_panel, delegate,
+    input, model_popup, pending_queue, permission, recommendations, setup, user_input,
 };
 
 pub fn render(frame: &mut Frame, app: &mut App) {
@@ -18,6 +18,13 @@ fn render_content(frame: &mut Frame, app: &mut App) {
     app.completed_turn_hits.clear();
     app.completed_turn_action_links.clear();
     app.input_dialog_area = None;
+    app.delegate_control_hits.clear();
+    app.delegate_control_owner = Some((
+        app.window_id.clone(),
+        app.tab_id
+            .clone()
+            .unwrap_or_else(|| DEFAULT_TAB_ID.to_string()),
+    ));
     app.queue_control_hits.clear();
     app.recommendation_rendered = false;
 
@@ -112,6 +119,7 @@ fn render_content(frame: &mut Frame, app: &mut App) {
     let input_height = {
         let tab = app.current_tab();
         input::input_height(&tab.input, tab.cursor_pos, main_area.width)
+            + if tab.delegate.draft.is_some() { 2 } else { 0 }
     };
 
     // Expire the transient hint independently, then decide whether to
@@ -274,7 +282,25 @@ fn render_content(frame: &mut Frame, app: &mut App) {
     }
     chat::render_activity(frame, app, h_activity[1]);
     pending_queue::render(frame, queued_count, chunks[7].inner(Margin::new(1, 0)));
-    let input_area = chunks[8];
+    let controls_height = if app.current_tab().delegate.draft.is_some() {
+        chunks[8]
+            .height
+            .saturating_sub(input::INPUT_MIN_HEIGHT)
+            .min(2)
+    } else {
+        0
+    };
+    delegate::render_controls(
+        frame,
+        app,
+        Rect::new(chunks[8].x, chunks[8].y, chunks[8].width, controls_height),
+    );
+    let input_area = Rect::new(
+        chunks[8].x,
+        chunks[8].y + controls_height,
+        chunks[8].width,
+        chunks[8].height.saturating_sub(controls_height),
+    );
     app.input_dialog_area = Some(input_area);
     input::render(frame, app, input_area);
 
@@ -312,6 +338,8 @@ fn render_content(frame: &mut Frame, app: &mut App) {
         agent_popup::render_popup(frame, agent_state, input_area);
     }
 
+    let delegate_picker_visible = delegate::render_picker(frame, app, chunks[8]);
+
     if let Some(request) = app.current_tab().user_input.front() {
         user_input::render(frame, request, input_area);
     }
@@ -325,6 +353,7 @@ fn render_content(frame: &mut Frame, app: &mut App) {
         || app.model_popup_state().is_some()
         || app.config_popup_state().is_some()
         || app.agent_popup_state().is_some()
+        || delegate_picker_visible
         || !app.current_tab().user_input.is_empty()
     {
         app.recommendation_rendered = false;

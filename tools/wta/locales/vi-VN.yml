@@ -313,4 +313,11 @@ setup.subtitle.wsl_agent_missing: "Chúng tôi không tìm thấy \"%{agent}\" t
 commands.delegate.summary: "Ủy quyền một tác vụ bằng hồ sơ agent"
 delegate.usage: "Nhập tác vụ sau /delegate. Tùy chọn: --profile <profile> và --target tab|pane."  # {Locked="/delegate","--profile","<profile>","--target","tab|pane"} Literal command syntax.
 delegate.started: "Đã bắt đầu tác vụ được ủy quyền."
+delegate.profile_picker: "Ủy quyền cho (nhập để tìm kiếm: %{query})"  # Profile picker title; %{query} is the user's search text, not the task.
+delegate.placement_picker: "Mở tác vụ được ủy quyền"
+delegate.profile_label: "Ủy quyền cho %{profile}"  # Clickable, one-task-only selection above the task input; %{profile} is a Terminal profile display name.
+delegate.context_hint: "Thư mục hiện tại của bảng làm việc · ngữ cảnh thiết bị đầu cuối"
+delegate.draft_hint: "Tab: agent · Shift+Tab: vị trí · Esc: hủy"  # Keyboard shortcuts for a one-task delegation draft. {Locked="Tab","Shift+Tab","Esc"}
+delegate.task_placeholder: "Mô tả tác vụ cần ủy quyền..."
+delegate.no_profiles: "Không có hồ sơ agent phù hợp."
 delegate.failed: "Không thể bắt đầu tác vụ được ủy quyền: %{error}"  # {Locked="%{error}"} Diagnostic text.

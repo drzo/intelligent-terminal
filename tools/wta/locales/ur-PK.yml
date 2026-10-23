@@ -314,4 +314,11 @@ setup.subtitle.wsl_agent_missing: "%{distro} کے لاگ ان ماحول میں 
 commands.delegate.summary: "ایجنٹ پروفائل استعمال کرتے ہوئے کوئی کام سونپیں"
 delegate.usage: "/delegate کے بعد کوئی کام درج کریں۔ اختیاری: --profile <profile> اور --target tab|pane۔"  # {Locked="/delegate","--profile","<profile>","--target","tab|pane"} Literal command syntax.
 delegate.started: "سونپا گیا کام شروع ہو گیا۔"
+delegate.profile_picker: "کام سونپیں (تلاش کرنے کے لیے ٹائپ کریں: %{query})"  # Profile picker title; %{query} is the user's search text, not the task.
+delegate.placement_picker: "سونپا گیا کام کھولیں"
+delegate.profile_label: "%{profile} کو کام سونپیں"  # Clickable, one-task-only selection above the task input; %{profile} is a Terminal profile display name.
+delegate.context_hint: "کام کے پین کی موجودہ ڈائریکٹری · ٹرمینل کا سیاق و سباق"
+delegate.draft_hint: "Tab: ایجنٹ · Shift+Tab: جگہ · Esc: منسوخ کریں"  # Keyboard shortcuts for a one-task delegation draft. {Locked="Tab","Shift+Tab","Esc"}
+delegate.task_placeholder: "سونپنے کے لیے کام کی وضاحت کریں..."
+delegate.no_profiles: "کوئی مماثل ایجنٹ پروفائل نہیں۔"
 delegate.failed: "سونپا گیا کام شروع نہیں کیا جا سکا: %{error}"  # {Locked="%{error}"} Diagnostic text.

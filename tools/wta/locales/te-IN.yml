@@ -314,4 +314,11 @@ setup.subtitle.wsl_agent_missing: "%{distro} లాగిన్ వాతావ�
 commands.delegate.summary: "ఏజెంట్ ప్రొఫైల్ ఉపయోగించి పనిని అప్పగించండి"
 delegate.usage: "/delegate తర్వాత పనిని నమోదు చేయండి. ఐచ్ఛికం: --profile <profile> మరియు --target tab|pane."  # {Locked="/delegate","--profile","<profile>","--target","tab|pane"} Literal command syntax.
 delegate.started: "అప్పగించిన పని ప్రారంభమైంది."
+delegate.profile_picker: "అప్పగించండి (వెతకడానికి టైప్ చేయండి: %{query})"  # Profile picker title; %{query} is the user's search text, not the task.
+delegate.placement_picker: "అప్పగించిన పనిని తెరవండి"
+delegate.profile_label: "%{profile}కి అప్పగించండి"  # Clickable, one-task-only selection above the task input; %{profile} is a Terminal profile display name.
+delegate.context_hint: "పని పేన్ యొక్క ప్రస్తుత డైరెక్టరీ · టెర్మినల్ సందర్భం"
+delegate.draft_hint: "Tab: ఏజెంట్ · Shift+Tab: స్థానం · Esc: రద్దు"  # Keyboard shortcuts for a one-task delegation draft. {Locked="Tab","Shift+Tab","Esc"}
+delegate.task_placeholder: "అప్పగించాల్సిన పనిని వివరించండి..."
+delegate.no_profiles: "సరిపోలే ఏజెంట్ ప్రొఫైల్‌లు లేవు."
 delegate.failed: "అప్పగించిన పనిని ప్రారంభించలేకపోయాము: %{error}"  # {Locked="%{error}"} Diagnostic text.

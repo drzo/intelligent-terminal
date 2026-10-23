@@ -11,6 +11,7 @@ use super::tests::{
 };
 use super::*;
 use crate::protocol::acp::client::MasterExtRequest;
+use std::{sync::Mutex, time::Duration};
 
 /// Dispatch a zero-arg slash command by name through the real
 /// `handle_slash_command` path, the way the Enter handler does.
@@ -32,39 +33,98 @@ fn seed_delegate_profiles(app: &mut App) {
 }
 
 #[test]
-fn delegate_completion_keeps_profile_and_placement_optional_and_does_not_launch() {
+fn delegate_tab_completes_while_enter_opens_profile_picker_without_launching() {
     let _locale = crate::test_support::lock_locale();
     let mut app = test_app();
     seed_delegate_profiles(&mut app);
-    app.current_tab_mut().replace_input("/delegate ".into());
-    assert_eq!(app.delegate_candidates().len(), 4);
-    app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
-    assert_eq!(
-        app.current_tab().input,
-        "/delegate --profile {claude-project} "
-    );
-    assert_eq!(app.delegate_candidates().len(), 2);
-    app.current_tab_mut().command_popup_selected = 1;
+    app.delegate_profiles.swap(0, 1);
+    app.current_tab_mut().replace_input("/dele".into());
     app.handle_key(KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE));
+    assert_eq!(app.current_tab().input, "/delegate ");
+    assert!(app.current_tab().delegate.picker.is_none());
+    app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+    let picker = app.current_tab().delegate.picker.as_ref().unwrap();
+    assert_eq!(picker.control, delegate::DelegateControl::Profile);
     assert_eq!(
-        app.current_tab().input,
-        "/delegate --profile {claude-project} --target pane "
+        picker.selected, 1,
+        "configured default, not the first profile"
     );
-    assert!(app.delegate_candidates().is_empty());
+    assert_eq!(app.delegate_profile_candidates().len(), 2);
+    app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+    let draft = app.current_tab().delegate.draft.as_ref().unwrap();
+    assert_eq!(draft.profile_id, "{claude-project}");
+    assert_eq!(draft.placement, crate::native_profile::Placement::Tab);
+    assert!(app.current_tab().input.is_empty());
+    app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+    assert!(app.current_tab().messages.is_empty());
     assert!(app.test_prompt_rx.as_mut().unwrap().try_recv().is_err());
 }
 
 #[test]
-fn delegate_escape_dismisses_completion_without_deleting_the_draft() {
+fn delegate_reselecting_profile_and_placement_preserves_task_and_exact_identity() {
     let _locale = crate::test_support::lock_locale();
     let mut app = test_app();
     seed_delegate_profiles(&mut app);
+    app.current_tab_mut().replace_input("/delegate".into());
+    app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+    app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
     app.current_tab_mut()
-        .replace_input("/delegate Claude".into());
-    assert_eq!(app.delegate_candidates().len(), 2);
-    app.handle_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
-    assert_eq!(app.current_tab().input, "/delegate Claude");
+        .replace_input("fix the build\nkeep --target literal".into());
+    app.handle_key(KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE));
+    for character in "Review".chars() {
+        app.handle_event(AppEvent::Key(KeyEvent::new(
+            KeyCode::Char(character),
+            KeyModifiers::NONE,
+        )));
+    }
+    assert_eq!(app.delegate_profile_candidates().len(), 1);
+    app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+    assert_eq!(
+        app.current_tab()
+            .delegate
+            .draft
+            .as_ref()
+            .unwrap()
+            .profile_id,
+        "{claude-review}"
+    );
+    app.handle_key(KeyEvent::new(KeyCode::BackTab, KeyModifiers::SHIFT));
+    app.handle_key(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE));
+    app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+    assert_eq!(
+        app.current_tab().delegate.draft.as_ref().unwrap().placement,
+        crate::native_profile::Placement::Pane
+    );
+    assert_eq!(
+        app.current_tab().input,
+        "fix the build\nkeep --target literal"
+    );
     assert!(!app.command_popup_visible());
+    assert!(app.prepared_command_range().is_none());
+    assert!(app.test_prompt_rx.as_mut().unwrap().try_recv().is_err());
+}
+
+#[test]
+fn delegate_escape_preserves_input_at_each_picker_level_and_never_sends_it() {
+    let _locale = crate::test_support::lock_locale();
+    let mut app = test_app();
+    seed_delegate_profiles(&mut app);
+    app.current_tab_mut().replace_input("/delegate ".into());
+    app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+    app.handle_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
+    assert_eq!(app.current_tab().input, "/delegate ");
+    assert!(app.current_tab().delegate.picker.is_none());
+    app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+    app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+    app.current_tab_mut()
+        .replace_input("keep this draft".into());
+    app.handle_key(KeyEvent::new(KeyCode::BackTab, KeyModifiers::SHIFT));
+    app.handle_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
+    assert!(app.current_tab().delegate.draft.is_some());
+    app.handle_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
+    assert!(app.current_tab().delegate.draft.is_none());
+    assert_eq!(app.current_tab().input, "keep this draft");
+    assert!(app.test_prompt_rx.as_mut().unwrap().try_recv().is_err());
 }
 
 #[test]
@@ -88,11 +148,312 @@ fn delegate_completion_does_not_recreate_a_closed_tab() {
     let mut app = test_app();
     let count = app.tab_sessions.len();
     app.handle_event(AppEvent::DelegateCompleted {
+        window_id: app.window_id.clone(),
         tab_id: "closed-tab".into(),
+        request_id: uuid::Uuid::new_v4(),
         result: Ok(()),
     });
     assert_eq!(app.tab_sessions.len(), count);
     assert!(!app.tab_sessions.contains_key("closed-tab"));
+}
+
+struct DelegateChannel {
+    requests: Mutex<Vec<(String, serde_json::Value)>>,
+    fail: AtomicBool,
+}
+
+#[async_trait::async_trait]
+impl crate::shell::wt_channel::WtChannel for DelegateChannel {
+    async fn request(
+        &self,
+        method: &str,
+        params: serde_json::Value,
+    ) -> anyhow::Result<serde_json::Value> {
+        use serde_json::json;
+        self.requests
+            .lock()
+            .unwrap()
+            .push((method.into(), params.clone()));
+        Ok(match method {
+            "get_delegate_context" => json!({
+                "pane": {"session_id":"source","window_id":42,"cwd":r"C:\Source Project"},
+                "content":"recent work pane output",
+            }),
+            "agent_profiles" => {
+                if let Some(profile) = params["profile"].as_str() {
+                    json!([{
+                        "guid":profile,"name":"Claude Project","agent_id":"claude",
+                        "commandline":r#""C:\Agent Tools\claude.exe" --model profile-model"#,
+                    }])
+                } else {
+                    json!([
+                        {"guid":"{claude-project}","name":"Claude Project","agent_id":"claude","default":true},
+                        {"guid":"{claude-review}","name":"Claude Review","agent_id":"claude"},
+                    ])
+                }
+            }
+            "create_tab" | "split_pane" => {
+                anyhow::ensure!(!self.fail.load(Ordering::Relaxed), "fixture launch failed");
+                json!({"session_id":"created"})
+            }
+            "publish" => json!({}),
+            _ => anyhow::bail!("unexpected delegate fixture request: {method}"),
+        })
+    }
+
+    fn is_available(&self) -> bool {
+        true
+    }
+}
+
+#[tokio::test]
+async fn delegate_submission_is_one_shot_restores_failures_and_keeps_source_context() {
+    let _locale = crate::test_support::lock_locale();
+    tokio::task::LocalSet::new()
+        .run_until(async {
+            for with_picker in [true, false] {
+                let mut app = test_app();
+                seed_delegate_profiles(&mut app);
+                app.pane_id = Some("owning-helper".into());
+                app.window_id = Some("7".into());
+                if with_picker {
+                    app.current_tab_mut().replace_input("/delegate".into());
+                    app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+                    app.handle_key(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE));
+                    app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+                    app.handle_key(KeyEvent::new(KeyCode::BackTab, KeyModifiers::SHIFT));
+                    app.handle_key(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE));
+                    app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+                }
+                let task = if with_picker {
+                    "--target literal task\nfix the failure"
+                } else {
+                    "fix the failure\nkeep --target tab in the task"
+                };
+                let input = if with_picker {
+                    task.to_string()
+                } else {
+                    format!("/delegate {task}")
+                };
+                app.current_tab_mut().replace_input(input.clone());
+                let channel = Arc::new(DelegateChannel {
+                    requests: Mutex::new(Vec::new()),
+                    fail: AtomicBool::new(true),
+                });
+                app.shell_mgr =
+                    Arc::new(crate::shell::ShellManager::new().with_wt_channel(channel.clone()));
+                let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+                app.event_tx = Some(tx);
+                let session = app.current_tab().session_id.clone();
+                app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+                app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+                let event = tokio::time::timeout(Duration::from_secs(5), rx.recv())
+                    .await
+                    .unwrap()
+                    .unwrap();
+                app.handle_event(event);
+                assert_eq!(app.current_tab().input, input);
+                assert_eq!(app.current_tab().delegate.draft.is_some(), with_picker);
+                assert!(app.current_tab().delegate.pending.is_none());
+                assert!(matches!(
+                    app.current_tab().messages.last(),
+                    Some(ChatMessage::Error(_))
+                ));
+                channel.fail.store(false, Ordering::Relaxed);
+                app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+                let origin = app.active_tab_key().to_string();
+                app.tab_mut("other").replace_input("other tab draft".into());
+                app.tab_id = Some("other".into());
+                let event = tokio::time::timeout(Duration::from_secs(5), rx.recv())
+                    .await
+                    .unwrap()
+                    .unwrap();
+                app.handle_event(event);
+                assert_eq!(app.current_tab().input, "other tab draft");
+                let original = &app.tab_sessions[&origin];
+                assert!(original.input.is_empty());
+                assert!(original.delegate.draft.is_none());
+                assert!(original.delegate.pending.is_none());
+                assert_eq!(original.session_id, session);
+                assert_eq!(
+                    original
+                        .messages
+                        .iter()
+                        .filter(|message| matches!(message, ChatMessage::User(_)))
+                        .count(),
+                    1
+                );
+                assert!(app.test_prompt_rx.as_mut().unwrap().try_recv().is_err());
+                let requests = channel.requests.lock().unwrap();
+                assert_eq!(
+                    requests
+                        .iter()
+                        .filter(|(method, _)| method == "get_delegate_context")
+                        .count(),
+                    2
+                );
+                let (_, context) = &requests[0];
+                assert_eq!(context["session_id"], "owning-helper");
+                assert_eq!(context["max_lines"], 30);
+                assert_eq!(context["max_chars"], 4000);
+                let launches = requests
+                    .iter()
+                    .filter(|(method, _)| matches!(method.as_str(), "create_tab" | "split_pane"))
+                    .collect::<Vec<_>>();
+                assert_eq!(launches.len(), 2, "duplicate Enter must not launch twice");
+                for (method, params) in launches {
+                    assert_eq!(
+                        method,
+                        if with_picker {
+                            "split_pane"
+                        } else {
+                            "create_tab"
+                        }
+                    );
+                    assert_eq!(
+                        params["profile"],
+                        if with_picker {
+                            "{claude-review}"
+                        } else {
+                            "{claude-project}"
+                        }
+                    );
+                    assert_eq!(params["window_id"], 42);
+                    assert_eq!(params["cwd"], r"C:\Source Project");
+                    let command = params["commandline"].as_str().unwrap();
+                    if !with_picker {
+                        assert!(command.contains(task));
+                        assert!(command.contains("recent work pane output"));
+                    }
+                }
+            }
+        })
+        .await;
+}
+
+#[test]
+fn delegate_completion_does_not_discard_a_newer_draft_or_accept_another_window() {
+    let _locale = crate::test_support::lock_locale();
+    let mut app = test_app();
+    app.window_id = Some("original".into());
+    app.current_tab_mut().replace_input("newer draft".into());
+    let id = uuid::Uuid::new_v4();
+    app.current_tab_mut().delegate.pending = Some(delegate::PendingDelegate {
+        id,
+        input: "old task".into(),
+        draft: None,
+        history: "/delegate old task".into(),
+    });
+    app.handle_event(AppEvent::DelegateCompleted {
+        window_id: Some("other".into()),
+        tab_id: app.active_tab_key().into(),
+        request_id: id,
+        result: Ok(()),
+    });
+    assert!(app.current_tab().delegate.pending.is_some());
+    assert!(app.current_tab().messages.is_empty());
+    app.handle_event(AppEvent::DelegateCompleted {
+        window_id: app.window_id.clone(),
+        tab_id: app.active_tab_key().into(),
+        request_id: id,
+        result: Ok(()),
+    });
+    assert_eq!(app.current_tab().input, "newer draft");
+    assert!(app.current_tab().delegate.pending.is_none());
+}
+
+#[test]
+fn delegate_controls_and_picker_support_mouse_without_leaking_to_chat() {
+    use crossterm::event::{MouseButton, MouseEvent, MouseEventKind};
+    let _locale = crate::test_support::lock_locale();
+    let mut app = test_app();
+    seed_delegate_profiles(&mut app);
+    app.current_tab_mut().replace_input("/delegate".into());
+    app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+    app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+    app.current_tab_mut().replace_input("keep this task".into());
+    let mut terminal = ratatui::Terminal::new(ratatui::backend::TestBackend::new(70, 16)).unwrap();
+    terminal
+        .draw(|frame| crate::ui::render(frame, &mut app))
+        .unwrap();
+    let profile_area = app
+        .delegate_control_hits
+        .iter()
+        .find(|(_, control)| *control == delegate::DelegateControl::Profile)
+        .unwrap()
+        .0;
+    let click = |area: ratatui::layout::Rect| {
+        AppEvent::Mouse(MouseEvent {
+            kind: MouseEventKind::Down(MouseButton::Left),
+            column: area.x,
+            row: area.y,
+            modifiers: KeyModifiers::NONE,
+        })
+    };
+    let original_tab = app.tab_id.clone();
+    app.tab_mut("other-tab");
+    app.tab_id = Some("other-tab".into());
+    app.handle_event(click(profile_area));
+    assert!(
+        app.current_tab().delegate.picker.is_none(),
+        "stale hit belongs to the previous tab"
+    );
+    app.tab_id = original_tab;
+    app.handle_event(click(profile_area));
+    assert!(app.current_tab().delegate.picker.is_some());
+    terminal
+        .draw(|frame| crate::ui::render(frame, &mut app))
+        .unwrap();
+    let choice_area = app
+        .delegate_control_hits
+        .iter()
+        .find(|(_, control)| *control == delegate::DelegateControl::Pick(1))
+        .unwrap()
+        .0;
+    app.handle_event(click(choice_area));
+    assert_eq!(
+        app.current_tab()
+            .delegate
+            .draft
+            .as_ref()
+            .unwrap()
+            .profile_id,
+        "{claude-review}"
+    );
+    assert_eq!(app.current_tab().input, "keep this task");
+    assert!(app.test_prompt_rx.as_mut().unwrap().try_recv().is_err());
+
+    for index in 0..10 {
+        let mut profile = app.delegate_profiles[0].clone();
+        profile.guid = format!("{{copy-{index}}}");
+        profile.name = format!("Copied profile {index}");
+        profile.default = false;
+        app.delegate_profiles.push(profile);
+    }
+    app.handle_key(KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE));
+    for _ in 0..20 {
+        app.handle_key(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE));
+    }
+    terminal
+        .draw(|frame| crate::ui::render(frame, &mut app))
+        .unwrap();
+    let (first_row, delegate::DelegateControl::Pick(first_index)) = app.delegate_control_hits[0]
+    else {
+        panic!("expected a scrolled picker row");
+    };
+    assert!(first_index > 0);
+    let expected_profile = app.delegate_profile_candidates()[first_index].guid.clone();
+    app.handle_event(click(first_row));
+    assert_eq!(
+        app.current_tab()
+            .delegate
+            .draft
+            .as_ref()
+            .unwrap()
+            .profile_id,
+        expected_profile
+    );
+    assert_eq!(app.current_tab().input, "keep this task");
 }
 
 fn custom_model(selection_id: &str, model_id: &str) -> CustomModelCatalogEntry {

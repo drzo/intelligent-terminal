@@ -313,4 +313,11 @@ setup.subtitle.wsl_agent_missing: "%{distro} kirish muhitida \"%{agent}\" topilm
 commands.delegate.summary: "Agent profilidan foydalanib vazifani topshiring"
 delegate.usage: "/delegate dan keyin vazifani kiriting. Ixtiyoriy: --profile <profile> va --target tab|pane."  # {Locked="/delegate","--profile","<profile>","--target","tab|pane"} Literal command syntax.
 delegate.started: "Topshirilgan vazifa boshlandi."
+delegate.profile_picker: "Topshirish (qidirish uchun yozing: %{query})"  # Profile picker title; %{query} is the user's search text, not the task.
+delegate.placement_picker: "Topshirilgan vazifani ochish"
+delegate.profile_label: "%{profile} profiliga topshirish"  # Clickable, one-task-only selection above the task input; %{profile} is a Terminal profile display name.
+delegate.context_hint: "Ish panelining joriy katalogi · terminal konteksti"
+delegate.draft_hint: "Tab: agent · Shift+Tab: joylashuv · Esc: bekor qilish"  # Keyboard shortcuts for a one-task delegation draft. {Locked="Tab","Shift+Tab","Esc"}
+delegate.task_placeholder: "Topshiriladigan vazifani tavsiflang..."
+delegate.no_profiles: "Mos keladigan agent profillari yoʻq."
 delegate.failed: "Topshirilgan vazifani boshlab boʻlmadi: %{error}"  # {Locked="%{error}"} Diagnostic text.

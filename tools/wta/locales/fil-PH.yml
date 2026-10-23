@@ -313,4 +313,11 @@ setup.subtitle.wsl_agent_missing: "Hindi namin makita ang \"%{agent}\" sa kapali
 commands.delegate.summary: "Magdelegado ng gawain gamit ang profile ng agent"
 delegate.usage: "Maglagay ng gawain pagkatapos ng /delegate. Opsyonal: --profile <profile> at --target tab|pane."  # {Locked="/delegate","--profile","<profile>","--target","tab|pane"} Literal command syntax.
 delegate.started: "Nagsimula na ang itinalagang gawain."
+delegate.profile_picker: "Magdelegado sa (mag-type para maghanap: %{query})"  # Profile picker title; %{query} is the user's search text, not the task.
+delegate.placement_picker: "Buksan ang itinalagang gawain"
+delegate.profile_label: "Magdelegado sa %{profile}"  # Clickable, one-task-only selection above the task input; %{profile} is a Terminal profile display name.
+delegate.context_hint: "Direktoryo ng kasalukuyang panel ng trabaho · konteksto ng terminal"
+delegate.draft_hint: "Tab: agent · Shift+Tab: puwesto · Esc: kanselahin"  # Keyboard shortcuts for a one-task delegation draft. {Locked="Tab","Shift+Tab","Esc"}
+delegate.task_placeholder: "Ilarawan ang gawaing idedelegado..."
+delegate.no_profiles: "Walang tumutugmang profile ng agent."
 delegate.failed: "Hindi masimulan ang itinalagang gawain: %{error}"  # {Locked="%{error}"} Diagnostic text.
