@@ -190,12 +190,34 @@ static bool EqualBstr(BSTR value, const wchar_t* expected) noexcept
     return value && SysStringLen(value) == wcslen(expected) && wcscmp(value, expected) == 0;
 }
 
-class TestSink final : public Microsoft::WRL::RuntimeClass<Microsoft::WRL::RuntimeClassFlags<Microsoft::WRL::ClassicCom>, ITerminalProtocolEventSink, ITerminalProtocolNativeAgent>
+class TestSink final : public Microsoft::WRL::RuntimeClass<Microsoft::WRL::RuntimeClassFlags<Microsoft::WRL::ClassicCom>, ITerminalProtocolEventSink, ITerminalProtocolNativeAgent, ITerminalProtocolAgentProfiles>
 {
 public:
     std::atomic<bool> received{ false };
     std::atomic<bool> tabReceived{ false };
     std::atomic<bool> splitReceived{ false };
+    std::atomic<bool> profilesReceived{ false };
+    std::atomic<bool> contextReceived{ false };
+
+    HRESULT STDMETHODCALLTYPE GetAgentProfiles(MIDL_uhyper windowId, BSTR profileId, BSTR* json) noexcept override
+    {
+        RETURN_HR_IF_NULL(E_POINTER, json);
+        *json = nullptr;
+        profilesReceived = windowId == 42 && EqualBstr(profileId, L"profile guid");
+        RETURN_HR_IF(E_INVALIDARG, !profilesReceived);
+        *json = SysAllocString(L"[{\"guid\":\"profile guid\"}]");
+        return *json ? S_OK : E_OUTOFMEMORY;
+    }
+
+    HRESULT STDMETHODCALLTYPE GetAgentContext(GUID ownerPane, long maxLines, long maxCharacters, BSTR* json) noexcept override
+    {
+        RETURN_HR_IF_NULL(E_POINTER, json);
+        *json = nullptr;
+        contextReceived = ownerPane == TestSession && maxLines == 30 && maxCharacters == 4000;
+        RETURN_HR_IF(E_INVALIDARG, !contextReceived);
+        *json = SysAllocString(L"{\"content\":\"bounded context\"}");
+        return *json ? S_OK : E_OUTOFMEMORY;
+    }
 
     HRESULT STDMETHODCALLTYPE OnEvent(BSTR text) noexcept override
     {
@@ -339,8 +361,8 @@ try
         using namespace RegistrationFixture;
         enabled = true;
         const auto resetRegistration = wil::scope_exit([]() noexcept { enabled = false; });
-        Check(Protocol::details::ProxyInterfaces.size() == 8, "Eight protocol and handoff mappings");
-        for (const size_t failure : { size_t{ 0 }, size_t{ 1 }, size_t{ 4 }, size_t{ 8 } })
+        const auto interfaceCount = Protocol::details::ProxyInterfaces.size();
+        for (const size_t failure : { size_t{ 0 }, size_t{ 1 }, size_t{ 4 }, interfaceCount })
         {
             Protocol::details::ProxyRegistration attempt;
             classCalls = revokeCalls = 0;
@@ -358,10 +380,10 @@ try
             failMapping = 0;
             mappings.clear();
             THROW_IF_FAILED(attempt.Register(module.get()));
-            Check(classCalls == 2 && mappings.size() == 8, "Retry registers factory and all eight mappings");
+            Check(classCalls == 2 && mappings.size() == interfaceCount, "Retry registers factory and all mappings");
             Check(std::equal(mappings.begin(), mappings.end(), Protocol::details::ProxyInterfaces.begin()), "Retry maps every production IID");
             THROW_IF_FAILED(attempt.Register(module.get()));
-            Check(classCalls == 2 && mappings.size() == 8, "Successful registration is idempotent");
+            Check(classCalls == 2 && mappings.size() == interfaceCount, "Successful registration is idempotent");
             THROW_IF_FAILED(attempt.Unregister());
             Check(revokeCalls == previousRevokes + 1, "Successful retry owns its cookie");
         }
@@ -374,7 +396,7 @@ try
             failMapping = 0;
             mappings.clear();
             THROW_IF_FAILED(scoped.InitializeFromExecutableDirectory());
-            Check(classCalls == 2 && mappings.size() == 8, "Failed scoped initialization remains retryable");
+            Check(classCalls == 2 && mappings.size() == interfaceCount, "Failed scoped initialization remains retryable");
             THROW_IF_FAILED(scoped.InitializeFromExecutableDirectory());
             Check(classCalls == 2, "Successful scoped initialization is cached");
         }
@@ -481,6 +503,15 @@ try
             THROW_IF_FAILED(nativeAgent->SplitAgentCliPane(TestSession, direction.get(), 0.375f, profile.get(), commandline.get(),
                                                          1, provider.get(), splitJson.put()));
             Check(EqualBstr(splitJson.get(), L"{\"synthetic\":\"pane\",\"id\":73}"), "Native agent pane JSON crossed apartments");
+            Microsoft::WRL::ComPtr<ITerminalProtocolAgentProfiles> profiles;
+            THROW_IF_FAILED(proxy.As(&profiles));
+            auto profileId = allocate(L"profile guid");
+            wil::unique_bstr profilesJson;
+            THROW_IF_FAILED(profiles->GetAgentProfiles(42, profileId.get(), profilesJson.put()));
+            Check(EqualBstr(profilesJson.get(), L"[{\"guid\":\"profile guid\"}]"), "Agent profile catalog crossed apartments");
+            wil::unique_bstr contextJson;
+            THROW_IF_FAILED(profiles->GetAgentContext(TestSession, 30, 4000, contextJson.put()));
+            Check(EqualBstr(contextJson.get(), L"{\"content\":\"bounded context\"}"), "Agent context crossed apartments");
             callbackResult = S_OK;
         }
         catch (...)
@@ -492,6 +523,7 @@ try
     THROW_IF_FAILED(callbackResult);
     Check(sink->received, "Callback crossed apartments through the local proxy");
     Check(sink->tabReceived && sink->splitReceived, "Both native agent calls crossed apartments with intact arguments");
+    Check(sink->profilesReceived && sink->contextReceived, "Profile catalog and source context crossed apartments with intact arguments");
     THROW_IF_FAILED(registration.Unregister());
     THROW_IF_FAILED(registration.Unregister());
     std::puts("PASS: package and injected token policy, registration failure/retry ledger, scoped retry, local factory, exact metadata IID set, sentinel overrides, callback and native agent marshaling");

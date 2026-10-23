@@ -309,3 +309,7 @@ system.provider_command_blocked_by_policy: "%{command}: Aprobarea automată este
 system.model_unknown: "Model necunoscut %{model} — tastați /model pentru a vedea lista disponibilă."  # {Locked="%{model}","/model"}
 
 setup.subtitle.wsl_agent_missing: "Nu am putut găsi \"%{agent}\" în mediul de conectare al distribuției %{distro}. Verificați instalarea, PATH și profilul shell al acestui utilizator Linux, apoi încercați din nou."  # WSL login-shell detection; %{agent} is the agent display name, %{distro} is the Linux distribution name. {Locked="PATH"}
+commands.delegate.summary: "Delegați o sarcină folosind un profil de agent"
+delegate.usage: "Introduceți o sarcină după /delegate. Opțional: --profile <profile> și --target tab|pane."  # {Locked="/delegate","--profile","<profile>","--target","tab|pane"} Literal command syntax.
+delegate.started: "Sarcina delegată a pornit."
+delegate.failed: "Nu s-a putut porni sarcina delegată: %{error}"  # {Locked="%{error}"} Diagnostic text.

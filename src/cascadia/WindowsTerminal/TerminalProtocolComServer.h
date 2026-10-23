@@ -35,7 +35,7 @@ class WindowEmperor;
 // failures. Complex results cross the wire as JSON (BSTR); the per-method logic
 // and the UI-thread-marshaled page queries are unchanged from the WinRT server.
 struct __declspec(uuid(__CLSID_TerminalProtocolServer))
-TerminalProtocolComServer : public Microsoft::WRL::RuntimeClass<Microsoft::WRL::RuntimeClassFlags<Microsoft::WRL::RuntimeClassType::ClassicCom>, ITerminalProtocol, ITerminalProtocolNativeAgent>
+TerminalProtocolComServer : public Microsoft::WRL::RuntimeClass<Microsoft::WRL::RuntimeClassFlags<Microsoft::WRL::RuntimeClassType::ClassicCom>, ITerminalProtocol, ITerminalProtocolNativeAgent, ITerminalProtocolAgentProfiles>
 {
     ~TerminalProtocolComServer();
 
@@ -50,6 +50,8 @@ TerminalProtocolComServer : public Microsoft::WRL::RuntimeClass<Microsoft::WRL::
     STDMETHODIMP GetProcessStatus(GUID sessionId, BSTR* json) override;
     STDMETHODIMP GetSessionVariable(GUID sessionId, BSTR name, BSTR* json) override;
     STDMETHODIMP GetSettings(BSTR* json) override;
+    STDMETHODIMP GetAgentProfiles(unsigned __int64 windowId, BSTR profileId, BSTR* json) override;
+    STDMETHODIMP GetAgentContext(GUID ownerPane, long maxLines, long maxCharacters, BSTR* json) override;
     STDMETHODIMP CreateTab(unsigned __int64 windowId, BSTR profile, BSTR commandline, BSTR title, BSTR startingDirectory, boolean suppressAppTitle, boolean background, BSTR* json) override;
     STDMETHODIMP SplitPane(GUID sessionId, BSTR direction, float size, BSTR profile, BSTR commandline, boolean background, BSTR* json) override;
     STDMETHODIMP ClosePane(GUID sessionId) override;

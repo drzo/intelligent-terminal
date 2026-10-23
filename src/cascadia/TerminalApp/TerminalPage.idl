@@ -259,5 +259,7 @@ namespace TerminalApp
         Boolean RestoreKeptGroup(Guid groupId);
         void ShutdownPanes();
         Windows.Foundation.IAsyncOperation<Boolean> GetProtocolPaneIsBackground(Guid paneSessionId);
+        Windows.Foundation.IAsyncOperation<String> GetProtocolAgentProfiles(String profileId);
+        Windows.Foundation.IAsyncOperation<Microsoft.Terminal.Protocol.PaneContext> GetProtocolDelegationContext(Guid ownerPane, Int32 maxLines, Int32 maxCharacters);
     }
 }

@@ -311,3 +311,7 @@ system.provider_command_blocked_by_policy: "%{command}: آپ کی تنظیم ک�
 system.model_unknown: "نامعلوم ماڈل %{model} — دستیاب فہرست دیکھنے کے لیے /model ٹائپ کریں۔"  # {Locked="%{model}","/model"}
 
 setup.subtitle.wsl_agent_missing: "%{distro} کے لاگ ان ماحول میں \"%{agent}\" نہیں ملا۔ اس Linux صارف کی تنصیب، PATH اور شیل پروفائل کی جانچ کریں، پھر دوبارہ کوشش کریں۔"  # WSL login-shell detection; %{agent} is the agent display name, %{distro} is the Linux distribution name. {Locked="PATH"}
+commands.delegate.summary: "ایجنٹ پروفائل استعمال کرتے ہوئے کوئی کام سونپیں"
+delegate.usage: "/delegate کے بعد کوئی کام درج کریں۔ اختیاری: --profile <profile> اور --target tab|pane۔"  # {Locked="/delegate","--profile","<profile>","--target","tab|pane"} Literal command syntax.
+delegate.started: "سونپا گیا کام شروع ہو گیا۔"
+delegate.failed: "سونپا گیا کام شروع نہیں کیا جا سکا: %{error}"  # {Locked="%{error}"} Diagnostic text.

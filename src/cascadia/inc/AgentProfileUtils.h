@@ -274,4 +274,16 @@ namespace Microsoft::Terminal::AgentProfiles
         return BuildCommand(executable.native(), profile.AgentProfileId(), profile.AgentProfileModel(),
                             profile.AgentProfilePermissionMode(), profile.AgentProfileArguments(), requireExecutable);
     }
+
+    template<typename Profile>
+    std::wstring LaunchCommand(const Profile& profile)
+    {
+        if (!IsManaged(profile))
+        {
+            return std::wstring{ profile.Commandline() };
+        }
+        Settings::Model::AgentPolicy::Reload();
+        CheckLaunchPolicy(profile.AgentProfileId(), *Settings::Model::AgentPolicy::GetSnapshot());
+        return Command(profile, true);
+    }
 }

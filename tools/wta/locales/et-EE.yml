@@ -310,3 +310,7 @@ system.provider_command_blocked_by_policy: "%{command}: Automaatne kinnitamine o
 system.model_unknown: "Tundmatu mudel %{model} — tippige /model saadaolevate mudelite loendi nägemiseks."  # {Locked="%{model}","/model"}
 
 setup.subtitle.wsl_agent_missing: "Me ei leidnud agenti \"%{agent}\" distributsiooni %{distro} sisselogimiskeskkonnast. Kontrollige selle Linuxi kasutaja installi, PATH-i ja kesta profiili ning proovige uuesti."  # WSL login-shell detection; %{agent} is the agent display name, %{distro} is the Linux distribution name. {Locked="PATH"}
+commands.delegate.summary: "Delegeerige ülesanne agendi profiili abil"
+delegate.usage: "Sisestage ülesanne pärast käsku /delegate. Valikuline: --profile <profile> ja --target tab|pane."  # {Locked="/delegate","--profile","<profile>","--target","tab|pane"} Literal command syntax.
+delegate.started: "Delegeeritud ülesanne käivitati."
+delegate.failed: "Delegeeritud ülesannet ei saanud käivitada: %{error}"  # {Locked="%{error}"} Diagnostic text.

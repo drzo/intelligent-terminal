@@ -313,3 +313,7 @@ system.provider_command_blocked_by_policy: "%{command}: আপোনাৰ স�
 system.model_unknown: "অজ্ঞাত মডেল %{model} — উপলব্ধ তালিকা চাবলৈ /model টাইপ কৰক।"  # {Locked="%{model}","/model"}
 
 setup.subtitle.wsl_agent_missing: "%{distro}-ৰ লগইন পৰিৱেশত \"%{agent}\" বিচাৰি পোৱা নগ'ল। এই Linux ব্যৱহাৰকাৰীৰ ইনষ্টলেশ্বন, PATH আৰু শ্বেল প্ৰ'ফাইল পৰীক্ষা কৰক, তাৰ পিছত পুনৰ চেষ্টা কৰক।"  # WSL login-shell detection; %{agent} is the agent display name, %{distro} is the Linux distribution name. {Locked="PATH"}
+commands.delegate.summary: "এজেণ্ট প্ৰফাইল ব্যৱহাৰ কৰি এটা কাম অৰ্পণ কৰক"
+delegate.usage: "/delegate ৰ পিছত এটা কাম লিখক। ঐচ্ছিক: --profile <profile> আৰু --target tab|pane।"  # {Locked="/delegate","--profile","<profile>","--target","tab|pane"} Literal command syntax.
+delegate.started: "অৰ্পণ কৰা কাম আৰম্ভ হৈছে।"
+delegate.failed: "অৰ্পণ কৰা কাম আৰম্ভ কৰিব পৰা নগ'ল: %{error}"  # {Locked="%{error}"} Diagnostic text.

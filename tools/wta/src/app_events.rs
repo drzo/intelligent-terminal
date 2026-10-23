@@ -2119,6 +2119,42 @@ impl App {
             AppEvent::ExecutionInfo(message) => {
                 self.push_execution_info(message);
             }
+            AppEvent::DelegateProfilesLoaded {
+                window_id,
+                tab_id,
+                result,
+            } => {
+                if self.window_id != window_id {
+                    self.delegate_profiles_requested = false;
+                    return;
+                }
+                match result {
+                    Ok(profiles) => self.delegate_profiles = profiles,
+                    Err(error) => {
+                        tracing::error!(target: "delegate", %error, "profile discovery failed");
+                        if let Some(tab) = self.tab_sessions.get_mut(&tab_id) {
+                            tab.messages.push(ChatMessage::Error(
+                                t!("delegate.failed", error = error.as_str()).into_owned(),
+                            ));
+                        }
+                    }
+                }
+            }
+            AppEvent::DelegateCompleted { tab_id, result } => {
+                let message = match result {
+                    Ok(()) => ChatMessage::success(t!("delegate.started").into_owned()),
+                    Err(error) => {
+                        tracing::error!(target: "delegate", %error, "delegation failed");
+                        ChatMessage::Error(
+                            t!("delegate.failed", error = error.as_str()).into_owned(),
+                        )
+                    }
+                };
+                if let Some(tab) = self.tab_sessions.get_mut(&tab_id) {
+                    tab.messages.push(message);
+                    tab.scroll_to_bottom();
+                }
+            }
             AppEvent::AgentThoughtChunk { session_id, text } => {
                 if let Some(tab) = self.session_tab_mut_if_current(&session_id) {
                     if tab.loading_session {

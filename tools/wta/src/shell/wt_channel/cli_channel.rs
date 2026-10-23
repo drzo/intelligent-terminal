@@ -960,6 +960,41 @@ impl WtChannel for CliChannel {
     ) -> anyhow::Result<serde_json::Value> {
         // Map protocol method names to wtcli subcommands + args.
         match method {
+            "get_delegate_context" => {
+                let owner = params["session_id"]
+                    .as_str()
+                    .ok_or_else(|| anyhow!("missing delegation owner pane"))?;
+                let lines = params["max_lines"]
+                    .as_u64()
+                    .ok_or_else(|| anyhow!("missing line limit"))?
+                    .to_string();
+                let chars = params["max_chars"]
+                    .as_u64()
+                    .ok_or_else(|| anyhow!("missing character limit"))?
+                    .to_string();
+                self.run_wtcli(&[
+                    "agent-context",
+                    "--owner",
+                    owner,
+                    "--max-lines",
+                    &lines,
+                    "--max-chars",
+                    &chars,
+                ])
+                .await
+            }
+            "agent_profiles" => {
+                let mut args = vec!["agent-profiles"];
+                let window;
+                if let Some(id) = params.get("window_id").and_then(serde_json::Value::as_u64) {
+                    window = id.to_string();
+                    args.extend(["--window-id", &window]);
+                }
+                if let Some(profile) = params.get("profile").and_then(serde_json::Value::as_str) {
+                    args.extend(["--profile", profile]);
+                }
+                self.run_wtcli(&args).await
+            }
             "publish" => {
                 let payload = params.to_string();
                 self.run_wtcli(&["publish", "--existing-only", &payload])

@@ -702,6 +702,7 @@ pub struct TabSession {
     pub move_position_candidates: Vec<&'static MovePositionSpec>,
     /// Index into whichever popup candidate list is active.
     pub command_popup_selected: usize,
+    pub(crate) delegate_popup_dismissed: bool,
 
     // Filled in Milestone 2 once each tab has its own ACP SessionId.
     #[allow(dead_code)]

@@ -379,3 +379,10 @@ time.days_other: "%{count} days ago"
 # maintain by hand.
 
 setup.subtitle.wsl_agent_missing: "We could not find \"%{agent}\" in the %{distro} login environment. Check this Linux user's installation, PATH, and shell profile, then try again."  # WSL login-shell detection; %{agent} is the agent display name, %{distro} is the Linux distribution name. {Locked="PATH"}
+# Summary of /delegate, which starts a task using an AI agent profile (not a terminal profile).
+commands.delegate.summary: "Delegate a task using an agent profile"
+# Enter the task text after the command; the profile and destination switches are optional. {Locked="/delegate","--profile","<profile>","--target","tab|pane"} are literal command syntax, not translatable labels.
+delegate.usage: "Enter a task after /delegate. Optional: --profile <profile> and --target tab|pane."
+delegate.started: "Delegated task started."
+# %{error} is diagnostic text describing why task startup failed; preserve it verbatim. {Locked="%{error}"}
+delegate.failed: "Could not start the delegated task: %{error}"

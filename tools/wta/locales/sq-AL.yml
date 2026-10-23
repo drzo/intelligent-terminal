@@ -309,3 +309,7 @@ system.provider_command_blocked_by_policy: "%{command}: Miratimi automatik ësht
 system.model_unknown: "Model i panjohur %{model} — shkruani /model për të parë listën e disponueshme."  # {Locked="%{model}","/model"}
 
 setup.subtitle.wsl_agent_missing: "Nuk mundëm të gjenim \"%{agent}\" në mjedisin e hyrjes së %{distro}. Kontrolloni instalimin, PATH dhe profilin e shell-it të këtij përdoruesi Linux, pastaj provoni përsëri."  # WSL login-shell detection; %{agent} is the agent display name, %{distro} is the Linux distribution name. {Locked="PATH"}
+commands.delegate.summary: "Delegoni një detyrë duke përdorur një profil agjenti"
+delegate.usage: "Futni një detyrë pas /delegate. Opsionale: --profile <profile> dhe --target tab|pane."  # {Locked="/delegate","--profile","<profile>","--target","tab|pane"} Literal command syntax.
+delegate.started: "Detyra e deleguar filloi."
+delegate.failed: "Nuk mund të fillohej detyra e deleguar: %{error}"  # {Locked="%{error}"} Diagnostic text.

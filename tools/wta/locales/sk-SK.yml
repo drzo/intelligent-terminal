@@ -310,3 +310,7 @@ system.provider_command_blocked_by_policy: "%{command}: Automatické schvaľovan
 system.model_unknown: "Neznámy model %{model} — zadaním /model zobrazíte dostupný zoznam."  # {Locked="%{model}","/model"}
 
 setup.subtitle.wsl_agent_missing: "V prihlasovacom prostredí distribúcie %{distro} sa nepodarilo nájsť \"%{agent}\". Skontrolujte inštaláciu, PATH a profil shellu tohto používateľa Linuxu a skúste to znova."  # WSL login-shell detection; %{agent} is the agent display name, %{distro} is the Linux distribution name. {Locked="PATH"}
+commands.delegate.summary: "Delegujte úlohu pomocou profilu agenta"
+delegate.usage: "Za /delegate zadajte úlohu. Voliteľné: --profile <profile> a --target tab|pane."  # {Locked="/delegate","--profile","<profile>","--target","tab|pane"} Literal command syntax.
+delegate.started: "Delegovaná úloha bola spustená."
+delegate.failed: "Delegovanú úlohu sa nepodarilo spustiť: %{error}"  # {Locked="%{error}"} Diagnostic text.

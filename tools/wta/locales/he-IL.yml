@@ -310,3 +310,7 @@ system.provider_command_blocked_by_policy: "%{command}: אישור אוטומט�
 system.model_unknown: "מודל לא ידוע %{model} — הקלד /model כדי לראות את הרשימה הזמינה."  # {Locked="%{model}","/model"}
 
 setup.subtitle.wsl_agent_missing: "לא הצלחנו למצוא את \"%{agent}\" בסביבת הכניסה של %{distro}. בדוק את ההתקנה, PATH ופרופיל המעטפת של משתמש Linux זה, ולאחר מכן נסה שוב."  # WSL login-shell detection; %{agent} is the agent display name, %{distro} is the Linux distribution name. {Locked="PATH"}
+commands.delegate.summary: "האצל משימה באמצעות פרופיל סוכן"
+delegate.usage: "הזן משימה אחרי /delegate. אפשרויות נוספות: --profile <profile> וגם --target tab|pane."  # {Locked="/delegate","--profile","<profile>","--target","tab|pane"} Literal command syntax.
+delegate.started: "המשימה שהואצלה התחילה."
+delegate.failed: "לא ניתן להתחיל את המשימה שהואצלה: %{error}"  # {Locked="%{error}"} Diagnostic text.

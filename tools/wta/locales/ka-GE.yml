@@ -310,3 +310,7 @@ system.provider_command_blocked_by_policy: "%{command}: ავტომატუ
 system.model_unknown: "უცნობი მოდელი %{model} — აკრიფეთ /model ხელმისაწვდომი სიის სანახავად."  # {Locked="%{model}","/model"}
 
 setup.subtitle.wsl_agent_missing: "%{distro}-ის შესვლის გარემოში \"%{agent}\" ვერ ვიპოვეთ. შეამოწმეთ Linux-ის ამ მომხმარებლის ინსტალაცია, PATH და გარსის პროფილი, შემდეგ ხელახლა სცადეთ."  # WSL login-shell detection; %{agent} is the agent display name, %{distro} is the Linux distribution name. {Locked="PATH"}
+commands.delegate.summary: "გადააბარეთ დავალება აგენტის პროფილის გამოყენებით"
+delegate.usage: "/delegate-ის შემდეგ შეიყვანეთ დავალება. არასავალდებულო: --profile <profile> და --target tab|pane."  # {Locked="/delegate","--profile","<profile>","--target","tab|pane"} Literal command syntax.
+delegate.started: "გადაბარებული დავალება დაიწყო."
+delegate.failed: "გადაბარებული დავალების დაწყება ვერ მოხერხდა: %{error}"  # {Locked="%{error}"} Diagnostic text.

@@ -310,3 +310,7 @@ system.provider_command_blocked_by_policy: "%{command}: Onarpen automatikoa desg
 system.model_unknown: "%{model} modelo ezezaguna — idatzi /model erabilgarri dagoen zerrenda ikusteko."  # {Locked="%{model}","/model"}
 
 setup.subtitle.wsl_agent_missing: "Ezin izan dugu \"%{agent}\" aurkitu %{distro} saioa hasteko ingurunean. Egiaztatu Linux erabiltzaile honen instalazioa, PATH eta shell-profila, eta saiatu berriro."  # WSL login-shell detection; %{agent} is the agent display name, %{distro} is the Linux distribution name. {Locked="PATH"}
+commands.delegate.summary: "Eskuordetu zeregin bat agente-profil bat erabiliz"
+delegate.usage: "Idatzi zeregin bat /delegate komandoaren ondoren. Aukerakoa: --profile <profile> eta --target tab|pane."  # {Locked="/delegate","--profile","<profile>","--target","tab|pane"} Literal command syntax.
+delegate.started: "Eskuordetutako zeregina hasi da."
+delegate.failed: "Ezin izan da eskuordetutako zeregina hasi: %{error}"  # {Locked="%{error}"} Diagnostic text.

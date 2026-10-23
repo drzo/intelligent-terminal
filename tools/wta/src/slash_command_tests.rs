@@ -23,6 +23,78 @@ fn run_slash(app: &mut App, name: &str) {
     });
 }
 
+fn seed_delegate_profiles(app: &mut App) {
+    app.delegate_profiles = serde_json::from_value(serde_json::json!([
+        {"guid":"{claude-project}","name":"Claude Project","agent_id":"claude","default":true},
+        {"guid":"{claude-review}","name":"Claude Review","agent_id":"claude"}
+    ]))
+    .unwrap();
+}
+
+#[test]
+fn delegate_completion_keeps_profile_and_placement_optional_and_does_not_launch() {
+    let _locale = crate::test_support::lock_locale();
+    let mut app = test_app();
+    seed_delegate_profiles(&mut app);
+    app.current_tab_mut().replace_input("/delegate ".into());
+    assert_eq!(app.delegate_candidates().len(), 4);
+    app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+    assert_eq!(
+        app.current_tab().input,
+        "/delegate --profile {claude-project} "
+    );
+    assert_eq!(app.delegate_candidates().len(), 2);
+    app.current_tab_mut().command_popup_selected = 1;
+    app.handle_key(KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE));
+    assert_eq!(
+        app.current_tab().input,
+        "/delegate --profile {claude-project} --target pane "
+    );
+    assert!(app.delegate_candidates().is_empty());
+    assert!(app.test_prompt_rx.as_mut().unwrap().try_recv().is_err());
+}
+
+#[test]
+fn delegate_escape_dismisses_completion_without_deleting_the_draft() {
+    let _locale = crate::test_support::lock_locale();
+    let mut app = test_app();
+    seed_delegate_profiles(&mut app);
+    app.current_tab_mut()
+        .replace_input("/delegate Claude".into());
+    assert_eq!(app.delegate_candidates().len(), 2);
+    app.handle_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
+    assert_eq!(app.current_tab().input, "/delegate Claude");
+    assert!(!app.command_popup_visible());
+}
+
+#[test]
+fn delegate_missing_task_retains_draft_and_never_submits_to_current_agent() {
+    let _locale = crate::test_support::lock_locale();
+    let mut app = test_app();
+    app.current_tab_mut()
+        .replace_input("/delegate --target pane --profile {chosen} ".into());
+    app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+    assert_eq!(
+        app.current_tab().input,
+        "/delegate --target pane --profile {chosen} "
+    );
+    assert!(app.test_prompt_rx.as_mut().unwrap().try_recv().is_err());
+    assert_eq!(last_notice(&app).0, NoticeKind::Warning);
+}
+
+#[test]
+fn delegate_completion_does_not_recreate_a_closed_tab() {
+    let _locale = crate::test_support::lock_locale();
+    let mut app = test_app();
+    let count = app.tab_sessions.len();
+    app.handle_event(AppEvent::DelegateCompleted {
+        tab_id: "closed-tab".into(),
+        result: Ok(()),
+    });
+    assert_eq!(app.tab_sessions.len(), count);
+    assert!(!app.tab_sessions.contains_key("closed-tab"));
+}
+
 fn custom_model(selection_id: &str, model_id: &str) -> CustomModelCatalogEntry {
     CustomModelCatalogEntry {
         selection_id: selection_id.into(),
@@ -291,13 +363,13 @@ fn agent_prefix_match_ranks_before_client_substring_match() {
     }];
     app.handle_event(AppEvent::SessionCommandsUpdated {
         session_id: "session-1".into(),
-        commands: vec![session_command("delta", "Synthetic command", None)],
+        commands: vec![session_command("odyssey", "Synthetic command", None)],
     });
-    type_input(&mut app, "/del");
+    type_input(&mut app, "/od");
 
     let names = popup_command_names(&app);
 
-    assert_eq!(names, vec!["delta", "model"]);
+    assert_eq!(names, vec!["odyssey", "model"]);
 
     app.command_popup_down();
     app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));

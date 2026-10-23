@@ -312,3 +312,7 @@ system.provider_command_blocked_by_policy: "%{command}: تم تعطيل المو
 system.model_unknown: "نموذج غير معروف %{model} — اكتب /model لعرض القائمة المتاحة."  # {Locked="%{model}","/model"}
 
 setup.subtitle.wsl_agent_missing: "تعذر العثور على \"%{agent}\" في بيئة تسجيل الدخول إلى %{distro}. تحقق من التثبيت وPATH وملف تعريف الصدفة لدى مستخدم Linux هذا، ثم أعد المحاولة."  # WSL login-shell detection; %{agent} is the agent display name, %{distro} is the Linux distribution name. {Locked="PATH"}
+commands.delegate.summary: "فوّض مهمة باستخدام ملف تعريف عامل"
+delegate.usage: "أدخل مهمة بعد /delegate. اختياري: --profile <profile> و --target tab|pane."  # {Locked="/delegate","--profile","<profile>","--target","tab|pane"} Literal command syntax.
+delegate.started: "بدأت المهمة المفوّضة."
+delegate.failed: "تعذر بدء المهمة المفوّضة: %{error}"  # {Locked="%{error}"} Diagnostic text.

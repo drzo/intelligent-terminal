@@ -305,3 +305,7 @@ system.provider_command_blocked_by_policy: "%{command}: 您組織的原則已停
 system.model_unknown: "未知模型 %{model} — 輸入 /model 查看可用清單。"  # {Locked="%{model}","/model"}
 
 setup.subtitle.wsl_agent_missing: "無法在 %{distro} 的登入環境中找到 \"%{agent}\"。請檢查此 Linux 使用者的安裝狀態、PATH 和 shell 設定檔，然後重試。"  # WSL login-shell detection; %{agent} is the agent display name, %{distro} is the Linux distribution name. {Locked="PATH"}
+commands.delegate.summary: "使用智能體設定檔委派工作"
+delegate.usage: "在 /delegate 後輸入工作。選用參數：--profile <profile> 和 --target tab|pane。"  # {Locked="/delegate","--profile","<profile>","--target","tab|pane"} Literal command syntax.
+delegate.started: "已啟動委派的工作。"
+delegate.failed: "無法啟動委派的工作：%{error}"  # {Locked="%{error}"} Diagnostic text.

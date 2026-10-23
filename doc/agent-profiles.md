@@ -117,6 +117,35 @@ security boundary.
 
 ## Splitting panes
 
+### Delegating a task to a profile
+
+The built-in assistant's `/delegate` command can select one of these profiles
+and open it in a new tab or a new pane:
+
+```text
+/delegate --profile "Claude - Project" --target pane Fix the current build error
+```
+
+Typing `/delegate ` offers profile and placement suggestions. Selecting a
+suggestion fills in an option without launching; write the task and press Enter
+to start it. Both options are optional: the default is the first eligible
+profile for the configured delegation provider, opened in a new tab.
+Copies are separate choices and retain their own command and environment.
+The source work pane supplies the working directory and bounded terminal
+output; the assistant conversation is not copied or switched to another agent.
+
+Host delegation entry points share this profile-based launch path, including
+command-palette delegation, the Agents sidebar launcher, and confirmed Session
+MCP delegation. Profile arguments take precedence over the older host
+`delegateModel` and custom delegate command settings. A missing or blocked
+profile is an error, not a request to fall back to a shell.
+Delegation requires a direct interactive agent command so its startup task can
+be passed safely. An explicit shell-wrapper profile can still be launched
+normally, but is not rewritten for delegation. Host delegation does not convert
+a WSL working directory or switch execution environments automatically.
+
+### Ordinary splits
+
 The default split shortcuts and tab split action use `splitMode: "profile"`.
 Configure the source profile's `defaultSplitProfile` in `settings.json`; there
 is no default split target control in the profile editor. It determines the target:

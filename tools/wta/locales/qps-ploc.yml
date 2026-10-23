@@ -311,3 +311,7 @@ system.provider_command_blocked_by_policy: "%{command}: [Åûţöḿåţïç å�
 system.model_unknown: "[Ûñķñöŵñ ḿöďéĺ %{model} — ţÿṗé /model ţö śéé ţĥé åṽåïĺåƀĺé ĺïśţ.!!!! !!!! !!!! !!!!]"  # {Locked="%{model}","/model"}
 
 setup.subtitle.wsl_agent_missing: "[Ŵé çöûĺď ñöţ ƒïñď \"%{agent}\" ïñ ţĥé %{distro} ĺöğïñ éñṽïŕöñḿéñţ. Çĥéçķ ţĥïś Linux ûśéŕ'ś ïñśţåĺĺåţïöñ, PATH, åñď śĥéĺĺ ṗŕöƒïĺé, ţĥéñ ţŕÿ åğåïñ.!!!! !!!! !!!! !!!! !!!!]"  # WSL login-shell detection; %{agent} is the agent display name, %{distro} is the Linux distribution name. {Locked="PATH"}
+commands.delegate.summary: "[Ďéĺéğåţé å ţåśķ üśïñğ åñ åğéñţ ṕŕöƒïĺé!!!! !!!!]"
+delegate.usage: "[Éñţéŕ å ţåśķ åƒţéŕ /delegate. Öṕţïöñåĺ: --profile <profile> åñď --target tab|pane.!!!! !!!! !!!!]"  # {Locked="/delegate","--profile","<profile>","--target","tab|pane"} Literal command syntax.
+delegate.started: "[Ďéĺéğåţéď ţåśķ śţåŕţéď.!!!! !!!!]"
+delegate.failed: "[Çöüĺď ñöţ śţåŕţ ţĥé ďéĺéğåţéď ţåśķ: %{error}!!!! !!!!]"  # {Locked="%{error}"} Diagnostic text.

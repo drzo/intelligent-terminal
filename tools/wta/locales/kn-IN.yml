@@ -311,3 +311,7 @@ system.provider_command_blocked_by_policy: "%{command}: ನಿಮ್ಮ ಸಂ�
 system.model_unknown: "ಅಪರಿಚಿತ ಮಾದರಿ %{model} — ಲಭ್ಯವಿರುವ ಪಟ್ಟಿಯನ್ನು ನೋಡಲು /model ಟೈಪ್ ಮಾಡಿ."  # {Locked="%{model}","/model"}
 
 setup.subtitle.wsl_agent_missing: "%{distro} ಲಾಗಿನ್ ಪರಿಸರದಲ್ಲಿ \"%{agent}\" ಕಂಡುಬಂದಿಲ್ಲ. ಈ Linux ಬಳಕೆದಾರರ ಸ್ಥಾಪನೆ, PATH ಮತ್ತು ಶೆಲ್ ಪ್ರೊಫೈಲ್ ಪರಿಶೀಲಿಸಿ, ನಂತರ ಮತ್ತೆ ಪ್ರಯತ್ನಿಸಿ."  # WSL login-shell detection; %{agent} is the agent display name, %{distro} is the Linux distribution name. {Locked="PATH"}
+commands.delegate.summary: "ಏಜೆಂಟ್ ಪ್ರೊಫೈಲ್ ಬಳಸಿ ಕಾರ್ಯವನ್ನು ನಿಯೋಜಿಸಿ"
+delegate.usage: "/delegate ನಂತರ ಕಾರ್ಯವನ್ನು ನಮೂದಿಸಿ. ಐಚ್ಛಿಕ: --profile <profile> ಮತ್ತು --target tab|pane."  # {Locked="/delegate","--profile","<profile>","--target","tab|pane"} Literal command syntax.
+delegate.started: "ನಿಯೋಜಿಸಲಾದ ಕಾರ್ಯ ಪ್ರಾರಂಭವಾಗಿದೆ."
+delegate.failed: "ನಿಯೋಜಿಸಲಾದ ಕಾರ್ಯವನ್ನು ಪ್ರಾರಂಭಿಸಲು ಸಾಧ್ಯವಾಗಲಿಲ್ಲ: %{error}"  # {Locked="%{error}"} Diagnostic text.

@@ -33,6 +33,7 @@ namespace Microsoft::Terminal::Protocol
             __uuidof(ITerminalProtocol),
             __uuidof(ITerminalProtocolEventSink),
             __uuidof(ITerminalProtocolNativeAgent),
+            __uuidof(ITerminalProtocolAgentProfiles),
             __uuidof(ITerminalHandoff),
             __uuidof(ITerminalHandoff2),
             __uuidof(ITerminalHandoff3),

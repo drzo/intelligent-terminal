@@ -925,6 +925,58 @@ try
 }
 CATCH_RETURN()
 
+STDMETHODIMP TerminalProtocolComServer::GetAgentProfiles(unsigned __int64 windowId, BSTR profileId, BSTR* json)
+try
+{
+    RETURN_HR_IF_NULL(E_POINTER, json);
+    *json = nullptr;
+    RETURN_HR_IF(E_NOT_VALID_STATE, !s_emperor);
+    const auto windows = s_emperor->GetWindows();
+    auto target = _getMostRecentHost(windows);
+    if (windowId != 0)
+    {
+        target = nullptr;
+        for (const auto& host : windows)
+        {
+            if (host->Logic().WindowProperties().WindowId() == windowId)
+            {
+                target = host;
+                break;
+            }
+        }
+    }
+    RETURN_HR_IF(E_FAIL, !target);
+    const auto page = _getPage(target.get());
+    RETURN_HR_IF(E_FAIL, !page);
+    *json = _bstr(winrt::to_string(page.GetProtocolAgentProfiles(_hstr(profileId)).get()));
+    return S_OK;
+}
+CATCH_RETURN()
+
+STDMETHODIMP TerminalProtocolComServer::GetAgentContext(GUID ownerPane, long maxLines, long maxCharacters, BSTR* json)
+try
+{
+    RETURN_HR_IF_NULL(E_POINTER, json);
+    *json = nullptr;
+    RETURN_HR_IF(E_INVALIDARG, maxLines < 0 || maxLines > 1000 || maxCharacters < 0 || maxCharacters > 100000);
+    RETURN_HR_IF(E_NOT_VALID_STATE, !s_emperor);
+    for (const auto& host : s_emperor->GetWindows())
+    {
+        if (const auto page = _getPage(host.get()))
+        {
+            auto context = page.GetProtocolDelegationContext(winrt::guid{ ownerPane }, maxLines, maxCharacters).get();
+            if (context.Pane.SessionId != winrt::guid{})
+            {
+                context.Pane.WindowId = host->Logic().WindowProperties().WindowId();
+                *json = _bstrFromJson(_toJson(context));
+                return S_OK;
+            }
+        }
+    }
+    return E_FAIL;
+}
+CATCH_RETURN()
+
 // ============================================================================
 // Mutations
 // ============================================================================

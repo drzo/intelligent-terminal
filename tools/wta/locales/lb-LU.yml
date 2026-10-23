@@ -310,3 +310,7 @@ system.provider_command_blocked_by_policy: "%{command}: Automatesch Genehmegung 
 system.model_unknown: "Onbekannte Modell %{model} — tippt /model fir d'verfügbar Lëscht ze gesinn."  # {Locked="%{model}","/model"}
 
 setup.subtitle.wsl_agent_missing: "Mir konnten \"%{agent}\" net am Umeldëmfeld vu %{distro} fannen. Kontrolléiert d'Installatioun, PATH an de Shell-Profil vun dësem Linux-Benotzer a probéiert dann nach eng Kéier."  # WSL login-shell detection; %{agent} is the agent display name, %{distro} is the Linux distribution name. {Locked="PATH"}
+commands.delegate.summary: "Delegéiert eng Aufgab mat engem Agentprofil"
+delegate.usage: "Gitt eng Aufgab no /delegate an. Optional: --profile <profile> an --target tab|pane."  # {Locked="/delegate","--profile","<profile>","--target","tab|pane"} Literal command syntax.
+delegate.started: "Déi delegéiert Aufgab gouf gestart."
+delegate.failed: "Déi delegéiert Aufgab konnt net gestart ginn: %{error}"  # {Locked="%{error}"} Diagnostic text.

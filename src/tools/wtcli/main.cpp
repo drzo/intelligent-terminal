@@ -783,6 +783,47 @@ int wmain(int argc, wchar_t** argv)
             FormatPaneStatusHuman(status);
     });
 
+    std::string agentProfileId;
+    uint64_t agentProfileWindow = 0;
+    auto* agentProfilesCmd = app.add_subcommand("agent-profiles", "List native agent profiles or resolve a profile's launch command");
+    agentProfilesCmd->add_option("-p,--profile", agentProfileId, "Exact profile GUID to resolve");
+    agentProfilesCmd->add_option("-w,--window-id", agentProfileWindow, "Owning window ID");
+    agentProfilesCmd->callback([&]() {
+        auto server = connect();
+        if (!server) return;
+        winrt::com_ptr<ITerminalProtocolAgentProfiles> profiles;
+        auto hr = server->QueryInterface(__uuidof(ITerminalProtocolAgentProfiles), profiles.put_void());
+        Json::Value result;
+        if (SUCCEEDED(hr))
+        {
+            wil::unique_bstr profile{ Bstr(agentProfileId) };
+            hr = CallJson([&](BSTR* json) { return profiles->GetAgentProfiles(agentProfileWindow, profile.get(), json); }, result);
+        }
+        if (FAILED(hr)) { fprintf(stderr, "GetAgentProfiles failed: 0x%08X\n", static_cast<uint32_t>(hr)); exitCode = 1; return; }
+        PrintJson(result);
+    });
+
+    std::string agentContextOwner;
+    int agentContextLines = 30, agentContextChars = 4000;
+    auto* agentContextCmd = app.add_subcommand("agent-context", "Capture context from an agent's owning work pane");
+    agentContextCmd->add_option("--owner", agentContextOwner)->required();
+    agentContextCmd->add_option("--max-lines", agentContextLines)->check(CLI::Range(0, 1000));
+    agentContextCmd->add_option("--max-chars", agentContextChars)->check(CLI::Range(0, 100000));
+    agentContextCmd->callback([&]() {
+        auto server = connect();
+        if (!server) return;
+        winrt::com_ptr<ITerminalProtocolAgentProfiles> profiles;
+        auto hr = server->QueryInterface(__uuidof(ITerminalProtocolAgentProfiles), profiles.put_void());
+        Json::Value result;
+        if (SUCCEEDED(hr))
+        {
+            const auto owner = ResolveSessionId(server.get(), agentContextOwner);
+            hr = CallJson([&](BSTR* json) { return profiles->GetAgentContext(owner, agentContextLines, agentContextChars, json); }, result);
+        }
+        if (FAILED(hr)) { fprintf(stderr, "GetAgentContext failed: 0x%08X\n", static_cast<uint32_t>(hr)); exitCode = 1; return; }
+        PrintJson(result);
+    });
+
     // ── new-tab ──
     std::string newTabCommand, newTabTitle, newTabCwd, newTabProfile, newTabAgentProvider;
     uint64_t newTabWindowId = 0;

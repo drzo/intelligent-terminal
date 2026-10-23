@@ -386,6 +386,10 @@ fn bind_choice_target(
         let requires_target = matches!(action, RecommendedAction::Send { .. })
             || matches!(
                 action,
+                RecommendedAction::OpenAndSend { agent: Some(_), .. }
+            )
+            || matches!(
+                action,
                 RecommendedAction::OpenAndSend {
                     target: OpenTarget::Panel,
                     ..
@@ -481,64 +485,78 @@ async fn execute_choice(
                 direction,
                 profile,
             } => {
+                if let Some(agent) = agent.as_deref() {
+                    let runtime = lookup_delegate_agent(delegate_agents, agent)?;
+                    let created = crate::native_profile::launch(
+                        shell_mgr,
+                        crate::native_profile::LaunchRequest {
+                            profile: profile.as_deref(),
+                            provider: Some(&runtime.id),
+                            source_pane: parent.as_deref(),
+                            window_id: None,
+                            cwd: cwd.as_deref(),
+                            task: Some(input),
+                            include_context: false,
+                            placement: match target {
+                                OpenTarget::Tab => crate::native_profile::Placement::Tab,
+                                OpenTarget::Panel => crate::native_profile::Placement::Pane,
+                            },
+                            direction: direction.as_deref().unwrap_or("auto"),
+                            size: 0.5,
+                            background: false,
+                            title: title.as_deref(),
+                        },
+                    )
+                    .await?;
+                    if let (Some(session), Some(pane)) = (
+                        created["agent_session_id"].as_str(),
+                        created["session_id"].as_str(),
+                    ) {
+                        if event_tx
+                            .send(AppEvent::RegisterBornBoundSession {
+                                event: crate::agent_sessions::SessionEvent::SessionStarted {
+                                    key: session.to_string(),
+                                    cli_source: crate::agent_sessions::CliSource::from(
+                                        crate::session_registry::SessionHookCliSource::Known(
+                                            runtime.id.clone(),
+                                        ),
+                                    ),
+                                    pane_session_id: pane.to_string(),
+                                    cwd: created["cwd"]
+                                        .as_str()
+                                        .map(std::path::PathBuf::from)
+                                        .unwrap_or_default(),
+                                    title: String::new(),
+                                },
+                            })
+                            .is_err()
+                        {
+                            tracing::warn!(target: "delegate", "agent launched but session registration receiver closed");
+                        }
+                    }
+                    crate::telemetry::log_delegate_invoked("Agent");
+                    continue;
+                }
                 // Resolve profile: prefer explicit from LLM, fall back to active pane's profile
                 let active_pane = shell_mgr.wt_get_active_pane().await.ok();
                 let profile = resolve_agent_profile(profile.as_deref(), active_pane.as_ref());
 
                 ensure_non_empty("input", input)?;
-                let runtime = match agent.as_deref() {
-                    Some(agent) => Some(lookup_delegate_agent(delegate_agents, agent)?),
-                    None => None,
-                };
-                let runtime_name = runtime.map(|agent| agent.name.as_str());
-                let delivery_mode = runtime
-                    .map(|agent| agent.prompt_delivery)
-                    .unwrap_or(DelegatePromptDelivery::LaunchThenSend);
                 let target_label = open_target_label(target);
-                coordinator_log(&format!(
-                    "open_and_send begin target={} parent={:?} agent={:?} title={:?} direction={:?} delivery_mode={} input_chars={}",
-                    target_label,
-                    parent,
-                    agent,
-                    title,
-                    direction,
-                    delegate_prompt_delivery_label(delivery_mode),
-                    input.chars().count(),
-                ));
-                let _ = event_tx.send(AppEvent::ExecutionInfo(match runtime_name {
-                    Some(name) => format!("Opening {} for {}.", target_label, name),
-                    None => format!("Opening {}.", target_label),
-                }));
-                let pinned_session_id = runtime.and_then(|runtime| {
-                    pinned_session_id_for_runtime(
-                        runtime,
-                        delegate_command_launchable(&runtime.commandline),
-                    )
-                });
-                coordinator_log(&format!(
-                    "open_and_send pin decision agent={:?} pinned_session_id={:?}",
-                    agent, pinned_session_id
-                ));
-                let commandline = runtime
-                    .map(|runtime| {
-                        build_delegate_launch_commandline(
-                            runtime,
-                            Some(input),
-                            pinned_session_id.as_deref(),
-                        )
-                    })
-                    .transpose()?;
+                let _ = event_tx.send(AppEvent::ExecutionInfo(format!(
+                    "Opening {}.",
+                    target_label
+                )));
                 let pane_id = match target {
                     OpenTarget::Tab => {
-                        // Launch the delegate agent directly as the tab process.
                         let result = shell_mgr
                             .wt_create_tab_with_background(
-                                commandline.as_deref(),
+                                None,
                                 cwd.as_deref(),
-                                title.as_deref().or(runtime_name),
+                                title.as_deref(),
                                 profile.as_deref(),
                                 false,
-                                runtime.map(|runtime| runtime.id.as_str()),
+                                None,
                             )
                             .await
                             .context("failed to create tab")?;
@@ -553,12 +571,12 @@ async fn execute_choice(
                         let result = shell_mgr
                             .wt_split_pane(
                                 parent,
-                                commandline.as_deref(),
+                                None,
                                 cwd.as_deref(),
                                 direction.as_deref(),
                                 None,
                                 profile.as_deref(),
-                                runtime.map(|runtime| runtime.id.as_str()),
+                                None,
                             )
                             .await
                             .with_context(|| format!("failed to split pane {}", parent))?;
@@ -575,56 +593,11 @@ async fn execute_choice(
                     "open_and_send resolved target={} pane_id={}",
                     target_label, pane_id
                 ));
-                if runtime.is_some() {
-                    crate::telemetry::log_delegate_invoked("Agent");
-                }
                 let _ = event_tx.send(AppEvent::ExecutionInfo(format!(
                     "Opened {} pane {}.",
                     target_label, pane_id
                 )));
-                if let (Some(session_id), Some(runtime)) = (pinned_session_id.as_deref(), runtime) {
-                    let event = crate::agent_sessions::SessionEvent::SessionStarted {
-                        key: session_id.to_string(),
-                        cli_source: crate::agent_sessions::CliSource::from(
-                            crate::session_registry::SessionHookCliSource::Known(
-                                runtime.id.clone(),
-                            ),
-                        ),
-                        pane_session_id: pane_id.clone(),
-                        cwd: cwd
-                            .as_deref()
-                            .map(std::path::PathBuf::from)
-                            .unwrap_or_default(),
-                        title: String::new(),
-                    };
-                    coordinator_log(&format!(
-                        "open_and_send born-bound registering session_id={} pane={} cli={}",
-                        session_id, pane_id, runtime.id
-                    ));
-                    if event_tx
-                        .send(AppEvent::RegisterBornBoundSession { event })
-                        .is_err()
-                    {
-                        tracing::warn!(
-                            target: "coordinator",
-                            "born-bound registration event queue is unavailable",
-                        );
-                    }
-                }
-                if matches!(delivery_mode, DelegatePromptDelivery::LaunchThenSend) {
-                    send_input_to_new_pane(shell_mgr, &pane_id, input, event_tx).await?;
-                } else {
-                    coordinator_log(&format!(
-                        "open_and_send startup_prompt_delivery target={} pane_id={}",
-                        target_label, pane_id
-                    ));
-                    // commandline bakes in the user prompt — trace only.
-                    tracing::trace!(target: "coordinator.content", commandline = ?commandline, "open_and_send commandline");
-                    let _ = event_tx.send(AppEvent::ExecutionInfo(format!(
-                        "Passed startup prompt to pane {} on launch.",
-                        pane_id
-                    )));
-                }
+                send_input_to_new_pane(shell_mgr, &pane_id, input, event_tx).await?;
             }
             RecommendedAction::Open {
                 target,
@@ -831,6 +804,7 @@ fn lookup_delegate_agent<'a>(
         .ok_or_else(|| anyhow!("no delegate agent configured"))
 }
 
+#[cfg(test)]
 fn pinned_session_id_for_runtime(
     runtime: &DelegateAgentRuntime,
     launchable: bool,
@@ -910,6 +884,45 @@ fn build_delegate_launch_commandline(
     input: Option<&str>,
     session_id: Option<&str>,
 ) -> Result<String> {
+    build_launch_commandline(runtime, input, session_id, false)
+}
+
+pub(crate) fn build_profile_launch_commandline(
+    runtime: &DelegateAgentRuntime,
+    input: Option<&str>,
+    session_id: Option<&str>,
+) -> Result<String> {
+    build_launch_commandline(runtime, input, session_id, true)
+}
+
+fn profile_prompt_invocation(commandline: &str) -> Result<String> {
+    let mut tokens = split_windows_commandline(commandline);
+    let path = std::path::Path::new(&tokens[0]);
+    if path
+        .extension()
+        .and_then(|extension| extension.to_str())
+        .is_some_and(|extension| {
+            extension.eq_ignore_ascii_case("cmd") || extension.eq_ignore_ascii_case("bat")
+        })
+    {
+        let companion = path.with_extension("ps1");
+        anyhow::ensure!(
+            path.is_absolute() && companion.is_file(),
+            "this batch profile needs its adjacent PowerShell shim to accept a startup task"
+        );
+        tokens[0] = companion.to_string_lossy().into_owned();
+    }
+    Ok(join_windows_commandline(
+        &tokens.iter().map(String::as_str).collect::<Vec<_>>(),
+    ))
+}
+
+fn build_launch_commandline(
+    runtime: &DelegateAgentRuntime,
+    input: Option<&str>,
+    session_id: Option<&str>,
+    from_profile: bool,
+) -> Result<String> {
     let commandline = runtime.commandline.trim();
     if commandline.is_empty() {
         bail!("delegate agent runtime commandline is empty");
@@ -919,7 +932,11 @@ fn build_delegate_launch_commandline(
     }
     // Resolve bare names (e.g. "claude" → "claude.exe") at launch time so we
     // always see the current PATH, not a stale snapshot from process startup.
-    let resolved = resolve_commandline_executable(commandline);
+    let resolved = if from_profile {
+        commandline.to_string()
+    } else {
+        resolve_commandline_executable(commandline)
+    };
 
     // Identify the agent profile from the *raw* command line so flag lookups
     // (model, session id) see the real CLI -- not a later `cmd /c` wrapper, and
@@ -931,9 +948,11 @@ fn build_delegate_launch_commandline(
     // decide whether to pin a session id keeps that decision and the flag we
     // append here in agreement -- otherwise we could register a born-bound id
     // that the CLI was never actually launched with.
-    let profile = agent_registry::lookup_profile_by_id(agent_registry::resolve_agent_id_from_cmd(
-        commandline,
-    ));
+    let profile = agent_registry::lookup_profile_by_id(if from_profile {
+        &runtime.id
+    } else {
+        agent_registry::resolve_agent_id_from_cmd(commandline)
+    });
     ensure_delegate_supported(profile)?;
 
     // If a model is configured, append --model <value> using the agent's model flags.
@@ -965,10 +984,34 @@ fn build_delegate_launch_commandline(
             DelegatePromptDelivery::LaunchThenSend => resolved_ref.to_string(),
             DelegatePromptDelivery::LaunchWithStartupPrompt => {
                 ensure_non_empty("input", input)?;
-                build_delegate_startup_prompt_commandline(resolved_ref, input)?
+                if from_profile {
+                    let mut args = split_windows_commandline(resolved_ref);
+                    if let PromptFlag::Flag(flag) = profile.delegate_prompt_flag {
+                        args.push(flag.to_string());
+                    }
+                    args.push(input.to_string());
+                    join_windows_commandline(&args.iter().map(String::as_str).collect::<Vec<_>>())
+                } else {
+                    build_delegate_startup_prompt_commandline(resolved_ref, input)?
+                }
             }
         },
     };
+    if from_profile {
+        if let Some(input) = input {
+            if needs_shell_launch(&resolved) || input.contains('%') {
+                let invocation = profile_prompt_invocation(commandline)?;
+                return Ok(build_shell_multiline_delegate_launch(
+                    &invocation,
+                    profile,
+                    runtime.model.as_deref(),
+                    session_id,
+                    input,
+                    pwsh_available(),
+                ));
+            }
+        }
+    }
     // .cmd/.bat shims (e.g. npm-installed CLIs) can't be launched directly via
     // CreateProcess — normally we wrap with `cmd /c` so the interpreter resolves
     // them. But `cmd /c` truncates a command-line argument at the first newline
@@ -999,7 +1042,12 @@ fn build_delegate_launch_commandline(
                 }
             }
         }
-        return Ok(format!("cmd /c {}", raw));
+        return Ok(if from_profile {
+            let cmd = std::env::var("SystemRoot").context("SystemRoot is unavailable")?;
+            format!("\"{cmd}\\System32\\cmd.exe\" /d /s /v:off /c \"{raw}\"")
+        } else {
+            format!("cmd /c {}", raw)
+        });
     }
     Ok(raw)
 }
@@ -1923,13 +1971,6 @@ fn open_target_label(target: &OpenTarget) -> &'static str {
     }
 }
 
-fn delegate_prompt_delivery_label(delivery: DelegatePromptDelivery) -> &'static str {
-    match delivery {
-        DelegatePromptDelivery::LaunchThenSend => "launch_then_send",
-        DelegatePromptDelivery::LaunchWithStartupPrompt => "launch_with_startup_prompt",
-    }
-}
-
 fn summarize_json_for_log(value: &serde_json::Value) -> String {
     let json = serde_json::to_string(value).unwrap_or_else(|_| "<unserializable json>".to_string());
     truncate_for_log(&json, 512)
@@ -2030,6 +2071,7 @@ mod tests {
     struct RecordingWtChannel {
         requests: Mutex<Vec<(String, serde_json::Value)>>,
         fail_send: bool,
+        native_provider: Option<String>,
     }
 
     #[async_trait::async_trait]
@@ -2048,6 +2090,16 @@ mod tests {
             }
             Ok(match method {
                 "create_tab" | "split_pane" => json!({"session_id": "created-pane"}),
+                "get_delegate_context" | "get_pane_context" => json!({
+                    "pane": {"session_id":"host-pane","window_id":42,"cwd":"C:\\repo"},
+                    "content":"",
+                }),
+                "agent_profiles" => json!([{
+                    "guid":"{profile-fixture}", "name":"Project agent",
+                    "agent_id": self.native_provider.as_deref().unwrap_or("copilot"),
+                    "default":true,
+                    "commandline":"C:\\profile\\selected.exe --model profile-model",
+                }]),
                 _ => json!({}),
             })
         }
@@ -2207,7 +2259,10 @@ mod tests {
                     None,
                 )
                 .unwrap();
-                let channel = Arc::new(RecordingWtChannel::default());
+                let channel = Arc::new(RecordingWtChannel {
+                    native_provider: Some(provider.into()),
+                    ..Default::default()
+                });
                 let shell_mgr = Arc::new(
                     ShellManager::new().with_wt_channel(channel.clone() as Arc<dyn WtChannel>),
                 );
@@ -2249,6 +2304,7 @@ mod tests {
                     }
                 );
                 assert_eq!(params["native_agent_provider_id"], provider);
+                assert_eq!(params["profile"], "{profile-fixture}");
                 assert_eq!(params["cwd"], "C:\\repo");
                 if placement == "new_split" {
                     assert_eq!(params["session_id"], "host-pane");
@@ -2372,10 +2428,7 @@ mod tests {
     }
 
     #[test]
-    fn tab_target_actions_discard_model_provided_parent_even_with_host_target() {
-        // Tab-targeted open/open_and_send actions don't need a parent pane at
-        // all (they create a brand new tab), so any model-invented parent
-        // must be wiped rather than bound to the host's resolved pane.
+    fn agent_tabs_bind_host_source_while_plain_tabs_discard_model_parent() {
         let mut choice = RecommendationChoice {
             choice: 1,
             title: "Delegate to a new tab".to_string(),
@@ -2402,14 +2455,11 @@ mod tests {
             ],
         };
 
-        // Even though the host resolved a real target pane, tab actions must
-        // never inherit it (or retain the model's guess) since they open a
-        // brand new tab rather than routing into an existing pane.
         bind_choice_target(&mut choice, Some("real-pane-guid")).unwrap();
 
         assert!(matches!(
             &choice.actions[0],
-            RecommendedAction::OpenAndSend { parent: None, .. }
+            RecommendedAction::OpenAndSend { parent: Some(parent), .. } if parent == "real-pane-guid"
         ));
         assert!(matches!(
             &choice.actions[1],

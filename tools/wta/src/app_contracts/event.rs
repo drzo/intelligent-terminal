@@ -6,6 +6,15 @@ use super::{
 };
 
 pub enum AppEvent {
+    DelegateProfilesLoaded {
+        window_id: Option<String>,
+        tab_id: String,
+        result: Result<Vec<crate::native_profile::NativeProfile>, String>,
+    },
+    DelegateCompleted {
+        tab_id: String,
+        result: Result<(), String>,
+    },
     Key(KeyEvent),
     Mouse(MouseEvent),
     Tick,

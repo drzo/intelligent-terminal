@@ -309,3 +309,7 @@ system.provider_command_blocked_by_policy: "%{command}: Kua monoa te whakaaetang
 system.model_unknown: "Tauira kāore e mōhiotia %{model} — patohia /model kia kite i te rārangi e wātea ana."  # {Locked="%{model}","/model"}
 
 setup.subtitle.wsl_agent_missing: "Kāore i kitea \"%{agent}\" i te taiao takiuru o %{distro}. Tirohia te tāutanga, PATH me te kōtaha anga o tēnei kaiwhakamahi Linux, kātahi ka whakamātau anō."  # WSL login-shell detection; %{agent} is the agent display name, %{distro} is the Linux distribution name. {Locked="PATH"}
+commands.delegate.summary: "Tautapahia he tūmahi mā tētahi kōtaha māngai"
+delegate.usage: "Tāurua he tūmahi i muri i /delegate. He kōwhiringa: --profile <profile> me --target tab|pane."  # {Locked="/delegate","--profile","<profile>","--target","tab|pane"} Literal command syntax.
+delegate.started: "Kua tīmata te tūmahi i tautapahia."
+delegate.failed: "Kāore i taea te tīmata i te tūmahi i tautapahia: %{error}"  # {Locked="%{error}"} Diagnostic text.

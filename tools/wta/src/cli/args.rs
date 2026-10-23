@@ -388,6 +388,12 @@ pub(crate) enum Command {
     /// PROMPT, the prompt is baked into the agent's launch; omit PROMPT to open
     /// the agent interactively with no startup prompt.
     Delegate {
+        /// Exact native agent profile GUID or unique display name
+        #[arg(long)]
+        profile: Option<String>,
+        /// Pin host delegation to a source terminal or its owning helper
+        #[arg(long, value_parser = command_resolution::parse_non_empty)]
+        source_pane: Option<String>,
         /// Owning Terminal's master pipe. Required for exact session splits and
         /// live session registration; never inferred from another instance.
         #[arg(long, value_name = "PIPE_NAME")]

@@ -60,6 +60,14 @@ impl App {
     }
 
     pub(super) fn handle_key(&mut self, key: KeyEvent) {
+        if commands::parse(&self.current_tab().input)
+            .is_some_and(|command| command.kind == CommandKind::Delegate)
+        {
+            self.request_delegate_profiles();
+        } else {
+            self.delegate_profiles_requested = false;
+            self.current_tab_mut().delegate_popup_dismissed = false;
+        }
         let typing_key = matches!(key.code, KeyCode::Char(ch) if !ch.is_control())
             && modifiers_allow_text_input(key.modifiers);
         if !typing_key || !self.chat_input_has_edit_focus() {
@@ -785,6 +793,12 @@ impl App {
                 self.current_tab_mut().autofix.suggested_pane_id = None;
                 let active = self.active_tab_key().to_string();
                 self.emit_autofix_state_cleared(&active);
+            }
+            KeyCode::Esc if !self.delegate_candidates().is_empty() => {
+                self.current_tab_mut().delegate_popup_dismissed = true;
+            }
+            KeyCode::Tab if !self.delegate_candidates().is_empty() => {
+                self.complete_delegate_candidate();
             }
             KeyCode::Esc => {
                 self.current_tab_mut().clear_input();

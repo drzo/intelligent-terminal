@@ -2285,6 +2285,13 @@ namespace winrt::TerminalApp::implementation
             if (const auto& sourceControl = sourcePane->GetTerminalControl())
             {
                 activeCwd = sourceControl.WorkingDirectory();
+                if (delegateSource == L"host")
+                {
+                    if (const auto connection = sourceControl.Connection())
+                    {
+                        cmdline += L" --source-pane " + quoteArg(winrt::to_hstring(connection.SessionId()));
+                    }
+                }
             }
         }
         if (activeCwd.empty())
@@ -9246,10 +9253,7 @@ namespace winrt::TerminalApp::implementation
             auto environment = settingsInternal->EnvironmentVariables();
             if (settingsInternal->UsesManagedAgentCommand())
             {
-                ::Microsoft::Terminal::Settings::Model::AgentPolicy::Reload();
-                ::Microsoft::Terminal::AgentProfiles::CheckLaunchPolicy(
-                    profile.AgentProfileId(), *::Microsoft::Terminal::Settings::Model::AgentPolicy::GetSnapshot());
-                settingsInternal->Commandline(winrt::hstring{ ::Microsoft::Terminal::AgentProfiles::Command(profile, true) });
+                settingsInternal->Commandline(winrt::hstring{ ::Microsoft::Terminal::AgentProfiles::LaunchCommand(profile) });
             }
 
             // Update the path to be relative to whatever our CWD is.

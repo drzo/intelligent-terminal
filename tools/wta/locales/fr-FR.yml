@@ -310,3 +310,7 @@ system.provider_command_blocked_by_policy: "%{command}: L’approbation automati
 system.model_unknown: "Modèle inconnu %{model} — tapez /model pour afficher la liste disponible."  # {Locked="%{model}","/model"}
 
 setup.subtitle.wsl_agent_missing: "Nous n'avons pas trouvé « %{agent} » dans l'environnement de connexion de %{distro}. Vérifiez l'installation, PATH et le profil de l'interpréteur de commandes de cet utilisateur Linux, puis réessayez."  # WSL login-shell detection; %{agent} is the agent display name, %{distro} is the Linux distribution name. {Locked="PATH"}
+commands.delegate.summary: "Déléguer une tâche à l’aide d’un profil d’agent"
+delegate.usage: "Saisissez une tâche après /delegate. Facultatif : --profile <profile> et --target tab|pane."  # {Locked="/delegate","--profile","<profile>","--target","tab|pane"} Literal command syntax.
+delegate.started: "La tâche déléguée a démarré."
+delegate.failed: "Impossible de démarrer la tâche déléguée : %{error}"  # {Locked="%{error}"} Diagnostic text.

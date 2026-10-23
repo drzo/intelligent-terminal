@@ -310,3 +310,7 @@ system.provider_command_blocked_by_policy: "%{command}: تأیید خودکار 
 system.model_unknown: "مدل ناشناخته %{model} — برای دیدن فهرست در دسترس، /model را تایپ کنید."  # {Locked="%{model}","/model"}
 
 setup.subtitle.wsl_agent_missing: "نتوانستیم \"%{agent}\" را در محیط ورود %{distro} پیدا کنیم. نصب، PATH و نمایهٔ پوستهٔ این کاربر Linux را بررسی کنید، سپس دوباره تلاش کنید."  # WSL login-shell detection; %{agent} is the agent display name, %{distro} is the Linux distribution name. {Locked="PATH"}
+commands.delegate.summary: "یک کار را با استفاده از نمایهٔ عامل واگذار کنید"
+delegate.usage: "پس از /delegate یک کار وارد کنید. اختیاری: --profile <profile> و --target tab|pane."  # {Locked="/delegate","--profile","<profile>","--target","tab|pane"} Literal command syntax.
+delegate.started: "کار واگذارشده شروع شد."
+delegate.failed: "شروع کار واگذارشده ممکن نشد: %{error}"  # {Locked="%{error}"} Diagnostic text.

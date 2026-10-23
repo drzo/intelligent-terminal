@@ -310,3 +310,7 @@ system.provider_command_blocked_by_policy: "%{command}: Автоматическ
 system.model_unknown: "Неизвестная модель %{model} — введите /model, чтобы увидеть доступный список."  # {Locked="%{model}","/model"}
 
 setup.subtitle.wsl_agent_missing: "Не удалось найти \"%{agent}\" в среде входа %{distro}. Проверьте установку, PATH и профиль оболочки этого пользователя Linux, затем повторите попытку."  # WSL login-shell detection; %{agent} is the agent display name, %{distro} is the Linux distribution name. {Locked="PATH"}
+commands.delegate.summary: "Делегировать задачу с помощью профиля агента"
+delegate.usage: "Введите задачу после /delegate. Необязательно: --profile <profile> и --target tab|pane."  # {Locked="/delegate","--profile","<profile>","--target","tab|pane"} Literal command syntax.
+delegate.started: "Делегированная задача запущена."
+delegate.failed: "Не удалось запустить делегированную задачу: %{error}"  # {Locked="%{error}"} Diagnostic text.

@@ -308,3 +308,7 @@ system.provider_command_blocked_by_policy: "%{command}: [!! Aut_omatic approval 
 system.model_unknown: "[!! Unk_nown model %{model} — type /model to see the available list. !!]"  # {Locked="%{model}","/model"}
 
 setup.subtitle.wsl_agent_missing: "[!! \u202eWe_ could not find \"%{agent}\" in the %{distro} login environment. Check this Linux user's installation, PATH, and shell profile, then try again.\u202c !!]"  # WSL login-shell detection; %{agent} is the agent display name, %{distro} is the Linux distribution name. {Locked="PATH"}
+commands.delegate.summary: "[!! \u202eDelegate a task using an agent profile\u202c !!]"
+delegate.usage: "[!! \u202eEnter a task after \u202c/delegate\u202e. Optional: \u202c--profile <profile>\u202e and \u202c--target tab|pane\u202e.\u202c !!]"  # {Locked="/delegate","--profile","<profile>","--target","tab|pane"} Literal command syntax.
+delegate.started: "[!! \u202eDelegated task started.\u202c !!]"
+delegate.failed: "[!! \u202eCould not start the delegated task: \u202c%{error} !!]"  # {Locked="%{error}"} Diagnostic text.

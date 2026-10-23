@@ -477,7 +477,7 @@ impl ShellManager {
 
     // ── Windows Terminal protocol operations ────────────────────────────
 
-    fn wt(&self) -> anyhow::Result<&dyn WtChannel> {
+    pub(crate) fn wt(&self) -> anyhow::Result<&dyn WtChannel> {
         self.wt_channel
             .as_deref()
             .filter(|ch| ch.is_available())
@@ -670,6 +670,22 @@ impl ShellManager {
     pub async fn wt_get_active_pane(&self) -> anyhow::Result<serde_json::Value> {
         self.wt()?
             .request("get_active_pane", serde_json::json!({}))
+            .await
+    }
+
+    pub async fn wt_agent_profiles(
+        &self,
+        window_id: Option<u64>,
+        profile: Option<&str>,
+    ) -> anyhow::Result<serde_json::Value> {
+        self.wt()?
+            .request(
+                "agent_profiles",
+                serde_json::json!({
+                    "window_id": window_id,
+                    "profile": profile,
+                }),
+            )
             .await
     }
 }

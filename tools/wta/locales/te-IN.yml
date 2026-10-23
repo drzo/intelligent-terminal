@@ -311,3 +311,7 @@ system.provider_command_blocked_by_policy: "%{command}: మీ సంస్థ �
 system.model_unknown: "తెలియని మోడల్ %{model} — అందుబాటులో ఉన్న జాబితాను చూడటానికి /model టైప్ చేయండి."  # {Locked="%{model}","/model"}
 
 setup.subtitle.wsl_agent_missing: "%{distro} లాగిన్ వాతావరణంలో \"%{agent}\" కనుగొనబడలేదు. ఈ Linux వినియోగదారు ఇన్‌స్టాలేషన్, PATH మరియు షెల్ ప్రొఫైల్‌ను తనిఖీ చేసి, మళ్లీ ప్రయత్నించండి."  # WSL login-shell detection; %{agent} is the agent display name, %{distro} is the Linux distribution name. {Locked="PATH"}
+commands.delegate.summary: "ఏజెంట్ ప్రొఫైల్ ఉపయోగించి పనిని అప్పగించండి"
+delegate.usage: "/delegate తర్వాత పనిని నమోదు చేయండి. ఐచ్ఛికం: --profile <profile> మరియు --target tab|pane."  # {Locked="/delegate","--profile","<profile>","--target","tab|pane"} Literal command syntax.
+delegate.started: "అప్పగించిన పని ప్రారంభమైంది."
+delegate.failed: "అప్పగించిన పనిని ప్రారంభించలేకపోయాము: %{error}"  # {Locked="%{error}"} Diagnostic text.

@@ -310,3 +310,7 @@ system.provider_command_blocked_by_policy: "%{command}: Автоматик ра�
 system.model_unknown: "Билгесез модель %{model} — мөмкин булган исемлекне күрү өчен /model языгыз."  # {Locked="%{model}","/model"}
 
 setup.subtitle.wsl_agent_missing: "%{distro} керү мохитендә \"%{agent}\" табылмады. Бу Linux кулланучысының урнаштыруын, PATH үзгәрешлесен һәм тышча профилен тикшерегез, аннары кабатлап карагыз."  # WSL login-shell detection; %{agent} is the agent display name, %{distro} is the Linux distribution name. {Locked="PATH"}
+commands.delegate.summary: "Агент профилен кулланып биремне тапшырыгыз"
+delegate.usage: "/delegate артыннан биремне кертегез. Өстәмә: --profile <profile> һәм --target tab|pane."  # {Locked="/delegate","--profile","<profile>","--target","tab|pane"} Literal command syntax.
+delegate.started: "Тапшырылган бирем башланды."
+delegate.failed: "Тапшырылган биремне башлап булмады: %{error}"  # {Locked="%{error}"} Diagnostic text.

@@ -310,3 +310,7 @@ system.provider_command_blocked_by_policy: "%{command}: A aprobación automátic
 system.model_unknown: "Modelo descoñecido %{model} — escriba /model para ver a lista dispoñible."  # {Locked="%{model}","/model"}
 
 setup.subtitle.wsl_agent_missing: "Non puidemos atopar \"%{agent}\" no contorno de inicio de sesión de %{distro}. Comprobe a instalación, PATH e o perfil do intérprete de ordes deste usuario de Linux e ténteo de novo."  # WSL login-shell detection; %{agent} is the agent display name, %{distro} is the Linux distribution name. {Locked="PATH"}
+commands.delegate.summary: "Delegue unha tarefa cun perfil de axente"
+delegate.usage: "Introduza unha tarefa despois de /delegate. Opcional: --profile <profile> e --target tab|pane."  # {Locked="/delegate","--profile","<profile>","--target","tab|pane"} Literal command syntax.
+delegate.started: "Iniciouse a tarefa delegada."
+delegate.failed: "Non se puido iniciar a tarefa delegada: %{error}"  # {Locked="%{error}"} Diagnostic text.

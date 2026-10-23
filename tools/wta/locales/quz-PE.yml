@@ -309,3 +309,7 @@ system.provider_command_blocked_by_policy: "%{command}: Organizaciónniykip pol�
 system.model_unknown: "Mana riqsisqa modelo %{model} — akllana lista rikunaykipaq /model qillqay."  # {Locked="%{model}","/model"}
 
 setup.subtitle.wsl_agent_missing: "%{distro} yaykuna muyuriqpi \"%{agent}\" nisqata mana tarirqaykuchu. Kay Linux llamk'achiqpa churasqanta, PATH nisqata, shellpa perfilninta ima qhawariy, chaymanta yapamanta ruwachiy."  # WSL login-shell detection; %{agent} is the agent display name, %{distro} is the Linux distribution name. {Locked="PATH"}
+commands.delegate.summary: "Agente perfilwan huk ruwanata quykuy"
+delegate.usage: "/delegate qhipaman huk ruwanata qillqay. Munaspa: --profile <profile> chaymanta --target tab|pane."  # {Locked="/delegate","--profile","<profile>","--target","tab|pane"} Literal command syntax.
+delegate.started: "Qusqa ruwana qallarikurqan."
+delegate.failed: "Qusqa ruwanata qallariyta mana atikurqanchu: %{error}"  # {Locked="%{error}"} Diagnostic text.

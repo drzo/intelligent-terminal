@@ -310,3 +310,7 @@ system.provider_command_blocked_by_policy: "%{command}: Kelulusan automatik dilu
 system.model_unknown: "Model tidak diketahui %{model} — taip /model untuk melihat senarai yang tersedia."  # {Locked="%{model}","/model"}
 
 setup.subtitle.wsl_agent_missing: "Kami tidak dapat menemui \"%{agent}\" dalam persekitaran log masuk %{distro}. Semak pemasangan, PATH dan profil shell pengguna Linux ini, kemudian cuba lagi."  # WSL login-shell detection; %{agent} is the agent display name, %{distro} is the Linux distribution name. {Locked="PATH"}
+commands.delegate.summary: "Wakilkan tugas menggunakan profil ejen"
+delegate.usage: "Masukkan tugas selepas /delegate. Pilihan: --profile <profile> dan --target tab|pane."  # {Locked="/delegate","--profile","<profile>","--target","tab|pane"} Literal command syntax.
+delegate.started: "Tugas yang diwakilkan telah dimulakan."
+delegate.failed: "Tidak dapat memulakan tugas yang diwakilkan: %{error}"  # {Locked="%{error}"} Diagnostic text.

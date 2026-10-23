@@ -6881,6 +6881,8 @@ namespace TerminalAppLocalTests
     void TabTests::AgentProfileCommandlineCopies()
     {
         auto page = _commonSetup();
+        Profile selectedProfile{ nullptr };
+        winrt::Windows::Foundation::IAsyncOperation<winrt::hstring> catalogOperation{ nullptr };
         TestOnUIThread([&]() {
             const CascadiaSettings settings{
                 LR"({"defaultProfile":"{00000000-0000-0000-0000-000000000001}",
@@ -6910,6 +6912,8 @@ namespace TerminalAppLocalTests
             VERIFY_IS_TRUE(winrt::Microsoft::Terminal::Settings::TerminalSettings::CreateWithProfile(settings, profile).DefaultSettings()->UsesManagedAgentCommand());
 
             page->_settings = settings;
+            selectedProfile = editedCopy;
+            catalogOperation = page->GetProtocolAgentProfiles(winrt::hstring{ Utils::GuidToString(editedCopy.Guid()) });
             using State = winrt::Microsoft::Terminal::TerminalConnection::ConnectionState;
             const auto manager = winrt::get_self<winrt::TerminalApp::implementation::ContentManager>(page->_manager);
             for (const auto& launchProfile : { profile, copy, editedCopy })
@@ -6960,6 +6964,20 @@ namespace TerminalAppLocalTests
                 pane->Close();
             }
         });
+        const auto resolved = catalogOperation.get();
+        Json::Value catalog;
+        std::string errors;
+        std::istringstream stream{ winrt::to_string(resolved) };
+        VERIFY_IS_TRUE(Json::parseFromStream(Json::CharReaderBuilder{}, stream, &catalog, &errors));
+        VERIFY_ARE_EQUAL(Json::ArrayIndex{ 1 }, catalog.size());
+        VERIFY_ARE_EQUAL(std::string{ "claude --model handwritten --custom-option" }, catalog[0]["commandline"].asString());
+        VERIFY_ARE_EQUAL(std::string{ "claude" }, catalog[0]["agent_id"].asString());
+        VERIFY_IS_FALSE(catalog[0]["managed"].asBool());
+        TestOnUIThread([&]() {
+            selectedProfile.Hidden(true);
+            catalogOperation = page->GetProtocolAgentProfiles(winrt::hstring{ Utils::GuidToString(selectedProfile.Guid()) });
+        });
+        VERIFY_THROWS(catalogOperation.get(), winrt::hresult_error);
     }
 
     void TabTests::NewTabFlyoutAgentIconsAdaptToTheme()

@@ -309,3 +309,7 @@ system.provider_command_blocked_by_policy: "%{command}: Tha cead fèin-ghluasada
 system.model_unknown: "Modail neo-aithnichte %{model} — sgrìobh /model gus an liosta a tha ri làimh fhaicinn."  # {Locked="%{model}","/model"}
 
 setup.subtitle.wsl_agent_missing: "Cha b' urrainn dhuinn \"%{agent}\" a lorg ann an àrainneachd clàraidh a-steach %{distro}. Thoir sùil air stàladh, PATH agus pròifil na slige aig a' chleachdaiche Linux seo, agus feuch ris a-rithist."  # WSL login-shell detection; %{agent} is the agent display name, %{distro} is the Linux distribution name. {Locked="PATH"}
+commands.delegate.summary: "Tiomnadh gnìomh le pròifil àidhent"
+delegate.usage: "Cuir a-steach gnìomh às dèidh /delegate. Roghainneil: --profile <profile> agus --target tab|pane."  # {Locked="/delegate","--profile","<profile>","--target","tab|pane"} Literal command syntax.
+delegate.started: "Thòisich an gnìomh a chaidh a thiomnadh."
+delegate.failed: "Cha b’ urrainn dhuinn an gnìomh a chaidh a thiomnadh a thòiseachadh: %{error}"  # {Locked="%{error}"} Diagnostic text.

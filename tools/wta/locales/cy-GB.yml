@@ -311,3 +311,7 @@ system.provider_command_blocked_by_policy: "%{command}: Mae cymeradwyaeth awtoma
 system.model_unknown: "Model anhysbys %{model} — teipiwch /model i weld y rhestr sydd ar gael."  # {Locked="%{model}","/model"}
 
 setup.subtitle.wsl_agent_missing: "Ni allem ddod o hyd i \"%{agent}\" yn amgylchedd mewngofnodi %{distro}. Gwiriwch osodiad, PATH a phroffil cragen y defnyddiwr Linux hwn, yna rhowch gynnig arall arni."  # WSL login-shell detection; %{agent} is the agent display name, %{distro} is the Linux distribution name. {Locked="PATH"}
+commands.delegate.summary: "Dirprwywch dasg gan ddefnyddio proffil asiant"
+delegate.usage: "Rhowch dasg ar ôl /delegate. Dewisol: --profile <profile> a --target tab|pane."  # {Locked="/delegate","--profile","<profile>","--target","tab|pane"} Literal command syntax.
+delegate.started: "Dechreuwyd y dasg ddirprwyedig."
+delegate.failed: "Methu dechrau'r dasg ddirprwyedig: %{error}"  # {Locked="%{error}"} Diagnostic text.

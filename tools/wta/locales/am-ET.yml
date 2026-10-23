@@ -311,3 +311,7 @@ system.provider_command_blocked_by_policy: "%{command}: ራስ-ሰር ማጽደ�
 system.model_unknown: "ያልታወቀ ሞዴል %{model} — የሚገኘውን ዝርዝር ለማየት /model ይተይቡ።"  # {Locked="%{model}","/model"}
 
 setup.subtitle.wsl_agent_missing: "በ%{distro} የመግቢያ አካባቢ ውስጥ \"%{agent}\"ን ማግኘት አልቻልንም። የዚህን Linux ተጠቃሚ ጭነት፣ PATH እና የሼል መገለጫ ያረጋግጡ፣ ከዚያ እንደገና ይሞክሩ።"  # WSL login-shell detection; %{agent} is the agent display name, %{distro} is the Linux distribution name. {Locked="PATH"}
+commands.delegate.summary: "የወኪል መገለጫ በመጠቀም ተግባር ይመድቡ"
+delegate.usage: "ከ /delegate በኋላ ተግባር ያስገቡ። አማራጭ፦ --profile <profile> እና --target tab|pane።"  # {Locked="/delegate","--profile","<profile>","--target","tab|pane"} Literal command syntax.
+delegate.started: "የተመደበው ተግባር ተጀምሯል።"
+delegate.failed: "የተመደበውን ተግባር መጀመር አልተቻለም፦ %{error}"  # {Locked="%{error}"} Diagnostic text.

@@ -19,6 +19,7 @@
 #include "../../types/inc/utils.hpp"
 #include "../TerminalSettingsAppAdapterLib/TerminalSettings.h"
 #include "../inc/AgentSourceUtils.h"
+#include "../inc/AgentProfileUtils.h"
 
 #include <wil/resource.h>
 #include <json/json.h>
@@ -37,6 +38,72 @@ namespace Protocol = winrt::Microsoft::Terminal::Protocol;
 
 namespace winrt::TerminalApp::implementation
 {
+    static winrt::guid _getSessionIdFromPane(const std::shared_ptr<Pane>& pane);
+    static std::shared_ptr<Pane> _getProtocolSourcePane(const winrt::com_ptr<Tab>& tab);
+
+    IAsyncOperation<Protocol::PaneContext> TerminalPage::GetProtocolDelegationContext(winrt::guid ownerPane, int32_t maxLines, int32_t maxCharacters)
+    {
+        auto strong = get_strong();
+        co_await wil::resume_foreground(Dispatcher());
+        for (const auto& tab : _RuntimeTabs())
+        {
+            const auto impl = _GetTabImpl(tab);
+            const auto root = impl ? impl->GetRootPane() : nullptr;
+            const auto owner = root ? root->FindPaneBySessionId(ownerPane) : nullptr;
+            if (owner)
+            {
+                const auto source = owner->IsAgentPane() ? _getProtocolSourcePane(impl) : owner;
+                if (source)
+                {
+                    co_return co_await GetProtocolPaneContext(_getSessionIdFromPane(source), true, maxLines, maxCharacters);
+                }
+                break;
+            }
+        }
+        co_return Protocol::PaneContext{};
+    }
+
+    IAsyncOperation<hstring> TerminalPage::GetProtocolAgentProfiles(hstring profileId)
+    {
+        auto strong = get_strong();
+        co_await wil::resume_foreground(Dispatcher());
+        namespace Registry = ::Microsoft::Terminal::Settings::Model::AgentRegistry;
+        namespace Profiles = ::Microsoft::Terminal::AgentProfiles;
+        ::Microsoft::Terminal::Settings::Model::AgentPolicy::Reload();
+        const auto policy = ::Microsoft::Terminal::Settings::Model::AgentPolicy::GetSnapshot();
+        Json::Value result{ Json::arrayValue };
+        for (const auto& profile : _settings.ActiveProfiles())
+        {
+            const auto id = profile.AgentProfileId();
+            const auto guid = ::Microsoft::Console::Utils::GuidToString(profile.Guid());
+            if (profile.Hidden() || id.empty() ||
+                !Registry::IsNativeAgentProviderAllowed(std::wstring_view{ id }, *policy) ||
+                (!profileId.empty() && profileId != guid))
+            {
+                continue;
+            }
+            if (Profiles::IsManaged(profile) && policy->yoloMode == ::Microsoft::Terminal::Settings::Model::AgentPolicy::PolicyState::Blocked)
+            {
+                continue;
+            }
+            Json::Value entry;
+            entry["guid"] = to_string(guid);
+            entry["name"] = to_string(profile.Name());
+            entry["agent_id"] = to_string(id);
+            entry["default"] = til::equals_insensitive_ascii(std::wstring_view{ id }, std::wstring_view{ _settings.GlobalSettings().EffectiveDelegateAgent() });
+            if (!profileId.empty())
+            {
+                entry["commandline"] = to_string(hstring{ Profiles::LaunchCommand(profile) });
+                entry["managed"] = Profiles::IsManaged(profile);
+            }
+            result.append(std::move(entry));
+        }
+        THROW_HR_IF_MSG(E_INVALIDARG, !profileId.empty() && result.empty(), "Agent profile is unavailable or blocked by policy");
+        Json::StreamWriterBuilder writer;
+        writer["indentation"] = "";
+        co_return to_hstring(Json::writeString(writer, result));
+    }
+
     // Helper to get PID from a pane's terminal control connection.
     static uint32_t _getPidFromPane(const std::shared_ptr<Pane>& pane)
     {

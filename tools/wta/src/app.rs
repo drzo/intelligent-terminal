@@ -97,6 +97,7 @@ fn agent_command_on_enter(input: &str, selected: Option<&AvailableAgent>) -> Opt
 mod agent_markdown;
 mod attachments;
 mod autofix;
+pub(crate) mod delegate;
 mod input_edit;
 mod prompt_queue;
 mod queue_controls;
@@ -1441,6 +1442,8 @@ pub struct App {
     host_agent_allowlist_present: bool,
     /// Installed subset of the host-allowed agents, refreshed by `/agent`.
     pub available_agents: Vec<AvailableAgent>,
+    delegate_profiles: Vec<crate::native_profile::NativeProfile>,
+    delegate_profiles_requested: bool,
     agent_source_probe_generation: u64,
     /// True when preflight detected an issue and is showing Setup screen.
     /// Prevents AgentError from overriding the preflight Setup.
@@ -1826,6 +1829,8 @@ impl App {
             allowed_agent_ids: Vec::new(),
             host_agent_allowlist_present: false,
             available_agents: Vec::new(),
+            delegate_profiles: Vec::new(),
+            delegate_profiles_requested: false,
             agent_source_probe_generation: 0,
             preflight_setup_active: false,
             agent_name: String::new(),
@@ -5737,6 +5742,8 @@ impl App {
             AppEvent::PostLoginAuthRecovery { .. } => "post_login_auth_recovery",
             AppEvent::AuthRecoveryTimedOut { .. } => "auth_recovery_timed_out",
             AppEvent::AgentSourcesDiscovered { .. } => "agent_sources_discovered",
+            AppEvent::DelegateProfilesLoaded { .. } => "delegate_profiles_loaded",
+            AppEvent::DelegateCompleted { .. } => "delegate_completed",
             AppEvent::PreflightComplete(_) => "preflight_complete",
             AppEvent::AgentReconnectPreflightComplete { .. } => {
                 "agent_reconnect_preflight_complete"
@@ -6363,7 +6370,10 @@ impl App {
         // Static command and move candidates borrow the tab's lists. Agent
         // candidates are filtered from the small cached available-agent list.
         let agent_candidates: Vec<_> = self.available_agent_command_candidates().collect();
-        let candidates = if !agent_candidates.is_empty() {
+        let delegate_candidates = self.delegate_candidates();
+        let candidates = if !delegate_candidates.is_empty() {
+            crate::ui::PopupCandidates::Delegate(delegate_candidates)
+        } else if !agent_candidates.is_empty() {
             crate::ui::PopupCandidates::Agents(agent_candidates)
         } else if !tab.move_position_candidates.is_empty() {
             crate::ui::PopupCandidates::MovePositions(tab.move_position_candidates.as_slice())
@@ -6426,7 +6436,8 @@ impl App {
 
     /// Whether the command popup is effectively visible this frame.
     pub(super) fn command_popup_visible(&self) -> bool {
-        self.current_tab().command_popup_visible()
+        !self.delegate_candidates().is_empty()
+            || self.current_tab().command_popup_visible()
             || self.available_agent_command_candidates().next().is_some()
             || !self.agent_slash_command_candidates().is_empty()
     }
@@ -6474,6 +6485,10 @@ impl App {
     }
 
     fn command_popup_candidate_count(&self) -> usize {
+        let delegate_count = self.delegate_candidates().len();
+        if delegate_count > 0 {
+            return delegate_count;
+        }
         let agent_count = self.available_agent_command_candidates().count();
         if agent_count > 0 {
             agent_count
@@ -6616,6 +6631,9 @@ impl App {
         //    `/he` → /help) and never submits the raw text as a prompt, so
         //    this arm is always consumed even if there is no selection.
         if self.command_popup_visible() {
+            if self.complete_delegate_candidate() {
+                return true;
+            }
             let selected_agent = self.selected_agent_command_candidate();
             if let Some(parsed) = agent_command_on_enter(&self.current_tab().input, selected_agent)
             {
@@ -6637,6 +6655,9 @@ impl App {
             if let Some(candidate) = self.selected_slash_command_candidate() {
                 let name = candidate.name().to_string();
                 if candidate.completion_behavior().prepares_free_text() {
+                    if name == "delegate" {
+                        self.request_delegate_profiles();
+                    }
                     let tab = self.current_tab_mut();
                     tab.replace_input(format!("/{name} "));
                     return true;
@@ -6674,7 +6695,7 @@ impl App {
         match commands::classify(&self.current_tab().input) {
             ParseOutcome::Command(cmd) => {
                 // /fix consumes the draft only after queue capacity has been checked.
-                if cmd.kind != CommandKind::Fix {
+                if !matches!(cmd.kind, CommandKind::Fix | CommandKind::Delegate) {
                     self.current_tab_mut().discard_input();
                 }
                 self.handle_slash_command(cmd);
@@ -6737,6 +6758,7 @@ impl App {
             CommandKind::Stop => self.cmd_stop(in_flight, cancelling),
             CommandKind::New => self.cmd_new(prompt_blocked),
             CommandKind::Fix => self.cmd_fix(prompt_blocked, cmd.rest),
+            CommandKind::Delegate => self.cmd_delegate(cmd.rest),
             CommandKind::Sessions => self.cmd_sessions(),
             CommandKind::Restart => self.cmd_restart(),
             CommandKind::Agent => self.cmd_agent(cmd.rest),
@@ -7702,6 +7724,9 @@ impl App {
         };
         let mut cmd = std::process::Command::new(exe);
         cmd.arg("delegate").arg(prompt);
+        if let Some(pane) = self.pane_id.as_deref() {
+            cmd.arg("--source-pane").arg(pane);
+        }
         if let Some(pipe) = self
             .deferred_acp
             .as_ref()

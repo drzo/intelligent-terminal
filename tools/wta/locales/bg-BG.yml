@@ -312,3 +312,7 @@ system.provider_command_blocked_by_policy: "%{command}: Автоматичнот
 system.model_unknown: "Неизвестен модел %{model} — въведете /model, за да видите наличния списък."  # {Locked="%{model}","/model"}
 
 setup.subtitle.wsl_agent_missing: "Не успяхме да намерим \"%{agent}\" в средата за влизане на %{distro}. Проверете инсталацията, PATH и профила на обвивката на този потребител на Linux, след което опитайте отново."  # WSL login-shell detection; %{agent} is the agent display name, %{distro} is the Linux distribution name. {Locked="PATH"}
+commands.delegate.summary: "Делегирайте задача чрез профил на агент"
+delegate.usage: "Въведете задача след /delegate. По избор: --profile <profile> и --target tab|pane."  # {Locked="/delegate","--profile","<profile>","--target","tab|pane"} Literal command syntax.
+delegate.started: "Делегираната задача е стартирана."
+delegate.failed: "Делегираната задача не можа да бъде стартирана: %{error}"  # {Locked="%{error}"} Diagnostic text.

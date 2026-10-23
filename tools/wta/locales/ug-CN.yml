@@ -318,3 +318,7 @@ system.provider_command_blocked_by_policy: "%{command}: ئاپتوماتىك ت�
 system.model_unknown: "نامەلۇم مودېل %{model} — ئىشلەتكىلى بولىدىغان تىزىملىكنى كۆرۈش ئۈچۈن /model نى كىرگۈزۈڭ."  # {Locked="%{model}","/model"}
 
 setup.subtitle.wsl_agent_missing: "%{distro} كىرىش مۇھىتىدا \"%{agent}\" نى تاپالمىدۇق. بۇ Linux ئىشلەتكۈچىسىنىڭ قاچىلاش ھالىتىنى، PATH ۋە shell ئارخىپىنى تەكشۈرۈپ، ئاندىن قايتا سىناڭ."  # WSL login-shell detection; %{agent} is the agent display name, %{distro} is the Linux distribution name. {Locked="PATH"}
+commands.delegate.summary: "ۋاكالەتچى ئارخىپىنى ئىشلىتىپ ۋەزىپە تاپشۇرۇڭ"
+delegate.usage: "/delegate دىن كېيىن ۋەزىپە كىرگۈزۈڭ. ئىختىيارىي: --profile <profile> ۋە --target tab|pane."  # {Locked="/delegate","--profile","<profile>","--target","tab|pane"} Literal command syntax.
+delegate.started: "تاپشۇرۇلغان ۋەزىپە باشلاندى."
+delegate.failed: "تاپشۇرۇلغان ۋەزىپىنى باشلىغىلى بولمىدى: %{error}"  # {Locked="%{error}"} Diagnostic text.

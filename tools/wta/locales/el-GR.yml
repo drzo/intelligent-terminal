@@ -311,3 +311,7 @@ system.provider_command_blocked_by_policy: "%{command}: Η αυτόματη έγ
 system.model_unknown: "Άγνωστο μοντέλο %{model} — πληκτρολογήστε /model για να δείτε τη διαθέσιμη λίστα."  # {Locked="%{model}","/model"}
 
 setup.subtitle.wsl_agent_missing: "Δεν μπορέσαμε να βρούμε το \"%{agent}\" στο περιβάλλον σύνδεσης του %{distro}. Ελέγξτε την εγκατάσταση, το PATH και το προφίλ κελύφους αυτού του χρήστη Linux και δοκιμάστε ξανά."  # WSL login-shell detection; %{agent} is the agent display name, %{distro} is the Linux distribution name. {Locked="PATH"}
+commands.delegate.summary: "Αναθέστε μια εργασία χρησιμοποιώντας προφίλ πράκτορα"
+delegate.usage: "Εισαγάγετε μια εργασία μετά το /delegate. Προαιρετικά: --profile <profile> και --target tab|pane."  # {Locked="/delegate","--profile","<profile>","--target","tab|pane"} Literal command syntax.
+delegate.started: "Η εργασία που ανατέθηκε ξεκίνησε."
+delegate.failed: "Δεν ήταν δυνατή η έναρξη της εργασίας που ανατέθηκε: %{error}"  # {Locked="%{error}"} Diagnostic text.

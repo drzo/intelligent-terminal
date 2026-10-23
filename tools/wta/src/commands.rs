@@ -24,6 +24,7 @@ pub enum CommandKind {
     /// invoked manually. Any text after `/fix` is passed through as an
     /// extra hint to steer the diagnosis (`/fix the path looks wrong`).
     Fix,
+    Delegate,
     /// Replace the shared master and Agent CLI pool. Each viable helper keeps
     /// its pane and reconnects its immutable binding over the stable pipe with
     /// a clean session. Only an unavailable helper requires pane recreation.
@@ -98,6 +99,12 @@ pub const REGISTRY: &[CommandSpec] = &[
         summary_key: "commands.fix.summary",
         kind: CommandKind::Fix,
         completion_behavior: CompletionBehavior::OptionalFreeText,
+    },
+    CommandSpec {
+        name: "delegate",
+        summary_key: "commands.delegate.summary",
+        kind: CommandKind::Delegate,
+        completion_behavior: CompletionBehavior::RequireFreeText,
     },
     CommandSpec {
         name: "restart",
@@ -520,6 +527,7 @@ mod tests {
                 ("clear", ExecuteImmediately),
                 ("new", ExecuteImmediately),
                 ("fix", OptionalFreeText),
+                ("delegate", RequireFreeText),
                 ("restart", ExecuteImmediately),
                 ("stop", ExecuteImmediately),
                 ("sessions", ExecuteImmediately),
@@ -528,12 +536,6 @@ mod tests {
                 ("config", OpenPicker),
                 ("move", OpenPicker),
             ]
-        );
-        assert!(
-            !actual
-                .iter()
-                .any(|(_, behavior)| *behavior == RequireFreeText),
-            "required free-text commands currently come from the ACP session registry"
         );
     }
 

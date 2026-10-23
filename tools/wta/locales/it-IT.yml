@@ -310,3 +310,7 @@ system.provider_command_blocked_by_policy: "%{command}: L'approvazione automatic
 system.model_unknown: "Modello sconosciuto %{model} — digita /model per visualizzare l'elenco disponibile."  # {Locked="%{model}","/model"}
 
 setup.subtitle.wsl_agent_missing: "Non abbiamo trovato \"%{agent}\" nell'ambiente di accesso di %{distro}. Controlla l'installazione, PATH e il profilo della shell di questo utente Linux, quindi riprova."  # WSL login-shell detection; %{agent} is the agent display name, %{distro} is the Linux distribution name. {Locked="PATH"}
+commands.delegate.summary: "Delega un'attività usando un profilo agente"
+delegate.usage: "Inserisci un'attività dopo /delegate. Facoltativo: --profile <profile> e --target tab|pane."  # {Locked="/delegate","--profile","<profile>","--target","tab|pane"} Literal command syntax.
+delegate.started: "Attività delegata avviata."
+delegate.failed: "Impossibile avviare l'attività delegata: %{error}"  # {Locked="%{error}"} Diagnostic text.

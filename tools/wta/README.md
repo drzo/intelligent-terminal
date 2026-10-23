@@ -779,9 +779,51 @@ History has no suggestion counts, numbering, or recommendation checkmarks.
 
 ## Interactive delegate tabs
 
-`wta delegate` without a prompt opens the configured interactive agent CLI in
-a fresh tab. The Agents sidebar's default `+` button uses this same delegation
-path, including provider, model, policy, and explicit host/WSL source selection;
+Host delegation uses a native agent **Terminal profile** as its launch
+configuration. The selected profile supplies the command, model arguments,
+environment, appearance, elevation, and close-on-exit behavior. With no explicit
+profile, the first visible, policy-allowed profile matching the configured
+delegate provider is selected. Missing profiles fail explicitly; the launcher
+does not invent a replacement command or fall back to a shell.
+The separate `delegateModel`/custom-command settings no longer override a host
+profile's command. Configure those arguments in the agent profile instead.
+Profile-owned resume, continue, and session-ID arguments are preserved; a new
+session ID is pinned only when the profile has not already selected a session.
+
+In the assistant input, `/delegate ` offers profile and placement completion:
+
+```text
+/delegate Investigate this failure
+/delegate --profile "Claude Project" Investigate this failure
+/delegate --target pane Investigate this failure
+/delegate --profile <profile-guid> --target tab Investigate this failure
+```
+
+Both options are optional and may appear in either order. `--agent` is an alias
+for `--profile`; use a GUID, unique profile name, or an unambiguous provider ID.
+The picker inserts GUIDs so copied profiles with the same display name remain
+distinct. Enter or Tab on a suggestion only completes that option; entering a
+nonempty task and pressing Enter launches it. Esc dismisses the suggestions
+without deleting the draft. `--` ends option parsing for a task beginning with
+`--`. Tab is the default placement; pane placement splits the owning work pane.
+The current assistant provider, ACP session, and history are not replaced.
+
+The source terminal is resolved from the owning helper, not a later global
+active-window query. Its cwd and bounded recent output (up to 30 lines and
+4,000 characters) are captured together and attached to the task. Chat history
+is not copied. Host profiles reject a Linux cwd rather than silently launching
+in another directory. Profile commands must invoke the interactive agent
+directly; arbitrary shell wrappers are not rewritten to guess prompt delivery.
+Batch profiles need their adjacent PowerShell shim to accept a startup task;
+delegation never substitutes another PATH-resolved provider for a missing shim.
+Explicit WSL delegation retains its existing source-specific CLI path and is
+not offered by the host-profile picker.
+
+`wta delegate --profile <guid-or-name>` uses the same host launch service as
+`/delegate`, command-palette `?` delegation, and confirmed Session MCP
+delegation. Without a prompt it opens the profile interactively in a fresh tab.
+The Agents sidebar's default `+` button uses this same delegation
+path, including profile, policy, and explicit host/WSL source selection;
 it does not open an assistant pane or resume a conversation. The normal Tabs
 `+`, explicit profile dropdown entries, and existing shortcuts are unchanged.
 

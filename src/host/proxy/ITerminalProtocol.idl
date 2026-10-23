@@ -14,6 +14,21 @@
 
 import "unknwn.idl";
 
+[
+    object,
+    uuid(0419A91E-19EA-4629-95BF-FF1C9EF50850),
+    pointer_default(unique)
+] interface ITerminalProtocolAgentProfiles : IUnknown
+{
+    HRESULT GetAgentProfiles([in] unsigned hyper windowId,
+                             [in] BSTR profileId,
+                             [out, retval] BSTR* json);
+    HRESULT GetAgentContext([in] GUID ownerPane,
+                            [in] long maxLines,
+                            [in] long maxCharacters,
+                            [out, retval] BSTR* json);
+};
+
 // LOAD BEARING (same discipline as ITerminalHandoff): OpenConsoleProxy.dll is a
 // single shared proxy/stub DLL. Never change or reuse the UUIDs below.
 

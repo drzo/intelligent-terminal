@@ -30,6 +30,7 @@ mod hook_contract_tests;
 mod locale_parity_tests;
 mod logging;
 mod master;
+mod native_profile;
 mod osc52;
 mod pane_context;
 mod protocol;

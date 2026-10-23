@@ -86,6 +86,8 @@ pub(crate) async fn run(command: Command, json_mode: bool) -> Result<()> {
             payload_json,
         } => agent_tools::run_action_proposal(channel, payload_json).await,
         Command::Delegate {
+            profile,
+            source_pane,
             master,
             prompt,
             agent,
@@ -102,6 +104,8 @@ pub(crate) async fn run(command: Command, json_mode: bool) -> Result<()> {
             split_size,
         } => {
             delegate::run(
+                profile.as_deref(),
+                source_pane.as_deref(),
                 prompt.as_deref(),
                 &agent,
                 delegate_agent.as_deref(),

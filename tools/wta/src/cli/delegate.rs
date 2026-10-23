@@ -6,6 +6,8 @@ use crate::shell::wt_channel::{CliChannel, WtChannel};
 use crate::shell::ShellManager;
 
 pub(crate) async fn run(
+    profile: Option<&str>,
+    source_pane: Option<&str>,
     prompt: Option<&str>,
     agent_cmd: &str,
     delegate_agent_cmd: Option<&str>,
@@ -78,6 +80,18 @@ pub(crate) async fn run(
         };
         split_cwd = Some(row.cwd.to_string_lossy().into_owned());
     }
+    anyhow::ensure!(
+        (profile.is_none() && source_pane.is_none()) || requested_source == AgentSource::Host,
+        "--profile and --source-pane select host-native delegation, not an explicit WSL delegate"
+    );
+    if requested_source == AgentSource::Host && profile.is_none() && delegate_agent_id.is_none() {
+        if let Some(command) = delegate_agent_cmd {
+            anyhow::ensure!(
+                crate::agent_registry::is_known_id(command),
+                "custom host delegation requires --profile or an exact --delegate-agent-id"
+            );
+        }
+    }
 
     let (debug_tx, _) = tokio::sync::mpsc::unbounded_channel::<crate::app::DebugMessage>();
     let channel = match CliChannel::connect()
@@ -94,6 +108,48 @@ pub(crate) async fn run(
         }
     };
     let shell_mgr = ShellManager::new().with_wt_channel(Arc::new(channel) as Arc<dyn WtChannel>);
+
+    if requested_source == AgentSource::Host {
+        let created = crate::native_profile::launch(
+            &shell_mgr,
+            crate::native_profile::LaunchRequest {
+                profile,
+                provider: delegate_agent_id
+                    .or(delegate_agent_cmd.filter(|id| crate::agent_registry::is_known_id(id))),
+                source_pane: split_pane.or(source_pane),
+                window_id: None,
+                cwd: split_cwd.as_deref().or(cwd),
+                task: prompt,
+                include_context: prompt.is_some(),
+                placement: if split_pane.is_some() {
+                    crate::native_profile::Placement::Pane
+                } else {
+                    crate::native_profile::Placement::Tab
+                },
+                direction: split_direction,
+                size: split_size,
+                background: preserve_sidebar_view,
+                title: None,
+            },
+        )
+        .await?;
+        if let (Some(session), Some(pane), Some(provider)) = (
+            created["agent_session_id"].as_str(),
+            created["session_id"].as_str(),
+            created["agent_id"].as_str(),
+        ) {
+            super::sessions::register_launched(
+                master,
+                session,
+                pane,
+                provider,
+                created["cwd"].as_str(),
+                None,
+            )
+            .await;
+        }
+        return Ok(());
+    }
 
     match delegate_with_context(
         &shell_mgr,
@@ -877,6 +933,8 @@ mod tests {
             ("copilot", None, 0.5, "--master is required"),
         ] {
             let error = super::run(
+                None,
+                None,
                 prompt,
                 "",
                 Some(provider),
