@@ -179,6 +179,10 @@ returns to History; stale activity cannot rebind it, while a legitimate session
 start may select a conversation again. Ordinary-shell OpenCode panes remain
 eligible while Sessions is ON without acquiring independent launch ownership.
 Real session-end and connection-close events still end pane eligibility.
+When Sessions is ON, authoritative Ended/closed metadata also releases History
+representation immediately, even while an older pane-status cache remains.
+Live Starting/Failed panes and OFF retained Closed/Failed connections keep their
+existing canonical/advisory History deduplication.
 
 The shared content factory records each connection lifetime's immutable UTC
 creation time and producer-owned monotonic creation sequence before observation admission.

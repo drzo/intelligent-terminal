@@ -2303,8 +2303,12 @@ namespace winrt::TerminalApp::implementation
                 if (const auto impl = _GetTabImpl(tab); impl && impl->GetRootPane())
                 {
                     impl->GetRootPane()->WalkTree([&](const auto& pane) {
-                        if (const auto metadata = _MetadataForPane(pane->GetSessionId());
-                            metadata && metadata->HasSession() &&
+                        const auto metadata = _MetadataForPane(pane->GetSessionId());
+                        if (metadata && (metadata->state == ContentManager::PaneAgentState::Ended || metadata->connectionClosed))
+                        {
+                            return;
+                        }
+                        if (metadata && metadata->HasSession() &&
                             (metadata->HasAgent() || pane->IsAgentPane()))
                         {
                             representedSessions.push_back({ metadata->session.sessionId,

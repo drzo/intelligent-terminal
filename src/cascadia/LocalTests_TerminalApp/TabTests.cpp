@@ -663,6 +663,7 @@ namespace TerminalAppLocalTests
         TEST_METHOD(AgentsViewUsesOpenPaneSessionBinding);
         TEST_METHOD(AgentsViewDeduplicatesQualifiedHistoryIdentity);
         TEST_METHOD(AgentsViewDeduplicatesCanonicalNativeSessionWithoutLocalBinding);
+        TEST_METHOD(AgentsViewEndedMetadataOverridesCachedHistoryRepresentation);
         TEST_METHOD(VerticalTabHistoryStartupLoading);
         TEST_METHOD(VerticalTabHistoryMasterUnavailableKeepsLoading);
         TEST_METHOD(VerticalTabHistoryMasterUnavailablePreservesRowsAndExpires);
@@ -13479,6 +13480,19 @@ namespace TerminalAppLocalTests
             VERIFY_IS_TRUE(page->_tabStrip.HistoryItems().GetAt(0) == otherSession);
             VERIFY_IS_TRUE(page->_tabStrip.HistoryItems().GetAt(1) == otherSource);
             VERIFY_IS_TRUE(page->_tabStrip.HistoryItems().GetAt(2) == otherProvider);
+            for (const auto retainedState : { State::Closed, State::Failed })
+            {
+                connection->SetState(retainedState);
+                page->_TryRaiseTerminalEndStateEvent(
+                    _formatPaneId(paneId), retainedState == State::Closed ? "closed" : "failed",
+                    page->_FindTabIdForControl(control));
+                page->_ApplyTabListProjection();
+                const auto retained = manager->MetadataForPane(paneId).value();
+                VERIFY_IS_TRUE(retained.HasAgent());
+                VERIFY_IS_FALSE(retained.connectionClosed);
+                VERIFY_ARE_EQUAL(3u, page->_tabStrip.HistoryItems().Size());
+            }
+            connection->SetState(State::Connected);
             auto unknown = row;
             unknown.removeMember("agent_session_id");
             apply(unknown);
@@ -13488,6 +13502,98 @@ namespace TerminalAppLocalTests
             apply(stale);
             VERIFY_ARE_EQUAL(4u, page->_tabStrip.HistoryItems().Size());
             VERIFY_IS_FALSE(_paneHasSession(page->_manager, paneId));
+        });
+    }
+
+    void TabTests::AgentsViewEndedMetadataOverridesCachedHistoryRepresentation()
+    {
+        using Manager = winrt::TerminalApp::implementation::ContentManager;
+        using Page = winrt::TerminalApp::implementation::TerminalPage;
+        using State = winrt::Microsoft::Terminal::TerminalConnection::ConnectionState;
+        const auto seed = winrt::make_self<TestConnection>(::Microsoft::Console::Utils::CreateGuid(), State::Connected);
+        auto page = _commonSetup(*seed, nullptr, std::nullopt, true);
+        const auto cleanup = wil::scope_exit([&]() {
+            RunOnUIThread([&]() { page = nullptr; });
+        });
+        TestOnUIThread([&]() {
+            page->_settings.GlobalSettings().AgentSessionManagementEnabled(true);
+            page->_SyncNativeAgentStatusMode();
+            const auto manager = winrt::get_self<Manager>(page->_manager);
+            const auto strip = winrt::get_self<winrt::TerminalApp::implementation::TabStrip>(page->_tabStrip);
+            page->_tabStrip.HistoryActive(true);
+            for (const auto advisory : { false, true })
+            {
+                for (const auto closed : { false, true })
+                {
+                    const auto connection = winrt::make_self<TestConnection>(::Microsoft::Console::Utils::CreateGuid(), State::Connected);
+                    const auto id = connection->SessionId();
+                    NewTerminalArgs args;
+                    args.NativeAgentProviderId(L"copilot");
+                    const auto pane = page->_MakePane(args, nullptr, *connection);
+                    VERIFY_IS_NOT_NULL(page->_CreateNewTabFromPane(pane));
+                    const auto tab = page->_GetFocusedTabImpl();
+                    auto history = winrt::make<winrt::TerminalApp::implementation::TabStripHistoryItem>();
+                    history.SessionId(L"cached-conversation");
+                    history.AgentId(L"copilot");
+                    history.AgentSource(L"host");
+                    history.PaneSessionId(winrt::to_hstring(id));
+                    history.Title(L"Retained conversation");
+                    history.Status(L"Idle");
+                    history.IsLive(true);
+                    Page::_RichTabAgentInfo cached;
+                    cached.providerId = "copilot";
+                    cached.status = "Working";
+                    cached.paneSessionId = id;
+                    cached.location = "Host";
+                    if (advisory)
+                    {
+                        cached.inferredHistoryKey["session_id"] = "cached-conversation";
+                        cached.inferredHistoryKey["provider_id"] = "copilot";
+                        cached.inferredHistoryKey["location"] = "Host";
+                    }
+                    else
+                    {
+                        cached.sessionId = "cached-conversation";
+                    }
+                    page->_richTabAgentStatusByPaneId.insert_or_assign(id, cached);
+                    strip->CommitHistorySnapshot({ history });
+                    page->_ApplyTabListProjection();
+                    VERIFY_IS_TRUE(manager->MetadataForPane(id)->state == Manager::PaneAgentState::Starting);
+                    VERIFY_ARE_EQUAL(0u, page->_tabStrip.HistoryItems().Size());
+                    if (closed)
+                    {
+                        manager->SetPaneConnectionState(id, true);
+                        page->_ApplyTabListProjection();
+                        VERIFY_IS_TRUE(manager->MetadataForPane(id)->state == Manager::PaneAgentState::Failed);
+                        VERIFY_ARE_EQUAL(0u, page->_tabStrip.HistoryItems().Size());
+                    }
+                    _publishPaneAgentEvent(page, page->_manager,
+                                           _keepRunningHook(id, "agent.session.start", "cached-conversation", "copilot"));
+                    page->_ApplyTabListProjection();
+                    VERIFY_IS_TRUE(manager->MetadataForPane(id)->HasSession());
+                    VERIFY_IS_TRUE(manager->MetadataForPane(id)->state ==
+                                   (closed ? Manager::PaneAgentState::Failed : Manager::PaneAgentState::Running));
+                    VERIFY_ARE_EQUAL(0u, page->_tabStrip.HistoryItems().Size());
+                    if (closed)
+                    {
+                        manager->SetPaneConnectionState(id, false);
+                    }
+                    else
+                    {
+                        manager->EndPaneSession(id);
+                    }
+                    page->_ApplyTabListProjection();
+                    VERIFY_IS_NOT_NULL(tab->GetRootPane()->FindPaneBySessionId(id));
+                    VERIFY_IS_TRUE(manager->MetadataForPane(id)->state == Manager::PaneAgentState::Ended);
+                    VERIFY_ARE_EQUAL(closed, manager->MetadataForPane(id)->connectionClosed);
+                    VERIFY_IS_FALSE(page->_TabHasCliAgent(tab));
+                    VERIFY_IS_FALSE(page->_MatchesPaneAgentScope(
+                        winrt::TerminalApp::implementation::Tab::VisiblePaneSnapshot{ .SessionId = id }));
+                    VERIFY_IS_TRUE(page->_richTabAgentStatusByPaneId.contains(id));
+                    VERIFY_ARE_EQUAL(1u, page->_tabStrip.HistoryItems().Size());
+                    VERIFY_IS_TRUE(page->_tabStrip.HistoryItems().GetAt(0) == history);
+                }
+            }
         });
     }
 
