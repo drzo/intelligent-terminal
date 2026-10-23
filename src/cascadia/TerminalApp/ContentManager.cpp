@@ -604,7 +604,7 @@ namespace winrt::TerminalApp::implementation
         PaneMetadataChanged.raise(*this, paneId);
     }
 
-    void ContentManager::EndPaneSession(const winrt::guid& paneId, const winrt::hstring& sessionId, const winrt::hstring& agent, const winrt::hstring& source, const winrt::hstring& distro, const std::optional<winrt::hstring> universe)
+    void ContentManager::EndPaneSession(const winrt::guid& paneId, const winrt::hstring& sessionId, const winrt::hstring& agent, const winrt::hstring& source, const winrt::hstring& distro, const std::optional<winrt::hstring> universe, const bool connectionStillRunning)
     {
         {
             std::lock_guard lock{ _mutex };
@@ -614,6 +614,12 @@ namespace winrt::TerminalApp::implementation
                 return;
             }
             auto& metadata = it->second;
+            if (connectionStillRunning &&
+                (metadata.connectionClosed || !metadata.HasSession() || sessionId.empty() ||
+                 metadata.session.sessionId != sessionId || metadata.session.agent != agent))
+            {
+                return;
+            }
             PaneSessionIdentity identity{ sessionId, agent, source, distro, universe.value_or(winrt::hstring{}) };
             _ResolvePaneHookScope(metadata, identity, universe.has_value());
             if (!agent.empty() && !metadata.session.agent.empty() && metadata.session.agent != agent)
@@ -631,8 +637,14 @@ namespace winrt::TerminalApp::implementation
             {
                 return;
             }
+            const auto provider = metadata.launchProvider.empty() ? metadata.session.agent : metadata.launchProvider;
+            const auto failed = metadata.state == PaneAgentState::Failed;
             _RetirePaneSession(metadata);
-            metadata.state = PaneAgentState::Ended;
+            metadata.state = connectionStillRunning ? (failed ? PaneAgentState::Failed : PaneAgentState::Starting) : PaneAgentState::Ended;
+            if (connectionStillRunning)
+            {
+                metadata.session.agent = provider;
+            }
             metadata.activity.clear();
         }
         PaneMetadataChanged.raise(*this, paneId);
@@ -831,15 +843,7 @@ namespace winrt::TerminalApp::implementation
             winrt::to_hstring(params.get("session_universe", "").asString()));
         if (ended || unbound)
         {
-            if (unbound)
-            {
-                const auto metadata = MetadataForPane(sessionId);
-                if (!metadata || metadata->session.sessionId != agentSessionId || metadata->session.agent != agent)
-                {
-                    return;
-                }
-            }
-            EndPaneSession(sessionId, agentSessionId, agent, identity.source, identity.distro, params.isMember("session_universe") ? std::optional<winrt::hstring>{ identity.universe } : std::nullopt);
+            EndPaneSession(sessionId, agentSessionId, agent, identity.source, identity.distro, params.isMember("session_universe") ? std::optional<winrt::hstring>{ identity.universe } : std::nullopt, unbound);
             return;
         }
         const auto cwd = params.isMember("cwd") ? params["cwd"] :

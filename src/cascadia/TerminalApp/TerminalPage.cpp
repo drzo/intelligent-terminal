@@ -11514,7 +11514,12 @@ namespace winrt::TerminalApp::implementation
                     if (sessionUnbound)
                     {
                         if (agent != "opencode" || agentSessionId.empty() ||
-                            !metadata || metadata->state != ContentManager::PaneAgentState::Ended)
+                            !metadata || metadata->connectionClosed || !metadata->HasAgent() || metadata->HasSession() ||
+                            !metadata->IsSuperseded({
+                                winrt::to_hstring(agentSessionId), winrt::to_hstring(agent),
+                                winrt::to_hstring(params.get("agent_source", "").asString()),
+                                winrt::to_hstring(params.get("wsl_distro", "").asString()),
+                                winrt::to_hstring(params.get("session_universe", "").asString()) }))
                         {
                             return;
                         }
@@ -11529,6 +11534,12 @@ namespace winrt::TerminalApp::implementation
                             ended != _richTabEndedSessionByPaneId.end() && ended->second == agentSessionId)
                         {
                             _richTabEndedSessionByPaneId.erase(ended);
+                        }
+                        if (const auto status = _richTabAgentStatusByPaneId.find(*paneSessionId);
+                            status != _richTabAgentStatusByPaneId.end() &&
+                            status->second.sessionId == agentSessionId && status->second.providerId == agent)
+                        {
+                            _richTabAgentStatusByPaneId.erase(status);
                         }
                         if (_RichTabCwdDependentFieldsVisible())
                         {

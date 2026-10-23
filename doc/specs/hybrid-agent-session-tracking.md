@@ -171,6 +171,14 @@ temporary explicit provider along with its binding. That provider is never
 promoted into independent launch ownership, so switching OFF cannot turn the
 completed resume's ordinary shell into a native agent. Independent launch
 ownership remains intact.
+OpenCode's `agent.session.unbind` releases a selected conversation (for example,
+returning to its home screen or handing ownership to another client), not the
+CLI process. It retires the old conversation and clears its resume command/trust,
+but retains the live pane's provider and agent eligibility. The released row
+returns to History; stale activity cannot rebind it, while a legitimate session
+start may select a conversation again. Ordinary-shell OpenCode panes remain
+eligible while Sessions is ON without acquiring independent launch ownership.
+Real session-end and connection-close events still end pane eligibility.
 
 The shared content factory records each connection lifetime's immutable UTC
 creation time and producer-owned monotonic creation sequence before observation admission.
