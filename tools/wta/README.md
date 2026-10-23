@@ -813,6 +813,9 @@ cancels its one-time delegation selection and retains the text for ordinary
 chat. No cancellation submits a prompt. A successful launch clears the
 one-time selection and submitted input, while a failure keeps the draft for
 correction or retry. Edits made while a launch is pending are not discarded.
+Enter on a selected historical turn only expands or collapses that turn; it
+does not submit the delegation task. Pending launches follow their owning tab
+when it moves to another window.
 The current assistant provider, ACP session, and history are not replaced.
 
 Advanced inline options remain supported:

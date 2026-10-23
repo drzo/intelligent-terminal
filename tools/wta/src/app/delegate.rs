@@ -23,6 +23,8 @@ pub(crate) struct DelegatePicker {
 
 pub(crate) struct PendingDelegate {
     pub id: uuid::Uuid,
+    pub origin_window_id: Option<String>,
+    pub origin_tab_id: String,
     pub input: String,
     pub draft: Option<DelegateDraft>,
     pub history: String,
@@ -230,6 +232,14 @@ impl App {
             return false;
         }
         if !self.current_tab().input_has_nav_focus() {
+            if key.code == KeyCode::Enter
+                && self.current_tab().selected_completed_turn_idx.is_some()
+            {
+                if !key.modifiers.contains(KeyModifiers::SHIFT) {
+                    self.current_tab_mut().toggle_selected_completed_turn();
+                }
+                return true;
+            }
             return false;
         }
         match key.code {
@@ -377,6 +387,8 @@ impl App {
         let tab = self.current_tab_mut();
         tab.delegate.pending = Some(PendingDelegate {
             id,
+            origin_window_id: window_id.clone(),
+            origin_tab_id: tab_id.clone(),
             input: tab.input.clone(),
             draft: tab.delegate.draft.clone(),
             history: if tab.delegate.draft.is_none() {

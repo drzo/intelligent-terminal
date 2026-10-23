@@ -2176,20 +2176,16 @@ impl App {
                 request_id,
                 result,
             } => {
-                if window_id != self.window_id {
-                    return;
-                }
-                let Some(tab) = self.tab_sessions.get_mut(&tab_id) else {
+                // A tab drag rekeys live state, not the launch's original identity.
+                let Some(tab) = self.tab_sessions.values_mut().find(|tab| {
+                    tab.delegate.pending.as_ref().is_some_and(|pending| {
+                        pending.id == request_id
+                            && pending.origin_window_id == window_id
+                            && pending.origin_tab_id == tab_id
+                    })
+                }) else {
                     return;
                 };
-                if !tab
-                    .delegate
-                    .pending
-                    .as_ref()
-                    .is_some_and(|pending| pending.id == request_id)
-                {
-                    return;
-                }
                 let Some(pending) = tab.delegate.pending.take() else {
                     return;
                 };

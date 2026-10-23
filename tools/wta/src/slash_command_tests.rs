@@ -143,6 +143,67 @@ fn delegate_missing_task_retains_draft_and_never_submits_to_current_agent() {
 }
 
 #[test]
+fn delegate_enter_on_a_completed_turn_never_submits_or_executes_the_task() {
+    use crossterm::event::{MouseButton, MouseEvent, MouseEventKind};
+
+    let _locale = crate::test_support::lock_locale();
+    for task in ["fix the build", "/clear"] {
+        let mut app = test_app();
+        seed_delegate_profiles(&mut app);
+        run_slash(&mut app, "delegate");
+        app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+        app.state = ConnectionState::Connected;
+        app.current_tab_mut().session_id = Some("current-session".into());
+        app.current_tab_mut().replace_input(task.into());
+        let draft = app.current_tab().delegate.draft.clone();
+        app.current_tab_mut().completed_turns.push(CompletedTurn {
+            prompt: "previous work".into(),
+            details: vec![ChatMessage::Agent("previous result".into())],
+            expanded: false,
+            trailing_marker: None,
+        });
+        let mut terminal =
+            ratatui::Terminal::new(ratatui::backend::TestBackend::new(80, 20)).unwrap();
+        terminal
+            .draw(|frame| crate::ui::render(frame, &mut app))
+            .unwrap();
+        let hit = app
+            .completed_turn_hits
+            .iter()
+            .find(|hit| hit.kind == CompletedTurnHitKind::UserInput)
+            .copied()
+            .unwrap();
+        for kind in [
+            MouseEventKind::Down(MouseButton::Left),
+            MouseEventKind::Up(MouseButton::Left),
+        ] {
+            app.handle_event(AppEvent::Mouse(MouseEvent {
+                kind,
+                column: hit.start_column + 4,
+                row: hit.row,
+                modifiers: KeyModifiers::NONE,
+            }));
+        }
+        assert_eq!(app.current_tab().selected_completed_turn_idx, Some(0));
+        assert!(!app.current_tab().input_has_nav_focus());
+        let expanded = app.current_tab().completed_turns[0].expanded;
+
+        app.handle_event(AppEvent::Key(KeyEvent::new(
+            KeyCode::Enter,
+            KeyModifiers::NONE,
+        )));
+
+        assert_eq!(app.current_tab().input, task);
+        assert_eq!(app.current_tab().delegate.draft, draft);
+        assert!(app.current_tab().delegate.pending.is_none());
+        assert!(app.current_tab().messages.is_empty());
+        assert!(app.current_tab().prompt_queue.entries.is_empty());
+        assert!(app.test_prompt_rx.as_mut().unwrap().try_recv().is_err());
+        assert_ne!(app.current_tab().completed_turns[0].expanded, expanded);
+    }
+}
+
+#[test]
 fn delegate_completion_does_not_recreate_a_closed_tab() {
     let _locale = crate::test_support::lock_locale();
     let mut app = test_app();
@@ -331,6 +392,90 @@ async fn delegate_submission_is_one_shot_restores_failures_and_keeps_source_cont
         .await;
 }
 
+#[tokio::test]
+async fn delegate_completion_follows_owner_transfer_and_allows_retry() {
+    let _locale = crate::test_support::lock_locale();
+    tokio::task::LocalSet::new()
+        .run_until(async {
+            for rename_tab in [false, true] {
+                for fail in [false, true] {
+                    let mut app = test_app();
+                    app.switch_tab_session("source-tab".into());
+                    app.owner_tab_id = Some("source-tab".into());
+                    app.window_id = Some("7".into());
+                    app.pane_id = Some("owning-helper".into());
+                    seed_delegate_profiles(&mut app);
+                    run_slash(&mut app, "delegate");
+                    app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+                    app.current_tab_mut().replace_input("fix the build".into());
+                    let draft = app.current_tab().delegate.draft.clone();
+                    let channel = Arc::new(DelegateChannel {
+                        requests: Mutex::new(Vec::new()),
+                        fail: AtomicBool::new(fail),
+                    });
+                    app.shell_mgr = Arc::new(
+                        crate::shell::ShellManager::new().with_wt_channel(channel.clone()),
+                    );
+                    let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+                    app.event_tx = Some(tx);
+                    app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+                    let request_id = app.current_tab().delegate.pending.as_ref().unwrap().id;
+                    let new_tab = if rename_tab {
+                        "moved-tab"
+                    } else {
+                        "source-tab"
+                    };
+                    app.handle_event(AppEvent::TabRenamed {
+                        old_tab_id: "source-tab".into(),
+                        new_tab_id: new_tab.into(),
+                        new_window_id: Some("8".into()),
+                    });
+                    assert_eq!(app.window_id.as_deref(), Some("8"));
+                    assert_eq!(app.active_tab_key(), new_tab);
+                    app.handle_event(AppEvent::DelegateCompleted {
+                        window_id: Some("8".into()),
+                        tab_id: new_tab.into(),
+                        request_id,
+                        result: Ok(()),
+                    });
+                    assert!(app.current_tab().delegate.pending.is_some());
+
+                    let event = tokio::time::timeout(Duration::from_secs(5), rx.recv())
+                        .await
+                        .unwrap()
+                        .unwrap();
+                    assert!(matches!(&event, AppEvent::DelegateCompleted {
+                        window_id: Some(window), tab_id, request_id: id, ..
+                    } if window == "7" && tab_id == "source-tab" && *id == request_id));
+                    app.handle_event(event);
+
+                    assert!(app.current_tab().delegate.pending.is_none());
+                    if fail {
+                        assert_eq!(app.current_tab().input, "fix the build");
+                        assert_eq!(app.current_tab().delegate.draft, draft);
+                        assert!(matches!(
+                            app.current_tab().messages.last(),
+                            Some(ChatMessage::Error(_))
+                        ));
+                        channel.fail.store(false, Ordering::Relaxed);
+                        app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+                        assert!(app.current_tab().delegate.pending.is_some());
+                        let event = tokio::time::timeout(Duration::from_secs(5), rx.recv())
+                            .await
+                            .unwrap()
+                            .unwrap();
+                        app.handle_event(event);
+                    }
+                    assert!(app.current_tab().delegate.pending.is_none());
+                    assert!(app.current_tab().delegate.draft.is_none());
+                    assert!(app.current_tab().input.is_empty());
+                    assert!(app.test_prompt_rx.as_mut().unwrap().try_recv().is_err());
+                }
+            }
+        })
+        .await;
+}
+
 #[test]
 fn delegate_completion_does_not_discard_a_newer_draft_or_accept_another_window() {
     let _locale = crate::test_support::lock_locale();
@@ -338,20 +483,34 @@ fn delegate_completion_does_not_discard_a_newer_draft_or_accept_another_window()
     app.window_id = Some("original".into());
     app.current_tab_mut().replace_input("newer draft".into());
     let id = uuid::Uuid::new_v4();
+    let origin_window_id = app.window_id.clone();
+    let origin_tab_id = app.active_tab_key().to_string();
     app.current_tab_mut().delegate.pending = Some(delegate::PendingDelegate {
         id,
+        origin_window_id: origin_window_id.clone(),
+        origin_tab_id: origin_tab_id.clone(),
         input: "old task".into(),
         draft: None,
         history: "/delegate old task".into(),
     });
-    app.handle_event(AppEvent::DelegateCompleted {
-        window_id: Some("other".into()),
-        tab_id: app.active_tab_key().into(),
-        request_id: id,
-        result: Ok(()),
-    });
-    assert!(app.current_tab().delegate.pending.is_some());
-    assert!(app.current_tab().messages.is_empty());
+    for (window_id, tab_id, request_id) in [
+        (Some("other".into()), origin_tab_id.clone(), id),
+        (origin_window_id.clone(), "other-tab".into(), id),
+        (
+            origin_window_id.clone(),
+            origin_tab_id.clone(),
+            uuid::Uuid::new_v4(),
+        ),
+    ] {
+        app.handle_event(AppEvent::DelegateCompleted {
+            window_id,
+            tab_id,
+            request_id,
+            result: Ok(()),
+        });
+        assert!(app.current_tab().delegate.pending.is_some());
+        assert!(app.current_tab().messages.is_empty());
+    }
     app.handle_event(AppEvent::DelegateCompleted {
         window_id: app.window_id.clone(),
         tab_id: app.active_tab_key().into(),
