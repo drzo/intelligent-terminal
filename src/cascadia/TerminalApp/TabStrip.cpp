@@ -13,6 +13,7 @@
 #include "Utils.h"
 
 #include <array>
+#include <cmath>
 #include <set>
 #include <unordered_set>
 
@@ -1018,7 +1019,7 @@ namespace winrt::TerminalApp::implementation
         display.IsGroup(isGroup);
         winrt::get_self<TabStripDisplayItem>(display)->HeaderProgressProjectedToPaneRows(headerProgressProjectedToPaneRows);
         winrt::get_self<TabStripDisplayItem>(display)->SyncTabPresentation(_isRailCollapsed, _isVerticalPresentation);
-        _refreshPaneRowVisuals(display);
+        _refreshDisplayItemVisuals(display);
     }
 
     IInspectable TabStrip::HeaderForTab(IInspectable const& item, const bool realize)
@@ -1107,11 +1108,11 @@ namespace winrt::TerminalApp::implementation
         }
     }
 
-    static std::optional<Windows::UI::Color> _tabSelectionColor(MUX::Controls::TabViewItem const& tab, const bool selected)
+    static WUX::Media::SolidColorBrush _tabSelectionBrush(MUX::Controls::TabViewItem const& tab, const bool selected)
     {
         if (!tab)
         {
-            return std::nullopt;
+            return nullptr;
         }
         if (selected)
         {
@@ -1123,10 +1124,9 @@ namespace winrt::TerminalApp::implementation
                 const auto colorKey = box_value(L"TabViewItemHeaderBackgroundSelected");
                 if (resources && resources.HasKey(colorKey))
                 {
-                    if (const auto brush = resources.Lookup(colorKey).try_as<WUX::Media::SolidColorBrush>();
-                        brush && brush.Color().A != 0 && brush.Opacity() > 0)
+                    if (const auto brush = resources.Lookup(colorKey).try_as<WUX::Media::SolidColorBrush>())
                     {
-                        return brush.Color();
+                        return brush;
                     }
                 }
             }
@@ -1134,9 +1134,9 @@ namespace winrt::TerminalApp::implementation
         if (const auto brush = tab.Background().try_as<WUX::Media::SolidColorBrush>();
             brush && brush.Color().A != 0 && brush.Opacity() > 0)
         {
-            return brush.Color();
+            return WUX::Media::SolidColorBrush{ brush.Color() };
         }
-        return std::nullopt;
+        return nullptr;
     }
 
     static WUX::Media::SolidColorBrush _tabHoverBrush(MUX::Controls::TabViewItem const& tab)
@@ -1162,10 +1162,36 @@ namespace winrt::TerminalApp::implementation
         return nullptr;
     }
 
-    static Windows::UI::Color _tabSelectionForeground(const Windows::UI::Color color) noexcept
+    static Windows::UI::Color _sidebarBackdropColor(WUX::Media::Brush const& background, const ElementTheme theme)
     {
-        const auto luminance = (0.2126 * color.R + 0.7152 * color.G + 0.0722 * color.B) / 255.0;
-        return luminance >= 0.6 ? Windows::UI::Colors::Black() : Windows::UI::Colors::White();
+        const auto fallback = theme == ElementTheme::Light ? Windows::UI::Colors::White() : Windows::UI::Colors::Black();
+        if (const auto solid = background.try_as<WUX::Media::SolidColorBrush>())
+        {
+            const auto alpha = static_cast<uint8_t>(std::lround(solid.Color().A * solid.Opacity()));
+            return til::color{ solid.Color() }.with_alpha(alpha).layer_over(til::color{ fallback });
+        }
+        if (const auto acrylic = background.try_as<WUX::Media::AcrylicBrush>())
+        {
+            // Acrylic has no single rendered color; its fallback gives a stable contrast baseline.
+            const auto color = acrylic.FallbackColor();
+            const auto alpha = static_cast<uint8_t>(std::lround(color.A * acrylic.Opacity()));
+            return til::color{ color }.with_alpha(alpha).layer_over(til::color{ fallback });
+        }
+        return fallback;
+    }
+
+    static Windows::UI::Color _tabSelectionForeground(WUX::Media::SolidColorBrush const& brush, const Windows::UI::Color backdrop)
+    {
+        const auto alpha = static_cast<uint8_t>(std::lround(brush.Color().A * brush.Opacity()));
+        const auto rendered = til::color{ brush.Color() }.with_alpha(alpha).layer_over(til::color{ backdrop });
+        const auto linear = [](const uint8_t value) {
+            const auto channel = value / 255.0;
+            return channel <= 0.04045 ? channel / 12.92 : std::pow((channel + 0.055) / 1.055, 2.4);
+        };
+        const auto luminance = 0.2126 * linear(rendered.r) + 0.7152 * linear(rendered.g) + 0.0722 * linear(rendered.b);
+        return (luminance + 0.05) / 0.05 >= 1.05 / (luminance + 0.05) ?
+                   Windows::UI::Colors::Black() :
+                   Windows::UI::Colors::White();
     }
 
     static void _bindMonochromeIconForeground(ContentPresenter const& presenter, Control const& foregroundOwner)
@@ -1325,18 +1351,22 @@ namespace winrt::TerminalApp::implementation
                     }
                 }
             }
+            const auto tabColor = isGroup && !selected ? nullptr : _tabSelectionBrush(display.Tab(), selected);
             if (const auto nativeSelection = grid.FindName(L"TabSelectionBackground").try_as<WUX::Controls::Border>())
             {
-                nativeSelection.Visibility(selected ? Visibility::Visible : Visibility::Collapsed);
+                nativeSelection.Visibility(selected && !tabColor ? Visibility::Visible : Visibility::Collapsed);
             }
-            const auto tabColor = isGroup && !selected ? std::nullopt : _tabSelectionColor(display.Tab(), selected);
             if (selectionBackground)
             {
                 const auto showColor = tabColor && (selected || !_highContrast) && !(!selected && hovered);
-                WUX::Media::SolidColorBrush brush{ showColor ? *tabColor : Windows::UI::Colors::Transparent() };
+                WUX::Media::SolidColorBrush brush{ showColor ? tabColor.Color() : Windows::UI::Colors::Transparent() };
                 if (showColor && !selected)
                 {
                     brush.Opacity(display.Tab().Background().as<WUX::Media::SolidColorBrush>().Opacity());
+                }
+                else if (showColor)
+                {
+                    brush.Opacity(tabColor.Opacity());
                 }
                 selectionBackground.Background(brush);
             }
@@ -1344,11 +1374,10 @@ namespace winrt::TerminalApp::implementation
             const auto header = grid.FindName(L"TabHeaderPresenter").try_as<WUX::Controls::Control>();
             const auto close = grid.FindName(L"TabCloseButton").try_as<WUX::Controls::Control>();
             const auto iconPresenter = grid.FindName(L"TabIconPresenter").try_as<ContentPresenter>();
-            const auto foregroundColor = selected ? tabColor :
-                                                    hovered ? std::make_optional(hoverBrush.Color()) : std::nullopt;
-            if (foregroundColor)
+            const auto foregroundBrush = selected ? tabColor : hovered ? hoverBrush : nullptr;
+            if (foregroundBrush)
             {
-                const auto foreground = WUX::Media::SolidColorBrush{ _tabSelectionForeground(*foregroundColor) };
+                const auto foreground = WUX::Media::SolidColorBrush{ _tabSelectionForeground(foregroundBrush, _sidebarBackdropColor(Background(), grid.ActualTheme())) };
                 for (const auto& control : { header, toggle, close })
                 {
                     if (control)
@@ -1388,17 +1417,26 @@ namespace winrt::TerminalApp::implementation
 
         const auto button = root.FindName(L"PaneActivateButton").try_as<WUX::Controls::Control>();
         const auto active = pane.ActiveIndicatorVisibility() == Visibility::Visible;
-        const auto color = pane.ActiveIndicatorVisibility() == Visibility::Visible ?
-                               _tabSelectionColor(pane.Tab(), true) :
-                               std::nullopt;
+        const auto color = active ? _tabSelectionBrush(pane.Tab(), true) : nullptr;
         const auto hoverBrush = !active && !highContrastActive ? _tabHoverBrush(pane.Tab()) : nullptr;
         const auto hovered = hoverBrush && winrt::get_self<TabStripPaneItem>(pane)->IsPointerOver();
         if (const auto background = root.FindName(L"PaneColorSelectionBackground").try_as<WUX::Controls::Border>())
         {
-            background.Background(WUX::Media::SolidColorBrush{ color.value_or(Windows::UI::Colors::Transparent()) });
+            WUX::Media::SolidColorBrush brush{ color ? color.Color() : Windows::UI::Colors::Transparent() };
+            if (color)
+            {
+                brush.Opacity(color.Opacity());
+            }
+            background.Background(brush);
         }
-        const auto foreground = color ? WUX::Media::SolidColorBrush{ _tabSelectionForeground(*color) } :
-                                         hovered ? WUX::Media::SolidColorBrush{ _tabSelectionForeground(hoverBrush.Color()) } : nullptr;
+        if (const auto nativeSelection = root.FindName(L"PaneActiveBackground").try_as<WUX::Controls::Border>())
+        {
+            nativeSelection.Visibility(active && !color ? Visibility::Visible : Visibility::Collapsed);
+        }
+        const auto foregroundBrush = color ? color : hovered ? hoverBrush : nullptr;
+        const auto foreground = foregroundBrush ?
+                                    WUX::Media::SolidColorBrush{ _tabSelectionForeground(foregroundBrush, _sidebarBackdropColor(Background(), root.ActualTheme())) } :
+                                    nullptr;
         for (const auto name : { L"PaneActivateButton", L"PaneCloseButton", L"PaneTitleText", L"PaneMetadataText" })
         {
             if (const auto control = root.FindName(name).try_as<WUX::Controls::Control>())
@@ -1969,10 +2007,11 @@ namespace winrt::TerminalApp::implementation
     {
         WUX::Media::Brush background{ nullptr };
         WUX::Media::Brush foreground{ nullptr };
-        if (const auto color = _tabSelectionColor(tab, true))
+        if (const auto color = _tabSelectionBrush(tab, true))
         {
-            background = WUX::Media::SolidColorBrush{ *color };
-            foreground = WUX::Media::SolidColorBrush{ _tabSelectionForeground(*color) };
+            background = WUX::Media::SolidColorBrush{ color.Color() };
+            background.as<WUX::Media::SolidColorBrush>().Opacity(color.Opacity());
+            foreground = WUX::Media::SolidColorBrush{ _tabSelectionForeground(color, _sidebarBackdropColor(Background(), ActualTheme())) };
         }
         for (uint32_t index = 0; index < _historyItems.Size(); ++index)
         {

@@ -91,7 +91,6 @@ namespace TerminalApp
         String Title;
         Boolean IsActive;
         Windows.UI.Xaml.Visibility ActiveIndicatorVisibility;
-        Windows.UI.Xaml.Visibility CloseVisibility;
         String MetadataText;
         String AutomationName;
         Windows.UI.Xaml.Visibility MetadataVisibility;
@@ -105,6 +104,7 @@ namespace TerminalApp
         Windows.UI.Xaml.Controls.IconElement CreateIcon(Object source);
         TextHighlightColor MetadataHighlightColor;
         IVector<HighlightedRun> MetadataHighlightRanges;
+        Windows.UI.Xaml.Visibility CloseVisibility;
     };
 
     [default_interface] runtimeclass TabStripDisplayItem : Windows.UI.Xaml.Data.INotifyPropertyChanged

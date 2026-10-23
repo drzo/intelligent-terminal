@@ -580,7 +580,7 @@
                                     Background="{ThemeResource ListViewItemBackgroundSelected}"
                                     CornerRadius="{StaticResource SidebarTabCornerRadius}"
                                     IsHitTestVisible="False"
-                                    Visibility="{x:Bind SelectionVisibility, Mode=OneWay}" />
+                                    Visibility="Collapsed" />
                             <Border x:Name="TabColorSelectionBackground"
                                     Grid.ColumnSpan="3"
                                     Background="Transparent"
@@ -702,7 +702,7 @@
                                                 Background="{ThemeResource ListViewItemBackgroundSelected}"
                                                 CornerRadius="{StaticResource SidebarTabCornerRadius}"
                                                 IsHitTestVisible="False"
-                                                Visibility="{x:Bind ActiveIndicatorVisibility, Mode=OneWay}" />
+                                                Visibility="Collapsed" />
                                         <Border x:Name="PaneColorSelectionBackground"
                                                 Grid.ColumnSpan="2"
                                                 Background="Transparent"

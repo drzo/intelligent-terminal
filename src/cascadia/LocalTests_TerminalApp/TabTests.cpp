@@ -528,6 +528,7 @@ namespace TerminalAppLocalTests
         TEST_METHOD(VerticalTabThemeChangesDoNotReprojectPanes);
         TEST_METHOD(VerticalTabColorsFollowSidebarTheme);
         TEST_METHOD(VerticalTabStripUsesNativeInteractionStates);
+        TEST_METHOD(VerticalTabStripContrastsRenderedColors);
         TEST_METHOD(VerticalTabStripCloseAffordanceTracksRowState);
         TEST_METHOD(VerticalTabStripRefreshesHighContrastColors);
         TEST_METHOD(VerticalTabGroupingIgnoresAgentPane);
@@ -15614,6 +15615,11 @@ namespace TerminalAppLocalTests
             VERIFY_ARE_EQUAL(headerRoot.ActualHeight(), selectionBackground.ActualHeight());
             VERIFY_IS_TRUE(container.ActualHeight() > selectionBackground.ActualHeight());
 
+            strip.SetPaneItems(tab, display.PaneItems(), false);
+            VERIFY_ARE_EQUAL(Visibility::Visible, selectionBackground.Visibility());
+            strip.SetPaneItems(tab, display.PaneItems(), true);
+            VERIFY_ARE_EQUAL(Visibility::Collapsed, selectionBackground.Visibility());
+
             strip.IsRailCollapsed(true);
             host.UpdateLayout();
             VERIFY_ARE_EQUAL(Visibility::Collapsed, display.ChildrenVisibility());
@@ -21465,7 +21471,7 @@ namespace TerminalAppLocalTests
                 const auto selectedBrush = grid.FindName(L"TabColorSelectionBackground").as<Border>().Background().as<Media::SolidColorBrush>();
                 VERIFY_ARE_EQUAL(terminalColor, til::color{ selectedBrush.Color() });
                 VERIFY_ARE_EQUAL(1.0, selectedBrush.Opacity());
-                VERIFY_ARE_EQUAL(Visibility::Visible, grid.FindName(L"TabSelectionBackground").as<Border>().Visibility());
+                VERIFY_ARE_EQUAL(Visibility::Collapsed, grid.FindName(L"TabSelectionBackground").as<Border>().Visibility());
                 const auto header = grid.FindName(L"TabHeaderPresenter").as<winrt::TerminalApp::TabHeaderControl>();
                 VERIFY_IS_TRUE(header.ReadLocalValue(Control::ForegroundProperty()) != DependencyProperty::UnsetValue());
                 const auto icon = grid.FindName(L"TabIconPresenter").as<ContentPresenter>().Content().as<IconElement>();
@@ -21617,7 +21623,7 @@ namespace TerminalAppLocalTests
                     const auto selected = root.FindName(L"PaneActiveBackground").as<Border>();
                     const auto colored = root.FindName(L"PaneColorSelectionBackground").as<Border>();
                     const auto isActive = pane.ActiveIndicatorVisibility() == Visibility::Visible;
-                    VERIFY_ARE_EQUAL(isActive ? Visibility::Visible : Visibility::Collapsed, selected.Visibility());
+                    VERIFY_ARE_EQUAL(Visibility::Collapsed, selected.Visibility());
                     VERIFY_ARE_EQUAL(isActive ? expected : til::color{ winrt::Windows::UI::Colors::Transparent() },
                                      til::color{ colored.Background().as<Media::SolidColorBrush>().Color() });
                     if (isActive)
@@ -21750,7 +21756,7 @@ namespace TerminalAppLocalTests
                     VERIFY_ARE_EQUAL(uint8_t{ 0 }, inactiveBrush.Color().A);
                 }
                 strip.SelectedItem(tab);
-                VERIFY_ARE_EQUAL(Visibility::Visible, selectionBackground.Visibility());
+                VERIFY_ARE_EQUAL(Visibility::Collapsed, selectionBackground.Visibility());
                 impl->OnSidebarRowPointerEntered(headerGrid, nullptr);
                 VERIFY_ARE_EQUAL(0.0, hoverBackground.Opacity());
                 winrt::get_self<winrt::TerminalApp::implementation::TabStripDisplayItem>(impl->DisplayItemForTab(tab))->SetPointerOver(false, false);
@@ -21868,6 +21874,102 @@ namespace TerminalAppLocalTests
             const auto replacementGrid = replacementRoot.Children().GetAt(0).as<Grid>();
             const auto replacementColor = replacementGrid.FindName(L"TabColorSelectionBackground").as<Border>();
             VERIFY_ARE_EQUAL(uint8_t{ 0 }, replacementColor.Background().as<Media::SolidColorBrush>().Color().A);
+        });
+    }
+
+    void TabTests::VerticalTabStripContrastsRenderedColors()
+    {
+        TestOnUIThread([&]() {
+            if (winrt::Windows::UI::ViewManagement::AccessibilitySettings{}.HighContrast())
+            {
+                return;
+            }
+
+            winrt::TerminalApp::TabStrip strip;
+            strip.Width(240);
+            strip.Height(240);
+            strip.RequestedTheme(ElementTheme::Light);
+            strip.Background(Media::SolidColorBrush{ winrt::Windows::UI::Colors::White() });
+            winrt::MUX::Controls::TabViewItem tab;
+            tab.Header(winrt::box_value(L"Contrast tab"));
+            Media::SolidColorBrush inactive{ winrt::Windows::UI::Colors::Black() };
+            inactive.Opacity(0.3);
+            tab.Background(inactive);
+            const auto gray = winrt::Windows::UI::ColorHelper::FromArgb(255, 0x90, 0x90, 0x90);
+            Media::SolidColorBrush selected{ gray };
+            Media::SolidColorBrush hover{ gray };
+            hover.Opacity(0.6);
+            ResourceDictionary resources;
+            resources.Insert(winrt::box_value(L"TabViewItemHeaderBackgroundSelected"), selected);
+            resources.Insert(winrt::box_value(L"TabViewItemHeaderBackgroundPointerOver"), hover);
+            tab.Resources().ThemeDictionaries().Insert(winrt::box_value(L"Light"), resources);
+            strip.TabItems().Append(tab);
+            Window::Current().Content(strip);
+            Window::Current().Activate();
+            strip.SelectedItem(tab);
+            strip.UpdateLayout();
+
+            const auto impl = winrt::get_self<winrt::TerminalApp::implementation::TabStrip>(strip);
+            const auto root = strip.ContainerFromIndex(0).as<ListViewItem>().ContentTemplateRoot().as<StackPanel>();
+            const auto header = root.Children().GetAt(0).as<Grid>();
+            const auto headerText = header.FindName(L"TabHeaderPresenter").as<winrt::TerminalApp::TabHeaderControl>();
+            const auto nativeSelection = header.FindName(L"TabSelectionBackground").as<Border>();
+            const auto colorSelection = header.FindName(L"TabColorSelectionBackground").as<Border>();
+            VERIFY_ARE_EQUAL(Visibility::Collapsed, nativeSelection.Visibility());
+            VERIFY_ARE_EQUAL(gray, colorSelection.Background().as<Media::SolidColorBrush>().Color());
+            VERIFY_ARE_EQUAL(winrt::Windows::UI::Colors::Black(), headerText.Foreground().as<Media::SolidColorBrush>().Color());
+
+            strip.SelectedItem(nullptr);
+            impl->OnSidebarRowPointerEntered(header, nullptr);
+            VERIFY_ARE_EQUAL(winrt::Windows::UI::Colors::Black(), headerText.Foreground().as<Media::SolidColorBrush>().Color());
+            strip.Background(Media::SolidColorBrush{ winrt::Windows::UI::Colors::Black() });
+            impl->RefreshTabColor(tab);
+            VERIFY_ARE_EQUAL(winrt::Windows::UI::Colors::White(), headerText.Foreground().as<Media::SolidColorBrush>().Color());
+            strip.Background(Media::SolidColorBrush{ winrt::Windows::UI::Colors::White() });
+            impl->RefreshTabColor(tab);
+            strip.SelectedItem(tab);
+            strip.SetPaneItems(tab, winrt::single_threaded_vector<winrt::TerminalApp::TabStripPaneItem>({
+                                        winrt::make<winrt::TerminalApp::implementation::TabStripPaneItem>(tab, 11, L"", L"Active", true),
+                                        winrt::make<winrt::TerminalApp::implementation::TabStripPaneItem>(tab, 12, L"", L"Hovered", false) }),
+                               true);
+            strip.UpdateLayout();
+            const auto paneList = root.Children().GetAt(1).as<ItemsControl>();
+            const auto paneRoot = [&](const uint32_t index) {
+                return Media::VisualTreeHelper::GetChild(paneList.ContainerFromIndex(index), 0).as<Grid>();
+            };
+            const auto active = paneRoot(0);
+            const auto other = paneRoot(1);
+            const auto activeText = active.FindName(L"PaneTitleText").as<winrt::TerminalApp::HighlightedTextControl>();
+            const auto otherText = other.FindName(L"PaneTitleText").as<winrt::TerminalApp::HighlightedTextControl>();
+            VERIFY_ARE_EQUAL(Visibility::Collapsed, active.FindName(L"PaneActiveBackground").as<Border>().Visibility());
+            VERIFY_ARE_EQUAL(winrt::Windows::UI::Colors::Black(), activeText.Foreground().as<Media::SolidColorBrush>().Color());
+            impl->OnPanePointerEntered(other, nullptr);
+            VERIFY_ARE_EQUAL(winrt::Windows::UI::Colors::Black(), otherText.Foreground().as<Media::SolidColorBrush>().Color());
+            strip.Background(Media::SolidColorBrush{ winrt::Windows::UI::Colors::Black() });
+            impl->RefreshTabColor(tab);
+            VERIFY_ARE_EQUAL(winrt::Windows::UI::Colors::White(), otherText.Foreground().as<Media::SolidColorBrush>().Color());
+            strip.Background(Media::SolidColorBrush{ winrt::Windows::UI::Colors::White() });
+            impl->RefreshTabColor(tab);
+
+            selected.Color(winrt::Windows::UI::ColorHelper::FromArgb(128, 0, 0, 0));
+            impl->RefreshTabColor(tab);
+            VERIFY_ARE_EQUAL(uint8_t{ 128 }, active.FindName(L"PaneColorSelectionBackground").as<Border>().Background().as<Media::SolidColorBrush>().Color().A);
+            VERIFY_ARE_EQUAL(winrt::Windows::UI::Colors::Black(), activeText.Foreground().as<Media::SolidColorBrush>().Color());
+
+            selected.Color(winrt::Windows::UI::Colors::Transparent());
+            impl->RefreshTabColor(tab);
+            VERIFY_ARE_EQUAL(uint8_t{ 0 }, active.FindName(L"PaneColorSelectionBackground").as<Border>().Background().as<Media::SolidColorBrush>().Color().A);
+            VERIFY_ARE_EQUAL(Visibility::Collapsed, active.FindName(L"PaneActiveBackground").as<Border>().Visibility());
+            VERIFY_ARE_EQUAL(winrt::Windows::UI::Colors::Black(), activeText.Foreground().as<Media::SolidColorBrush>().Color());
+            strip.Background(Media::SolidColorBrush{ winrt::Windows::UI::Colors::Black() });
+            impl->RefreshTabColor(tab);
+            VERIFY_ARE_EQUAL(winrt::Windows::UI::Colors::White(), activeText.Foreground().as<Media::SolidColorBrush>().Color());
+            strip.Background(Media::SolidColorBrush{ winrt::Windows::UI::Colors::White() });
+            impl->RefreshTabColor(tab);
+            strip.SetPaneItems(tab, nullptr, false);
+            VERIFY_ARE_EQUAL(uint8_t{ 0 }, colorSelection.Background().as<Media::SolidColorBrush>().Color().A);
+            VERIFY_ARE_EQUAL(Visibility::Collapsed, nativeSelection.Visibility());
+            VERIFY_ARE_EQUAL(winrt::Windows::UI::Colors::Black(), headerText.Foreground().as<Media::SolidColorBrush>().Color());
         });
     }
 
