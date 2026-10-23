@@ -253,7 +253,7 @@ environment. It is separate from Antigravity's bundled ACP runtime; preparing
 the ACP dependency does not install Python.
 
 Tab/pane agent metadata and Sidebar Recent share a bounded
-`wta sessions list --json --include-status` snapshot request. Recent applies
+`wta sessions list --master <pipe> --json --include-status` snapshot request. Recent applies
 the existing shell-origin filter to the conversation projection; pane metadata
 reads the normalized `pane_statuses` projection without requiring an agent
 session ID. A Recent request can join an in-flight metadata request, and hiding
@@ -302,15 +302,25 @@ The opt-in JSON object contains `sessions` and `history_status` (`loading`, `rea
 or `error`), with optional `history_error_kind` to distinguish timeout-only failures;
 ordinary `--json` output remains one session per line.
 
-Session commands without an explicit `--master` rediscover `master-pipe.txt`
-before each connection attempt, so a stale address from a previous Terminal
-process does not pin a startup request to the old pipe. An explicit `--master`
-stays pinned. Missing discovery files, missing pipes, and busy pipes share the
-existing seven-attempt retry budget (1.87 seconds of backoff); permission and
-other failures are not retried. Listing, activation, and born-bound registration
-use the same connection path.
+Terminal-owned session snapshots, activation, activation-status queries, and
+delegate registration use the owning process's explicit `--master` pipe.
+An unavailable or empty owned endpoint never falls back to shared discovery.
+The pipe remains stable across master restarts, and activation retries retain
+both the owning pipe and operation ID.
 
-If the master remains temporarily unavailable, `sessions list --json --include-status`
+All `sessions` commands require `--master`, including activation-status queries.
+Master addresses are passed in memory or as process arguments; WTA does not
+publish or read a shared discovery file. Concurrent normal and elevated Terminal
+processes therefore cannot overwrite each other's session-command target.
+An old discovery file left by a previous version is ignored.
+Missing and busy pipes share the existing seven-attempt retry budget
+(1.87 seconds of backoff); permission and other failures are not retried.
+
+`delegate --master <pipe>` pins split validation and best-effort live registration
+to that master. Without it, an ordinary delegate still launches, but logs that
+live registration was skipped; exact session splits require an owning master.
+
+If the master remains temporarily unavailable, `sessions list --master <pipe> --json --include-status`
 exits nonzero and writes `{"error":{"kind":"master_unavailable"}}` instead of a
 successful empty snapshot. Other listing failures retain their ordinary error
 behavior. The sidebar keeps loading (or retains existing rows) and retries every
@@ -419,13 +429,14 @@ sessions already in the registry remain visible according to the requested origi
 
 Initial host discovery runs at master startup, after a confirmed host-agent
 installation, or on an explicit `wta sessions refresh` request. There is no unconditional
-periodic installation scan. Failed host-agent startup discoveries are retried through the
-same discovery worker, with delays of 5, 10, 20, 40, then at most 60 seconds after
-each failure (checked on the existing five-second history timer). Retries recheck
+periodic installation scan. Failed host-agent startup discoveries use delays of 5
+and 10 seconds and stop after three total attempts. The master, dedicated history
+workers and model probes use the common startup admission layer; separate probe
+processes cannot reset the same target's failure budget. Retries recheck
 installation and policy and do not restart healthy resident providers.
-Custom settings lookup failures use the same capped retry schedule and do not clear
-existing history or prevent other providers from being queried.
-`wta sessions refresh --json` schedules discovery while respecting failure backoff and returns the
+Custom settings lookup failures retry separately, with delays capped at 60 seconds,
+without clearing existing history or preventing other providers from being queried.
+`wta sessions refresh --master <pipe> --json` schedules discovery while respecting failure backoff and returns the
 current snapshot with `history_status`; it does not wait for discovery to finish.
 The removed `--all-agents` flag is no longer accepted. F5 in a helper's session view
 explicitly refreshes that helper's bound connection without discovering other agents.
@@ -434,12 +445,47 @@ only in nonvertical layout; vertical layout uses the Sidebar fallback instead.
 Live layout changes and helper-ready runtime configuration update this selection per
 window without reconnecting ACP. Push updates remain immediate in either layout,
 and returning to nonvertical layout immediately refreshes an already-open helper view.
-History-query recovery may rebuild only its history-only process. Startup
-discovery retries are separate and retain the existing ACP initialization timeout.
+History-query recovery may rebuild only its history-only process.
 
-Master allows up to 60 seconds for an ACP `initialize` reply from either a
-native agent or an `npx` adapter, including cold starts. Session creation,
-authentication and model-probe timeouts are separate and unchanged.
+### ACP preparation and startup verification
+
+Provider-specific detection and preparation adapters live in
+`src/agent_lifecycle/providers/`. The agent registry still owns commands, models
+and authentication metadata. Shared admission, safe diagnostics and process-tree
+ownership apply to every provider, including custom launch commands.
+
+`install-acp --agent-id antigravity` prepares the separate ACP dependency and
+performs one initialize-only check. Its JSON distinguishes `dependency_present`
+from `startup_verified`; a failed check exits nonzero but does not uninstall the
+dependency or hide the provider. `verify-acp --agent <command> --agent-id <id>`
+performs the same bounded check without a conversation or prompt.
+Both accept `--wsl-distro` and explicit `--retry-startup`.
+
+Settings uses the first initialization of its model probe as the startup check,
+rather than launching a disposable verification process and then another model
+probe. The normal agent-pane connection similarly verifies its prepared
+dependency in the actual shared runtime. An installation-time check is not a
+guarantee of future startup.
+
+Failure budgets are stored under the package-private `acp-startup` directory,
+scoped to the WTA binary identity and hashed effective launch target. They contain
+counts, structured failure fields and bounded, filtered native details rather
+than full provider configuration objects. Native details can include file paths. Ordinary
+refreshes and new helper generations do not reset them. A successful initialize
+or an explicit user retry resets the target's budget; unconfirmed cleanup stops
+replacement instead. `probe-models --retry-startup` is the CLI equivalent of the
+explicit retry action. See [ACP provider lifecycle](../../doc/specs/acp-provider-lifecycle.md).
+
+The `probe-sessions` and `probe-host-sessions` diagnostics share admission for
+their inherited provider binding and retain it through confirmed cleanup.
+Both accept `--retry-startup`; it reopens an exhausted cycle, not a cleanup
+quarantine. They preserve their diagnostic output shapes and treat an unsupported
+session-list method as a normal result rather than an initialization failure.
+Their session-list timeout remains 10 seconds.
+
+Startup checks allow up to 60 seconds for an ACP `initialize` reply from either a
+native agent or an `npx` adapter, including cold starts. Session creation and
+authentication retain their own limits.
 
 ### tmux-like CLI
 

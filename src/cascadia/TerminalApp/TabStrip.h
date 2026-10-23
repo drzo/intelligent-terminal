@@ -458,6 +458,10 @@ namespace winrt::TerminalApp::implementation
         void OnRichTabMetadataFlyoutClosing(
             winrt::Windows::Foundation::IInspectable const& sender,
             winrt::Windows::UI::Xaml::Controls::Primitives::FlyoutBaseClosingEventArgs const& e);
+        void OnDisplayOptionsOpened(winrt::Windows::Foundation::IInspectable const& sender,
+                                    winrt::Windows::Foundation::IInspectable const& e);
+        void OnDisplayOptionsClosed(winrt::Windows::Foundation::IInspectable const& sender,
+                                    winrt::Windows::Foundation::IInspectable const& e);
         void OnSearchToggleClick(winrt::Windows::Foundation::IInspectable const& sender,
                                  winrt::Windows::UI::Xaml::RoutedEventArgs const& e);
         void OnSearchPointerPressed(winrt::Windows::Foundation::IInspectable const& sender,
@@ -547,6 +551,7 @@ namespace winrt::TerminalApp::implementation
         til::typed_event<winrt::Microsoft::UI::Xaml::Controls::TabViewItem, winrt::hstring> HeaderTitleChangeRequested;
         til::typed_event<TerminalApp::TabStrip, winrt::Windows::Foundation::IInspectable> VisibleFieldsChanged;
         til::event<winrt::delegate<>> HistoryProjectionChanged;
+        til::typed_event<TerminalApp::TabStrip, winrt::Windows::UI::Xaml::Input::KeyRoutedEventArgs> DisplayOptionsKeyDown;
 
     private:
         TerminalApp::TabStripOrientation _orientation{ TerminalApp::TabStripOrientation::Vertical };
@@ -562,6 +567,7 @@ namespace winrt::TerminalApp::implementation
         bool _projectionControlsEnabled{ true };
         TerminalApp::SidebarFiltersViewModel _sidebarFilters{ winrt::make<SidebarFiltersViewModel>() };
         winrt::Windows::UI::Xaml::Data::INotifyPropertyChanged::PropertyChanged_revoker _sidebarFiltersChanged;
+        winrt::Windows::UI::Xaml::UIElement::PreviewKeyDown_revoker _displayOptionsKeyDownRevoker;
         void _onSidebarFiltersChanged(winrt::Windows::Foundation::IInspectable const&, winrt::Windows::UI::Xaml::Data::PropertyChangedEventArgs const&);
         winrt::Windows::UI::Xaml::DispatcherTimer _historyAgeTimer{ nullptr };
         void _updateHistoryAgeTimer();

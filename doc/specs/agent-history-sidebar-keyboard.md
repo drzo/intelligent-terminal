@@ -26,9 +26,10 @@ changes the initial `tabLayout`; subsequent user choices, horizontal agent-sessi
 behavior, and other agent/delegation shortcuts remain supported.
 
 The two filter preferences are saved independently in `settings.json` as
-`sidebarShowAgentsOnly` and `sidebarShowRecentAgentSessions` (both default to
-`false`). Sidebar menu changes and toggle actions save the selected preference;
-new windows and application restarts restore it. Editing these settings also
+`sidebarShowAgentsOnly` (default `false`) and
+`sidebarShowRecentAgentSessions` (default `true`). Sidebar menu changes and toggle
+actions save the selected preference; new windows and application restarts
+restore it. Editing these settings also
 updates open windows through the existing settings reload path. Search queries
 and their temporary scope overrides are not persisted, and switching layouts
 does not clear the saved preferences. A failed save restores the previous
@@ -97,11 +98,13 @@ instead of letting unordered snapshot rows repeatedly change the icon.
 | Default shortcut | Responsibility |
 |---|---|
 | `Ctrl+Shift+G` | Toggle **Agents only** without changing **Recent agent sessions** or the search query. |
-| `Ctrl+Shift+R` | Toggle **Recent agent sessions** without changing **Agents only** or the search query. |
-| `Ctrl+Shift+/` | Retained alias for the recent-session preference in vertical layout; horizontal Agent Pane sessions behavior is unchanged. |
+| `Ctrl+Shift+/` | Toggle **Recent agent sessions** without changing **Agents only** or the search query in vertical layout; horizontal Agent Pane sessions behavior is unchanged. |
 | `Ctrl+Shift+S` | Enter the sidebar by focusing its upper-left toggle without opening search, or collapse it and return to the previous input when focus is already inside. |
 | `Ctrl+F` | Open/focus shared sidebar search; in horizontal layout, open the existing tab-search palette. |
 | `Ctrl+Shift+.` | Show/hide the independent Agent Pane; its behavior is unchanged. |
+
+Ctrl+Shift+G and Ctrl+Shift+/ also work while Sidebar Display options is open.
+Their menu hints follow effective user bindings and explicit unbinding.
 
 In horizontal layout, `Ctrl+Shift+S` remains a consumed no-op: no layout/chrome
 change and no input leakage into the terminal. User bindings can override or

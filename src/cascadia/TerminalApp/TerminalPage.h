@@ -970,7 +970,16 @@ namespace winrt::TerminalApp::implementation
         void _CommandPaletteButtonOnClick(const IInspectable& sender, const Windows::UI::Xaml::RoutedEventArgs& eventArgs);
         void _AboutButtonOnClick(const IInspectable& sender, const Windows::UI::Xaml::RoutedEventArgs& eventArgs);
 
+        enum class KeyDispatchScope
+        {
+            All,
+            SidebarNavigation,
+            SidebarFilters
+        };
+
         void _KeyDownHandler(const Windows::Foundation::IInspectable& sender, const Windows::UI::Xaml::Input::KeyRoutedEventArgs& e);
+        void _SidebarNavigationKeyDown(const Windows::Foundation::IInspectable& sender, const Windows::UI::Xaml::Input::KeyRoutedEventArgs& e);
+        void _DispatchKeyEvent(const Windows::UI::Xaml::Input::KeyRoutedEventArgs& e, KeyDispatchScope scope);
         static ::Microsoft::Terminal::Core::ControlKeyStates _GetPressedModifierKeys() noexcept;
         static void _ClearKeyboardState(const WORD vkey, const WORD scanCode) noexcept;
         void _HookupKeyBindings(const Microsoft::Terminal::Settings::Model::IActionMapView& actionMap) noexcept;
@@ -1135,7 +1144,7 @@ namespace winrt::TerminalApp::implementation
             bool accepted{ false };
             winrt::hstring detail;
         };
-        _SidebarHistoryActivationRequest _PrepareSidebarHistoryActivation(TerminalApp::TabStripHistoryItem const& item);
+        _SidebarHistoryActivationRequest _PrepareSidebarHistoryActivation(TerminalApp::TabStripHistoryItem const& item, std::wstring_view masterPipe);
         static _SidebarHistoryActivationResult _ParseSidebarHistoryActivation(const std::string& output, const winrt::hstring& activationId);
         void _ReconcileSidebarHistoryActivation(const _SidebarHistoryActivationRequest& request, const _SidebarHistoryActivationResult& result);
         safe_void_coroutine _ActivateSidebarHistoryItem(TerminalApp::TabStripHistoryItem item);
@@ -1275,6 +1284,7 @@ namespace winrt::TerminalApp::implementation
         bool _HasMultipleTabs() const;
 
         void _SelectNextTab(const bool bMoveRight, const Windows::Foundation::IReference<Microsoft::Terminal::Settings::Model::TabSwitcherMode>& customTabSwitcherMode);
+        bool _SelectAdjacentSidebarTab(bool forward);
         bool _SelectTab(uint32_t tabIndex);
         bool _MoveFocus(const Microsoft::Terminal::Settings::Model::FocusDirection& direction);
         bool _SwapPane(const Microsoft::Terminal::Settings::Model::FocusDirection& direction);

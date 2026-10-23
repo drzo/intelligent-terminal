@@ -7,6 +7,7 @@
 use super::*;
 use crate::coordinator::mock_native_delegate_executables;
 use acp::schema::v1::{ContentChunk, SessionId, SessionNotification, SessionUpdate};
+use std::path::PathBuf;
 use tokio_util::compat::{TokioAsyncReadCompatExt, TokioAsyncWriteCompatExt};
 
 #[tokio::test(flavor = "current_thread")]
@@ -617,12 +618,9 @@ fn helper_initialize_errors_do_not_expose_provider_credentials() {
         );
         assert!(!visible.contains(CREDENTIAL_RESOURCE));
         assert!(!visible.contains(CREDENTIAL_ID));
+        let detail = crate::protocol::acp::client::acp_error_detail(&protocol_error);
         assert!(
-            protocol_error
-                .data
-                .as_ref()
-                .and_then(serde_json::Value::as_str)
-                .is_some_and(|detail| !detail.trim().is_empty() && detail.contains("try again")),
+            !detail.trim().is_empty() && detail.contains("try again"),
             "helper-visible error detail must remain actionable: {visible}"
         );
     }
@@ -1076,11 +1074,78 @@ fn provider_binding_isolated_pool_keys_do_not_expose_configuration() {
     assert!(custom_key.contains("custom:provider:model-a@7"));
     assert!(!custom_key.contains("secret-endpoint"));
     assert!(!custom_key.contains("secret-credential"));
+    let mut restarted = custom.clone();
+    if let ProviderBinding::Custom { generation, .. } = &mut restarted {
+        *generation = 1;
+    }
+    assert_ne!(custom.pool_key(), restarted.pool_key());
+    assert_eq!(custom.admission_binding_key(), restarted.admission_binding_key());
+    let admission_key = custom.admission_binding_key();
+    assert!(!admission_key.contains("secret"));
+    assert!(!admission_key.contains("model-a"));
+    if let ProviderBinding::Custom { config, .. } = &mut restarted {
+        config.base_url.push_str("/changed");
+    }
+    assert_ne!(admission_key, restarted.admission_binding_key());
     assert!(
         agent_cmd_key("custom-agent --model pinned", Some("custom:local"), &source)
             .starts_with("warm:"),
         "trusted custom commands are not transient model generations"
     );
+}
+
+#[test]
+fn discovery_retry_epoch_changes_only_for_explicit_new_cycles() {
+    let mut retry = HistoryRefreshState {
+        startup_exhausted: true,
+        failures: 3,
+        ..Default::default()
+    };
+    retry.observe_retry_epoch(0);
+    assert!(retry.startup_exhausted);
+    assert_eq!(retry.failures, 3);
+    retry.observe_retry_epoch(1);
+    assert!(!retry.startup_exhausted);
+    assert_eq!(retry.failures, 0);
+    retry.record_failure();
+    retry.observe_retry_epoch(1);
+    retry.observe_retry_epoch(0);
+    assert_eq!(retry.failures, 1);
+    assert_eq!(retry.retry_epoch, 1);
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn discovery_rejects_failure_from_before_external_retry() {
+    let state = make_state();
+    let key = agent_cmd_key(
+        &crate::agent_registry::build_acp_command("copilot", None),
+        Some("copilot"),
+        &crate::agent_source::AgentSource::Host,
+    );
+    let result = refresh_host_history_agents_with(
+        &state,
+        &["copilot"],
+        HistoryRefreshTrigger::Immediate,
+        |_, _| {
+            let registry = Arc::clone(&state.startup_registry);
+            let key = key.clone();
+            async move {
+                let failure = crate::agent_lifecycle::StartupFailure::from_error(
+                    &anyhow!("old attempt"),
+                    3,
+                    None,
+                    false,
+                );
+                registry.retry(&key).await?;
+                Err::<Arc<AgentCli>, _>(failure.into())
+            }
+        },
+    ).await;
+    assert!(!result);
+    let retries = state.history_discovery_retries.lock().await;
+    assert_eq!(retries[&key].retry_epoch, 1);
+    assert_eq!(retries[&key].failures, 0);
+    assert!(retries[&key].retry_due());
 }
 
 #[tokio::test(flavor = "current_thread")]
@@ -1399,6 +1464,49 @@ async fn concurrent_helper_initialization_publishes_only_the_winning_agent() {
                 HashSet::from([helper_id])
             );
             assert!(unused.bound_helpers.lock().await.is_empty());
+        })
+        .await;
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn failed_pool_generations_share_three_attempts_without_retiring_healthy_agents() {
+    tokio::task::LocalSet::new()
+        .run_until(async {
+            use std::sync::atomic::{AtomicUsize, Ordering};
+
+            let state = make_state();
+            let failed_key = "warm:bounded-startup".to_string();
+            let healthy_key = "warm:healthy-provider".to_string();
+            let healthy = unbound_test_agent(&healthy_key);
+            let retained = acquire_agent_from_pool(&state, &healthy_key, |_| {
+                let healthy = Arc::clone(&healthy);
+                async move { Ok(healthy) }
+            })
+            .await
+            .unwrap();
+            let attempts = AtomicUsize::new(0);
+
+            for _ in 0..8 {
+                let result = acquire_agent_from_pool(&state, &failed_key, |_| {
+                    attempts.fetch_add(1, Ordering::SeqCst);
+                    async { Err(anyhow!("fixture initialization failed")) }
+                })
+                .await;
+                assert!(result.is_err());
+            }
+
+            assert_eq!(
+                attempts.load(Ordering::SeqCst),
+                3,
+                "replacing a failed pool cell must not reset the shared startup budget"
+            );
+            let reused = acquire_agent_from_pool(&state, &healthy_key, |_| async {
+                panic!("a failed provider must not restart its healthy sibling")
+            })
+            .await
+            .unwrap();
+            assert!(Arc::ptr_eq(&retained, &reused));
+            assert!(state.agents.lock().await.get(&failed_key).is_none());
         })
         .await;
 }
@@ -2531,6 +2639,7 @@ async fn native_receiver_ordered_birth_reset_preserves_late_rpc_activity() {
             SessionEvent::Notification {
                 key: "restored-real".into(),
                 message: "ask_user".into(),
+                timestamp_ms: None,
             },
         )
         .await;
@@ -2656,6 +2765,7 @@ async fn native_receiver_explicit_foreground_handoff_after_off_completion() {
         .apply_event(SessionEvent::Notification {
             key: "foreground-b".into(),
             message: "ask_user".into(),
+            timestamp_ms: None,
         })
         .await;
     let attention = state.registry.lookup(&b).await.unwrap();
@@ -2772,6 +2882,7 @@ fn make_state_with_retirement_pending_timeout(
     retirement_pending_timeout: std::time::Duration,
 ) -> Arc<MasterStateInner> {
     Arc::new(MasterStateInner {
+        startup_registry: Arc::new(crate::agent_lifecycle::StartupRegistry::default()),
         native_observation_receiver_generation: None,
         native_observation_listener_ready: std::sync::atomic::AtomicBool::new(false),
         session_lifecycle_gates: Mutex::new(SessionLifecycleGateTable::default()),
@@ -9453,6 +9564,134 @@ async fn reap_agent_drops_only_its_own_orphans() {
         .await;
 }
 
+fn runtime_exit_fixture(
+    script: &str,
+    receipt: bool,
+) -> crate::protocol::acp::process::AgentProcess {
+    let mut command = tokio::process::Command::new("pwsh.exe");
+    command
+        .args(["-NoProfile", "-Command", script])
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .kill_on_drop(true);
+    crate::protocol::acp::process::AgentProcess::spawn(
+        &mut command,
+        receipt.then(|| ("unused".into(), "receipt".into())),
+    )
+    .unwrap()
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn runtime_cleanup_holds_shared_startup_admission() {
+    let state = make_state();
+    let key = "runtime-cleanup-fixture".to_string();
+    // An unread ownership receipt holds real cleanup pending until stdin closes.
+    // EOF releases it without launching WSL.
+    let mut child = runtime_exit_fixture("[Console]::In.ReadLine() | Out-Null", true);
+    let release_cleanup = child.stdin.take().unwrap();
+    child.stop_token().cancel();
+    {
+        let mut reaper = std::pin::pin!(wait_for_agent_exit(&state, &key, &key, &mut child));
+        std::future::poll_fn(|cx| {
+            assert!(std::future::Future::poll(reaper.as_mut(), cx).is_pending());
+            std::task::Poll::Ready(())
+        })
+        .await;
+        {
+            let mut independent = std::pin::pin!(state.startup_registry.lock(&key));
+            std::future::poll_fn(|cx| {
+                assert!(
+                    std::future::Future::poll(independent.as_mut(), cx).is_pending(),
+                    "independent startup admission must wait for runtime process cleanup"
+                );
+                std::task::Poll::Ready(())
+            })
+            .await;
+        }
+        drop(release_cleanup);
+        tokio::time::timeout(std::time::Duration::from_secs(20), reaper)
+            .await
+            .expect("runtime cleanup finishes once its ownership receipt is released")
+            .unwrap();
+    }
+    assert!(child.try_wait().unwrap().is_some());
+    state
+        .startup_registry
+        .lock(&key)
+        .await
+        .unwrap()
+        .begin()
+        .unwrap();
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn runtime_cleanup_wait_does_not_block_admission_for_a_live_agent() {
+    let state = make_state();
+    let key = "runtime-live-fixture".to_string();
+    let mut child = runtime_exit_fixture("[Console]::In.ReadLine() | Out-Null", false);
+    let release_process = child.stdin.take().unwrap();
+    {
+        let mut reaper = std::pin::pin!(wait_for_agent_exit(&state, &key, &key, &mut child));
+        std::future::poll_fn(|cx| {
+            assert!(std::future::Future::poll(reaper.as_mut(), cx).is_pending());
+            std::task::Poll::Ready(())
+        })
+        .await;
+        {
+            let mut startup = tokio::time::timeout(
+                std::time::Duration::from_secs(1),
+                state.startup_registry.lock(&key),
+            )
+            .await
+            .expect("waiting for a live agent must not hold startup admission")
+            .unwrap();
+            startup.begin().unwrap();
+            startup.succeeded().unwrap();
+        }
+        drop(release_process);
+        let status = tokio::time::timeout(std::time::Duration::from_secs(20), reaper)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(status.code(), Some(0));
+    }
+    assert!(child.try_wait().unwrap().is_some());
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn runtime_cleanup_failure_quarantines_independent_admission() {
+    let state = make_state();
+    let key = "runtime-cleanup-failure".to_string();
+    let mut child = runtime_exit_fixture(
+        "[Console]::Out.WriteLine('invalid receipt'); [Console]::Out.Flush(); [Console]::In.ReadLine() | Out-Null",
+        true,
+    );
+    child.stop_token().cancel();
+    let failure = tokio::time::timeout(
+        std::time::Duration::from_secs(20),
+        wait_for_agent_exit(&state, &key, &key, &mut child),
+    )
+    .await
+    .unwrap()
+    .unwrap_err();
+    assert_eq!(
+        failure
+            .downcast_ref::<crate::agent_lifecycle::StartupFailure>()
+            .unwrap()
+            .phase,
+        crate::agent_lifecycle::StartupPhase::Cleanup,
+    );
+    let blocked = state
+        .startup_registry
+        .lock(&key)
+        .await
+        .unwrap()
+        .begin()
+        .unwrap_err();
+    assert!(blocked.is::<crate::agent_lifecycle::StartupCleanupUnconfirmed>());
+    assert!(state.startup_registry.retry(&key).await.is_err());
+}
+
 #[tokio::test(flavor = "current_thread")]
 async fn reap_agent_keeps_key_unavailable_through_orphan_cleanup() {
     tokio::task::LocalSet::new()
@@ -13822,6 +14061,7 @@ impl crate::shell::wt_channel::WtChannel for MockWtChannel {
 
 fn make_state_with_wt(wt: Arc<dyn crate::shell::wt_channel::WtChannel>) -> Arc<MasterStateInner> {
     Arc::new(MasterStateInner {
+        startup_registry: Arc::new(crate::agent_lifecycle::StartupRegistry::default()),
         native_observation_receiver_generation: None,
         native_observation_listener_ready: std::sync::atomic::AtomicBool::new(false),
         session_lifecycle_gates: Mutex::new(SessionLifecycleGateTable::default()),
@@ -14422,6 +14662,90 @@ async fn sidebar_history_control_initialize_skips_agent_and_restricts_surface() 
     assert!(state.agents.lock().await.is_empty());
 }
 
+#[tokio::test(start_paused = true)]
+async fn helper_retry_initialize_completes_while_history_is_pending() {
+    tokio::task::LocalSet::new()
+        .run_until(async {
+            let mut state = make_state();
+            Arc::get_mut(&mut state).unwrap().default_agent_cmd =
+                format!("wta-test-retry-no-spawn-{}.exe", uuid::Uuid::new_v4());
+            let (mut agent, mut requests) =
+                controlled_history_agent("copilot", crate::agent_source::AgentSource::Host);
+            Arc::get_mut(&mut agent).unwrap().cmd_key = agent_cmd_key(
+                &state.default_agent_cmd,
+                state.default_agent_id.as_deref(),
+                &agent.source,
+            );
+            add_test_agent_to_pool(&state, &agent).await;
+            let (notif_tx, _notif_rx) = mpsc::channel(NOTIF_CHANNEL_CAPACITY);
+            let handler = HelperHandler {
+                helper_id: HelperId(7002),
+                agent: empty_agent_cell(),
+                state: Arc::clone(&state),
+                replacement_gate: Arc::new(Mutex::new(())),
+                notif_tx,
+                agent_side_slot: Arc::new(OnceLock::new()),
+            };
+            let refresh_state = Arc::clone(&state);
+            let refresh_agent = Arc::clone(&agent);
+            let refresh = tokio::task::spawn_local(async move {
+                refresh_agent_history(
+                    &refresh_state,
+                    &refresh_agent,
+                    HistoryRefreshTrigger::Immediate,
+                )
+                .await
+            });
+            let reply = requests.recv().await.expect("history RPC must be pending");
+            assert!(agent.history_refresh.gate.try_lock().is_err());
+
+            let mut request =
+                acp::schema::v1::InitializeRequest::new(acp::schema::ProtocolVersion::V1);
+            crate::session_registry::inject_wta_meta(
+                &mut request.meta,
+                &crate::session_registry::WtaMeta {
+                    provider_binding: Some("default".to_string()),
+                    startup_intent: Some("retry".to_string()),
+                    ..Default::default()
+                },
+            );
+            let initialized = tokio::time::timeout(
+                std::time::Duration::from_secs(1),
+                handler.initialize(request),
+            )
+            .await;
+            assert!(
+                agent.history_refresh.gate.try_lock().is_err(),
+                "the independent history response has not been released"
+            );
+            reply
+                .send(Ok(vec![history_row(
+                    "retained-history",
+                    "Retained history",
+                )]))
+                .unwrap();
+            assert_eq!(refresh.await.unwrap(), Some(1));
+            initialized
+                .expect("helper retry must not wait for an independent history response")
+                .expect("the resident healthy agent must remain reusable");
+            assert!(Arc::ptr_eq(handler.agent.get().unwrap(), &agent));
+            assert!(agent
+                .bound_helpers
+                .lock()
+                .await
+                .contains(&handler.helper_id));
+            let key = agent_admission_key_with_provider(
+                &state.default_agent_cmd,
+                state.default_agent_id.as_deref(),
+                &agent.source,
+                &ProviderBinding::Native,
+            );
+            assert_eq!(state.startup_registry.retry_epoch(&key).await.unwrap(), 1);
+            assert_eq!(state.agents.lock().await.len(), 1);
+        })
+        .await;
+}
+
 #[test]
 fn sidebar_history_discovery_checks_policy_before_installation() {
     let allowed = HashSet::from(["copilot".to_string(), "codex".to_string()]);
@@ -14981,7 +15305,90 @@ async fn sidebar_history_startup_retry_recovers_without_respawning_healthy_agent
 }
 
 #[tokio::test(start_paused = true)]
-async fn sidebar_history_startup_retry_uses_capped_backoff_without_explicit_override() {
+async fn dedicated_history_startup_stops_after_three_failures_and_accepts_explicit_retry() {
+    let state = make_state();
+    let target = history::HistoryTarget {
+        startup_registry: Arc::clone(&state.startup_registry),
+        command: format!("wta-missing-history-{}.exe", uuid::Uuid::new_v4()),
+        agent_id: "custom:history-failure".to_string(),
+        source: crate::agent_source::AgentSource::Host,
+        provider: ProviderBinding::Native,
+    };
+    let key = agent_cmd_key_with_provider(
+        &target.command,
+        Some(&target.agent_id),
+        &target.source,
+        &target.provider,
+    );
+    let cancelled = tokio_util::sync::CancellationToken::new();
+    let mut query = history::HistoryQuery::default();
+    for _ in 0..3 {
+        assert!(query.poll(Some(&target), &cancelled, false).await.is_err());
+    }
+    assert!(state.startup_registry.lock(&key).await.unwrap().begin().is_err());
+    assert!(query.poll(Some(&target), &cancelled, false).await.is_err());
+    state.startup_registry.retry(&key).await.unwrap();
+    assert!(query.poll(Some(&target), &cancelled, false).await.is_err());
+    state.startup_registry.lock(&key).await.unwrap().begin().unwrap();
+}
+
+#[tokio::test(start_paused = true)]
+async fn sidebar_history_stops_scheduling_an_exhausted_startup_target() {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    tokio::task::LocalSet::new()
+        .run_until(async {
+            let state = make_state();
+            let key = agent_cmd_key(
+                &crate::agent_registry::build_acp_command("copilot", None),
+                Some("copilot"),
+                &crate::agent_source::AgentSource::Host,
+            );
+            let calls = AtomicUsize::new(0);
+            let initialize = |_: String, _: String| {
+                calls.fetch_add(1, Ordering::SeqCst);
+                let state = Arc::clone(&state);
+                let key = key.clone();
+                async move {
+                    acquire_agent_from_pool(&state, &key, |_| async {
+                        Err(anyhow!("controlled startup failure"))
+                    })
+                    .await
+                }
+            };
+            for _ in 0..3 {
+                assert!(
+                    !refresh_host_history_agents_with(
+                        &state,
+                        &["copilot"],
+                        HistoryRefreshTrigger::Periodic,
+                        &initialize,
+                    )
+                    .await
+                );
+                tokio::time::advance(std::time::Duration::from_secs(120)).await;
+            }
+            assert!(
+                !state.history_discovery_retries.lock().await[&key].retry_due(),
+                "a saturated startup budget must not remain on the background retry timer"
+            );
+            for trigger in [HistoryRefreshTrigger::Periodic, HistoryRefreshTrigger::Immediate] {
+                assert!(
+                    !refresh_host_history_agents_with(
+                        &state,
+                        &["copilot"],
+                        trigger,
+                        &initialize,
+                    )
+                    .await
+                );
+            }
+            assert_eq!(calls.load(Ordering::SeqCst), 3);
+        })
+        .await;
+}
+
+#[tokio::test(start_paused = true)]
+async fn sidebar_history_startup_retry_stops_after_three_failures_without_implicit_override() {
     use std::sync::atomic::{AtomicUsize, Ordering};
     tokio::task::LocalSet::new()
         .run_until(async {
@@ -14996,7 +15403,7 @@ async fn sidebar_history_startup_retry_uses_capped_backoff_without_explicit_over
                 Some("copilot"),
                 &crate::agent_source::AgentSource::Host,
             );
-            for (index, delay) in [5, 10, 20, 40, 60, 60].into_iter().enumerate() {
+            for (index, delay) in [5, 10].into_iter().enumerate() {
                 assert!(
                     !refresh_host_history_agents_with(
                         &state,
@@ -15047,6 +15454,7 @@ async fn sidebar_history_startup_retry_uses_capped_backoff_without_explicit_over
                 )
                 .await
             );
+            tokio::time::advance(std::time::Duration::from_secs(3600)).await;
             assert!(
                 !refresh_host_history_agents_with(
                     &state,
@@ -15056,7 +15464,7 @@ async fn sidebar_history_startup_retry_uses_capped_backoff_without_explicit_over
                 )
                 .await
             );
-            assert_eq!(attempts.load(Ordering::SeqCst), 7);
+            assert_eq!(attempts.load(Ordering::SeqCst), 3);
         })
         .await;
 }
@@ -16766,6 +17174,7 @@ while ($null -ne ($line=[Console]::In.ReadLine())) {{
                 .history_refresh
                 .target
                 .set(history::HistoryTarget {
+                    startup_registry: Arc::clone(&state.startup_registry),
                     command: format!(
                         "pwsh.exe -NoProfile -EncodedCommand {}",
                         crate::osc52::base64_encode(&utf16)
@@ -16884,6 +17293,7 @@ while ($null -ne ($line=[Console]::In.ReadLine())) {{
                 .history_refresh
                 .target
                 .set(history::HistoryTarget {
+                    startup_registry: Arc::clone(&state.startup_registry),
                     command: format!(
                         "pwsh.exe -NoProfile -EncodedCommand {}",
                         crate::osc52::base64_encode(&utf16)
@@ -17123,6 +17533,7 @@ async fn history_refresh_live_copilot_readonly_connection_can_be_recycled() {
                 .history_refresh
                 .target
                 .set(history::HistoryTarget {
+                    startup_registry: Arc::clone(&state.startup_registry),
                     command: format!(
                         "{} --no-auto-update",
                         crate::agent_registry::build_acp_command("copilot", None)
@@ -18415,6 +18826,33 @@ async fn seeded_history_carries_the_agents_execution_source() {
 /// distro — so a startup failure has to name the source or it sends the user
 /// debugging the wrong machine.
 #[test]
+fn startup_native_details_cross_the_master_helper_error_boundary() {
+    let error = crate::agent_lifecycle::StartupDetails::attach(
+        acp::Error::new(-32603, "Internal error")
+            .data(serde_json::json!({"credential": "must-not-forward"}))
+            .into(),
+        &[
+            "Failed to load Python DLL 'native-loader.dll'.".into(),
+            "LoadLibrary: controlled native failure.".into(),
+        ],
+    );
+    let failure = crate::agent_lifecycle::StartupFailure::from_error(&error, 2, Some(true), false);
+    let response = helper_initialize_error(
+        HelperInitializeFailure::AgentStartup,
+        &error.context(failure),
+    );
+    let serialized = serde_json::to_string(&response).unwrap();
+    assert!(!serialized.contains("must-not-forward"));
+    let response: acp::Error = serde_json::from_str(&serialized).unwrap();
+    let failure = crate::protocol::acp::failure::AgentFailure::from_initialize_error(&response);
+    assert_eq!(failure.class(), "startup_failed");
+    assert!(failure.to_string().contains("native-loader.dll"));
+    assert!(failure
+        .to_string()
+        .contains("LoadLibrary: controlled native failure."));
+}
+
+#[test]
 fn startup_failure_names_the_execution_source() {
     use crate::agent_source::AgentSource;
 
@@ -18707,6 +19145,7 @@ fn session_event_key_returns_key_for_keyed_variants() {
             SessionEvent::Notification {
                 key: "k4".into(),
                 message: "m".into(),
+                timestamp_ms: None,
             },
             Some("k4"),
         ),
@@ -18883,6 +19322,7 @@ async fn native_off_watcher_admits_exact_copilot_input_activity() {
             event: crate::agent_sessions::SessionEvent::Notification {
                 key: "native-watcher".into(),
                 message: "stale".into(),
+                timestamp_ms: None,
             },
         },
     )
@@ -18933,6 +19373,7 @@ async fn native_off_watcher_rejects_unknown_backend_and_removed_bindings() {
             event: SessionEvent::Notification {
                 key: "native-source".into(),
                 message: "ask_user".into(),
+                timestamp_ms: None,
             },
         };
         apply_watcher_event(&state, emitted.clone()).await;
@@ -19021,6 +19462,7 @@ async fn copilot_completion_hooks_resume_activity_without_file_events() {
         watcher(SessionEvent::Notification {
             key: key.into(),
             message: "file-only approval".into(),
+            timestamp_ms: None,
         }),
     )
     .await;
@@ -19047,6 +19489,13 @@ async fn copilot_completion_hooks_resume_activity_without_file_events() {
             Some(AgentStatus::Attention)
         );
         crate::wt_protocol_events::take_test_published_events();
+        let before = state.registry.lookup(&sid).await.unwrap();
+        handle_master_wt_event(&state, hook("agent.tool.finished")).await;
+        assert_eq!(state.registry.lookup(&sid).await.unwrap(), before);
+        assert!(crate::wt_protocol_events::take_test_published_events().is_empty());
+        let mut expired = before;
+        expired.attention_cooldown_until_ms = Some(0);
+        state.registry.upsert(expired).await;
         handle_master_wt_event(&state, hook("agent.tool.finished")).await;
         let row = state.registry.lookup(&sid).await.unwrap();
         assert_eq!(row.status, Some(AgentStatus::Working));
@@ -19088,6 +19537,93 @@ async fn copilot_completion_hooks_resume_activity_without_file_events() {
     assert_eq!(
         state.registry.lookup(&sid).await.unwrap().status,
         Some(AgentStatus::Ended)
+    );
+}
+
+#[tokio::test]
+async fn copilot_out_of_range_waiting_timestamp_recovers_master() {
+    use crate::agent_sessions::AgentStatus;
+    for timestamp in [253402300800000_u64, u64::MAX] {
+        let state = make_state();
+        let sid = SessionId::new("range");
+        let mut hook = serde_json::json!({
+            "method": "agent_event", "params": {
+                "event": "agent.prompt.submit", "cli_source": "copilot",
+                "agent_session_id": "range", "pane_id": "owner", "payload": {},
+            },
+        });
+        handle_master_wt_event(&state, hook.clone()).await;
+        hook["params"]["event"] = serde_json::json!("agent.notification");
+        hook["params"]["payload"] = serde_json::json!({
+            "notification_type": "permission_prompt", "message": "approve", "timestamp": timestamp,
+        });
+        handle_master_wt_event(&state, hook.clone()).await;
+        let mut expired = state.registry.lookup(&sid).await.unwrap();
+        assert_eq!(expired.status, Some(AgentStatus::Attention));
+        expired.attention_cooldown_until_ms = Some(0);
+        state.registry.upsert(expired).await;
+        hook["params"]["event"] = serde_json::json!("agent.tool.finished");
+        hook["params"]["payload"] =
+            serde_json::json!({"tool_name": "sql", "timestamp": 1792473545613_u64});
+        handle_master_wt_event(&state, hook).await;
+        let row = state.registry.lookup(&sid).await.unwrap();
+        assert_eq!(row.status, Some(AgentStatus::Working), "{timestamp}");
+        assert!(row.attention_reason.is_none());
+    }
+}
+
+#[tokio::test]
+async fn copilot_stale_tool_return_preserves_master_waiting() {
+    use crate::agent_sessions::AgentStatus;
+
+    let state = make_state();
+    let _capture = crate::wt_protocol_events::capture_test_published_events();
+    let key = "copilot-stale-tool-return";
+    let sid = SessionId::new(key);
+    let mut hook = serde_json::json!({
+        "method": "agent_event",
+        "params": {
+            "event": "agent.prompt.submit",
+            "cli_source": "copilot",
+            "agent_session_id": key,
+            "pane_id": "owner",
+            "payload": {},
+        },
+    });
+    handle_master_wt_event(&state, hook.clone()).await;
+    hook["params"]["event"] = serde_json::json!("agent.notification");
+    for timestamp in [1792473545608_u64, 1792473545612, 1792473545609] {
+        hook["params"]["payload"] = serde_json::json!({
+            "notificationType": "permission_prompt",
+            "message": "approve command",
+            "timestamp": timestamp,
+        });
+        handle_master_wt_event(&state, hook.clone()).await;
+    }
+    let mut expired = state.registry.lookup(&sid).await.unwrap();
+    expired.attention_cooldown_until_ms = Some(0);
+    state.registry.upsert(expired).await;
+    let before = state.registry.lookup(&sid).await.unwrap();
+    crate::wt_protocol_events::take_test_published_events();
+    hook["params"]["event"] = serde_json::json!("agent.tool.finished");
+    for timestamp in [
+        serde_json::json!("2026-10-20T05:19:05.580Z"),
+        serde_json::json!(1792473545610_u64),
+    ] {
+        hook["params"]["payload"] = serde_json::json!({"tool_name": "sql", "timestamp": timestamp});
+        handle_master_wt_event(&state, hook.clone()).await;
+        let row = state.registry.lookup(&sid).await.unwrap();
+        assert_eq!(row, before, "timestamp={timestamp}");
+        assert!(crate::wt_protocol_events::take_test_published_events().is_empty());
+    }
+    hook["params"]["payload"]["timestamp"] = serde_json::json!("2026-10-20T13:19:05.612+08:00");
+    handle_master_wt_event(&state, hook).await;
+    let row = state.registry.lookup(&sid).await.unwrap();
+    assert_eq!(row.status, Some(AgentStatus::Working));
+    assert!(row.attention_reason.is_none());
+    assert_eq!(
+        crate::wt_protocol_events::take_test_published_events().len(),
+        1
     );
 }
 
@@ -19281,6 +19817,7 @@ async fn restored_session_birth_normalizes_pane_identity_and_preserves_live_hook
                 SessionEvent::Notification {
                     key: sid.0.to_string(),
                     message: "Awaiting input".into(),
+                    timestamp_ms: None,
                 }
             } else {
                 SessionEvent::ToolStarting {
@@ -21028,6 +21565,7 @@ async fn master_com_shell_prompt_preserves_agent_panes_and_other_sequences() {
         .apply_event(SessionEvent::Notification {
             key: "protected-session".into(),
             message: "waiting for a choice".into(),
+            timestamp_ms: None,
         })
         .await;
 

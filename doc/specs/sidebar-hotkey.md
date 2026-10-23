@@ -111,3 +111,48 @@ focus to the toggle without closing search or changing its query. This is the
 preservation default: removing automatic search activation does not introduce
 another search-close/reset rule. Subsequent collapse continues to use the
 existing search lifecycle.
+
+## Displayed-tab navigation
+
+Decision recorded on October 21, 2026: navigate the currently displayed open
+tabs and wrap at both ends.
+
+| Default shortcut | Configurable action | Behavior in Sidebar layout |
+| --- | --- | --- |
+| Ctrl+Alt+Down | `nextSidebarTab` | Activate the next displayed open tab; wrap from the last to the first. |
+| Ctrl+Alt+Up | `prevSidebarTab` | Activate the previous displayed open tab; wrap from the first to the last. |
+
+Use the existing display projection, including the selected filter and current
+search results. This is the displayed list, not only the rows currently inside
+the scrolled viewport. Recent-session history rows and child pane rows are not
+tab-navigation targets. Navigation does not resume a session or reorder tabs.
+If the active tab has been filtered out, continue from its position in the
+canonical tab order, skipping excluded tabs and wrapping. One displayed tab
+remains selected; with no displayed tabs, the active tab is unchanged.
+
+Activation and focus use the same paths as tab selection and activation of an
+already selected sidebar row. Preserve the search query, active pane within each
+tab, session identities, drafts and filter preferences. These actions do not use
+the tab switcher and leave horizontal-layout input unhandled.
+
+The default command IDs are `Terminal.NextSidebarTab` and
+`Terminal.PrevSidebarTab`. User rebinding, command overrides and explicit
+unbinding retain normal action-map precedence. Existing `nextTab`/`prevTab`,
+numeric tab shortcuts and Escape keep their existing behavior.
+
+## Sidebar Display options shortcuts
+
+| Default shortcut | Behavior in Sidebar layout |
+| --- | --- |
+| Ctrl+Shift+G | Toggle Agents only without changing the Recent preference or search query. |
+| Ctrl+Shift+/ | Toggle Agent recent sessions without changing the Agents-only preference or search query. |
+
+Both shortcuts work while Sidebar Display options is expanded, including when
+the other filter item owns keyboard focus. Each press changes its preference
+once and updates the native checked state. The menu displays the effective
+configured shortcuts rather than fixed default text.
+
+User-defined bindings and explicit unbinding retain normal action-map precedence.
+Horizontal Agent Pane session
+behavior, other flyouts/dialogs, native mouse/Space/Enter activation, Escape,
+metadata-toggle behavior, terminal input and selection remain unchanged.

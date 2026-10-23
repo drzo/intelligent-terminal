@@ -202,7 +202,8 @@ legacy ACP entries, preserving their identities and structured-definition
 precedence. Do not start CLI-only entries or infer ACP commands from their CLI.
 
 Use the existing provider-qualified pool, ACP capability checks, history merge,
-five-second refresh workers, and startup retry backoff. Distinct custom identities
+five-second refresh workers, and bounded startup admission. Settings lookup
+failures retry separately with delays capped at 60 seconds. Distinct custom identities
 remain separate even if their executables or raw session IDs match. No chat
 session, prompt, or interactive login is created. Settings lookup failures are
 logged and retried without discarding existing rows or blocking other providers'

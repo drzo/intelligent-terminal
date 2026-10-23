@@ -2,10 +2,10 @@
 
 use super::*;
 use std::time::Duration;
-use tokio::io::{AsyncBufReadExt, BufReader};
+use tokio::io::BufReader;
 use tokio::time::Instant;
 
-use crate::protocol::acp::history_process::{HistoryJob, WslHistoryGroup};
+use crate::protocol::acp::process::AgentProcess;
 
 const WAIT_STEPS: [u64; 5] = [5, 10, 20, 40, 60];
 const HARD_TIMEOUT: Duration = Duration::from_secs(300);
@@ -14,10 +14,23 @@ const MAX_INVENTORY_ROWS: usize = 100_000;
 
 #[derive(Clone)]
 pub(super) struct HistoryTarget {
+    pub startup_registry: Arc<crate::agent_lifecycle::StartupRegistry>,
     pub command: String,
     pub agent_id: String,
     pub source: crate::agent_source::AgentSource,
     pub provider: ProviderBinding,
+}
+
+impl HistoryTarget {
+    fn admission_key(&self) -> String {
+        crate::agent_lifecycle::agent_key(
+            &self.command,
+            Some(&self.agent_id),
+            &self.source,
+            &self.provider.admission_binding_key(),
+            self.provider.is_model_scoped(),
+        )
+    }
 }
 
 async fn await_history_startup(
@@ -34,6 +47,7 @@ async fn await_history_startup(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::path::PathBuf;
 
     type PageReply =
         tokio::sync::oneshot::Sender<acp::Result<acp::schema::v1::ListSessionsResponse>>;
@@ -359,6 +373,227 @@ mod tests {
             "dependency preparation failed"
         );
     }
+
+    fn fixture_target() -> HistoryTarget {
+        HistoryTarget {
+            startup_registry: Arc::default(),
+            command: format!("wta-missing-history-{}.exe", uuid::Uuid::new_v4()),
+            agent_id: "custom:history-ownership".into(),
+            source: crate::agent_source::AgentSource::Host,
+            provider: ProviderBinding::Native,
+        }
+    }
+
+    fn fixture_process(target: &HistoryTarget) -> HistoryProcess {
+        let (pipe, _peer) = tokio::io::duplex(1024);
+        let (read, write) = tokio::io::split(pipe);
+        let (connection, _io) = conn::spawn_client(
+            acp::Client.builder().name("history-ownership-fixture"),
+            conn::byte_streams(write.compat_write(), read.compat()),
+        );
+        let mut process = HistoryProcess::mock(connection);
+        process.startup_registry = Arc::clone(&target.startup_registry);
+        process.admission_key = target.admission_key();
+        process
+    }
+
+    #[tokio::test]
+    async fn receipt_cancellation_retains_child_and_admission_until_confirmed_stop() {
+        tokio::task::LocalSet::new()
+            .run_until(async {
+                let target = fixture_target();
+                let key = target.admission_key();
+                let mut process = fixture_process(&target);
+                let mut lease = target.startup_registry.lock(&key).await.unwrap();
+                lease.begin().unwrap();
+                process.startup = Some(lease);
+                process.initialized = false;
+                process.conn = None;
+                let mut command = tokio::process::Command::new("pwsh.exe");
+                command
+                    .args([
+                        "-NoProfile",
+                        "-Command",
+                        "[Console]::In.ReadLine() | Out-Null",
+                    ])
+                    .stdin(std::process::Stdio::piped())
+                    .stdout(std::process::Stdio::piped())
+                    .kill_on_drop(true);
+                // The normal ownership reader waits for a receipt until stdin closes.
+                // EOF avoids invoking WSL while exercising the real cancellable read.
+                process.child = Some(
+                    AgentProcess::spawn(&mut command, Some(("unused".into(), "receipt".into())))
+                        .unwrap(),
+                );
+                let pid = process.child.as_ref().unwrap().id();
+                let mut query = HistoryQuery {
+                    process: Some(process),
+                    ..Default::default()
+                };
+                let cancelled = tokio_util::sync::CancellationToken::new();
+                {
+                    let mut poll = std::pin::pin!(query.poll(Some(&target), &cancelled, false));
+                    std::future::poll_fn(|cx| {
+                        assert!(std::future::Future::poll(poll.as_mut(), cx).is_pending());
+                        std::task::Poll::Ready(())
+                    })
+                    .await;
+                    cancelled.cancel();
+                    assert!(poll.await.is_err());
+                }
+                let process = query.process.as_mut().unwrap();
+                assert_eq!(process.child.as_ref().unwrap().id(), pid);
+                assert!(process.startup.is_some());
+                assert!(query.recycling);
+                {
+                    let mut competing = std::pin::pin!(target.startup_registry.lock(&key));
+                    std::future::poll_fn(|cx| {
+                        assert!(std::future::Future::poll(competing.as_mut(), cx).is_pending());
+                        std::task::Poll::Ready(())
+                    })
+                    .await;
+                }
+                {
+                    let mut stop = std::pin::pin!(query.stop());
+                    std::future::poll_fn(|cx| {
+                        assert!(std::future::Future::poll(stop.as_mut(), cx).is_pending());
+                        std::task::Poll::Ready(())
+                    })
+                    .await;
+                }
+                assert!(query.process.as_ref().unwrap().startup.is_some());
+                drop(
+                    query
+                        .process
+                        .as_mut()
+                        .unwrap()
+                        .child
+                        .as_mut()
+                        .unwrap()
+                        .stdin
+                        .take(),
+                );
+                tokio::time::timeout(Duration::from_secs(20), query.stop())
+                    .await
+                    .expect("retained receipt ownership permits confirmed cleanup")
+                    .unwrap();
+                assert!(query.process.is_none());
+                target
+                    .startup_registry
+                    .lock(&key)
+                    .await
+                    .unwrap()
+                    .begin()
+                    .unwrap();
+            })
+            .await;
+    }
+
+    #[tokio::test]
+    async fn post_initialize_stop_failure_quarantines_independent_admission() {
+        tokio::task::LocalSet::new()
+            .run_until(async {
+                let target = fixture_target();
+                let key = target.admission_key();
+                let mut process = fixture_process(&target);
+                let mut startup = target.startup_registry.lock(&key).await.unwrap();
+                startup.begin().unwrap();
+                startup.succeeded().unwrap();
+                drop(startup);
+                assert!(process.initialized);
+                assert!(process.startup.is_none());
+                process.reject_stop = true;
+                let error = process.stop().await.unwrap_err();
+                assert_eq!(
+                    error
+                        .downcast_ref::<crate::agent_lifecycle::StartupFailure>()
+                        .unwrap()
+                        .phase,
+                    crate::agent_lifecycle::StartupPhase::Cleanup,
+                );
+                let registry = Arc::clone(&target.startup_registry);
+                let error = registry.lock(&key).await.unwrap().begin().unwrap_err();
+                assert!(error.is::<crate::agent_lifecycle::StartupCleanupUnconfirmed>());
+                assert!(registry.retry(&key).await.is_err());
+            })
+            .await;
+    }
+
+    #[tokio::test]
+    async fn initialization_failure_reuses_its_lease_during_cleanup() {
+        tokio::task::LocalSet::new()
+            .run_until(async {
+                let target = fixture_target();
+                let key = target.admission_key();
+                let mut process = fixture_process(&target);
+                let mut startup = target.startup_registry.lock(&key).await.unwrap();
+                startup.begin().unwrap();
+                process.startup = Some(startup);
+                process.initialized = false;
+                process.reject_stop = true;
+                let error =
+                    tokio::time::timeout(Duration::from_secs(1), process.initialize(&target))
+                        .await
+                        .expect("initialization cleanup must not reacquire its own lease")
+                        .unwrap_err();
+                assert_eq!(
+                    error
+                        .downcast_ref::<crate::agent_lifecycle::StartupFailure>()
+                        .unwrap()
+                        .phase,
+                    crate::agent_lifecycle::StartupPhase::Cleanup,
+                );
+                assert!(target
+                    .startup_registry
+                    .lock(&key)
+                    .await
+                    .unwrap()
+                    .begin()
+                    .is_err());
+            })
+            .await;
+    }
+
+    #[tokio::test]
+    async fn stopped_history_requires_a_new_registry_retry_epoch() {
+        let target = fixture_target();
+        let key = target.admission_key();
+        let cancelled = tokio_util::sync::CancellationToken::new();
+        let mut query = HistoryQuery::default();
+        for _ in 0..crate::agent_lifecycle::MAX_STARTUP_ATTEMPTS {
+            assert!(query.poll(Some(&target), &cancelled, false).await.is_err());
+        }
+        assert!(query.startup_stopped);
+        assert!(query.poll(Some(&target), &cancelled, false).await.is_err());
+        assert!(query.startup_stopped);
+        target.startup_registry.retry(&key).await.unwrap();
+        assert!(query.poll(Some(&target), &cancelled, false).await.is_err());
+        assert!(!query.startup_stopped);
+        assert_eq!(
+            query.retry_epoch,
+            target.startup_registry.retry_epoch(&key).await.unwrap()
+        );
+    }
+
+    #[test]
+    fn stale_failure_cannot_stop_a_new_retry_epoch() {
+        let mut query = HistoryQuery::default();
+        query.observe_startup_failure(0, 1);
+        assert!(!query.startup_stopped);
+        assert_eq!(query.retry_epoch, 1);
+        query.observe_startup_failure(1, 1);
+        assert!(query.startup_stopped);
+        query.observe_startup_failure(0, 1);
+        assert!(
+            query.startup_stopped,
+            "stale failure cannot change current state"
+        );
+        query.observe_startup_failure(1, 2);
+        assert!(!query.startup_stopped);
+        query.observe_startup_failure(0, 0);
+        assert!(!query.startup_stopped);
+        assert_eq!(query.retry_epoch, 2);
+    }
 }
 
 #[derive(Default)]
@@ -394,13 +629,12 @@ impl AdaptiveWait {
 }
 
 pub(super) struct HistoryProcess {
+    startup_registry: Arc<crate::agent_lifecycle::StartupRegistry>,
+    admission_key: String,
+    startup: Option<crate::agent_lifecycle::StartupLease>,
     conn: Option<conn::ClientLink>,
-    child: Option<tokio::process::Child>,
-    job: Option<HistoryJob>,
-    wsl_group: Option<WslHistoryGroup>,
-    wsl_bootstrap: Option<(String, String)>,
+    child: Option<AgentProcess>,
     incoming: Option<BufReader<tokio::process::ChildStdout>>,
-    receipt: Vec<u8>,
     stderr: AgentStderrLog,
     init_timeout: Duration,
     initialized: bool,
@@ -411,41 +645,46 @@ pub(super) struct HistoryProcess {
 
 impl HistoryProcess {
     async fn spawn(target: &HistoryTarget) -> Result<Self> {
-        crate::antigravity_acp::prepare(&target.command, Some(&target.agent_id), &target.source)
-            .await?;
-        let mut spawned = crate::protocol::acp::spawn::spawn_history_agent_process(
+        let key = target.admission_key();
+        let mut startup = target.startup_registry.lock(&key).await?;
+        startup.begin()?;
+        let prepared = crate::agent_lifecycle::providers::prepare(
+            &target.command,
+            Some(&target.agent_id),
+            &target.source,
+        )
+        .await
+        .context(crate::agent_lifecycle::StartupPhase::Preparation);
+        match prepared {
+            Ok(prepared) => startup.prepared(prepared),
+            Err(error) => return Err(startup.failed(error)),
+        }
+        let spawned = crate::protocol::acp::spawn::spawn_history_agent_process(
             &target.command,
             &target.agent_id,
             &target.source,
             target.provider.spawn_selection(),
-        )?;
+        )
+        .context(crate::agent_lifecycle::StartupPhase::Spawn);
+        let mut spawned = match spawned {
+            Ok(spawned) => spawned,
+            Err(error) => return Err(startup.failed(error)),
+        };
         let stderr = AgentStderrLog::new(format!("history-{}", target.agent_id));
         if let Some(pipe) = spawned.child.stderr.take() {
             stderr.drain(pipe);
         }
-        let incoming = BufReader::new(
-            spawned
-                .child
-                .stdout
-                .take()
-                .ok_or_else(|| anyhow!("history stdout missing"))?,
-        );
-        let wsl_bootstrap = match (&target.source, spawned.wsl_history_marker) {
-            (crate::agent_source::AgentSource::Wsl { distro }, Some(marker)) => {
-                Some((distro.clone(), marker))
-            }
-            _ => None,
-        };
+        // No await after spawn: the query must own the child and admission
+        // lease before receipt acquisition can be cancelled.
         Ok(Self {
+            startup_registry: Arc::clone(&target.startup_registry),
+            admission_key: key,
+            startup: Some(startup),
             conn: None,
             child: Some(spawned.child),
-            job: spawned.history_job,
-            wsl_group: None,
-            wsl_bootstrap,
-            incoming: Some(incoming),
-            receipt: Vec::new(),
+            incoming: None,
             stderr,
-            init_timeout: Duration::from_secs(if spawned.is_npx { 60 } else { 15 }),
+            init_timeout: crate::agent_lifecycle::INITIALIZE_TIMEOUT,
             initialized: false,
             io: None,
             #[cfg(test)]
@@ -453,36 +692,12 @@ impl HistoryProcess {
         })
     }
 
-    async fn read_wsl_receipt(&mut self) -> Result<()> {
-        if let Some((distro, marker)) = &self.wsl_bootstrap {
-            let incoming = self
-                .incoming
-                .as_mut()
-                .ok_or_else(|| anyhow!("WSL history bootstrap pipe missing"))?;
-            let count = tokio::time::timeout(
-                Duration::from_secs(15),
-                incoming.read_until(b'\n', &mut self.receipt),
-            )
-            .await
-            .context("WSL history ownership receipt timed out")??;
-            if count != 0 || !self.receipt.is_empty() {
-                self.wsl_group = Some(WslHistoryGroup::parse(
-                    distro,
-                    marker,
-                    std::str::from_utf8(&self.receipt)?,
-                )?);
-            }
-            // EOF before the trusted bootstrap prints its receipt means no
-            // agent was launched; malformed/missing live receipts fail closed.
-            self.wsl_bootstrap = None;
-        }
-        Ok(())
-    }
-
     async fn initialize(&mut self, target: &HistoryTarget) -> Result<()> {
-        self.read_wsl_receipt().await?;
         let result = async {
             let child = self.child.as_mut().ok_or_else(|| anyhow!("history child missing"))?;
+            if self.incoming.is_none() {
+                self.incoming = Some(child.take_stdout().await?);
+            }
             let outgoing = child.stdin.take().ok_or_else(|| anyhow!("history stdin missing"))?;
             let incoming = self.incoming.take().ok_or_else(|| anyhow!("history stdout missing"))?;
             // Callers include ordinary Send tasks, which do not inherit the
@@ -507,6 +722,10 @@ impl HistoryProcess {
                 acp::schema::v1::InitializeRequest::new(acp::schema::ProtocolVersion::V1)
                     .client_info(acp::schema::v1::Implementation::new("wta-history", env!("CARGO_PKG_VERSION"))),
             )).await.context("history ACP initialize timed out")??;
+            if let Some(startup) = &mut self.startup {
+                startup.succeeded()?;
+            }
+            self.startup = None;
             if response.agent_capabilities.session_capabilities.list.is_none() {
                 return Err(anyhow!("history ACP server does not support session/list"));
             }
@@ -517,10 +736,22 @@ impl HistoryProcess {
             Ok(())
         }.await;
         if let Err(error) = result {
-            for line in self.stderr.mark_failed() {
+            let lines = self.stderr.mark_failed();
+            for line in &lines {
                 tracing::warn!(target: "master_history", agent_id = %target.agent_id, "{line}");
             }
-            return Err(error);
+            // Keep an initialization lease in self across cleanup awaits.
+            // Reacquiring it here would deadlock, and a local would be lost
+            // if retirement cancels cleanup.
+            let cleanup = self.cleanup().await;
+            let error = crate::agent_lifecycle::StartupDetails::attach(
+                cleanup.err().unwrap_or(error),
+                &lines,
+            );
+            return Err(match self.startup.take() {
+                Some(startup) => startup.failed(error),
+                None => error,
+            });
         }
         Ok(())
     }
@@ -532,31 +763,42 @@ impl HistoryProcess {
     }
 
     async fn stop(&mut self) -> Result<()> {
-        #[cfg(test)]
-        if self.reject_stop {
-            return Err(anyhow!("fixture cannot confirm process exit"));
+        let result = self.cleanup().await;
+        let startup = self.startup.take();
+        match result {
+            Ok(()) => Ok(()),
+            Err(error) => Err(match startup {
+                Some(startup) => startup.failed(error),
+                None => error,
+            }),
         }
-        self.read_wsl_receipt().await?;
-        if let Some(group) = &self.wsl_group {
-            group.terminate().await?;
+    }
+
+    async fn cleanup(&mut self) -> Result<()> {
+        if self.startup.is_none() {
+            self.startup = Some(self.startup_registry.lock(&self.admission_key).await?);
         }
-        if let Some(job) = &self.job {
-            job.terminate().await?;
+        let result: Result<()> = async {
+            #[cfg(test)]
+            if self.reject_stop {
+                return Err(anyhow!("fixture cannot confirm process exit"));
+            }
+            if let Some(child) = &mut self.child {
+                child.terminate().await?;
+            }
+            if let Some(conn) = &self.conn {
+                conn.shutdown();
+            }
+            if let Some(io) = self.io.take() {
+                io.abort();
+                let _ = io.await;
+            }
+            Ok(())
         }
-        if let Some(child) = &mut self.child {
-            tokio::time::timeout(Duration::from_secs(5), child.wait())
-                .await
-                .context("history launcher exit timed out")?
-                .context("wait for history launcher")?;
-        }
-        if let Some(conn) = &self.conn {
-            conn.shutdown();
-        }
-        if let Some(io) = self.io.take() {
-            io.abort();
-            let _ = io.await;
-        }
-        Ok(())
+        .await;
+        result
+            .context(crate::agent_lifecycle::StartupPhase::Cleanup)
+            .context(crate::agent_lifecycle::StartupCleanupUnconfirmed)
     }
 
     fn ended(&mut self) -> Result<bool> {
@@ -573,13 +815,12 @@ impl HistoryProcess {
     #[cfg(test)]
     pub(super) fn mock(conn: conn::ClientLink) -> Self {
         Self {
+            startup_registry: Arc::default(),
+            admission_key: "history-fixture".into(),
+            startup: None,
             conn: Some(conn),
             child: None,
-            job: None,
-            wsl_group: None,
-            wsl_bootstrap: None,
             incoming: None,
-            receipt: Vec::new(),
             stderr: AgentStderrLog::new("history-fixture"),
             init_timeout: Duration::from_secs(15),
             initialized: true,
@@ -655,6 +896,8 @@ pub(super) struct HistoryQuery {
     pending: Option<PendingList>,
     recycling: bool,
     wait: AdaptiveWait,
+    startup_stopped: bool,
+    retry_epoch: u64,
     last_response_complete: bool,
 }
 
@@ -679,6 +922,19 @@ impl HistoryQuery {
 
     pub fn in_flight(&self) -> bool {
         self.pending.is_some()
+    }
+
+    fn observe_startup_failure(&mut self, failed_epoch: u64, registry_epoch: u64) {
+        let retried = registry_epoch > self.retry_epoch;
+        self.retry_epoch = self.retry_epoch.max(registry_epoch);
+        if failed_epoch < self.retry_epoch {
+            if retried {
+                self.startup_stopped = false;
+            }
+            return;
+        }
+        self.startup_stopped = true;
+        self.retry_epoch = self.retry_epoch.max(failed_epoch);
     }
 
     pub fn last_response_complete(&self) -> bool {
@@ -714,6 +970,31 @@ impl HistoryQuery {
         match self.poll_inner(target, cancelled, complete_inventory).await {
             Ok(result) => result,
             Err(error) => {
+                if error.is::<crate::agent_lifecycle::StartupLimitReached>()
+                    || error.is::<crate::agent_lifecycle::StartupCleanupUnconfirmed>()
+                {
+                    let failed_epoch = error
+                        .downcast_ref::<crate::agent_lifecycle::StartupFailure>()
+                        .map(|failure| failure.retry_epoch)
+                        .unwrap_or(self.retry_epoch);
+                    let registry_epoch = if let Some(target) = target {
+                        match target
+                            .startup_registry
+                            .retry_epoch(&target.admission_key())
+                            .await
+                        {
+                            Ok(epoch) => epoch,
+                            Err(epoch_error) => {
+                                tracing::warn!(target: "master_history", error = %epoch_error,
+                                    "could not read history startup retry epoch");
+                                self.retry_epoch
+                            }
+                        }
+                    } else {
+                        self.retry_epoch
+                    };
+                    self.observe_startup_failure(failed_epoch, registry_epoch);
+                }
                 self.wait.fast_successes = 0;
                 tracing::warn!(target: "master_history",
                     pid = ?self.process.as_ref().and_then(|process| process.child.as_ref()).and_then(|child| child.id()),
@@ -730,6 +1011,20 @@ impl HistoryQuery {
         complete_inventory: bool,
     ) -> Result<std::result::Result<acp::schema::v1::ListSessionsResponse, HistoryRefreshFailure>>
     {
+        if self.startup_stopped {
+            let Some(target) = target else {
+                return Ok(Err(HistoryRefreshFailure::Other));
+            };
+            let epoch = target
+                .startup_registry
+                .retry_epoch(&target.admission_key())
+                .await?;
+            if epoch <= self.retry_epoch {
+                return Ok(Err(HistoryRefreshFailure::Other));
+            }
+            self.retry_epoch = epoch;
+            self.startup_stopped = false;
+        }
         if self.recycling {
             self.stop().await?;
         }
@@ -753,6 +1048,13 @@ impl HistoryQuery {
                 )
                 .await?,
             );
+            if let Some(startup) = self
+                .process
+                .as_ref()
+                .and_then(|process| process.startup.as_ref())
+            {
+                self.retry_epoch = self.retry_epoch.max(startup.retry_epoch());
+            }
         }
         if let Some(process) = self.process.as_mut().filter(|process| !process.initialized) {
             self.recycling = true;

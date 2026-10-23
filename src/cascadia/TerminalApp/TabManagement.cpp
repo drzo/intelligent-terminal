@@ -114,7 +114,7 @@ namespace winrt::TerminalApp::implementation
             const auto settings{ Settings::TerminalSettings::CreateWithNewTerminalArgs(_settings, newTerminalArgs) };
 
             // Try to handle auto-elevation
-            if (!newTerminalArgs.ContentId() && _maybeElevate(newTerminalArgs, settings, profile))
+            if (!newTerminalArgs.ContentId() && _maybeElevate(newTerminalArgs.Copy().as<NewTerminalArgs>(), settings, profile))
             {
                 return S_OK;
             }
@@ -1304,6 +1304,32 @@ namespace winrt::TerminalApp::implementation
             p.Visibility(Visibility::Visible);
             p.SelectNextItem(bMoveRight);
         }
+    }
+
+    bool TerminalPage::_SelectAdjacentSidebarTab(const bool forward)
+    {
+        if (!_isVerticalLayout)
+        {
+            return false;
+        }
+        if (_rearranging || _mutatingTabCollections || _changingTabLayout)
+        {
+            return true;
+        }
+        const auto focused = _GetFocusedTabImpl();
+        const auto owners = _BuildTabListSnapshot();
+        const auto target = ::TerminalApp::TabListViewModel{ owners, _ReadTabListCriteria() }.CycleDisplayedTarget(focused.get(), forward);
+        if (target && target->canonicalIndex < _tabs.Size() &&
+            _GetTabImpl(_tabs.GetAt(target->canonicalIndex)).get() == target->identity)
+        {
+            _SelectTab(target->canonicalIndex);
+            if (focused && focused.get() == target->identity)
+            {
+                // Re-enter the only displayed tab through the existing row-activation path.
+                focused->RequestFocusActiveControl.raise();
+            }
+        }
+        return true;
     }
 
     // Method Description:
