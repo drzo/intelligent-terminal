@@ -172,6 +172,7 @@ namespace winrt::Microsoft::Terminal::Settings::Model::implementation
         void ResetApplicationState() const;
         void ResetToDefaultSettings();
         bool WriteSettingsToDisk();
+        bool InitializeNewTabMenu();
         // Called under ApplicationState::LockSidebarState, after a valid load.
         bool MigrateSidebarLayout(ApplicationState& state, const std::function<bool()>& save);
         void WarnSidebarPersistenceFailure();

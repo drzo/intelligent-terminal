@@ -2640,6 +2640,11 @@
         "newTabMenu": {
           "$ref": "#/$defs/NewTabMenu"
         },
+        "agentProfileMenuInitialized": {
+          "type": "boolean",
+          "default": false,
+          "description": "Records completion of Intelligent Terminal's one-time agent menu initialization. When true, remainingProfiles excludes automatically generated native agent profiles."
+        },
         "language": {
           "type": [
             "string",

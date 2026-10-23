@@ -189,19 +189,35 @@ Terminal's generated-profile state; rediscovery does not make it visible again.
 Managed launches resolve the executable again at connection creation, so a stale
 menu entry cannot run an unavailable CLI.
 
-The default new-tab menu lists ordinary profiles first and automatically generated
-agent profiles second, with a separator only when both groups have visible,
-available profiles. Each group preserves the existing profile order and shortcuts.
-The default layout means an omitted `newTabMenu` or exactly one
-`{ "type": "remainingProfiles" }` entry. Grouping affects only the displayed menu
-and does not rewrite `settings.json`. User-created copies without the generated
-agent source stay in the ordinary group.
+After generating profiles, settings loading initializes the agent menu once.
+This applies to both the default menu and pre-existing custom menus. Existing
+entries, folders, and their order are retained. Visible, available native agent
+profiles not already explicitly included or matched by a collection are appended
+as individual editable entries. A separator is added before them only when the
+existing menu has visible content and does not already end with a separator.
+If no native agent is available, initialization waits until a later load.
 
-Agent profiles can be reordered through the new-tab menu settings or hidden
-individually. Any other `newTabMenu` layout, including an empty list, folders,
-explicit profiles, or separators, is rendered as configured without automatic
-grouping or separators. Profiles also respect disabled profile sources and the
-agent allowlist.
+Ordinary profiles stay in the existing `remainingProfiles` dynamic group rather
+than becoming individual saved menu entries. After initialization this group
+excludes the `IntelligentTerminal.AgentProfiles` source, so removing an agent menu
+entry cannot make it reappear among ordinary profiles. New ordinary profiles,
+including user-created copies without that source, continue to appear in the
+dynamic group automatically.
+
+The profile definitions, menu entries, separator, and
+`"agentProfileMenuInitialized": true` completion marker are saved together in
+`settings.json`. A failed write leaves the on-disk configuration eligible for
+retry. The marker survives Settings editor copies, saves, and restarts; even
+deleting all agent entries and the separator does not trigger regeneration.
+The menu settings page can reorder or remove individual agent entries and move
+or delete the separator. Removing a menu entry does not delete its profile.
+
+After initialization, newly discovered agents still get profile definitions,
+but no new menu entries are automatically appended. Users can add them through
+the menu settings page. Explicitly configured matching collections continue to
+follow their own dynamic rules. Hidden profiles, disabled profile sources, and
+the agent allowlist remain respected. Resetting settings, or explicitly clearing
+the completion marker, allows initialization again.
 
 There is no WTA or hidden PowerShell process beneath a managed agent. The native CLI
 decides what Ctrl+C means during interaction. When it exits, Terminal observes its

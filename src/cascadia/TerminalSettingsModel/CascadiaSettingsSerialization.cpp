@@ -19,12 +19,14 @@
 #include "AgentProfileGenerator.h"
 
 #include "ApplicationState.h"
+#include "../inc/AgentProfileUtils.h"
 #include "../inc/AgentPolicy.h"
 #include "DefaultTerminal.h"
 #include "FileUtils.h"
 #include "SettingsTelemetry.h"
 
 #include "ProfileEntry.h"
+#include "SeparatorEntry.h"
 #include "FolderEntry.h"
 #include "MatchProfilesEntry.h"
 #include "WtExeUtils.h"
@@ -1328,6 +1330,7 @@ try
 
     // If this throws, the app will catch it and use the default settings.
     const auto settings = winrt::make_self<CascadiaSettings>(std::move(loader));
+    mustWriteToDisk |= settings->InitializeNewTabMenu();
 
     // If we created the file, or found new dynamic profiles, write the user
     // settings string back to the file.
@@ -1845,6 +1848,102 @@ void CascadiaSettings::_resolveDefaultProfile() const
     GlobalSettings().DefaultProfile(_allProfiles.GetAt(0).Guid());
 }
 
+bool CascadiaSettings::InitializeNewTabMenu()
+{
+    const auto entries = _globals->NewTabMenu();
+    if (_globals->AgentProfileMenuInitialized() || !entries)
+    {
+        return false;
+    }
+
+    std::unordered_set<winrt::guid> missingProfiles;
+    for (const auto& profile : _activeProfiles)
+    {
+        if (profile.Source() == ::Microsoft::Terminal::AgentProfiles::Source)
+        {
+            missingProfiles.insert(profile.Guid());
+        }
+    }
+    if (missingProfiles.empty())
+    {
+        return false;
+    }
+
+    bool hasExistingContent = false;
+    std::function<void(const IVector<Model::NewTabMenuEntry>&)> removeReferencedProfiles;
+    removeReferencedProfiles = [&](const auto& menuEntries) {
+        if (!menuEntries)
+        {
+            return;
+        }
+        for (const auto& entry : menuEntries)
+        {
+            if (!entry)
+            {
+                continue;
+            }
+            switch (entry.Type())
+            {
+            case NewTabMenuEntryType::Profile:
+                if (const auto profile = entry.as<Model::ProfileEntry>().Profile())
+                {
+                    missingProfiles.erase(profile.Guid());
+                    hasExistingContent = true;
+                }
+                break;
+            case NewTabMenuEntryType::RemainingProfiles:
+            case NewTabMenuEntryType::MatchProfiles:
+                if (const auto profiles = entry.as<Model::ProfileCollectionEntry>().Profiles())
+                {
+                    for (const auto& [index, profile] : profiles)
+                    {
+                        // The remaining-profiles group stays dynamic, but must not
+                        // reclaim agent entries the user subsequently removes.
+                        if (entry.Type() == NewTabMenuEntryType::RemainingProfiles)
+                        {
+                            hasExistingContent |= profile.Source() != ::Microsoft::Terminal::AgentProfiles::Source;
+                        }
+                        else
+                        {
+                            missingProfiles.erase(profile.Guid());
+                            hasExistingContent = true;
+                        }
+                    }
+                }
+                break;
+            case NewTabMenuEntryType::Folder:
+                removeReferencedProfiles(winrt::get_self<FolderEntry>(entry.as<Model::FolderEntry>())->RawEntries());
+                hasExistingContent |= entry.as<Model::FolderEntry>().AllowEmpty() && entry.as<Model::FolderEntry>().Inlining() == FolderEntryInlining::Never;
+                break;
+            case NewTabMenuEntryType::Action:
+                hasExistingContent = true;
+                break;
+            default:
+                break;
+            }
+        }
+    };
+    removeReferencedProfiles(entries);
+
+    const auto lastEntry = entries.Size() ? entries.GetAt(entries.Size() - 1) : Model::NewTabMenuEntry{ nullptr };
+    if (!missingProfiles.empty() && hasExistingContent && (!lastEntry || lastEntry.Type() != NewTabMenuEntryType::Separator))
+    {
+        entries.Append(winrt::make<SeparatorEntry>());
+    }
+    for (const auto& profile : _activeProfiles)
+    {
+        if (profile.Source() == ::Microsoft::Terminal::AgentProfiles::Source && missingProfiles.contains(profile.Guid()))
+        {
+            entries.Append(winrt::make<ProfileEntry>(winrt::to_hstring(profile.Guid())));
+        }
+    }
+    // Persist the marker atomically with the menu, including for pre-existing
+    // custom layouts. A failed settings write leaves initialization retryable.
+    _globals->AgentProfileMenuInitialized(true);
+    _resolveNewTabMenuProfiles();
+    return true;
+}
+
 // Method Description:
 // - Iterates through the "newTabMenu" entries and for ProfileEntries resolves the "profile"
 //   fields, which can be a profile name, to a GUID and stores it back.
@@ -1854,6 +1953,13 @@ void CascadiaSettings::_resolveDefaultProfile() const
 //   multiple of these entries are found.
 void CascadiaSettings::_resolveNewTabMenuProfiles() const
 {
+    for (auto index = _warnings.Size(); index > 0; --index)
+    {
+        if (_warnings.GetAt(index - 1) == SettingsLoadWarnings::DuplicateRemainingProfilesEntry)
+        {
+            _warnings.RemoveAt(index - 1);
+        }
+    }
     Model::RemainingProfilesEntry remainingProfilesEntry = nullptr;
 
     // The TerminalPage needs to know which profile has which profile ID. To prevent
@@ -1863,7 +1969,11 @@ void CascadiaSettings::_resolveNewTabMenuProfiles() const
     auto activeProfileCount = gsl::narrow_cast<int>(_activeProfiles.Size());
     for (auto profileIndex = 0; profileIndex < activeProfileCount; profileIndex++)
     {
-        remainingProfilesMap.emplace(profileIndex, _activeProfiles.GetAt(profileIndex));
+        const auto profile = _activeProfiles.GetAt(profileIndex);
+        if (!_globals->AgentProfileMenuInitialized() || profile.Source() != ::Microsoft::Terminal::AgentProfiles::Source)
+        {
+            remainingProfilesMap.emplace(profileIndex, profile);
+        }
     }
 
     // We keep track of the "remaining profiles" - those that have not yet been resolved
