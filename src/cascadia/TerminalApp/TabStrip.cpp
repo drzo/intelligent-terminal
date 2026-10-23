@@ -1333,6 +1333,8 @@ namespace winrt::TerminalApp::implementation
                     }
                 }
             }
+            const auto groupIndicatorVisible = isGroup && display.ChildrenVisibility() == Visibility::Visible &&
+                                               display.SelectionVisibility() == Visibility::Visible;
             const auto selected = display.SelectionVisibility() == Visibility::Visible && !selectedPaneVisible;
             const auto pointerOver = winrt::get_self<TabStripDisplayItem>(display)->IsPointerOver();
             if (const auto hoverBackground = grid.FindName(L"TabHoverBackground").try_as<WUX::Controls::Border>())
@@ -1352,7 +1354,7 @@ namespace winrt::TerminalApp::implementation
                     if (Windows::Foundation::Metadata::ApiInformation::IsPropertyPresent(
                             L"Windows.UI.Xaml.Controls.Primitives.ListViewItemPresenter", L"SelectionIndicatorVisualEnabled"))
                     {
-                        presenter.SelectionIndicatorVisualEnabled(!selectedPaneVisible);
+                        presenter.SelectionIndicatorVisualEnabled(!groupIndicatorVisible);
                     }
                     const auto marker = box_value(L"SidebarThemedHover");
                     if (!_highContrast)

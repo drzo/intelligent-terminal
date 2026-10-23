@@ -15830,6 +15830,7 @@ namespace TerminalAppLocalTests
                 const auto paneList = root.Children().GetAt(1).as<ItemsControl>();
                 const auto groupIndicator = Media::VisualTreeHelper::GetChild(paneList, 0).as<Grid>().Children().GetAt(0).as<Border>();
                 VERIFY_ARE_EQUAL(10.0, paneList.Margin().Left);
+                VERIFY_ARE_EQUAL(display.SelectionVisibility(), winrt::unbox_value<Visibility>(paneList.Tag()));
                 VERIFY_ARE_EQUAL(selectedPane < 0 ? Visibility::Collapsed : Visibility::Visible, groupIndicator.Visibility());
                 for (uint32_t index = 0; index < display.PaneItems().Size(); ++index)
                 {
@@ -15842,7 +15843,10 @@ namespace TerminalAppLocalTests
                     VERIFY_ARE_EQUAL(expected, background.Visibility());
                     VERIFY_ARE_EQUAL(10.0, background.Margin().Left);
                 }
-                VERIFY_ARE_EQUAL(paneList.ActualHeight() - 10, groupIndicator.ActualHeight());
+                if (selectedPane >= 0)
+                {
+                    VERIFY_ARE_EQUAL(paneList.ActualHeight() - 10, groupIndicator.ActualHeight());
+                }
             };
             verifySelection(firstDisplay, 1);
             verifySelection(secondDisplay, -1);
@@ -22693,8 +22697,34 @@ namespace TerminalAppLocalTests
             VERIFY_ARE_EQUAL(1u, display.PaneItems().Size());
             VERIFY_ARE_EQUAL(Visibility::Visible, display.SelectionVisibility());
             VERIFY_ARE_EQUAL(Visibility::Collapsed, display.PaneItems().GetAt(0).ActiveIndicatorVisibility());
-            const auto headerRoot = page->_tabStrip.ContainerFromIndex(0).as<ListViewItem>()
-                                        .ContentTemplateRoot().as<StackPanel>().Children().GetAt(0).as<Grid>();
+            const auto container = page->_tabStrip.ContainerFromIndex(0).as<ListViewItem>();
+            const auto findPresenter = [](const auto& self, const DependencyObject& element) -> Primitives::ListViewItemPresenter {
+                if (const auto presenter = element.try_as<Primitives::ListViewItemPresenter>())
+                {
+                    return presenter;
+                }
+                for (auto index = 0; index < Media::VisualTreeHelper::GetChildrenCount(element); ++index)
+                {
+                    if (const auto presenter = self(self, Media::VisualTreeHelper::GetChild(element, index)))
+                    {
+                        return presenter;
+                    }
+                }
+                return nullptr;
+            };
+            const auto nativePresenter = findPresenter(findPresenter, container);
+            VERIFY_IS_NOT_NULL(nativePresenter);
+            const auto hasNativeIndicator = winrt::Windows::Foundation::Metadata::ApiInformation::IsPropertyPresent(
+                L"Windows.UI.Xaml.Controls.Primitives.ListViewItemPresenter", L"SelectionIndicatorVisualEnabled");
+            if (hasNativeIndicator)
+            {
+                VERIFY_IS_FALSE(nativePresenter.SelectionIndicatorVisualEnabled());
+            }
+            const auto contentRoot = container.ContentTemplateRoot().as<StackPanel>();
+            const auto headerRoot = contentRoot.Children().GetAt(0).as<Grid>();
+            const auto paneList = contentRoot.Children().GetAt(1).as<ItemsControl>();
+            const auto groupIndicator = Media::VisualTreeHelper::GetChild(paneList, 0).as<Grid>().Children().GetAt(0).as<Border>();
+            VERIFY_ARE_EQUAL(Visibility::Visible, groupIndicator.Visibility());
             const auto nativeSelection = headerRoot.FindName(L"TabSelectionBackground").as<Border>();
             VERIFY_ARE_EQUAL(Visibility::Visible, nativeSelection.Visibility());
 
@@ -22702,6 +22732,10 @@ namespace TerminalAppLocalTests
             page->_ApplyTabListProjection();
             VERIFY_ARE_EQUAL(2u, display.PaneItems().Size());
             VERIFY_ARE_EQUAL(Visibility::Collapsed, nativeSelection.Visibility());
+            if (hasNativeIndicator)
+            {
+                VERIFY_IS_FALSE(nativePresenter.SelectionIndicatorVisualEnabled());
+            }
         });
     }
 
