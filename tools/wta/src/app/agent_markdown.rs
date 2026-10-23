@@ -796,10 +796,99 @@ After"#
                 .collect::<std::collections::HashSet<_>>();
             if language == "rust" {
                 assert!(colors.len() > 1, "Rust tokens must retain syntax colors");
+                for (foreground, background) in [
+                    (ratatui::style::Color::Black, ratatui::style::Color::White),
+                    (ratatui::style::Color::White, ratatui::style::Color::Black),
+                ] {
+                    let area = Rect::new(0, 0, 90, rows.len() as u16);
+                    let mut buffer = Buffer::empty(area);
+                    Paragraph::new(rows.clone())
+                        .style(Style::new().fg(foreground).bg(background))
+                        .render(area, &mut buffer);
+                    assert!(
+                        buffer
+                            .content
+                            .iter()
+                            .filter(|cell| matches!(cell.fg, ratatui::style::Color::Rgb(..)))
+                            .all(|cell| cell.bg == ratatui::style::Color::Rgb(43, 48, 59)),
+                        "Syntax colors need their matching background on {background:?} profiles"
+                    );
+                }
             } else {
                 assert!(colors.is_empty(), "Unknown code must keep upstream styling");
+                let code_line = rows
+                    .iter()
+                    .find(|line| line.to_string().contains("fn main()"))
+                    .unwrap();
+                assert!(
+                    code_line
+                        .spans
+                        .iter()
+                        .filter(|span| !span.content.trim().is_empty())
+                        .all(|span| span.style.add_modifier.contains(Modifier::DIM)),
+                    "Ordinary code must retain its code style: {code_line:?}"
+                );
             }
         }
+    }
+
+    #[test]
+    fn agent_markdown_highlighted_code_preserves_quote_prefix_and_style() {
+        for language in ["rust", "not-a-language"] {
+            let source = format!(
+                r#"> ~~~{language}
+> fn main() {{}}
+> ~~~"#
+            );
+            let result = render_batch(BatchJob {
+                sources: vec![Arc::from(source)].into(),
+                width: 90,
+                generation: 1,
+            });
+            let segments = result.rows.unwrap();
+            let code_line = segments[0]
+                .iter()
+                .find(|line| line.to_string().contains("fn main()"))
+                .unwrap();
+            assert!(
+                code_line.to_string().starts_with("● > "),
+                "language={language:?}, row={code_line:?}"
+            );
+            assert!(
+                code_line
+                    .spans
+                    .iter()
+                    .skip(1)
+                    .filter(|span| !span.content.trim().is_empty())
+                    .all(|span| span
+                        .style
+                        .add_modifier
+                        .contains(Modifier::DIM | Modifier::ITALIC)),
+                "language={language:?}, row={code_line:?}"
+            );
+        }
+        let source = "```rust\nlet text = \"\u{1b}[31mLITERAL_ANSI\u{1b}[0m\";\n```";
+        let parsed = from_str_with_options(source, &Options::new(PaneStyles));
+        assert!(
+            parsed
+                .to_string()
+                .contains("\u{1b}[31mLITERAL_ANSI\u{1b}[0m"),
+            "Syntax highlighting must not interpret literal ANSI escapes: {parsed:?}"
+        );
+        let result = render_batch(BatchJob {
+            sources: vec![Arc::from(source)].into(),
+            width: 90,
+            generation: 1,
+        });
+        let text = result.rows.unwrap()[0]
+            .iter()
+            .map(Line::to_string)
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(
+            text.contains("[31mLITERAL_ANSI[0m") && !text.contains('\u{1b}'),
+            "Literal escape-sequence text must survive projection: {text:?}"
+        );
     }
 
     #[test]
