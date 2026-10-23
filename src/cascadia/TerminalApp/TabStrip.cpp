@@ -2361,6 +2361,8 @@ namespace winrt::TerminalApp::implementation
         _applyHistoryRowForeground(container.ContentTemplateRoot().try_as<FrameworkElement>(), history);
         if (display)
         {
+            // Keep scrolling placeholders at the same minimum height as their tab headers.
+            container.MinHeight(display.HeaderMinHeight());
             // XAML's dynamic binding subscriber is not agile and attempts to marshal
             // PropertyChangedEventHandler during realization. Keep these UI-thread
             // automation updates on our own native delegates instead.
@@ -2392,6 +2394,7 @@ namespace winrt::TerminalApp::implementation
                     if (const auto item = weakDisplay.get();
                         item && row.Content() == item)
                     {
+                        row.MinHeight(item.HeaderMinHeight());
                         WUX::Automation::AutomationProperties::SetAcceleratorKey(row, item.AcceleratorKey());
                         WUX::Automation::AutomationProperties::SetHelpText(row, item.ToolTipText());
                     }
@@ -2403,6 +2406,7 @@ namespace winrt::TerminalApp::implementation
         else
         {
             _rowAutomationSubscriptions.erase(winrt::get_abi(container));
+            container.ClearValue(FrameworkElement::MinHeightProperty());
             container.ClearValue(WUX::Automation::AutomationProperties::AcceleratorKeyProperty());
         }
 
