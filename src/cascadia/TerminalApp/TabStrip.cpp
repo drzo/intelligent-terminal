@@ -1162,13 +1162,18 @@ namespace winrt::TerminalApp::implementation
         return nullptr;
     }
 
+    static Windows::UI::Color _compositeBrushColor(WUX::Media::SolidColorBrush const& brush, const Windows::UI::Color backdrop)
+    {
+        const auto alpha = static_cast<uint8_t>(std::lround(brush.Color().A * brush.Opacity()));
+        return til::color{ brush.Color() }.with_alpha(alpha).layer_over(til::color{ backdrop });
+    }
+
     static Windows::UI::Color _sidebarBackdropColor(WUX::Media::Brush const& background, const ElementTheme theme)
     {
         const auto fallback = theme == ElementTheme::Light ? Windows::UI::Colors::White() : Windows::UI::Colors::Black();
         if (const auto solid = background.try_as<WUX::Media::SolidColorBrush>())
         {
-            const auto alpha = static_cast<uint8_t>(std::lround(solid.Color().A * solid.Opacity()));
-            return til::color{ solid.Color() }.with_alpha(alpha).layer_over(til::color{ fallback });
+            return _compositeBrushColor(solid, fallback);
         }
         if (const auto acrylic = background.try_as<WUX::Media::AcrylicBrush>())
         {
@@ -1182,8 +1187,7 @@ namespace winrt::TerminalApp::implementation
 
     static Windows::UI::Color _tabSelectionForeground(WUX::Media::SolidColorBrush const& brush, const Windows::UI::Color backdrop)
     {
-        const auto alpha = static_cast<uint8_t>(std::lround(brush.Color().A * brush.Opacity()));
-        const auto rendered = til::color{ brush.Color() }.with_alpha(alpha).layer_over(til::color{ backdrop });
+        const auto rendered = til::color{ _compositeBrushColor(brush, backdrop) };
         const auto linear = [](const uint8_t value) {
             const auto channel = value / 255.0;
             return channel <= 0.04045 ? channel / 12.92 : std::pow((channel + 0.055) / 1.055, 2.4);
@@ -1385,7 +1389,7 @@ namespace winrt::TerminalApp::implementation
             const auto header = grid.FindName(L"TabHeaderPresenter").try_as<WUX::Controls::Control>();
             const auto close = grid.FindName(L"TabCloseButton").try_as<WUX::Controls::Control>();
             const auto iconPresenter = grid.FindName(L"TabIconPresenter").try_as<ContentPresenter>();
-            const auto inactiveBrush = !selected && !pointerOver && !_highContrast && selectionBackground ?
+            const auto inactiveBrush = !selected && !_highContrast && selectionBackground ?
                                            selectionBackground.Background().try_as<WUX::Media::SolidColorBrush>() :
                                            nullptr;
             const auto foregroundBrush = selected ? tabColor :
@@ -1393,7 +1397,15 @@ namespace winrt::TerminalApp::implementation
                                             inactiveBrush && inactiveBrush.Color().A > 0 && inactiveBrush.Opacity() > 0 ? inactiveBrush : nullptr;
             if (foregroundBrush)
             {
-                const auto foreground = WUX::Media::SolidColorBrush{ _tabSelectionForeground(foregroundBrush, _sidebarBackdropColor(Background(), grid.ActualTheme())) };
+                auto backdrop = _sidebarBackdropColor(Background(), grid.ActualTheme());
+                if (foregroundBrush == inactiveBrush && pointerOver && !hoverBrush)
+                {
+                    if (const auto defaultHover = grid.FindName(L"TabHoverBackground").as<WUX::Controls::Border>().Background().try_as<WUX::Media::SolidColorBrush>())
+                    {
+                        backdrop = _compositeBrushColor(defaultHover, backdrop);
+                    }
+                }
+                const auto foreground = WUX::Media::SolidColorBrush{ _tabSelectionForeground(foregroundBrush, backdrop) };
                 for (const auto& control : { header, toggle, close })
                 {
                     if (control)
