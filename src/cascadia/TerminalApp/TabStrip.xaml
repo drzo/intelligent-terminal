@@ -600,6 +600,7 @@
                                           VerticalAlignment="Center"
                                           FontFamily="{ThemeResource SymbolThemeFontFamily}"
                                           FontSize="12"
+                                          Foreground="{Binding Foreground, ElementName=TabHeaderPresenter, Mode=OneWay}"
                                           Glyph="&#xEA8F;"
                                           IsHitTestVisible="False"
                                           Visibility="{x:Bind Presentation.TabStatus.BellIndicator, Mode=OneWay}" />

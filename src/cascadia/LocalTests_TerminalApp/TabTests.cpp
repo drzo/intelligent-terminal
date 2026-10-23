@@ -20843,6 +20843,7 @@ namespace TerminalAppLocalTests
 
         TestOnUIThread([&]() {
             const auto tab = page->_GetFocusedTabImpl();
+            tab->ShowBellIndicator(true);
             const auto terminalColor = ThemeColor::ColorFromBrush(tab->_BackgroundBrush());
             const auto headerGrid = [&](const uint32_t index) {
                 page->UpdateLayout();
@@ -20861,6 +20862,9 @@ namespace TerminalAppLocalTests
                 const auto icon = grid.FindName(L"TabIconPresenter").as<ContentPresenter>().Content().as<IconElement>();
                 VERIFY_IS_NOT_NULL(icon.Foreground());
                 VERIFY_ARE_EQUAL(header.Foreground().as<Media::SolidColorBrush>().Color(), icon.Foreground().as<Media::SolidColorBrush>().Color());
+                const auto bell = grid.FindName(L"TabBellIndicator").as<FontIcon>();
+                VERIFY_IS_NOT_NULL(bell.Foreground());
+                VERIFY_ARE_EQUAL(header.Foreground().as<Media::SolidColorBrush>().Color(), bell.Foreground().as<Media::SolidColorBrush>().Color());
                 VERIFY_ARE_EQUAL(terminalColor, ThemeColor::ColorFromBrush(tab->_BackgroundBrush()));
             };
             const auto selectedTabColor = [](const winrt::MUX::Controls::TabViewItem& item) {
@@ -20888,9 +20892,17 @@ namespace TerminalAppLocalTests
                     tab->SetRuntimeTabColor(color);
                     verifyForegroundResources(tab->TabViewItem());
                     VERIFY_ARE_EQUAL(color, sidebarTabColor(0));
-                    const auto icon = headerGrid(0).FindName(L"TabIconPresenter").as<ContentPresenter>().Content().as<IconElement>();
-                    VERIFY_ARE_EQUAL(color == winrt::Windows::UI::Colors::Black() ? winrt::Windows::UI::Colors::White() : winrt::Windows::UI::Colors::Black(),
-                                     icon.Foreground().as<Media::SolidColorBrush>().Color());
+                    const auto grid = headerGrid(0);
+                    const auto header = grid.FindName(L"TabHeaderPresenter").as<winrt::TerminalApp::TabHeaderControl>();
+                    const auto icon = grid.FindName(L"TabIconPresenter").as<ContentPresenter>().Content().as<IconElement>();
+                    const auto bell = grid.FindName(L"TabBellIndicator").as<FontIcon>();
+                    const auto expectedForeground = color == winrt::Windows::UI::Colors::Black() ? winrt::Windows::UI::Colors::White() : winrt::Windows::UI::Colors::Black();
+                    VERIFY_ARE_EQUAL(expectedForeground, header.Foreground().as<Media::SolidColorBrush>().Color());
+                    VERIFY_ARE_EQUAL(expectedForeground, icon.Foreground().as<Media::SolidColorBrush>().Color());
+                    VERIFY_ARE_EQUAL(Visibility::Visible, bell.Visibility());
+                    VERIFY_IS_NOT_NULL(bell.Foreground());
+                    VERIFY_ARE_EQUAL(header.Foreground().as<Media::SolidColorBrush>().Color(), bell.Foreground().as<Media::SolidColorBrush>().Color());
+                    VERIFY_ARE_EQUAL(expectedForeground, bell.Foreground().as<Media::SolidColorBrush>().Color());
                     tab->ResetRuntimeTabColor();
                     verifyNativeBackground();
                 }
