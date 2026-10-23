@@ -85,6 +85,7 @@ namespace TerminalAppLocalTests
         TEST_METHOD(TestStructuredCustomAgentEditorIdentity);
         TEST_METHOD(TestCustomAgentEditorPreservesInternalMetadata);
         TEST_METHOD(TestCliOnlyCustomAgentEditPreservesSelectedAcpAgent);
+        TEST_METHOD(TestCustomAgentCaseVariantReplacesLegacyEntry);
         TEST_METHOD(TestStructuredCustomAgentDeletionClearsSelectedMirror);
         TEST_METHOD(TestStructuredCustomAgentDeletionPreservesSelectedMirror);
         TEST_METHOD(TestLegacyCustomAgentEditorCommands);
@@ -1514,6 +1515,50 @@ namespace TerminalAppLocalTests
         VERIFY_ARE_EQUAL(agent.Id(), saved.Id());
         VERIFY_IS_TRUE(saved.ResumeCommand().empty());
         VERIFY_IS_FALSE(saved.CanResumeAcpSessions());
+    }
+
+    void SettingsTests::TestCustomAgentCaseVariantReplacesLegacyEntry()
+    {
+        CascadiaSettings settings{ LR"({"profiles":[{"name":"Fixture","commandline":"cmd.exe"}]})", inboxSettings };
+        auto globals = settings.GlobalSettings();
+        if (globals.IsCustomAgentPolicyLocked())
+        {
+            Log::Result(TestResults::Skipped, L"Custom agents are disabled by policy.");
+            return;
+        }
+        CustomAgent selected{ L"custom:selected-fixture", L"Selected fixture" };
+        selected.AcpCommand(L"missing-selected-fixture.exe --stdio");
+        CustomAgent work{ L"custom:WORK", L"Work fixture" };
+        work.CliCommand(L"work.exe");
+        globals.CustomAgents(winrt::single_threaded_vector<CustomAgent>({ selected, work }));
+        globals.AcpCustomCommands(winrt::single_threaded_vector<winrt::hstring>({ L"work.exe --stdio" }));
+        globals.AcpAgent(selected.Id());
+        globals.AcpCustomCommand(selected.AcpCommand());
+        Editor::AIAgentsViewModel viewModel{ globals };
+        uint32_t count = 0;
+        for (const auto& entry : viewModel.AcpAgentList())
+        {
+            if (entry.Id() == L"custom:WORK" || entry.Id() == L"custom:work")
+            {
+                ++count;
+                VERIFY_ARE_EQUAL(work.Id(), entry.Id());
+            }
+        }
+        VERIFY_ARE_EQUAL(1u, count);
+        globals.AcpAgent(L"custom:work");
+        viewModel.EditCustomAcpAgent();
+        VERIFY_ARE_EQUAL(work.Id(), viewModel.CustomAgentId());
+        globals.AcpAgent(selected.Id());
+        viewModel.CustomAgentName(L"Renamed work");
+        viewModel.CustomAgentCliCommand(L"work.exe --CaseSensitiveArgument");
+        viewModel.SaveCustomAcpAgent();
+        VERIFY_IS_TRUE(viewModel.CustomAgentError().empty());
+        VERIFY_ARE_EQUAL(2u, globals.CustomAgents().Size());
+        VERIFY_ARE_EQUAL(work.Id(), globals.CustomAgents().GetAt(1).Id());
+        VERIFY_ARE_EQUAL(L"work.exe --CaseSensitiveArgument", globals.CustomAgents().GetAt(1).CliCommand());
+        VERIFY_ARE_EQUAL(0u, globals.AcpCustomCommands().Size());
+        VERIFY_ARE_EQUAL(selected.Id(), globals.AcpAgent());
+        VERIFY_ARE_EQUAL(selected.Id(), viewModel.CurrentAcpAgent().Id());
     }
 
     void SettingsTests::TestCliOnlyCustomAgentEditPreservesSelectedAcpAgent()

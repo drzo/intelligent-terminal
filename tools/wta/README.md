@@ -230,8 +230,10 @@ successfully answer ACP `session/list`.
 
 Successful discovery retires custom history workers whose definitions were
 removed or whose ACP commands changed, without interrupting agent panes using
-an existing ACP connection. A failed settings lookup preserves current workers
-and history until the lookup can be retried.
+an existing ACP connection. Obsolete ACP instances are removed from the pool
+when no helper uses them, including after their last helper disconnects.
+A failed settings lookup preserves current workers and history until the lookup
+can be retried.
 
 Discovery never automatically installs a native agent CLI. The pinned Claude and
 Codex ACP adapters are separate: their cache presence is not checked, and the
@@ -413,9 +415,11 @@ If the activation CLI times out, the sidebar checks the receipt using
 never start another focus or restore. Master continues an accepted activation
 after the requesting CLI disconnects. Retrying an unresolved row checks the
 same receipt, including after closing and reopening History; it does not generate
-a fresh activation ID. See
-[session tracking](../../doc/specs/hybrid-agent-session-tracking.md) for receipt
-retention and refresh cancellation/backoff behavior.
+a fresh activation ID. Concurrent requests for the same qualified conversation
+share the pending operation even when their activation IDs or target windows
+differ. Unknown outcomes retain the reservation; definitive failures allow retry.
+See [session tracking](../../doc/specs/hybrid-agent-session-tracking.md) for
+receipt retention and refresh cancellation/backoff behavior.
 
 The warm native-provider chat processes remain in the master pool after History
 closes; the dedicated history processes are also reused while their owning pool
@@ -1210,11 +1214,19 @@ managed read requests and explicit interactive creation remain unchanged.
 Delegation and native session resumes pass the resolved provider ID through
 `wtcli --agent-provider`. Terminal stores that identity with the terminal content
 before displaying the tab or split, so the Agents view and provider icon do not
-wait for CLI startup hooks. This does not create a conversation ID, activity
-state, or history row. Older protocol servers reject this capability explicitly.
+wait for CLI startup hooks. Provider identity alone does not create a conversation
+ID, activity state, or history row. Older protocol servers reject this capability
+explicitly.
 Host-configured delegation carries the provider separately from its executable
 through `wta delegate --delegate-agent-id`. Custom commands require that explicit
 identity; their executable basename is not treated as a configured provider.
+
+Custom history resumes also pass the trusted conversation ID through
+`wtcli --custom-agent-session`, requiring the `resume_custom_agent_cli_tab`
+capability. Terminal revalidates the provider's current resume definition and
+policy before launch, preserving the resolved profile's settings and binding
+the new pane to that provider and conversation instead of an inherited identity.
+
 Tabs, panes, Recent Sessions, and the agent picker share the six committed
 transparent PNG assets in `CascadiaPackage\AgentIcons\Masks` and the existing
 monochrome bitmap tint pipeline. `AgentIconResources.xaml` supplies fresh control

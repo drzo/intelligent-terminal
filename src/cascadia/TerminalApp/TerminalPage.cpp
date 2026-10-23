@@ -16703,7 +16703,6 @@ namespace winrt::TerminalApp::implementation
         auto restoredAgent = newTerminalArgs ?
                                  ::Microsoft::Terminal::AgentPaneRestore::ParseResumeCommandline(newTerminalArgs.Commandline()) :
                                  ::Microsoft::Terminal::AgentPaneRestore::ResumeTarget{};
-        winrt::hstring customResumeProvider;
         if (newTerminalArgs && !newTerminalArgs.CustomAgentSessionId().empty())
         {
             namespace Custom = ::Microsoft::Terminal::CustomAgents;
@@ -16713,13 +16712,15 @@ namespace winrt::TerminalApp::implementation
             Policy::Reload();
             ::Microsoft::Terminal::AgentProfiles::CheckLaunchPolicy(id, *Policy::GetSnapshot());
             const auto command = Custom::ResumeCommand(_settings.GlobalSettings(), id, newTerminalArgs.CustomAgentSessionId());
+            // Expanding the command must not reselect a command-matching profile
+            // (or ProfileDefaults) instead of the profile already resolved above.
+            newTerminalArgs.Profile(Utils::GuidToString(profile.Guid()));
             newTerminalArgs.Commandline(winrt::hstring{ command });
             controlSettings = Settings::TerminalSettings::CreateWithNewTerminalArgs(_settings, newTerminalArgs);
             restoredAgent.agent = id;
             restoredAgent.sessionId = newTerminalArgs.CustomAgentSessionId();
             restoredAgent.backend = L"host:" + std::wstring{ id };
             restoredAgent.cwd = newTerminalArgs.StartingDirectory();
-            customResumeProvider = id;
         }
         if (newTerminalArgs && newTerminalArgs.NativeAgentProviderId().empty() && !restoredAgent.agent.empty())
         {
@@ -16763,11 +16764,11 @@ namespace winrt::TerminalApp::implementation
         const auto profileAgentId = profile.AgentProfileId();
         const auto profileProvider = ::Microsoft::Terminal::Settings::Model::AgentRegistry::CanonicalNativeAgentProviderId(
             std::wstring_view{ profileAgentId });
-        const auto nativeAgentProvider = !customResumeProvider.empty() ?
-                                             customResumeProvider :
-                                         !profileProvider.empty() ?
-                                             winrt::hstring{ profileProvider } :
-                                             newTerminalArgs ? newTerminalArgs.NativeAgentProviderId() : winrt::hstring{};
+        // _maybeElevate validates and canonicalizes explicit provider metadata,
+        // including history activation's expanded command without a session flag.
+        const auto nativeAgentProvider = newTerminalArgs && !newTerminalArgs.NativeAgentProviderId().empty() ?
+                                             newTerminalArgs.NativeAgentProviderId() :
+                                             winrt::hstring{ profileProvider };
         const auto control = _CreateNewControlAndContent(controlSettings, connection, nativeAgentProvider);
 
         // Two kinds of pane replay their own history and must not also be

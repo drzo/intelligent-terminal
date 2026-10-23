@@ -62,6 +62,7 @@ TerminalProtocolComServer : public Microsoft::WRL::RuntimeClass<Microsoft::WRL::
     STDMETHODIMP GetPaneContext(GUID sourceSessionId, boolean hasExplicitSource, long maxLines, long maxCharacters, BSTR* json) override;
     STDMETHODIMP CreateAgentCliTab(unsigned __int64 windowId, BSTR profile, BSTR commandline, BSTR title, BSTR startingDirectory, boolean suppressAppTitle, boolean background, BSTR providerId, BSTR* json) override;
     STDMETHODIMP SplitAgentCliPane(GUID sessionId, BSTR direction, float size, BSTR profile, BSTR commandline, boolean background, BSTR providerId, BSTR* json) override;
+    STDMETHODIMP ResumeCustomAgentCliTab(unsigned __int64 windowId, BSTR profile, BSTR providerId, BSTR agentSessionId, BSTR title, BSTR startingDirectory, boolean background, BSTR* json) override;
 
     // Static setup — must be called before s_StartListening().
     static void s_setEmperor(WindowEmperor* emperor) noexcept;
@@ -77,7 +78,7 @@ TerminalProtocolComServer : public Microsoft::WRL::RuntimeClass<Microsoft::WRL::
     static void s_NotifyEventToComClients(const std::string& eventJson);
 
 private:
-    HRESULT _CreateTab(unsigned __int64 windowId, BSTR profile, BSTR commandline, BSTR title, BSTR startingDirectory, boolean suppressAppTitle, boolean background, const winrt::hstring& nativeAgentProviderId, BSTR* json);
+    HRESULT _CreateTab(unsigned __int64 windowId, BSTR profile, BSTR commandline, BSTR title, BSTR startingDirectory, boolean suppressAppTitle, boolean background, const winrt::hstring& nativeAgentProviderId, BSTR* json, const winrt::hstring& customAgentSessionId = {});
     HRESULT _SplitPane(GUID sessionId, BSTR direction, float size, BSTR profile, BSTR commandline, boolean background, const winrt::hstring& nativeAgentProviderId, BSTR* json);
     // ── Per-subscriber asynchronous event delivery (issue #239) ──
     //

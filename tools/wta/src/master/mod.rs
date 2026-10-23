@@ -635,9 +635,10 @@ struct MasterStateInner {
     /// agents spawn in parallel — we hold the outer `Mutex` only long
     /// enough to get/insert the `OnceCell`, never across the spawn.
     ///
-    /// **Pool eviction policy:** agents are kept warm for the lifetime of
-    /// the master process (no idle-timeout eviction). The expected pool
-    /// cardinality is small — one entry per distinct agent-id selected by
+    /// **Pool eviction policy:** current catalog agents are kept warm for the
+    /// master lifetime (no idle-timeout eviction). Obsolete custom commands
+    /// and model-scoped entries retire after their last helper unbinds.
+    /// The expected pool cardinality is small — one entry per distinct agent-id selected by
     /// any tab in the window — so the memory/process overhead is bounded
     /// by the number of GPO-allowed agents (typically 1–3). An agent that
     /// crashes is reaped and removed by `reap_agent`; its slot is refilled
@@ -649,6 +650,8 @@ struct MasterStateInner {
     history_discovery_state: std::sync::atomic::AtomicU8,
     history_discovery_errors: Mutex<HashMap<AgentCmdKey, HistoryRefreshFailure>>,
     history_discovery_retries: Mutex<HashMap<AgentCmdKey, HistoryRefreshState>>,
+    /// Last successful custom catalog; None must not evict existing providers.
+    custom_history_keys: Mutex<Option<HashSet<AgentCmdKey>>>,
     history_queries: Mutex<HashMap<AgentCmdKey, Arc<Mutex<HistoryRefreshState>>>>,
     history_status: watch::Sender<HistorySyncStatus>,
     history_status_gate: Mutex<()>,
@@ -5112,6 +5115,7 @@ async fn run_master_loop(config: MasterConfig, pipe_name: String) -> Result<()> 
         history_discovery_state: std::sync::atomic::AtomicU8::new(0),
         history_discovery_errors: Mutex::new(HashMap::new()),
         history_discovery_retries: Mutex::new(HashMap::new()),
+        custom_history_keys: Mutex::new(None),
         history_queries: Mutex::new(HashMap::new()),
         history_status: watch::channel(crate::session_registry::HistoryLoadStatus::Loading.into())
             .0,
@@ -6772,7 +6776,7 @@ async fn serve_helper(
 
     let cleanup = cleanup_disconnected_helper(&handler).await;
     if let Some(agent) = handler.agent.get() {
-        retire_unbound_model_agent(&state, agent).await;
+        retire_unbound_agent(&state, agent).await;
     }
 
     tracing::info!(
@@ -6787,13 +6791,28 @@ async fn serve_helper(
     result
 }
 
-async fn retire_unbound_model_agent(state: &MasterStateInner, agent: &Arc<AgentCli>) {
-    if !agent.cmd_key.starts_with("model:") {
+async fn retire_unbound_agent(state: &MasterStateInner, agent: &Arc<AgentCli>) {
+    let custom = agent.source == crate::agent_source::AgentSource::Host
+        && agent.resolved_agent_id.starts_with("custom:");
+    if !agent.cmd_key.starts_with("model:") && !custom {
         return;
     }
 
     let removed = {
         let mut agents = state.agents.lock().await;
+        // Match reconciliation's pool -> catalog order. A restored command
+        // must remain resident even when an old helper disconnects.
+        if !agent.cmd_key.starts_with("model:")
+            && custom
+            && state
+                .custom_history_keys
+                .lock()
+                .await
+                .as_ref()
+                .is_none_or(|keys| keys.contains(&agent.cmd_key))
+        {
+            return;
+        }
         let matches_instance = agents
             .get(&agent.cmd_key)
             .and_then(|cell| cell.get())
@@ -6808,7 +6827,7 @@ async fn retire_unbound_model_agent(state: &MasterStateInner, agent: &Arc<AgentC
         tracing::info!(
             target: "master",
             agent = %agent.cmd_key,
-            "retiring unbound model-specific agent CLI"
+            "retiring unbound obsolete agent CLI"
         );
         agent.conn.shutdown();
     }
@@ -8100,10 +8119,9 @@ async fn reconcile_custom_history_agents(
             )
         })
         .collect();
-    let agents: Vec<_> = state
-        .agents
-        .lock()
-        .await
+    let pool = state.agents.lock().await;
+    *state.custom_history_keys.lock().await = Some(eligible_keys.clone());
+    let agents: Vec<_> = pool
         .values()
         .filter(|cell| !agent_cell_is_retired(state, cell))
         .filter_map(|cell| {
@@ -8115,6 +8133,7 @@ async fn reconcile_custom_history_agents(
                 && agent.resolved_agent_id.starts_with("custom:")
         })
         .collect();
+    drop(pool);
     for (cell, agent) in agents {
         if eligible_keys.contains(&agent.cmd_key) {
             let _lifecycle = agent.history_refresh.lifecycle_gate.lock().await;
@@ -8148,9 +8167,9 @@ async fn reconcile_custom_history_agents(
             }
             continue;
         }
-        // Only the dedicated history query is retired. Helpers can still own
-        // the pooled ACP connection and its live sessions after a settings edit.
+        // Helpers keep their live connection until the last one disconnects.
         retire_agent_history(&agent).await;
+        retire_unbound_agent(state, &agent).await;
     }
 }
 
@@ -8726,13 +8745,33 @@ async fn handle_session_activate(
         // not permission for the client to dispatch the operation again.
         let completed = receipts
             .iter()
-            .find(|(_, receipt)| receipt.response.state != SessionActivationState::Pending)
+            .find(|(_, receipt)| receipt.response.state == SessionActivationState::Complete)
             .map(|(id, _)| id.clone());
         if let Some(id) = completed {
             receipts.remove(&id);
         } else {
             return Err(acp::Error::internal_error().data("too many pending session activations"));
         }
+    }
+    // Reserve the qualified conversation, not just the caller's request ID.
+    // Unknown outcomes remain reserved: the terminal may already have launched it.
+    let existing = receipts
+        .values()
+        .find(|receipt| {
+            receipt.params.identity == parsed.identity
+                && receipt.response.state != SessionActivationState::Complete
+        })
+        .map(|receipt| receipt.response.clone());
+    if let Some(mut response) = existing {
+        response.activation_id = parsed.activation_id.clone();
+        receipts.insert(
+            parsed.activation_id.clone(),
+            SessionActivationReceipt {
+                params: parsed.clone(),
+                response: response.clone(),
+            },
+        );
+        return Ok(encode_session_activation(&response));
     }
     receipts.insert(
         parsed.activation_id.clone(),
@@ -8755,13 +8794,15 @@ async fn handle_session_activate(
     let (sender, receiver) = tokio::sync::oneshot::channel();
     tokio::task::spawn_local(async move {
         let response = execute_session_activation(&state, &parsed).await;
-        state.session_activation_receipts.lock().await.insert(
-            parsed.activation_id.clone(),
-            SessionActivationReceipt {
-                params: parsed,
-                response: response.clone(),
-            },
-        );
+        let mut receipts = state.session_activation_receipts.lock().await;
+        for receipt in receipts.values_mut().filter(|receipt| {
+            receipt.params.identity == parsed.identity
+                && receipt.response.state == SessionActivationState::Pending
+        }) {
+            receipt.response = response.clone();
+            receipt.response.activation_id = receipt.params.activation_id.clone();
+        }
+        drop(receipts);
         // A disconnected caller retrieves the receipt through the status method.
         let _ = sender.send(response);
     });
@@ -9105,6 +9146,10 @@ async fn execute_session_activation(
                 "background": true,
                 "native_agent_provider_id": provider_id,
             });
+            if custom.is_some() {
+                params["custom_agent_session_id"] =
+                    serde_json::Value::String(row.session_id.to_string());
+            }
             if matches!(row.location, crate::agent_sessions::SessionLocation::Host)
                 && !row.cwd.as_os_str().is_empty()
             {

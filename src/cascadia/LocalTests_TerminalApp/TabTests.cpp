@@ -715,6 +715,8 @@ namespace TerminalAppLocalTests
         TEST_METHOD(GetWindowLayoutIncludesAgentRestoreMetadata);
         TEST_METHOD(ElevatedPersistedTabKeepsShellCommands);
         TEST_METHOD(CustomResumeRetainsIdentityAfterDefinitionChanges);
+        TEST_METHOD(CustomHistoryActivationOverridesInheritedProvider);
+        TEST_METHOD(CustomResumeWithoutProfilePreservesDefaultSettings);
         TEST_METHOD(ElevatedPersistedTabExcludesAgentPanes);
         TEST_METHOD(ResumedPaneIdentityPersistsWithoutHooksOrBannerParsing);
         TEST_METHOD(RestoredSessionBindingsWaitForTheirHelperSubscription);
@@ -4001,6 +4003,97 @@ namespace TerminalAppLocalTests
                 _getTerminalArgs(normal.at(0)).Commandline());
             VERIFY_IS_TRUE(_getTerminalArgs(normal.at(1)).Commandline() == L"test-agent --resume fallback-session");
             VERIFY_ARE_EQUAL(original, serialize(page->_BuildPersistedTabActions(tab.get(), true)));
+        });
+    }
+
+    void TabTests::CustomHistoryActivationOverridesInheritedProvider()
+    {
+        const auto page = _commonSetup(nullptr, nullptr, std::nullopt, true);
+        for (const auto withSessionMetadata : { false, true })
+        {
+            winrt::Windows::Foundation::IAsyncOperation<winrt::Microsoft::Terminal::Protocol::TabCreationResult> operation{ nullptr };
+            TestOnUIThread([&]() {
+                auto globals = page->_settings.GlobalSettings();
+                globals.AgentSessionManagementEnabled(true);
+                CustomAgent first{ L"custom:history-a", L"History A" };
+                first.CliCommand(L"cmd.exe");
+                CustomAgent second{ L"custom:history-b", L"History B" };
+                second.CliCommand(L"cmd.exe");
+                second.ResumeCommand(L"cmd.exe /k echo {sessionId}");
+                globals.CustomAgents(winrt::single_threaded_vector<CustomAgent>({ first, second }));
+                const auto profile = page->_settings.ActiveProfiles().GetAt(1);
+                profile.AgentProfileId(first.Id());
+                page->_GetFocusedTabImpl()->GetFocusedProfile().AgentProfileId(first.Id());
+                globals.DefaultProfile(profile.Guid());
+                NewTerminalArgs args;
+                args.NativeAgentProviderId(second.Id());
+                args.Commandline(L"cmd.exe /k echo history-session");
+                if (withSessionMetadata)
+                {
+                    args.CustomAgentSessionId(L"history-session");
+                }
+                operation = page->CreateProtocolTab(args, false);
+            });
+            const auto created = operation.get();
+            TestOnUIThread([&]() {
+                const auto tab = page->_GetFocusedTabImpl();
+                const auto control = tab->GetActiveTerminalControl();
+                VERIFY_ARE_EQUAL(created.SessionId, control.Connection().SessionId());
+                const auto manager = winrt::get_self<winrt::TerminalApp::implementation::ContentManager>(page->_manager);
+                VERIFY_ARE_EQUAL(winrt::hstring{ L"custom:history-b" }, manager->NativeAgentProviderId(control.ContentId()));
+                if (withSessionMetadata)
+                {
+                    const auto& tracked = page->_paneAgentSessions.at(created.SessionId);
+                    VERIFY_ARE_EQUAL(winrt::hstring{ L"custom:history-b" }, tracked.agent);
+                    VERIFY_ARE_EQUAL(winrt::hstring{ L"history-session" }, tracked.sessionId);
+                    VERIFY_IS_TRUE(tracked.structuredCustomResume);
+                    VERIFY_IS_TRUE(page->_pendingRestoredSessionBindings.contains(created.SessionId));
+                }
+                page->OnPaneAgentSessionChanged(_keepRunningHook(
+                    created.SessionId, "agent.prompt.submit", "history-session", "custom:history-b"));
+                VERIFY_ARE_EQUAL(winrt::hstring{ L"custom:history-b" }, manager->NativeAgentProviderId(control.ContentId()));
+                VERIFY_ARE_EQUAL(winrt::hstring{ L"custom:history-b" }, page->_paneAgentSessions.at(created.SessionId).agent);
+            });
+        }
+    }
+
+    void TabTests::CustomResumeWithoutProfilePreservesDefaultSettings()
+    {
+        using State = winrt::Microsoft::Terminal::TerminalConnection::ConnectionState;
+        const auto page = _commonSetup(nullptr, nullptr, std::nullopt, true);
+        TestOnUIThread([&]() {
+            CustomAgent agent{ L"custom:default-profile-fixture", L"Default profile fixture" };
+            agent.CliCommand(L"test-agent.exe");
+            agent.ResumeCommand(L"test-agent.exe --resume {sessionId}");
+            auto globals = page->_settings.GlobalSettings();
+            globals.CustomAgents(winrt::single_threaded_vector<CustomAgent>({ agent }));
+            const auto defaultProfile = page->_settings.ActiveProfiles().GetAt(1);
+            defaultProfile.Commandline(L"cmd.exe");
+            defaultProfile.FontInfo().FontFace(L"Consolas");
+            defaultProfile.FontInfo().FontSize(23.0f);
+            const auto directory = wil::ExpandEnvironmentStringsW<std::wstring>(L"%SystemRoot%\\System32");
+            defaultProfile.StartingDirectory(winrt::hstring{ directory });
+            globals.DefaultProfile(defaultProfile.Guid());
+            const auto matchingProfile = page->_settings.ActiveProfiles().GetAt(0);
+            matchingProfile.Commandline(L"test-agent.exe");
+            matchingProfile.FontInfo().FontSize(11.0f);
+            matchingProfile.StartingDirectory(L"C:\\");
+            NewTerminalArgs args;
+            args.NativeAgentProviderId(agent.Id());
+            args.CustomAgentSessionId(L"profile-session");
+            VERIFY_IS_TRUE(args.Profile().empty());
+            VERIFY_IS_TRUE(args.Commandline().empty());
+            const auto connection = winrt::make_self<TestConnection>(
+                ::Microsoft::Console::Utils::CreateGuid(), State::Connected);
+            const auto pane = page->_MakePane(args, nullptr, *connection);
+            VERIFY_IS_NOT_NULL(pane);
+            const auto control = pane->GetTerminalControl();
+            VERIFY_ARE_EQUAL(Utils::GuidToString(defaultProfile.Guid()), args.Profile());
+            VERIFY_ARE_EQUAL(winrt::hstring{ L"Consolas" }, control.Settings().FontFace());
+            VERIFY_ARE_EQUAL(23.0f, control.Settings().FontSize());
+            VERIFY_ARE_EQUAL(winrt::hstring{ directory }, control.Settings().StartingDirectory());
+            const auto manager = winrt::get_self<winrt::TerminalApp::implementation::ContentManager>(page->_manager);
+            VERIFY_ARE_EQUAL(agent.Id(), manager->NativeAgentProviderId(control.ContentId()));
         });
     }
 
