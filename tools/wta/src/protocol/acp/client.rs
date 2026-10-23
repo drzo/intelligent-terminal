@@ -379,6 +379,7 @@ pub enum MasterExtRequest {
         window_id: u64,
         activation_id: String,
         tab_id: String,
+        status_only: bool,
     },
     /// Hot-swap the ACP model on this helper's live session(s) via
     /// `set_session_model`, without restarting anything. Two callers:
@@ -4316,37 +4317,63 @@ fn dispatch_master_ext_request_with_yolo_timeout(
                 window_id,
                 activation_id,
                 tab_id,
+                status_only,
             } => {
-                let request = crate::session_registry::build_session_activate_request(
-                    identity,
-                    window_id,
-                    activation_id,
-                    false,
-                );
-                let result = async {
-                    let raw = conn.ext_method(request).await?;
-                    let response = crate::session_registry::parse_session_activate_response(&raw.0)
-                        .map_err(|_| {
-                            acp::Error::internal_error().data("Invalid session activation response")
-                        })?;
-                    if !response.accepted {
-                        return Err(acp::Error::invalid_params().data(
-                            response
-                                .detail
-                                .unwrap_or_else(|| "Session activation was rejected".into()),
-                        ));
+                use crate::session_registry::SessionActivationState;
+                let mut status_only = status_only;
+                loop {
+                    let request = crate::session_registry::build_session_activate_request(
+                        identity.clone(),
+                        window_id,
+                        activation_id.clone(),
+                        status_only,
+                    );
+                    let response = match tokio::time::timeout(
+                        std::time::Duration::from_secs(8),
+                        conn.ext_method(request),
+                    )
+                    .await
+                    {
+                        Ok(Ok(raw)) => crate::session_registry::parse_session_activate_response(&raw.0),
+                        error => {
+                            tracing::warn!(target: "agents_view", request_id, ?error, "session activation outcome ambiguous; retaining receipt");
+                            break;
+                        }
+                    };
+                    let response = match response {
+                        Ok(response) if response.activation_id == activation_id => response,
+                        _ => {
+                            tracing::warn!(target: "agents_view", request_id, "invalid session activation receipt; retaining identity");
+                            break;
+                        }
+                    };
+                    match response.state {
+                        SessionActivationState::Pending => {
+                            // Coalesced aliases are pending with accepted=false.
+                            // Never execute again, even if this task is aborted.
+                            if status_only {
+                                break;
+                            }
+                            status_only = true;
+                        }
+                        SessionActivationState::Unknown => break,
+                        SessionActivationState::Complete => {
+                            if !response.accepted {
+                                let _ = event_tx.send(AppEvent::TabSystemMessage {
+                                    tab_id,
+                                    message: response.detail.unwrap_or_else(|| {
+                                        "Session activation was rejected".into()
+                                    }),
+                                });
+                            }
+                            let _ = event_tx.send(AppEvent::SessionActivationCompleted {
+                                activation_id,
+                            });
+                            let _ = event_tx.send(AppEvent::MasterMutationCompleted { request_id });
+                            break;
+                        }
                     }
-                    Ok(())
                 }
-                .await;
-                if let Err(error) = result {
-                    tracing::warn!(target: "agents_view", request_id, %error, "custom session activation failed");
-                    let _ = event_tx.send(AppEvent::TabSystemMessage {
-                        tab_id,
-                        message: error.to_string(),
-                    });
-                }
-                let _ = event_tx.send(AppEvent::MasterMutationCompleted { request_id });
             }
             MasterExtRequest::SetSessionModel {
                 request_id,

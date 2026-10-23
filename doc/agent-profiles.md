@@ -215,8 +215,11 @@ wt new-tab --native-agent-provider custom:work-agent --custom-agent-session SESS
 ```
 
 This conversation ID is separate from Terminal's `--sessionId` buffer identity.
-Saved native layouts retain the provider and known conversation ID, then
-resolve the current command and policy on restore. Without a known conversation
+Saved native layouts retain the provider, known conversation ID, and execution
+source, then resolve the current command and policy on restore. A saved non-host
+custom source is rejected before resolving a Windows invocation; it is never
+reinterpreted as a host conversation with the same ID. Older host layouts without
+explicit source metadata remain compatible. Without a known conversation
 ID, reopening a custom profile only starts its CLI. Custom hooks and arbitrary
 history-file scanners are not added. Removing a definition leaves existing
 history intact but prevents new resumes through that missing definition.

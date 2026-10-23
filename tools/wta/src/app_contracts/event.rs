@@ -376,4 +376,7 @@ pub enum AppEvent {
     MasterMutationCompleted {
         request_id: u64,
     },
+    SessionActivationCompleted {
+        activation_id: String,
+    },
 }

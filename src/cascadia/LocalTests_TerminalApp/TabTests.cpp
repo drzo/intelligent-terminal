@@ -718,6 +718,7 @@ namespace TerminalAppLocalTests
         TEST_METHOD(CustomResumeRetainsIdentityAfterDefinitionChanges);
         TEST_METHOD(CustomHistoryActivationOverridesInheritedProvider);
         TEST_METHOD(CustomResumeWithoutProfilePreservesDefaultSettings);
+        TEST_METHOD(CustomResumeRejectsPersistedNonHostBackend);
         TEST_METHOD(ElevatedPersistedTabExcludesAgentPanes);
         TEST_METHOD(ResumedPaneIdentityPersistsWithoutHooksOrBannerParsing);
         TEST_METHOD(RestoredSessionBindingsWaitForTheirHelperSubscription);
@@ -4181,6 +4182,67 @@ namespace TerminalAppLocalTests
             VERIFY_ARE_EQUAL(winrt::hstring{ directory }, control.Settings().StartingDirectory());
             const auto manager = winrt::get_self<winrt::TerminalApp::implementation::ContentManager>(page->_manager);
             VERIFY_ARE_EQUAL(agent.Id(), manager->NativeAgentProviderId(control.ContentId()));
+        });
+    }
+
+    void TabTests::CustomResumeRejectsPersistedNonHostBackend()
+    {
+        using State = winrt::Microsoft::Terminal::TerminalConnection::ConnectionState;
+        const auto paneId = ::Microsoft::Console::Utils::CreateGuid();
+        const auto connection = winrt::make_self<TestConnection>(paneId, State::Connected);
+        const auto page = _commonSetup(*connection);
+        TestOnUIThread([&]() {
+            auto globals = page->_settings.GlobalSettings();
+            globals.AgentSessionManagementEnabled(true);
+            CustomAgent agent{ L"custom:backend-fixture", L"Backend fixture" };
+            agent.CliCommand(L"test-agent.exe");
+            agent.ResumeCommand(L"test-agent.exe --resume {sessionId}");
+            globals.CustomAgents(winrt::single_threaded_vector<CustomAgent>({ agent }));
+            page->_SyncNativeAgentStatusMode();
+
+            Json::Value event;
+            Json::CharReaderBuilder reader;
+            std::istringstream stream{ winrt::to_string(_keepRunningHook(
+                paneId, "agent.session.start", "same-session", "custom:backend-fixture")) };
+            std::string errors;
+            VERIFY_IS_TRUE(Json::parseFromStream(reader, stream, &event, &errors));
+            event["params"]["wsl_distro"] = "Ubuntu";
+            page->OnPaneAgentSessionChanged(winrt::to_hstring(Json::writeString(Json::StreamWriterBuilder{}, event)));
+            const auto& binding = page->_paneAgentSessions.at(paneId);
+            VERIFY_IS_TRUE(binding.structuredCustomResume);
+            VERIFY_ARE_EQUAL(winrt::hstring{ L"wsl:Ubuntu:custom:backend-fixture" }, binding.backend);
+            page->OnPaneAgentSessionChanged(_keepRunningHook(
+                paneId, "agent.prompt.submit", "same-session", "custom:backend-fixture"));
+            VERIFY_ARE_EQUAL(winrt::hstring{ L"wsl:Ubuntu:custom:backend-fixture" }, page->_paneAgentSessions.at(paneId).backend);
+
+            NewTerminalArgs saved;
+            saved.SessionId(paneId);
+            NewTabArgs tabArgs{ saved };
+            std::vector<ActionAndArgs> actions{ ActionAndArgs{ ShortcutAction::NewTab, tabArgs } };
+            page->_StampAgentResumeCommandlines(actions);
+            WindowLayout layout;
+            layout.TabLayout(winrt::single_threaded_vector<ActionAndArgs>(std::move(actions)));
+            const auto restored = _getTerminalArgs(WindowLayout::FromJson(WindowLayout::ToJson(layout)).TabLayout().GetAt(0));
+            VERIFY_ARE_EQUAL(binding.backend, restored.CustomAgentBackend());
+            VERIFY_ARE_EQUAL(agent.Id(), restored.NativeAgentProviderId());
+            VERIFY_ARE_EQUAL(winrt::hstring{ L"same-session" }, restored.CustomAgentSessionId());
+            const auto copied = restored.Copy().as<NewTerminalArgs>();
+            VERIFY_ARE_EQUAL(restored.CustomAgentBackend(), copied.CustomAgentBackend());
+            VERIFY_IS_TRUE(restored.Equals(copied));
+            copied.CustomAgentBackend(L"host:custom:backend-fixture");
+            VERIFY_IS_FALSE(restored.Equals(copied));
+
+            // A Windows definition with the identical ID must not resume the WSL conversation,
+            // even if an elevated launch would otherwise flatten the arguments.
+            for (const auto elevate : { false, true })
+            {
+                restored.Elevate(winrt::box_value(elevate).as<winrt::Windows::Foundation::IReference<bool>>());
+                VERIFY_THROWS(page->_MakePane(restored, nullptr, *connection), winrt::hresult_error);
+                VERIFY_THROWS(restored.ToCommandline(), winrt::hresult_error);
+                VERIFY_IS_TRUE(restored.Commandline().empty());
+            }
+            copied.Elevate(winrt::box_value(false).as<winrt::Windows::Foundation::IReference<bool>>());
+            VERIFY_IS_NOT_NULL(page->_MakePane(copied, nullptr, *connection));
         });
     }
 

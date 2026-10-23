@@ -83,6 +83,7 @@ namespace TerminalAppLocalTests
 
         TEST_METHOD(TestElevateArg);
         TEST_METHOD(TestStructuredCustomAgentEditorIdentity);
+        TEST_METHOD(TestCancelCustomAgentWithoutAvailableAcpResetsEditor);
         TEST_METHOD(TestCustomAgentEditorPreservesInternalMetadata);
         TEST_METHOD(TestCliOnlyCustomAgentEditPreservesSelectedAcpAgent);
         TEST_METHOD(TestCustomAgentCaseVariantReplacesLegacyEntry);
@@ -1477,6 +1478,52 @@ namespace TerminalAppLocalTests
         }
         VERIFY_ARE_EQUAL(2u, customCount);
         VERIFY_ARE_EQUAL(agent.Id(), viewModel.CurrentAcpAgent().Id());
+    }
+
+    void SettingsTests::TestCancelCustomAgentWithoutAvailableAcpResetsEditor()
+    {
+        CascadiaSettings settings{ LR"({"profiles":[{"name":"Fixture","commandline":"cmd.exe"}]})", inboxSettings };
+        auto globals = settings.GlobalSettings();
+        if (globals.IsCustomAgentPolicyLocked())
+        {
+            Log::Result(TestResults::Skipped, L"Custom agents are disabled by policy.");
+            return;
+        }
+        VERIFY_ARE_EQUAL(0u, globals.CustomAgents().Size());
+        Editor::AIAgentsViewModel viewModel{ globals };
+        for (const auto& entry : viewModel.AcpAgentList())
+        {
+            if (entry.IsAddNew())
+            {
+                viewModel.CurrentAcpAgent(entry);
+                break;
+            }
+        }
+        // Exclude installed host agents so Cancel exercises the no-replacement path.
+        viewModel.AcpAgentList().Clear();
+        VERIFY_IS_TRUE(viewModel.IsAddingCustomAcpAgent());
+        viewModel.CustomAgentName(L"Canceled CLI fixture");
+        viewModel.CustomAgentResumeCommand(L"missing-custom-fixture.exe --resume {sessionId}");
+        viewModel.CustomAgentSharedSessions(true);
+        viewModel.SaveCustomAcpAgent();
+        VERIFY_IS_FALSE(viewModel.CustomAgentError().empty());
+        VERIFY_ARE_EQUAL(0u, globals.CustomAgents().Size());
+        viewModel.CustomAgentCliCommand(L"missing-custom-fixture.exe --interactive");
+        VERIFY_IS_TRUE(viewModel.CustomAcpCommand().empty());
+
+        viewModel.CancelCustomAcpAgent();
+
+        VERIFY_IS_TRUE(viewModel.IsAddingCustomAcpAgent());
+        VERIFY_IS_TRUE(viewModel.CustomAgentId().empty());
+        VERIFY_IS_TRUE(viewModel.CustomAgentName().empty());
+        VERIFY_IS_TRUE(viewModel.CustomAcpCommand().empty());
+        VERIFY_IS_TRUE(viewModel.CustomAgentCliCommand().empty());
+        VERIFY_IS_TRUE(viewModel.CustomAgentResumeCommand().empty());
+        VERIFY_IS_FALSE(viewModel.CustomAgentSharedSessions());
+        VERIFY_IS_TRUE(viewModel.CustomAgentError().empty());
+        viewModel.SaveCustomAcpAgent();
+        VERIFY_ARE_EQUAL(0u, globals.CustomAgents().Size());
+        VERIFY_ARE_EQUAL(0u, globals.AcpCustomCommands().Size());
     }
 
     void SettingsTests::TestCustomAgentEditorPreservesInternalMetadata()

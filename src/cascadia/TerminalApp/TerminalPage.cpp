@@ -11613,6 +11613,13 @@ namespace winrt::TerminalApp::implementation
                             const auto ownerPane = rootPane->FindPaneBySessionId(*paneSessionId);
                             const auto control = ownerPane ? ownerPane->GetTerminalControl() : nullptr;
                             winrt::hstring bindingBackend;
+                            if (const auto previous = _paneAgentSessions.find(*paneSessionId);
+                                previous != _paneAgentSessions.end() &&
+                                previous->second.agent == winrt::to_hstring(agent) &&
+                                previous->second.sessionId == winrt::to_hstring(agentSessionId))
+                            {
+                                bindingBackend = previous->second.backend;
+                            }
                             if (params.isMember("wsl_distro"))
                             {
                                 if (!params["wsl_distro"].isString() || params["wsl_distro"].asString().empty())
@@ -16713,6 +16720,10 @@ namespace winrt::TerminalApp::implementation
             namespace Custom = ::Microsoft::Terminal::CustomAgents;
             const auto id = newTerminalArgs.NativeAgentProviderId();
             THROW_HR_IF(E_INVALIDARG, !Custom::IsId(id));
+            // Custom definitions are Windows-only. Never reinterpret a saved
+            // non-host conversation using a same-ID Windows definition.
+            const auto backend = newTerminalArgs.CustomAgentBackend();
+            THROW_HR_IF(E_INVALIDARG, !backend.empty() && backend != winrt::hstring{ L"host:" + std::wstring{ id } });
             namespace Policy = ::Microsoft::Terminal::Settings::Model::AgentPolicy;
             Policy::Reload();
             ::Microsoft::Terminal::AgentProfiles::CheckLaunchPolicy(id, *Policy::GetSnapshot());

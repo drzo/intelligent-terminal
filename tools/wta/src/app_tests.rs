@@ -2562,6 +2562,42 @@ pub(super) fn test_app_with_master_rx() -> (
     (app, master_rx)
 }
 
+#[test]
+fn session_activation_receipt_survives_disconnect_and_status_retries() {
+    use crate::protocol::acp::client::MasterExtRequest;
+    let (mut app, mut master_rx) = test_app_with_master_rx();
+    let request = MasterExtRequest::SessionActivate {
+        request_id: 17,
+        identity: crate::session_registry::SessionIdentity {
+            session_id: agent_client_protocol::schema::v1::SessionId::new("history"),
+            history_key: None,
+        },
+        window_id: 42,
+        activation_id: "retained-receipt".into(),
+        tab_id: "origin-tab".into(),
+        status_only: true,
+    };
+    app.pending_session_activations
+        .insert("retained-receipt".into(), request);
+    app.handle_event(AppEvent::MasterDisconnected);
+    app.reconcile_session_activations();
+    app.reconcile_session_activations();
+    for _ in 0..2 {
+        assert!(matches!(master_rx.try_recv(),
+            Ok(MasterExtRequest::SessionActivate {
+                identity, window_id: 42, activation_id, tab_id, status_only: true, ..
+            }) if identity.session_id.to_string() == "history"
+                && activation_id == "retained-receipt" && tab_id == "origin-tab"));
+    }
+    assert!(app
+        .pending_session_activations
+        .contains_key("retained-receipt"));
+    app.handle_event(AppEvent::SessionActivationCompleted {
+        activation_id: "retained-receipt".into(),
+    });
+    assert!(app.pending_session_activations.is_empty());
+}
+
 // ─── word boundary helpers ──────────────────────────────────────────────
 
 #[test]

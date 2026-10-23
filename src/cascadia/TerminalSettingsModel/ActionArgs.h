@@ -403,6 +403,7 @@ namespace winrt::Microsoft::Terminal::Settings::Model::implementation
         // Native CLI identity, independent of any conversation or activity.
         ACTION_ARG(winrt::hstring, NativeAgentProviderId, L"");
         ACTION_ARG(winrt::hstring, CustomAgentSessionId, L"");
+        ACTION_ARG(winrt::hstring, CustomAgentBackend, L"");
 
         static constexpr std::string_view TypeKey{ "type" };
         static constexpr std::string_view SessionIdKey{ "sessionId" };
@@ -411,6 +412,7 @@ namespace winrt::Microsoft::Terminal::Settings::Model::implementation
         static constexpr std::string_view AgentPaneTransferKey{ "__agentPaneTransfer" };
         static constexpr std::string_view NativeAgentProviderIdKey{ "nativeAgentProviderId" };
         static constexpr std::string_view CustomAgentSessionIdKey{ "customAgentSessionId" };
+        static constexpr std::string_view CustomAgentBackendKey{ "customAgentBackend" };
 
     public:
         // Content types live in `AgentPaneRestore` so the restore path in
@@ -448,7 +450,8 @@ namespace winrt::Microsoft::Terminal::Settings::Model::implementation
                        otherAsUs->_ContentId == _ContentId &&
                        otherAsUs->_AgentPaneTransferId == _AgentPaneTransferId &&
                        otherAsUs->_NativeAgentProviderId == _NativeAgentProviderId &&
-                       otherAsUs->_CustomAgentSessionId == _CustomAgentSessionId;
+                       otherAsUs->_CustomAgentSessionId == _CustomAgentSessionId &&
+                       otherAsUs->_CustomAgentBackend == _CustomAgentBackend;
             }
             return false;
         };
@@ -472,6 +475,7 @@ namespace winrt::Microsoft::Terminal::Settings::Model::implementation
             JsonUtils::GetValueForKey(json, AgentPaneTransferKey, args->_AgentPaneTransferId);
             JsonUtils::GetValueForKey(json, NativeAgentProviderIdKey, args->_NativeAgentProviderId);
             JsonUtils::GetValueForKey(json, CustomAgentSessionIdKey, args->_CustomAgentSessionId);
+            JsonUtils::GetValueForKey(json, CustomAgentBackendKey, args->_CustomAgentBackend);
             const auto parsedProvider = args->NativeAgentProviderId();
             if (!parsedProvider.empty())
             {
@@ -511,6 +515,10 @@ namespace winrt::Microsoft::Terminal::Settings::Model::implementation
             {
                 JsonUtils::SetValueForKey(json, CustomAgentSessionIdKey, args->_CustomAgentSessionId);
             }
+            if (!args->CustomAgentBackend().empty())
+            {
+                JsonUtils::SetValueForKey(json, CustomAgentBackendKey, args->_CustomAgentBackend);
+            }
             return json;
         }
         Model::NewTerminalArgs Copy() const
@@ -533,6 +541,7 @@ namespace winrt::Microsoft::Terminal::Settings::Model::implementation
             copy->_AgentPaneTransferId = _AgentPaneTransferId;
             copy->_NativeAgentProviderId = _NativeAgentProviderId;
             copy->_CustomAgentSessionId = _CustomAgentSessionId;
+            copy->_CustomAgentBackend = _CustomAgentBackend;
             return *copy;
         }
         size_t Hash() const
@@ -558,6 +567,7 @@ namespace winrt::Microsoft::Terminal::Settings::Model::implementation
             h.write(AgentPaneTransferId());
             h.write(NativeAgentProviderId());
             h.write(CustomAgentSessionId());
+            h.write(CustomAgentBackend());
         }
     };
 

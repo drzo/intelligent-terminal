@@ -1606,6 +1606,7 @@ namespace winrt::Microsoft::Terminal::Settings::Editor::implementation
             _isAddingCustomAcpAgent = true;
             _editingCustomAcpAgentId = L"";
             _customAcpCommand = L"";
+            _LoadCustomAgentEditor(L"");
             _NotifyChanges(L"IsAddingCustomAcpAgent",
                            L"IsCustomAcpAgentSelected",
                            L"CurrentAcpAgent",

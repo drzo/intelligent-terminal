@@ -789,6 +789,7 @@ namespace winrt::TerminalApp::implementation
             {
                 terminalArgs.NativeAgentProviderId(binding->second.agent);
                 terminalArgs.CustomAgentSessionId(binding->second.sessionId);
+                terminalArgs.CustomAgentBackend(binding->second.backend);
                 terminalArgs.Commandline(L"");
                 if (!binding->second.cwd.empty())
                 {

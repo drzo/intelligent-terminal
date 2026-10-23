@@ -1488,6 +1488,8 @@ pub struct App {
     rename_session_tx: mpsc::UnboundedSender<RenameSessionRequest>,
     restart_tx: mpsc::UnboundedSender<AgentLifecycleRequest>,
     master_request_tx: mpsc::UnboundedSender<crate::protocol::acp::client::MasterExtRequest>,
+    /// Survives ACP task cancellation/reconnect; retained requests are status-only.
+    pending_session_activations: HashMap<String, crate::protocol::acp::client::MasterExtRequest>,
     debug_capture_enabled: Arc<AtomicBool>,
     /// Cached for creating DeferredAcpParams after auth-error recovery.
     shell_mgr: Arc<crate::shell::ShellManager>,
@@ -1857,6 +1859,7 @@ impl App {
             rename_session_tx,
             restart_tx,
             master_request_tx,
+            pending_session_activations: HashMap::new(),
             debug_capture_enabled,
             next_yolo_reconcile_id: 0,
             pending_yolo_reconciles: HashMap::new(),
@@ -3977,20 +3980,36 @@ impl App {
                 return;
             }
         };
-        let request_id = self.next_agents_rpc_request_id();
-        if self
-            .master_request_tx
-            .send(
+        let tab_id = self.active_tab_key().to_string();
+        if let Some(request) = self.pending_session_activations.values().find(|request| {
+            matches!(request,
                 crate::protocol::acp::client::MasterExtRequest::SessionActivate {
-                    request_id,
-                    identity,
-                    window_id,
-                    activation_id: uuid::Uuid::new_v4().to_string(),
-                    tab_id: self.active_tab_key().to_string(),
-                },
-            )
-            .is_err()
+                    identity: pending_identity, window_id: pending_window, tab_id: pending_tab, ..
+                } if pending_identity == &identity && *pending_window == window_id && pending_tab == &tab_id)
+        }) {
+            let _ = self.master_request_tx.send(request.clone());
+            return;
+        }
+        let request_id = self.next_agents_rpc_request_id();
+        let activation_id = uuid::Uuid::new_v4().to_string();
+        let request = crate::protocol::acp::client::MasterExtRequest::SessionActivate {
+            request_id,
+            identity,
+            window_id,
+            activation_id: activation_id.clone(),
+            tab_id,
+            status_only: false,
+        };
+        let mut retained = request.clone();
+        if let crate::protocol::acp::client::MasterExtRequest::SessionActivate {
+            status_only, ..
+        } = &mut retained
         {
+            *status_only = true;
+        }
+        self.pending_session_activations
+            .insert(activation_id, retained);
+        if self.master_request_tx.send(request).is_err() {
             tracing::warn!(target: "agents_view", "custom session activation channel is unavailable");
             self.current_tab_mut().messages.push(ChatMessage::warning(
                 t!(
@@ -4022,6 +4041,13 @@ impl App {
                     sid.0.to_string(),
                 ],
             });
+        }
+
+    }
+
+    fn reconcile_session_activations(&self) {
+        for request in self.pending_session_activations.values() {
+            let _ = self.master_request_tx.send(request.clone());
         }
     }
 
@@ -5818,6 +5844,7 @@ impl App {
             AppEvent::AgentsSnapshotFailed { .. } => "agents_snapshot_failed",
             AppEvent::RegisterBornBoundSession { .. } => "register_born_bound_session",
             AppEvent::MasterMutationCompleted { .. } => "master_mutation_completed",
+            AppEvent::SessionActivationCompleted { .. } => "session_activation_completed",
             AppEvent::DirectTerminalActionProposal { .. } => "direct_terminal_action_proposal",
             AppEvent::DirectTerminalActionProposalCommit { .. } => {
                 "direct_terminal_action_proposal_commit"

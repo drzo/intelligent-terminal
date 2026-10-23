@@ -211,6 +211,8 @@ namespace Microsoft.Terminal.Settings.Model
         // Native interactive CLI provider; does not select assistant content.
         String NativeAgentProviderId;
         String CustomAgentSessionId;
+        // Empty in legacy host layouts; otherwise the original execution backend.
+        String CustomAgentBackend;
     };
 
     [default_interface] runtimeclass ActionEventArgs : IActionEventArgs

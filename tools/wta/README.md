@@ -428,6 +428,10 @@ same receipt, including after closing and reopening History; it does not generat
 a fresh activation ID. Concurrent requests for the same qualified conversation
 share the pending operation even when their activation IDs or target windows
 differ. Unknown outcomes retain the reservation; definitive failures allow retry.
+Agent-pane activation requests also reconcile pending alias receipts with
+status-only queries instead of treating `accepted: false` as a rejection.
+Unresolved identities survive request cancellation and transport disconnection;
+only completed unsuccessful receipts report rejection to the originating tab.
 See [session tracking](../../doc/specs/hybrid-agent-session-tracking.md) for
 receipt retention and refresh cancellation/backoff behavior.
 

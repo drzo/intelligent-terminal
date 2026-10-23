@@ -30,6 +30,7 @@
 #include "../TerminalSettingsModel/AgentProfileGenerator.h"
 #include "../TerminalSettingsModel/SettingsTelemetry.h"
 #include "../TerminalSettingsModel/ActionArgs.h"
+#include "../TerminalSettingsModel/ApplicationState.h"
 #include "../TerminalApp/AgentProviderTelemetry.h"
 #include "../inc/AgentPolicy.h"
 #include "../inc/AgentRegistry.h"
@@ -626,6 +627,23 @@ namespace SettingsModelUnitTests
         VERIFY_IS_TRUE(std::wstring_view{ args.ToCommandline() }.find(L"--custom-agent-session") != std::wstring_view::npos);
         const auto saved = implementation::NewTerminalArgs::ToJson(copy);
         VERIFY_ARE_EQUAL(std::string{ "session-123" }, saved["customAgentSessionId"].asString());
+        VERIFY_IS_TRUE(copy.CustomAgentBackend().empty());
+        WindowLayout layout;
+        copy.CustomAgentBackend(L"wsl:Ubuntu:custom:work");
+        layout.TabLayout(winrt::single_threaded_vector<ActionAndArgs>({
+            ActionAndArgs{ ShortcutAction::NewTab, NewTabArgs{ copy } } }));
+        const auto restoredLayout = WindowLayout::FromJson(WindowLayout::ToJson(layout));
+        const auto restored = restoredLayout.TabLayout().GetAt(0).Args().as<NewTabArgs>().ContentArgs().as<NewTerminalArgs>();
+        VERIFY_ARE_EQUAL(winrt::hstring{ L"wsl:Ubuntu:custom:work" }, restored.CustomAgentBackend());
+        VERIFY_ARE_EQUAL(winrt::hstring{ L"custom:work" }, restored.NativeAgentProviderId());
+        VERIFY_ARE_EQUAL(winrt::hstring{ L"session-123" }, restored.CustomAgentSessionId());
+        VERIFY_THROWS(restored.ToCommandline(), winrt::hresult_error);
+        copy.CustomAgentBackend(L"host:custom:work");
+        VERIFY_IS_FALSE(args.Equals(copy));
+        VERIFY_IS_FALSE(copy.ToCommandline().empty());
+        // Original layouts did not record a backend and remain valid host resumes.
+        VERIFY_IS_TRUE(implementation::NewTerminalArgs::FromJson(saved).CustomAgentBackend().empty());
+        VERIFY_IS_FALSE(implementation::NewTerminalArgs::FromJson(saved).ToCommandline().empty());
         copy.CustomAgentSessionId(L"session-456");
         VERIFY_IS_FALSE(args.Equals(copy));
     }
