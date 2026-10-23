@@ -4190,7 +4190,18 @@ namespace TerminalAppLocalTests
         using State = winrt::Microsoft::Terminal::TerminalConnection::ConnectionState;
         const auto paneId = ::Microsoft::Console::Utils::CreateGuid();
         const auto connection = winrt::make_self<TestConnection>(paneId, State::Connected);
-        const auto page = _commonSetup(*connection);
+        Grid host{ nullptr };
+        TestOnUIThread([&]() { host = Grid{}; });
+        const auto page = _commonSetup(*connection, host);
+        ::details::Event bound;
+        Json::Value birth;
+        winrt::event_token token{};
+        const auto cleanup = wil::scope_exit([&]() {
+            TestOnUIThread([&]() {
+                page->ProtocolVtSequenceReceived(token);
+                page->ShutdownPanes();
+            });
+        });
         TestOnUIThread([&]() {
             auto globals = page->_settings.GlobalSettings();
             globals.AgentSessionManagementEnabled(true);
@@ -4214,36 +4225,72 @@ namespace TerminalAppLocalTests
             page->OnPaneAgentSessionChanged(_keepRunningHook(
                 paneId, "agent.prompt.submit", "same-session", "custom:backend-fixture"));
             VERIFY_ARE_EQUAL(winrt::hstring{ L"wsl:Ubuntu:custom:backend-fixture" }, page->_paneAgentSessions.at(paneId).backend);
-
-            NewTerminalArgs saved;
-            saved.SessionId(paneId);
-            NewTabArgs tabArgs{ saved };
-            std::vector<ActionAndArgs> actions{ ActionAndArgs{ ShortcutAction::NewTab, tabArgs } };
-            page->_StampAgentResumeCommandlines(actions);
-            WindowLayout layout;
-            layout.TabLayout(winrt::single_threaded_vector<ActionAndArgs>(std::move(actions)));
-            const auto restored = _getTerminalArgs(WindowLayout::FromJson(WindowLayout::ToJson(layout)).TabLayout().GetAt(0));
-            VERIFY_ARE_EQUAL(binding.backend, restored.CustomAgentBackend());
-            VERIFY_ARE_EQUAL(agent.Id(), restored.NativeAgentProviderId());
-            VERIFY_ARE_EQUAL(winrt::hstring{ L"same-session" }, restored.CustomAgentSessionId());
-            const auto copied = restored.Copy().as<NewTerminalArgs>();
-            VERIFY_ARE_EQUAL(restored.CustomAgentBackend(), copied.CustomAgentBackend());
-            VERIFY_IS_TRUE(restored.Equals(copied));
-            copied.CustomAgentBackend(L"host:custom:backend-fixture");
-            VERIFY_IS_FALSE(restored.Equals(copied));
-
-            // A Windows definition with the identical ID must not resume the WSL conversation,
-            // even if an elevated launch would otherwise flatten the arguments.
-            for (const auto elevate : { false, true })
-            {
-                restored.Elevate(winrt::box_value(elevate).as<winrt::Windows::Foundation::IReference<bool>>());
-                VERIFY_THROWS(page->_MakePane(restored, nullptr, *connection), winrt::hresult_error);
-                VERIFY_THROWS(restored.ToCommandline(), winrt::hresult_error);
-                VERIFY_IS_TRUE(restored.Commandline().empty());
-            }
-            copied.Elevate(winrt::box_value(false).as<winrt::Windows::Foundation::IReference<bool>>());
-            VERIFY_IS_NOT_NULL(page->_MakePane(copied, nullptr, *connection));
+            token = page->ProtocolVtSequenceReceived([&](auto&&, const winrt::hstring& payload) {
+                Json::Value event;
+                Json::CharReaderBuilder reader;
+                std::istringstream stream{ winrt::to_string(payload) };
+                std::string errors;
+                if (Json::parseFromStream(reader, stream, &event, &errors) &&
+                    event["method"] == "session_born_bound")
+                {
+                    birth = std::move(event);
+                    bound.Set();
+                }
+            });
         });
+
+        // First preserve hook-qualified WSL provenance while the control defaults
+        // to host; then derive it from the owning control without any hook binding.
+        for (const auto owningShell : { false, true })
+        {
+            TestOnUIThread([&]() {
+                if (owningShell)
+                {
+                    page->_paneAgentSessions.clear();
+                    page->_interactiveResumeSessions.clear();
+                }
+            });
+            const std::u16string_view resume = owningShell ?
+                                                   u"\x1b]9001;ShellType;wsl:Ubuntu;1\x07\x1b]9001;Resume;custom:backend-fixture;same-session\x07" :
+                                                   u"\x1b]9001;Resume;custom:backend-fixture;same-session\x07";
+            connection->WriteInput({ resume.data(), resume.data() + resume.size() });
+            VERIFY_ARE_EQUAL(static_cast<DWORD>(WAIT_OBJECT_0), WaitForSingleObject(bound.m_handle, 10000));
+            TestOnUIThread([&]() {
+                VERIFY_ARE_EQUAL(std::string{ "wsl:Ubuntu:custom:backend-fixture" }, birth["params"]["agent_backend"].asString());
+                VERIFY_ARE_EQUAL(std::string{ "Ubuntu" }, birth["params"]["wsl_distro"].asString());
+                const auto& binding = page->_paneAgentSessions.at(paneId);
+                VERIFY_IS_TRUE(binding.structuredCustomResume);
+                VERIFY_ARE_EQUAL(winrt::hstring{ L"wsl:Ubuntu:custom:backend-fixture" }, binding.backend);
+                NewTerminalArgs saved;
+                saved.SessionId(paneId);
+                NewTabArgs tabArgs{ saved };
+                std::vector<ActionAndArgs> actions{ ActionAndArgs{ ShortcutAction::NewTab, tabArgs } };
+                page->_StampAgentResumeCommandlines(actions);
+                WindowLayout layout;
+                layout.TabLayout(winrt::single_threaded_vector<ActionAndArgs>(std::move(actions)));
+                const auto restored = _getTerminalArgs(WindowLayout::FromJson(WindowLayout::ToJson(layout)).TabLayout().GetAt(0));
+                VERIFY_ARE_EQUAL(binding.backend, restored.CustomAgentBackend());
+                VERIFY_ARE_EQUAL(winrt::hstring{ L"custom:backend-fixture" }, restored.NativeAgentProviderId());
+                VERIFY_ARE_EQUAL(winrt::hstring{ L"same-session" }, restored.CustomAgentSessionId());
+                const auto copied = restored.Copy().as<NewTerminalArgs>();
+                VERIFY_ARE_EQUAL(restored.CustomAgentBackend(), copied.CustomAgentBackend());
+                VERIFY_IS_TRUE(restored.Equals(copied));
+                copied.CustomAgentBackend(L"host:custom:backend-fixture");
+                VERIFY_IS_FALSE(restored.Equals(copied));
+
+                // A Windows definition with the identical ID must not resume the WSL conversation,
+                // even if an elevated launch would otherwise flatten the arguments.
+                for (const auto elevate : { false, true })
+                {
+                    restored.Elevate(winrt::box_value(elevate).as<winrt::Windows::Foundation::IReference<bool>>());
+                    VERIFY_THROWS(page->_MakePane(restored, nullptr, *connection), winrt::hresult_error);
+                    VERIFY_THROWS(restored.ToCommandline(), winrt::hresult_error);
+                    VERIFY_IS_TRUE(restored.Commandline().empty());
+                }
+                copied.Elevate(winrt::box_value(false).as<winrt::Windows::Foundation::IReference<bool>>());
+                VERIFY_IS_NOT_NULL(page->_MakePane(copied, nullptr, *connection));
+            });
+        }
     }
 
     void TabTests::CustomResumeRetainsIdentityAfterDefinitionChanges()

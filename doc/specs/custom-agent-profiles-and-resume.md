@@ -269,6 +269,13 @@ string-interpolation fallback. Apply the existing source validation and launch
 quoting to WSL, and never fall back to the Windows host for a WSL session.
 New custom profiles in this first scope target Windows host commands;
 automatic WSL custom profile discovery is separate work.
+For custom OSC 9001 Resume bindings, an explicit owning-control WSL source
+overrides the existing binding; otherwise preserve the qualified backend for
+the same provider and session, falling back to host only for a new binding.
+A default host shell must not downgrade known WSL provenance. Publish that
+same backend (and WSL distro when present) with the session birth event, and
+retain it through persistence so unsupported custom WSL restores still fail
+explicitly rather than launching a Windows command.
 
 ### Configuration delivery and shared implementation
 

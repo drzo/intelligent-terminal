@@ -11188,10 +11188,32 @@ namespace winrt::TerminalApp::implementation
             winrt::hstring{ agent },
             winrt::hstring{ resumeCommandline } };
         binding.structuredCustomResume = custom;
+        if (custom)
+        {
+            namespace Backend = ::Microsoft::Terminal::Settings::Model;
+            binding.backend = winrt::hstring{ Backend::AgentPaneBackend::Host(agent) };
+            if (const auto previous = _paneAgentSessions.find(*paneSessionId);
+                previous != _paneAgentSessions.end() &&
+                previous->second.agent == binding.agent &&
+                previous->second.sessionId == binding.sessionId &&
+                !previous->second.backend.empty())
+            {
+                binding.backend = previous->second.backend;
+            }
+            // An explicit owning-shell source wins; a default host shell must not
+            // erase the qualified provenance of an already bound conversation.
+            const auto shellName = control.ShellName();
+            const std::wstring_view shell{ shellName };
+            if (shell.starts_with(L"wsl:"))
+            {
+                binding.backend = winrt::hstring{ Backend::AgentPaneBackend::Wsl(shell.substr(4), agent) };
+            }
+        }
         if (const auto existing = _interactiveResumeSessions.find(*paneSessionId);
             existing != _interactiveResumeSessions.end() &&
             existing->second.sessionId == binding.sessionId &&
-            existing->second.agent == binding.agent)
+            existing->second.agent == binding.agent &&
+            existing->second.backend == binding.backend)
         {
             return;
         }
@@ -11213,6 +11235,16 @@ namespace winrt::TerminalApp::implementation
         params["agent_session_id"] = winrt::to_string(binding.sessionId);
         params["agent"] = winrt::to_string(binding.agent);
         params["cwd"] = winrt::to_string(control.WorkingDirectory());
+        if (custom)
+        {
+            params["agent_backend"] = winrt::to_string(binding.backend);
+            if (const auto backend = ::Microsoft::Terminal::Settings::Model::AgentPaneBackend::Parse(
+                    std::wstring_view{ binding.backend });
+                backend && backend->source == ::Microsoft::Terminal::Settings::Model::AgentPaneBackendSource::Wsl)
+            {
+                params["wsl_distro"] = winrt::to_string(winrt::hstring{ backend->wslDistro });
+            }
+        }
         if (!tabId.empty())
         {
             params["tab_id"] = std::string{ tabId };
