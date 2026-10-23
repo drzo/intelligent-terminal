@@ -659,6 +659,7 @@ namespace TerminalAppLocalTests
 
         TEST_METHOD(CreateTerminalPage);
         TEST_METHOD(PaneContextPropagatesCaptureFailure);
+        TEST_METHOD(ProtocolProfilesReflectRuntimeSettings);
         TEST_METHOD(AgentSessionRestoreRequiresPersistedBufferPath);
         TEST_METHOD(InteractiveResumeCommandPublishesSessionLifecycle);
         TEST_METHOD(InteractiveResumeOscPersistsSessionWithoutHooks);
@@ -1640,6 +1641,62 @@ namespace TerminalAppLocalTests
                 winrt::hresult_error,
                 [](const winrt::hresult_error& error) { return error.code() == E_INVALIDARG; });
         }
+    }
+
+    void TabTests::ProtocolProfilesReflectRuntimeSettings()
+    {
+        const auto page = _commonSetup();
+        const winrt::guid defaultId{ L"{5784e726-2a17-4932-bd11-18a387ef9c01}" };
+        const winrt::guid generatedId{ L"{5784e726-2a17-4932-bd11-18a387ef9c02}" };
+        winrt::TerminalApp::TerminalPage projectedPage{ nullptr };
+        TestOnUIThread([&]() {
+            projectedPage = *page;
+            page->_settings = CascadiaSettings{
+                LR"({
+                    "defaultProfile": "{5784e726-2a17-4932-bd11-18a387ef9c01}",
+                    "profiles": [
+                        { "guid": "{5784e726-2a17-4932-bd11-18a387ef9c01}", "name": "Same name" },
+                        { "guid": "{5784e726-2a17-4932-bd11-18a387ef9c03}", "name": "Hidden", "hidden": true }
+                    ]
+                })",
+                L"{}"
+            };
+            Profile generated{ generatedId };
+            generated.Name(L"Same name");
+            generated.AgentProfileId(L"copilot");
+            page->_settings.AllProfiles().Append(generated);
+            page->_settings.ActiveProfiles().Append(generated);
+        });
+
+        const auto query = [&]() {
+            winrt::Windows::Foundation::IAsyncOperation<winrt::Windows::Foundation::Collections::IVector<winrt::Microsoft::Terminal::Protocol::ProfileInfo>> operation{ nullptr };
+            TestOnUIThread([&]() {
+                operation = projectedPage.GetProtocolProfiles();
+            });
+            return operation.get();
+        };
+        const auto profiles = query();
+        VERIFY_ARE_EQUAL(2u, profiles.Size());
+        VERIFY_ARE_EQUAL(defaultId, profiles.GetAt(0).Id);
+        VERIFY_IS_TRUE(profiles.GetAt(0).IsDefault);
+        VERIFY_IS_TRUE(profiles.GetAt(0).AgentId.empty());
+        VERIFY_ARE_EQUAL(generatedId, profiles.GetAt(1).Id);
+        VERIFY_ARE_EQUAL(profiles.GetAt(0).Name, profiles.GetAt(1).Name);
+        VERIFY_ARE_EQUAL(winrt::hstring{ L"copilot" }, profiles.GetAt(1).AgentId);
+        VERIFY_IS_FALSE(profiles.GetAt(1).IsDefault);
+
+        TestOnUIThread([&]() {
+            NewTerminalArgs args;
+            args.Profile(Utils::GuidToString(profiles.GetAt(1).Id));
+            VERIFY_ARE_EQUAL(generatedId, page->_settings.GetProfileForArgs(args).Guid());
+            page->_settings.GlobalSettings().DefaultProfile(generatedId);
+            page->_settings.ActiveProfiles().GetAt(1).Name(L"Renamed agent");
+        });
+        const auto refreshed = query();
+        VERIFY_IS_FALSE(refreshed.GetAt(0).IsDefault);
+        VERIFY_IS_TRUE(refreshed.GetAt(1).IsDefault);
+        VERIFY_ARE_EQUAL(winrt::hstring{ L"Renamed agent" }, refreshed.GetAt(1).Name);
+        VERIFY_ARE_EQUAL(winrt::hstring{ L"Same name" }, profiles.GetAt(1).Name);
     }
 
     void TabTests::PaneAgentSessionBindingRequiresPaneIdentity()
