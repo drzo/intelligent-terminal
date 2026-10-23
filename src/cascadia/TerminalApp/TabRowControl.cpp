@@ -178,7 +178,6 @@ namespace winrt::TerminalApp::implementation
 
         WUX::Controls::Grid topChromeContainer;
         topChromeContainer.HorizontalAlignment(WUX::HorizontalAlignment::Right);
-        topChromeContainer.Margin(WUX::Thickness{ 0, 0, 12, 0 });
         WUX::Controls::Grid::SetColumn(topChromeContainer, 2);
         expandedChrome.Children().Append(topChromeContainer);
 

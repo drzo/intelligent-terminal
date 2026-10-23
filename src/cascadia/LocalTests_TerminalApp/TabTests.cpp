@@ -6427,7 +6427,7 @@ namespace TerminalAppLocalTests
                     VERIFY_ARE_EQUAL(buttonBounds.X, dragBounds.X + dragBounds.Width);
                     VERIFY_ARE_EQUAL(71.0f, buttonBounds.Width);
                     VERIFY_IS_TRUE(row->VerticalNewTabButton().IsHitTestVisible());
-                    VERIFY_IS_TRUE(buttonBounds.X + buttonBounds.Width <= width - 12.0f);
+                    VERIFY_ARE_EQUAL(static_cast<float>(width), buttonBounds.X + buttonBounds.Width);
                     VERIFY_IS_TRUE(buttonBounds.Y >= 4.0f);
                     VERIFY_IS_TRUE(buttonBounds.Y + buttonBounds.Height <= chrome.ActualHeight() - 4.0f);
                     const auto newTab = row->VerticalNewTabButton();
