@@ -13,6 +13,7 @@
 #include "ContentManager.h"
 #include "../inc/AgentRegistry.h"
 #include "../inc/AgentPaneRestore.h"
+#include "../inc/CustomAgentUtils.h"
 #include "Utils.h"
 #include "../../types/inc/utils.hpp"
 #include "../../inc/til/string.h"
@@ -782,6 +783,19 @@ namespace winrt::TerminalApp::implementation
             const auto binding = _paneAgentSessions.find(terminalArgs.SessionId());
             if (binding == _paneAgentSessions.end())
             {
+                continue;
+            }
+            if (::Microsoft::Terminal::CustomAgents::IsId(binding->second.agent))
+            {
+                const auto agent = ::Microsoft::Terminal::CustomAgents::Find(_settings.GlobalSettings(), binding->second.agent);
+                if (agent && !agent.ResumeCommand().empty())
+                {
+                    terminalArgs.NativeAgentProviderId(binding->second.agent);
+                    terminalArgs.CustomAgentSessionId(binding->second.sessionId);
+                    terminalArgs.Commandline(L"");
+                    if (!binding->second.cwd.empty())
+                        terminalArgs.StartingDirectory(binding->second.cwd);
+                }
                 continue;
             }
 

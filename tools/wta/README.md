@@ -219,6 +219,15 @@ Gemini and Antigravity are excluded before availability checks and ACP startup,
 even when installed and policy-allowed. Explicit chat selections remain supported,
 and sessions already registered by other paths are not filtered out of the sidebar.
 
+Configured custom ACP agents participate in the same background history discovery,
+independently of the selected agent-pane provider. Master reads their commands from
+trusted Terminal settings and checks `AllowCustomAgents` before reading or starting
+them. Structured `customAgents` entries and legacy custom ACP entries are supported;
+CLI-only entries are not started for discovery. Matching provider identities and
+commands reuse the agent pool, including when the same executable implements
+several custom providers. Listing still requires the provider to advertise and
+successfully answer ACP `session/list`.
+
 Discovery never automatically installs a native agent CLI. The pinned Claude and
 Codex ACP adapters are separate: their cache presence is not checked, and the
 existing `npx -y` launch behavior may download and bootstrap an uncached adapter
@@ -404,9 +413,9 @@ providers do not clear other providers' rows or overwrite live activity and pane
 bindings. Failures are logged under `master_history`; listing never installs a native
 agent CLI or starts an interactive login flow.
 
-This discovery covers built-in agents on the Windows host. It does not start WSL
-distributions or discover arbitrary custom commands; sessions already in the registry
-remain visible according to the requested origin filter.
+This discovery covers built-in and configured custom ACP agents on the Windows host.
+It does not start WSL distributions or infer commands for unconfigured providers;
+sessions already in the registry remain visible according to the requested origin filter.
 
 Initial host discovery runs at master startup, after a confirmed host-agent
 installation, or on an explicit `wta sessions refresh` request. There is no unconditional
@@ -414,6 +423,8 @@ periodic installation scan. Failed host-agent startup discoveries are retried th
 same discovery worker, with delays of 5, 10, 20, 40, then at most 60 seconds after
 each failure (checked on the existing five-second history timer). Retries recheck
 installation and policy and do not restart healthy resident providers.
+Custom settings lookup failures use the same capped retry schedule and do not clear
+existing history or prevent other providers from being queried.
 `wta sessions refresh --json` schedules discovery while respecting failure backoff and returns the
 current snapshot with `history_status`; it does not wait for discovery to finish.
 The removed `--all-agents` flag is no longer accepted. F5 in a helper's session view

@@ -73,6 +73,10 @@ namespace SettingsModelUnitTests
         TEST_METHOD(AgentProfileSplitTargets);
         TEST_METHOD(CustomDelegateAgentRoundtrips);
         TEST_METHOD(CustomAgentCollectionsRoundtrip);
+        TEST_METHOD(StructuredCustomAgentRoundtripAndProfiles);
+        TEST_METHOD(StructuredCustomAgentValidation);
+        TEST_METHOD(StructuredCustomAgentBatchInvocation);
+        TEST_METHOD(CustomAgentLayoutIdentityRoundtrip);
         TEST_METHOD(QuotedPathCustomCommandRoundtrips);
         TEST_METHOD(AgentTelemetryProviderBuckets);
         TEST_METHOD(AgentTelemetryProviderTransitions);
@@ -397,6 +401,129 @@ namespace SettingsModelUnitTests
     }
 
     // ── Round-trip ──────────────────────────────────────────────────────
+
+    void CustomAgentAndPolicyTests::StructuredCustomAgentRoundtripAndProfiles()
+    {
+        namespace Custom = ::Microsoft::Terminal::CustomAgents;
+        auto globals = winrt::make_self<implementation::GlobalAppSettings>();
+        const auto json = VerifyParseSucceeded(R"({
+            "customAgents": [
+                {"id":"custom:work","name":"Work",
+                 "acp":{"command":"adapter.exe","args":["--stdio"]},
+                 "cli":{"command":"work.exe","args":["--config","C:\\config dir\\work.json",""]},
+                 "resume":{"command":"work.exe","args":["resume","{sessionId}"]}},
+                {"id":"custom:acp-only","acp":{"command":"adapter.exe"}}
+            ]
+        })");
+        globals->LayerJson(json, OriginTag::User);
+        VERIFY_ARE_EQUAL(2u, globals->CustomAgents().Size());
+        VERIFY_ARE_EQUAL(std::wstring{ L"\"adapter.exe\" \"--stdio\"" }, Custom::AcpCommand(*globals, L"custom:work"));
+        const auto copy = globals->Copy();
+        globals->CustomAgents().GetAt(0).Name(L"Renamed");
+        VERIFY_ARE_EQUAL(winrt::hstring{ L"Work" }, copy->CustomAgents().GetAt(0).Name());
+        const auto serialized = copy->ToJson();
+        VERIFY_ARE_EQUAL(std::string{ "custom:work" }, serialized["customAgents"][0]["id"].asString());
+        VERIFY_ARE_EQUAL(std::string{ "" }, serialized["customAgents"][0]["cli"]["args"][2].asString());
+        std::vector<winrt::com_ptr<implementation::Profile>> first;
+        AgentProfileGenerator{ globals->CustomAgents() }.GenerateProfiles(first);
+        const auto find = [](const auto& profiles) {
+            return std::ranges::find_if(profiles, [](const auto& profile) { return profile->AgentProfileId() == L"custom:work"; });
+        };
+        const auto generated = find(first);
+        VERIFY_IS_TRUE(generated != first.end());
+        (*generated)->Origin(OriginTag::Generated);
+        auto layered = winrt::make_self<implementation::Profile>();
+        layered->AddLeastImportantParent(*generated);
+        VERIFY_IS_TRUE(::Microsoft::Terminal::AgentProfiles::IsManaged(*layered));
+        VERIFY_ARE_EQUAL(winrt::hstring{ L"Renamed" }, (*generated)->Name());
+        VERIFY_IS_TRUE(std::ranges::none_of(first, [](const auto& profile) { return profile->AgentProfileId() == L"custom:acp-only"; }));
+        globals->CustomAgents().GetAt(0).Name(L"New name");
+        globals->CustomAgents().GetAt(0).CliCommand(L"new-work.exe");
+        std::vector<winrt::com_ptr<implementation::Profile>> second;
+        AgentProfileGenerator{ globals->CustomAgents() }.GenerateProfiles(second);
+        VERIFY_ARE_EQUAL((*generated)->Guid(), (*find(second))->Guid());
+        VERIFY_ARE_EQUAL(std::wstring{ L"\"work.exe\" \"resume\" \"abc-123\"" }, Custom::ResumeCommand(*globals, L"custom:work", L"abc-123"));
+        layered->Commandline(L"explicit.exe");
+        VERIFY_IS_FALSE(::Microsoft::Terminal::AgentProfiles::IsManaged(*layered));
+    }
+
+    void CustomAgentAndPolicyTests::StructuredCustomAgentValidation()
+    {
+        namespace Custom = ::Microsoft::Terminal::CustomAgents;
+        for (const auto text : {
+                 R"({"customAgents":[{"id":"custom:bad id","cli":{"command":"agent.exe"}}]})",
+                 R"({"customAgents":[{"id":"custom:work","acp":{"command":"agent.exe"},"resume":{"command":"agent.exe","args":["{sessionId}"]}}]})",
+                 R"({"customAgents":[{"id":"custom:work","cli":{"command":"agent.exe"}},{"id":"custom:WORK","cli":{"command":"other.exe"}}]})",
+                 R"({"customAgents":[{"id":"custom:work","cli":{"command":"agent\u0000.exe"}}]})",
+                 R"({"customAgents":[{"id":"custom:work","cli":{"command":"agent.exe"},"resume":{"command":"agent.exe","args":["--id={sessionId}"]}}]})" })
+        {
+            const auto json = VerifyParseSucceeded(text);
+            auto globals = winrt::make_self<implementation::GlobalAppSettings>();
+            VERIFY_THROWS(globals->LayerJson(json, OriginTag::User), wil::ResultException);
+        }
+        const Custom::Invocation invocation{ LR"(C:\program files\agent.exe)", { L"", L"a \"quote\"", L"C:\\path dir\\", L"\u4e2d\u6587" } };
+        const auto parsed = Custom::Parse(Custom::Format(invocation));
+        VERIFY_ARE_EQUAL(invocation.command, parsed.command);
+        VERIFY_IS_TRUE(invocation.args == parsed.args);
+        VERIFY_THROWS(Custom::Parse(L"agent.exe | other.exe"), wil::ResultException);
+        VERIFY_THROWS(Custom::Parse(L"agent.exe \"unfinished"), wil::ResultException);
+    }
+
+    void CustomAgentAndPolicyTests::StructuredCustomAgentBatchInvocation()
+    {
+        namespace Custom = ::Microsoft::Terminal::CustomAgents;
+        GUID guid{};
+        THROW_IF_FAILED(CoCreateGuid(&guid));
+        const auto root = std::filesystem::current_path() / (L"Custom Agent " + Utils::GuidToString(guid));
+        std::filesystem::create_directory(root);
+        const auto cleanup = wil::scope_exit([&]() { std::filesystem::remove_all(root); });
+        const auto shim = root / L"agent.cmd";
+        std::ofstream{ shim } << "@exit /b 88\n";
+        Custom::Invocation invocation{ shim.native(), { L"resume", L"abc-123", LR"(quote " and ' & | ! ^)", L"C:\\path dir\\" } };
+        VERIFY_THROWS(Custom::LaunchCommand(invocation), wil::ResultException);
+        std::ofstream{ root / L"agent.ps1" }
+            << "$ErrorActionPreference='Stop'\n"
+               "[IO.File]::WriteAllText((Join-Path $PSScriptRoot 'args.json'), (ConvertTo-Json -Compress -InputObject @($args)))\n"
+               "exit 0\n";
+        auto command = Custom::LaunchCommand(invocation);
+        wil::unique_process_information process;
+        STARTUPINFOW startup{ sizeof(startup) };
+        THROW_IF_WIN32_BOOL_FALSE(CreateProcessW(nullptr, command.data(), nullptr, nullptr, FALSE, CREATE_NO_WINDOW, nullptr, root.c_str(), &startup, &process));
+        const auto terminate = wil::scope_exit([&]() {
+            if (WaitForSingleObject(process.hProcess, 0) == WAIT_TIMEOUT)
+            {
+                LOG_IF_WIN32_BOOL_FALSE(TerminateProcess(process.hProcess, 1));
+                WaitForSingleObject(process.hProcess, 5000);
+            }
+        });
+        VERIFY_ARE_EQUAL(static_cast<DWORD>(WAIT_OBJECT_0), WaitForSingleObject(process.hProcess, 30000));
+        DWORD exitCode{};
+        THROW_IF_WIN32_BOOL_FALSE(GetExitCodeProcess(process.hProcess, &exitCode));
+        VERIFY_ARE_EQUAL(0u, exitCode);
+        std::ifstream output{ root / L"args.json" };
+        const std::string text{ std::istreambuf_iterator<char>{ output }, std::istreambuf_iterator<char>{} };
+        const auto args = VerifyParseSucceeded(text);
+        VERIFY_ARE_EQUAL(static_cast<Json::ArrayIndex>(invocation.args.size()), args.size());
+        for (Json::ArrayIndex i = 0; i < args.size(); ++i)
+        {
+            VERIFY_ARE_EQUAL(winrt::to_string(invocation.args[i]), args[i].asString());
+        }
+    }
+
+    void CustomAgentAndPolicyTests::CustomAgentLayoutIdentityRoundtrip()
+    {
+        const auto json = VerifyParseSucceeded(R"({"nativeAgentProviderId":"custom:work","customAgentSessionId":"session-123"})");
+        const auto args = implementation::NewTerminalArgs::FromJson(json);
+        const auto copy = args.Copy().as<NewTerminalArgs>();
+        VERIFY_ARE_EQUAL(winrt::hstring{ L"custom:work" }, copy.NativeAgentProviderId());
+        VERIFY_ARE_EQUAL(winrt::hstring{ L"session-123" }, copy.CustomAgentSessionId());
+        VERIFY_IS_TRUE(args.Equals(copy));
+        VERIFY_IS_TRUE(std::wstring_view{ args.ToCommandline() }.find(L"--custom-agent-session") != std::wstring_view::npos);
+        const auto saved = implementation::NewTerminalArgs::ToJson(copy);
+        VERIFY_ARE_EQUAL(std::string{ "session-123" }, saved["customAgentSessionId"].asString());
+        copy.CustomAgentSessionId(L"session-456");
+        VERIFY_IS_FALSE(args.Equals(copy));
+    }
 
     void CustomAgentAndPolicyTests::AgentProfileSettingsRoundtrip()
     {

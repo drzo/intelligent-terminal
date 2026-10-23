@@ -329,12 +329,12 @@ fn spawn_host_agent_process(
     provider_selection: SharedProviderSelection<'_>,
     history_only: bool,
 ) -> Result<AgentSpawn> {
-    let parts: Vec<&str> = agent_cmd.split_whitespace().collect();
+    let parts = crate::coordinator::split_windows_commandline(agent_cmd);
     let raw_program = parts
         .first()
-        .copied()
+        .map(String::as_str)
         .ok_or_else(|| anyhow!("empty agent command"))?;
-    let args: Vec<&str> = parts[1..].to_vec();
+    let args = &parts[1..];
     let resolved_program = if resolve_spawn_profile(agent_cmd, agent_id).id
         == crate::agent_registry::ANTIGRAVITY_AGENT_ID
         && raw_program.eq_ignore_ascii_case("agy_acp_server.exe")
@@ -344,7 +344,9 @@ fn spawn_host_agent_process(
     } else {
         crate::agent_registry::resolve_bare_agent_name(raw_program)
     };
-    let needs_cmd = crate::coordinator::needs_shell_launch(&resolved_program);
+    let needs_cmd = crate::coordinator::needs_shell_launch(
+        &crate::coordinator::quote_windows_commandline_arg(&resolved_program),
+    );
 
     let is_npx = resolved_program.eq_ignore_ascii_case("npx")
         || resolved_program.eq_ignore_ascii_case("npx.cmd")
@@ -456,7 +458,7 @@ fn spawn_host_agent_process(
     if let Some(cwd) = cwd {
         cmd.current_dir(cwd);
     }
-    cmd.args(&args)
+    cmd.args(args)
         .stdin(std::process::Stdio::piped())
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped())
@@ -863,6 +865,66 @@ fn canonicalize_posix_locale(tag: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(windows)]
+    #[tokio::test]
+    async fn host_spawns_preserve_quoted_executable_and_argument_paths() {
+        let directory = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .unwrap()
+            .parent()
+            .unwrap()
+            .join("Generated Files")
+            .join(format!("agent with spaces {}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&directory).unwrap();
+        let executable = directory.join("custom agent.exe");
+        let marker = directory.join("argument with spaces.txt");
+        let system_root = std::env::var_os("SystemRoot").unwrap();
+        std::fs::copy(
+            PathBuf::from(system_root)
+                .join("System32")
+                .join("where.exe"),
+            &executable,
+        )
+        .unwrap();
+        std::fs::write(&marker, "").unwrap();
+        let pattern = format!("{}:argument with spaces.txt", directory.display());
+        let command = crate::coordinator::join_windows_commandline(&[
+            executable.to_str().unwrap(),
+            "/F",
+            &pattern,
+        ]);
+
+        for history_only in [false, true] {
+            let spawned = spawn_host_agent_process(
+                &command,
+                Some(&directory),
+                Some("custom:spawn-test"),
+                ChildEnvironmentPolicy::CleanCloudDiscovery,
+                SharedProviderSelection::Disabled,
+                history_only,
+            )
+            .unwrap();
+            assert_eq!(spawned.raw_program, executable.to_str().unwrap());
+            assert_eq!(spawned.resolved_program, executable.to_str().unwrap());
+            let output = spawned.child.wait_with_output().await.unwrap();
+            assert!(
+                output.status.success(),
+                "history_only={history_only}, status={}, stdout={}, stderr={}",
+                output.status,
+                String::from_utf8_lossy(&output.stdout),
+                String::from_utf8_lossy(&output.stderr),
+            );
+            assert_eq!(
+                String::from_utf8(output.stdout)
+                    .unwrap()
+                    .trim()
+                    .trim_matches('"'),
+                marker.to_str().unwrap()
+            );
+        }
+        std::fs::remove_dir_all(directory).unwrap();
+    }
 
     #[test]
     fn explicit_agent_id_overrides_command_inference() {

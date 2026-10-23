@@ -135,5 +135,11 @@ namespace Microsoft.Terminal.Settings.Editor
         Boolean CanEnableAgentPaneYoloMode { get; };
         Windows.UI.Xaml.Visibility AgentPaneYoloModeVisibility { get; };
         PERMANENT_OBSERVABLE_PROJECTED_SETTING(Boolean, RenderAgentMarkdown);
+        String CustomAgentName;
+        String CustomAgentCliCommand;
+        String CustomAgentResumeCommand;
+        Boolean CustomAgentSharedSessions;
+        String CustomAgentError { get; };
+        String CustomAgentId { get; };
     }
 }

@@ -3400,7 +3400,14 @@ impl HelperHandler {
             agent_id,
             source: agent_source,
             explicit_selection,
-        } = resolve_agent_selection(
+        } = if wta_meta
+            .agent_id
+            .as_deref()
+            .is_some_and(crate::custom_agents::is_custom_id)
+        {
+            resolve_custom_agent_selection(&self.state, &wta_meta, self.helper_id).await?
+        } else {
+            resolve_agent_selection(
             &self.state.default_agent_cmd,
             self.state.default_agent_id.as_deref(),
             self.state.allowed_agent_ids.as_ref(),
@@ -3409,7 +3416,8 @@ impl HelperHandler {
             wta_meta.agent_source.as_deref(),
             wta_meta.wsl_distro.as_deref(),
             self.helper_id,
-        )?;
+            )?
+        };
         tracing::info!(
             target: "master",
             step = "helper→agent",
@@ -3417,7 +3425,7 @@ impl HelperHandler {
             helper_id = ?self.helper_id,
             protocol_version = ?args.protocol_version,
             requested_agent_id = ?wta_meta.agent_id,
-            resolved_agent_cmd = %agent_cmd,
+            resolved_agent_cmd = if agent_id.as_deref().is_some_and(crate::custom_agents::is_custom_id) { "<custom>" } else { agent_cmd.as_str() },
             resolved_agent_id = ?agent_id,
             resolved_agent_source = %agent_source,
             "resolving agent CLI for helper"
@@ -5484,6 +5492,86 @@ fn resolve_agent_selection(
         } else {
             ExplicitAgentSelection::ImplicitDefault
         },
+    })
+}
+
+async fn resolve_custom_agent_selection(
+    state: &MasterStateInner,
+    metadata: &crate::session_registry::WtaMeta,
+    helper_id: HelperId,
+) -> acp::Result<ResolvedAgentSelection> {
+    let resolve = async {
+        crate::cli::native_agent::policy::check_custom(false)?;
+        let source = crate::agent_source::AgentSource::from_wire(
+            metadata.agent_source.as_deref(),
+            metadata.wsl_distro.as_deref(),
+        )?;
+        anyhow::ensure!(
+            matches!(source, crate::agent_source::AgentSource::Host),
+            "custom agent definitions currently require the Windows host source"
+        );
+        let id = metadata
+            .agent_id
+            .as_deref()
+            .context("custom agent identity is missing")?;
+        if let Some(wt) = state.wt.as_ref() {
+            let settings = wt
+                .request("get_settings", serde_json::Value::Null)
+                .await
+                .context("cannot read custom agent settings")?;
+            if let Some(agent) = crate::custom_agents::from_settings(&settings, id)? {
+                let invocation = agent
+                    .acp
+                    .context("the selected custom agent has no ACP startup command")?;
+                return Ok(ResolvedAgentSelection {
+                    command: invocation.commandline(),
+                    agent_id: Some(agent.id),
+                    source,
+                    explicit_selection: ExplicitAgentSelection::Accepted,
+                });
+            }
+            anyhow::ensure!(
+                settings
+                    .get("acpCustomCommand")
+                    .and_then(serde_json::Value::as_str)
+                    == Some(state.default_agent_cmd.as_str())
+                    || settings
+                        .get("acpCustomCommands")
+                        .and_then(serde_json::Value::as_array)
+                        .is_some_and(|commands| commands
+                            .iter()
+                            .any(|command| command.as_str()
+                                == Some(state.default_agent_cmd.as_str()))),
+                "the selected custom agent is no longer configured"
+            );
+        }
+        // Old hosts supply their selected custom command as the trusted master
+        // default, never as a helper-controlled command over the pipe.
+        anyhow::ensure!(
+            state
+                .default_agent_id
+                .as_deref()
+                .is_some_and(|default| default.eq_ignore_ascii_case(id)),
+            "the selected custom agent is no longer configured"
+        );
+        let mut resolved = resolve_agent_selection(
+            &state.default_agent_cmd,
+            state.default_agent_id.as_deref(),
+            state.allowed_agent_ids.as_ref(),
+            metadata.agent_id.as_deref(),
+            metadata.model.as_deref(),
+            metadata.agent_source.as_deref(),
+            metadata.wsl_distro.as_deref(),
+            helper_id,
+        )
+        .map_err(|error| anyhow!("{error}"))?;
+        resolved.explicit_selection = ExplicitAgentSelection::Accepted;
+        Ok(resolved)
+    }
+    .await;
+    resolve.map_err(|error: anyhow::Error| {
+        tracing::warn!(target: "master", %error, "custom agent selection failed");
+        acp::Error::invalid_params().data(error.to_string())
     })
 }
 
@@ -7798,33 +7886,122 @@ fn host_history_agent_ids(
         .collect()
 }
 
-async fn refresh_host_history_agents(state: &Arc<MasterStateInner>, agent_ids: &[&str]) -> bool {
-    refresh_host_history_agents_for_trigger(state, agent_ids, HistoryRefreshTrigger::Immediate)
-        .await
+struct HistoryAgentLaunch {
+    id: String,
+    command: String,
 }
 
-async fn refresh_host_history_agents_for_trigger(
+fn native_history_launches(agent_ids: &[&str]) -> Vec<HistoryAgentLaunch> {
+    agent_ids
+        .iter()
+        .map(|id| HistoryAgentLaunch {
+            id: (*id).to_owned(),
+            command: crate::agent_registry::build_acp_command(id, None),
+        })
+        .collect()
+}
+
+async fn configured_custom_history_agents(
     state: &Arc<MasterStateInner>,
-    agent_ids: &[&str],
-    trigger: HistoryRefreshTrigger,
-) -> bool {
-    refresh_host_history_agents_with(state, agent_ids, trigger, |command, agent_id| {
-        let state = Arc::clone(state);
-        async move {
-            get_or_spawn_agent(
-                &state,
-                &command,
-                Some(&agent_id),
-                &crate::agent_source::AgentSource::Host,
-                ProviderBinding::Native,
-                Vec::new(),
-            )
+    custom_allowed: bool,
+) -> Result<Vec<HistoryAgentLaunch>> {
+    if !custom_allowed {
+        return Ok(Vec::new());
+    }
+    let Some(wt) = state.wt.as_ref() else {
+        return Ok(Vec::new());
+    };
+    let settings = wt
+        .request("get_settings", serde_json::Value::Null)
+        .await
+        .context("cannot read custom agent settings for history discovery")?;
+    Ok(crate::custom_agents::history_commands(&settings)?
+        .into_iter()
+        .map(|(id, command)| HistoryAgentLaunch { id, command })
+        .collect())
+}
+
+async fn discover_custom_history_agents(
+    state: &Arc<MasterStateInner>,
+) -> Option<Vec<HistoryAgentLaunch>> {
+    const SETTINGS_KEY: &str = "custom-history-settings";
+    if state
+        .history_discovery_retries
+        .lock()
+        .await
+        .get(SETTINGS_KEY)
+        .is_some_and(|retry| !retry.retry_due())
+    {
+        state
+            .history_discovery_errors
+            .lock()
             .await
+            .insert(SETTINGS_KEY.into(), HistoryRefreshFailure::Other);
+        return None;
+    }
+    let result = async {
+        let allowed = crate::cli::native_agent::policy::custom_agents_allowed()?;
+        configured_custom_history_agents(state, allowed).await
+    }
+    .await;
+    match result {
+        Ok(agents) => {
+            state
+                .history_discovery_retries
+                .lock()
+                .await
+                .remove(SETTINGS_KEY);
+            state
+                .history_discovery_errors
+                .lock()
+                .await
+                .remove(SETTINGS_KEY);
+            Some(agents)
         }
-    })
+        Err(error) => {
+            let mut retries = state.history_discovery_retries.lock().await;
+            let retry = retries.entry(SETTINGS_KEY.into()).or_default();
+            let delay = retry.record_failure();
+            retry.next_refresh_at = Some(tokio::time::Instant::now() + delay);
+            drop(retries);
+            state
+                .history_discovery_errors
+                .lock()
+                .await
+                .insert(SETTINGS_KEY.into(), HistoryRefreshFailure::Other);
+            tracing::warn!(target: "master_history", %error, "could not discover configured custom agents");
+            None
+        }
+    }
+}
+
+async fn refresh_host_history_agents(
+    state: &Arc<MasterStateInner>,
+    agents: &[HistoryAgentLaunch],
+) -> bool {
+    refresh_history_launches_with(
+        state,
+        agents,
+        HistoryRefreshTrigger::Immediate,
+        |command, agent_id| {
+            let state = Arc::clone(state);
+            async move {
+                get_or_spawn_agent(
+                    &state,
+                    &command,
+                    Some(&agent_id),
+                    &crate::agent_source::AgentSource::Host,
+                    ProviderBinding::Native,
+                    Vec::new(),
+                )
+                .await
+            }
+        },
+    )
     .await
 }
 
+#[cfg(test)]
 async fn refresh_host_history_agents_with<F, Fut>(
     state: &Arc<MasterStateInner>,
     agent_ids: &[&str],
@@ -7835,11 +8012,31 @@ where
     F: Fn(String, String) -> Fut,
     Fut: std::future::Future<Output = Result<Arc<AgentCli>>>,
 {
+    refresh_history_launches_with(
+        state,
+        &native_history_launches(agent_ids),
+        trigger,
+        initialize,
+    )
+    .await
+}
+
+async fn refresh_history_launches_with<F, Fut>(
+    state: &Arc<MasterStateInner>,
+    agents: &[HistoryAgentLaunch],
+    trigger: HistoryRefreshTrigger,
+    initialize: F,
+) -> bool
+where
+    F: Fn(String, String) -> Fut,
+    Fut: std::future::Future<Output = Result<Arc<AgentCli>>>,
+{
     let initialize = &initialize;
-    let results = futures::future::join_all(agent_ids.iter().map(|&agent_id| async move {
-        let command = crate::agent_registry::build_acp_command(agent_id, None);
+    let results = futures::future::join_all(agents.iter().map(|launch| async move {
+        let agent_id = launch.id.as_str();
+        let command = &launch.command;
         let key = agent_cmd_key(
-            &command,
+            command,
             Some(agent_id),
             &crate::agent_source::AgentSource::Host,
         );
@@ -7857,7 +8054,7 @@ where
                 .insert(key, HistoryRefreshFailure::Other);
             return false;
         }
-        let agent = match initialize(command, agent_id.to_string()).await {
+        let agent = match initialize(command.clone(), agent_id.to_string()).await {
             Ok(agent) => agent,
             Err(error) => {
                 let mut retries = state.history_discovery_retries.lock().await;
@@ -7940,26 +8137,14 @@ fn request_host_history_discovery(state: &Arc<MasterStateInner>) {
                         crate::agent_check::check_host_agent_availability(agent_id, npx_available);
                     status.launch_ready || status.acp_bootstrap_available
                 })
-            })
-            .await;
+            });
+            let (discovery, custom) =
+                tokio::join!(discovery, discover_custom_history_agents(&state));
+            let complete = discovery.is_ok() && custom.is_some();
+            let mut agents = custom.unwrap_or_default();
             match discovery {
                 Ok(agent_ids) => {
-                    let eligible_keys: HashSet<_> = agent_ids
-                        .iter()
-                        .map(|id| {
-                            agent_cmd_key(
-                                &crate::agent_registry::build_acp_command(id, None),
-                                Some(id),
-                                &crate::agent_source::AgentSource::Host,
-                            )
-                        })
-                        .collect();
-                    state
-                        .history_discovery_retries
-                        .lock()
-                        .await
-                        .retain(|key, _| eligible_keys.contains(key));
-                    refresh_host_history_agents(&state, &agent_ids).await;
+                    agents.extend(native_history_launches(&agent_ids));
                 }
                 Err(error) => {
                     state
@@ -7970,6 +8155,24 @@ fn request_host_history_discovery(state: &Arc<MasterStateInner>) {
                     tracing::error!(target: "master_history", %error, "host agent availability check failed");
                 }
             }
+            if complete {
+                let eligible_keys: HashSet<_> = agents
+                    .iter()
+                    .map(|agent| {
+                        agent_cmd_key(
+                            &agent.command,
+                            Some(&agent.id),
+                            &crate::agent_source::AgentSource::Host,
+                        )
+                    })
+                    .collect();
+                state
+                    .history_discovery_retries
+                    .lock()
+                    .await
+                    .retain(|key, _| eligible_keys.contains(key));
+            }
+            refresh_host_history_agents(&state, &agents).await;
             // Keep the last completed outcome during subsequent refreshes. Resetting
             // to Loading on every snapshot request would prevent an empty list settling.
             if publish_history_sync_status(&state).await {
@@ -8418,25 +8621,77 @@ async fn execute_session_activation(
         );
     };
     let provider_id = cli_source.canonical_provider_id();
+    let custom = if let Some(id) = provider_id
+        .as_deref()
+        .filter(|id| crate::custom_agents::is_custom_id(id))
+    {
+        if let Err(error) = crate::cli::native_agent::policy::check_custom(false) {
+            return failed("not_resumable", error);
+        }
+        let Some(wt) = state.wt.as_ref() else {
+            return respond!(
+                "not_resumable",
+                false,
+                Some("Terminal settings service is unavailable.".into())
+            );
+        };
+        let settings = match wt.request("get_settings", serde_json::Value::Null).await {
+            Ok(settings) => settings,
+            Err(error) => return failed("not_resumable", error),
+        };
+        match crate::custom_agents::from_settings(&settings, id) {
+            Ok(Some(agent)) => Some(agent),
+            Ok(None) => {
+                return respond!(
+                    "not_resumable",
+                    false,
+                    Some("The custom agent definition is no longer configured.".into())
+                )
+            }
+            Err(error) => return failed("not_resumable", error),
+        }
+    } else {
+        None
+    };
+    if custom.is_some() && !matches!(row.location, crate::agent_sessions::SessionLocation::Host) {
+        return respond!(
+            "not_resumable",
+            false,
+            Some("Custom session resume currently requires the Windows host source.".into())
+        );
+    }
     let profile = provider_id
         .as_deref()
+        .filter(|id| !crate::custom_agents::is_custom_id(id))
         .map(crate::agent_registry::lookup_profile_by_id);
-    if profile.is_none_or(|profile| profile.id == crate::agent_registry::DEFAULT_PROFILE.id) {
+    if custom.is_none()
+        && profile.is_none_or(|profile| profile.id == crate::agent_registry::DEFAULT_PROFILE.id)
+    {
         return respond!(
             "not_resumable",
             false,
             Some("The selected session provider is unavailable.".to_string())
         );
     }
+    let supports_cli_resume = custom.as_ref().is_some_and(|agent| agent.resume.is_some())
+        || profile.is_some_and(|profile| !profile.resume_flag.is_empty());
+    let cli_can_resume_acp_sessions = custom
+        .as_ref()
+        .and_then(|agent| agent.resume.as_ref())
+        .is_some_and(|resume| resume.can_resume_acp_sessions)
+        || profile.is_some_and(|profile| profile.cli_can_resume_acp_sessions);
     let mut action = decide_enter_action(&RowSnapshot {
         origin: row.origin.clone().unwrap_or(SessionOrigin::Unknown),
         liveness,
         key: row.session_id.to_string(),
         cli_source: cli_source.clone(),
-        load_session_capability: crate::session_mgmt::LoadSessionCapability::Unknown,
-        cli_supports_resume_flag: profile.is_some_and(|profile| !profile.resume_flag.is_empty()),
-        cli_can_resume_acp_sessions: profile
-            .is_some_and(|profile| profile.cli_can_resume_acp_sessions),
+        load_session_capability: if custom.as_ref().is_some_and(|agent| agent.acp.is_none()) {
+            crate::session_mgmt::LoadSessionCapability::Unsupported
+        } else {
+            crate::session_mgmt::LoadSessionCapability::Unknown
+        },
+        cli_supports_resume_flag: supports_cli_resume,
+        cli_can_resume_acp_sessions,
         is_wsl: row.location.is_wsl(),
     });
     if matches!(
@@ -8448,7 +8703,7 @@ async fn execute_session_activation(
         .origin
         .as_ref()
         .is_none_or(|origin| *origin == SessionOrigin::Unknown)
-        && profile.is_some_and(|profile| !profile.resume_flag.is_empty())
+        && supports_cli_resume
     {
         // This is an explicit sidebar activation, not evidence of external
         // ownership. Native hook admission leaves origin unset, which has
@@ -8529,7 +8784,8 @@ async fn execute_session_activation(
                     Some("The selected session has an invalid CLI resume identifier.".to_string())
                 );
             }
-            if state
+            if custom.is_none()
+                && state
                 .allowed_agent_ids
                 .as_ref()
                 .is_some_and(|allowed| !allowed.contains(&provider_id))
@@ -8540,17 +8796,39 @@ async fn execute_session_activation(
                     Some("The selected session provider is blocked by policy.".to_string())
                 );
             }
+            if custom.is_some() {
+                if let Err(error) = crate::cli::native_agent::policy::check_custom(true) {
+                    return failed("resume_cli", error);
+                }
+            }
             let runtimes =
                 crate::coordinator::default_delegate_agent_runtimes(Some(&provider_id), None, None);
             let runtime = &runtimes[0];
             let commandline = match &row.location {
                 crate::agent_sessions::SessionLocation::Host => {
+                    if let Some(agent) = &custom {
+                        match &agent.resume {
+                            Some(resume) => resume.resume_commandline(&row.session_id.to_string()),
+                            None => Err(anyhow!("The custom agent has no CLI resume command.")),
+                        }
+                    } else {
                     crate::coordinator::build_delegate_resume_commandline(
                         runtime,
                         &row.session_id.to_string(),
                     )
                 }
+                }
                 crate::agent_sessions::SessionLocation::Wsl { distro } => {
+                    if custom.is_some() {
+                        return respond!(
+                            "resume_cli",
+                            false,
+                            Some(
+                                "Custom CLI resume currently requires the Windows host source."
+                                    .into()
+                            )
+                        );
+                    }
                     if provider_id == crate::agent_registry::ANTIGRAVITY_AGENT_ID
                         && !crate::agent_source::is_safe_wsl_distro_name(distro)
                     {

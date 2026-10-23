@@ -1684,7 +1684,7 @@ pub(crate) fn known_cli_id(src: &crate::agent_sessions::CliSource) -> Option<&'s
         CliSource::Gemini => Some("gemini"),
         CliSource::OpenCode => Some("opencode"),
         CliSource::Antigravity => Some("antigravity"),
-        CliSource::Unknown(_) => None,
+        CliSource::Custom(_) | CliSource::Unknown(_) => None,
     }
 }
 
@@ -3249,6 +3249,10 @@ impl App {
     /// discovered in a shell pane comes back in a shell pane via the
     /// CLI's own resume flag/verb.
     fn activate_agent_session_routed(&mut self, s: &crate::agent_sessions::AgentSession) {
+        if matches!(s.cli_source, crate::agent_sessions::CliSource::Custom(_)) {
+            self.dispatch_custom_session_activation(s);
+            return;
+        }
         use crate::session_mgmt::{
             decide_enter_action, liveness_from_status, EnterAction, LoadSessionCapability,
             NotResumableReason, RowSnapshot,
@@ -3891,6 +3895,68 @@ impl App {
         let tab = self.current_tab_mut();
         tab.agents_view.next_request_id = tab.agents_view.next_request_id.wrapping_add(1);
         tab.agents_view.next_request_id
+    }
+
+    fn dispatch_custom_session_activation(
+        &mut self,
+        session: &crate::agent_sessions::AgentSession,
+    ) {
+        let Some(window_id) = self
+            .window_id
+            .as_deref()
+            .and_then(|id| id.parse::<u64>().ok())
+            .filter(|id| *id != 0)
+        else {
+            tracing::warn!(target: "agents_view", "custom session activation has no owner window");
+            self.current_tab_mut().messages.push(ChatMessage::warning(
+                t!(
+                    "system.cannot_resume_unknown_agent",
+                    session_id = session.key.as_str()
+                )
+                .into_owned(),
+            ));
+            return;
+        };
+        let identity = match crate::custom_agents::activation_identity(
+            session,
+            self.current_tab().agents_view.snapshot.as_deref(),
+        ) {
+            Ok(identity) => identity,
+            Err(error) => {
+                tracing::warn!(target: "agents_view", %error, "custom session identity is unavailable");
+                self.current_tab_mut().messages.push(ChatMessage::warning(
+                    t!(
+                        "system.cannot_resume_unknown_agent",
+                        session_id = session.key.as_str()
+                    )
+                    .into_owned(),
+                ));
+                return;
+            }
+        };
+        let request_id = self.next_agents_rpc_request_id();
+        if self
+            .master_request_tx
+            .send(
+                crate::protocol::acp::client::MasterExtRequest::SessionActivate {
+                    request_id,
+                    identity,
+                    window_id,
+                    activation_id: uuid::Uuid::new_v4().to_string(),
+                    tab_id: self.active_tab_key().to_string(),
+                },
+            )
+            .is_err()
+        {
+            tracing::warn!(target: "agents_view", "custom session activation channel is unavailable");
+            self.current_tab_mut().messages.push(ChatMessage::warning(
+                t!(
+                    "system.cannot_resume_unknown_agent",
+                    session_id = session.key.as_str()
+                )
+                .into_owned(),
+            ));
+        }
     }
 
     fn dispatch_session_focus_rpc(&mut self, sid: &str) {

@@ -373,6 +373,13 @@ pub enum MasterExtRequest {
         request_id: u64,
         sid: acp::schema::v1::SessionId,
     },
+    SessionActivate {
+        request_id: u64,
+        identity: crate::session_registry::SessionIdentity,
+        window_id: u64,
+        activation_id: String,
+        tab_id: String,
+    },
     /// Hot-swap the ACP model on this helper's live session(s) via
     /// `set_session_model`, without restarting anything. Two callers:
     /// * settings hot-reload (`acpModel` changed) and the per-pane `/model`
@@ -4296,6 +4303,44 @@ fn dispatch_master_ext_request_with_yolo_timeout(
                     Err(err) => {
                         tracing::warn!(target: "agents_view", request_id, session_id = %sid.0, error = ?err, "session_focus ext-request failed");
                     }
+                }
+                let _ = event_tx.send(AppEvent::MasterMutationCompleted { request_id });
+            }
+            MasterExtRequest::SessionActivate {
+                request_id,
+                identity,
+                window_id,
+                activation_id,
+                tab_id,
+            } => {
+                let request = crate::session_registry::build_session_activate_request(
+                    identity,
+                    window_id,
+                    activation_id,
+                    false,
+                );
+                let result = async {
+                    let raw = conn.ext_method(request).await?;
+                    let response = crate::session_registry::parse_session_activate_response(&raw.0)
+                        .map_err(|_| {
+                            acp::Error::internal_error().data("Invalid session activation response")
+                        })?;
+                    if !response.accepted {
+                        return Err(acp::Error::invalid_params().data(
+                            response
+                                .detail
+                                .unwrap_or_else(|| "Session activation was rejected".into()),
+                        ));
+                    }
+                    Ok(())
+                }
+                .await;
+                if let Err(error) = result {
+                    tracing::warn!(target: "agents_view", request_id, %error, "custom session activation failed");
+                    let _ = event_tx.send(AppEvent::TabError {
+                        tab_id,
+                        message: error.to_string(),
+                    });
                 }
                 let _ = event_tx.send(AppEvent::MasterMutationCompleted { request_id });
             }

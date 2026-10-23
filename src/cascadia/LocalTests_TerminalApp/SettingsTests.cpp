@@ -8,6 +8,8 @@
 #include "../inc/AgentAvailability.h"
 #include "../UnitTests_SettingsModel/TestUtils.h"
 #include "../TerminalSettingsAppAdapterLib/TerminalSettings.h"
+#include <winrt/Microsoft.Terminal.Settings.Editor.h>
+#include "CppWinrtTailored.h"
 
 using namespace Microsoft::Console;
 using namespace WEX::Logging;
@@ -74,6 +76,10 @@ namespace TerminalAppLocalTests
         TEST_METHOD(TestIterableColorSchemeCommands);
 
         TEST_METHOD(TestElevateArg);
+        TEST_METHOD(TestStructuredCustomAgentEditorIdentity);
+        TEST_METHOD(TestCustomAgentEditorPreservesInternalMetadata);
+        TEST_METHOD(TestLegacyCustomAgentEditorCommands);
+        TEST_METHOD(TestCustomAgentSettingsPageLoads);
         TEST_METHOD(TestAgentSettingsChangeClassification);
         TEST_METHOD(TestAgentHooksReconciliationClassification);
         TEST_METHOD(TestHostAgentSnapshotParsing);
@@ -1364,6 +1370,140 @@ namespace TerminalAppLocalTests
             VERIFY_IS_FALSE(terminalArgs.Profile().empty());
             VERIFY_ARE_EQUAL(L"Vintage", terminalArgs.Profile());
         }
+    }
+
+    void SettingsTests::TestStructuredCustomAgentEditorIdentity()
+    {
+        CascadiaSettings settings{ LR"({"profiles":[{"name":"Fixture","commandline":"cmd.exe"}]})", inboxSettings };
+        auto globals = settings.GlobalSettings();
+        if (globals.IsCustomAgentPolicyLocked())
+        {
+            Log::Result(TestResults::Skipped, L"Custom agents are disabled by policy.");
+            return;
+        }
+        CustomAgent agent{ L"custom:stable-fixture", L"Custom fixture" };
+        agent.AcpCommand(L"missing-custom-fixture.exe --stdio");
+        CustomAgent cliOnly{ L"custom:cli-fixture", L"CLI fixture" };
+        cliOnly.CliCommand(L"missing-custom-fixture.exe --interactive");
+        globals.CustomAgents(winrt::single_threaded_vector<CustomAgent>({ agent, cliOnly }));
+        globals.AcpAgent(agent.Id());
+        globals.AcpCustomCommand(agent.AcpCommand());
+
+        Editor::AIAgentsViewModel viewModel{ globals };
+        VERIFY_ARE_EQUAL(0u, globals.AcpCustomCommands().Size());
+        VERIFY_ARE_EQUAL(agent.Id(), viewModel.CurrentAcpAgent().Id());
+        uint32_t customCount = 0;
+        for (const auto& entry : viewModel.AcpAgentList())
+        {
+            if (std::wstring_view{ entry.Id() }.starts_with(L"custom:"))
+            {
+                ++customCount;
+            }
+            if (entry.Id() == cliOnly.Id())
+            {
+                viewModel.CurrentAcpAgent(entry);
+                VERIFY_IS_TRUE(viewModel.IsAddingCustomAcpAgent());
+                VERIFY_ARE_EQUAL(cliOnly.CliCommand(), viewModel.CustomAgentCliCommand());
+                VERIFY_ARE_EQUAL(agent.Id(), globals.AcpAgent());
+                viewModel.CancelCustomAcpAgent();
+                VERIFY_IS_FALSE(viewModel.IsAddingCustomAcpAgent());
+            }
+        }
+        VERIFY_ARE_EQUAL(2u, customCount);
+        VERIFY_ARE_EQUAL(agent.Id(), viewModel.CurrentAcpAgent().Id());
+    }
+
+    void SettingsTests::TestCustomAgentEditorPreservesInternalMetadata()
+    {
+        CascadiaSettings settings{ LR"({"profiles":[{"name":"Fixture","commandline":"cmd.exe"}]})", inboxSettings };
+        auto globals = settings.GlobalSettings();
+        if (globals.IsCustomAgentPolicyLocked())
+        {
+            Log::Result(TestResults::Skipped, L"Custom agents are disabled by policy.");
+            return;
+        }
+        CustomAgent agent{ L"custom:stable-fixture", L"Custom fixture" };
+        agent.AcpCommand(L"missing-custom-fixture.exe --stdio");
+        agent.CliCommand(L"missing-custom-fixture.exe");
+        agent.ResumeCommand(L"missing-custom-fixture.exe --resume {sessionId}");
+        agent.CanResumeAcpSessions(true);
+        globals.CustomAgents(winrt::single_threaded_vector<CustomAgent>({ agent }));
+        globals.AcpAgent(agent.Id());
+
+        Editor::AIAgentsViewModel viewModel{ globals };
+        viewModel.EditCustomAcpAgent();
+        viewModel.CustomAgentName(L"Renamed fixture");
+        viewModel.SaveCustomAcpAgent();
+        VERIFY_IS_TRUE(viewModel.CustomAgentError().empty());
+        VERIFY_ARE_EQUAL(1u, globals.CustomAgents().Size());
+        auto saved = globals.CustomAgents().GetAt(0);
+        VERIFY_ARE_EQUAL(agent.Id(), saved.Id());
+        VERIFY_ARE_EQUAL(L"Renamed fixture", saved.Name());
+        VERIFY_IS_TRUE(saved.CanResumeAcpSessions());
+
+        viewModel.EditCustomAcpAgent();
+        viewModel.CustomAgentResumeCommand(L"");
+        viewModel.SaveCustomAcpAgent();
+        VERIFY_IS_TRUE(viewModel.CustomAgentError().empty());
+        VERIFY_ARE_EQUAL(1u, globals.CustomAgents().Size());
+        saved = globals.CustomAgents().GetAt(0);
+        VERIFY_ARE_EQUAL(agent.Id(), saved.Id());
+        VERIFY_IS_TRUE(saved.ResumeCommand().empty());
+        VERIFY_IS_FALSE(saved.CanResumeAcpSessions());
+    }
+
+    void SettingsTests::TestLegacyCustomAgentEditorCommands()
+    {
+        CascadiaSettings settings{ LR"({"profiles":[{"name":"Fixture","commandline":"cmd.exe"}]})", inboxSettings };
+        auto globals = settings.GlobalSettings();
+        if (globals.IsCustomAgentPolicyLocked())
+        {
+            Log::Result(TestResults::Skipped, L"Custom agents are disabled by policy.");
+            return;
+        }
+        globals.AcpAgent(L"custom:missing-custom-fixture");
+        globals.AcpCustomCommand(L"missing-custom-fixture.exe --stdio");
+        globals.DelegateAgent(globals.AcpAgent());
+        globals.DelegateCustomCommand(L"missing-custom-fixture.exe --delegate");
+
+        Editor::AIAgentsViewModel viewModel{ globals };
+        VERIFY_ARE_EQUAL(1u, globals.AcpCustomCommands().Size());
+        VERIFY_ARE_EQUAL(0u, globals.CustomAgents().Size());
+        VERIFY_ARE_EQUAL(globals.AcpCustomCommand(), viewModel.CurrentAcpAgent().CustomCommand());
+        VERIFY_ARE_EQUAL(globals.DelegateCustomCommand(), viewModel.CurrentDelegateAgent().CustomCommand());
+
+        CustomAgent agent{ globals.AcpAgent(), L"Promoted fixture" };
+        agent.AcpCommand(globals.AcpCustomCommand());
+        globals.CustomAgents(winrt::single_threaded_vector<CustomAgent>({ agent }));
+        Editor::AIAgentsViewModel promotedViewModel{ globals };
+        VERIFY_ARE_EQUAL(globals.DelegateCustomCommand(), promotedViewModel.CurrentDelegateAgent().CustomCommand());
+    }
+
+    void SettingsTests::TestCustomAgentSettingsPageLoads()
+    {
+        VERIFY_SUCCEEDED(RunOnUIThread([]() {
+            using namespace winrt::Windows::UI::Xaml;
+            const auto window = Window::Current();
+            const auto previousContent = window.Content();
+            const auto cleanup = wil::scope_exit([&]() { window.Content(previousContent); });
+            CascadiaSettings settings{ LR"({"profiles":[{"name":"Fixture","commandline":"cmd.exe"}]})", inboxSettings };
+            auto globals = settings.GlobalSettings();
+            CustomAgent agent{ L"custom:page-fixture", L"Custom fixture" };
+            agent.AcpCommand(L"missing-custom-fixture.exe --stdio");
+            agent.CliCommand(L"missing-custom-fixture.exe");
+            agent.ResumeCommand(L"missing-custom-fixture.exe --resume {sessionId}");
+            globals.CustomAgents(winrt::single_threaded_vector<CustomAgent>({ agent }));
+            globals.AcpAgent(agent.Id());
+            Editor::AIAgentsViewModel viewModel{ globals };
+            Controls::Frame frame;
+            window.Content(frame);
+            Editor::NavigateToPageArgs args{ viewModel, nullptr, L"" };
+            VERIFY_IS_TRUE(frame.Navigate(winrt::xaml_typename<Editor::AIAgents>(), args));
+            const auto page = frame.Content().as<Editor::AIAgents>();
+            viewModel.EditCustomAcpAgent();
+            const auto commandBox = page.FindName(L"CustomAcpCommandBox").as<Controls::TextBox>();
+            VERIFY_ARE_EQUAL(agent.AcpCommand(), commandBox.Text());
+        }));
     }
 
     void SettingsTests::TestElevateArg()

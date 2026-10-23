@@ -210,6 +210,7 @@ namespace Microsoft.Terminal.Settings.Model
         UInt64 AgentPaneTransferId { get; set; };
         // Native interactive CLI provider; does not select assistant content.
         String NativeAgentProviderId;
+        String CustomAgentSessionId;
     };
 
     [default_interface] runtimeclass ActionEventArgs : IActionEventArgs

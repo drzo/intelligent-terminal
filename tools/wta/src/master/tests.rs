@@ -1084,6 +1084,55 @@ fn provider_binding_isolated_pool_keys_do_not_expose_configuration() {
 }
 
 #[tokio::test(flavor = "current_thread")]
+async fn custom_selection_resolves_only_trusted_settings_commands() {
+    let mock = Arc::new(MockWtChannel::responding(serde_json::json!({
+        "customAgents": [
+            {"id": "custom:work", "acp": {"command": "adapter.exe", "args": ["--stdio", "C:\\config dir\\agent.json"]}},
+            {"id": "custom:cli-only", "cli": {"command": "work.exe"}}
+        ]
+    })));
+    let state = make_state_with_wt(mock.clone());
+    let mut metadata = crate::session_registry::WtaMeta {
+        agent_id: Some("custom:work".into()),
+        agent_cmd: Some("untrusted-pipe-command.exe".into()),
+        ..Default::default()
+    };
+    let selected = resolve_custom_agent_selection(&state, &metadata, HelperId(42))
+        .await
+        .unwrap();
+    assert_eq!(
+        selected.command,
+        r#"adapter.exe --stdio "C:\config dir\agent.json""#
+    );
+    assert_eq!(selected.agent_id.as_deref(), Some("custom:work"));
+    assert_eq!(
+        selected.explicit_selection,
+        ExplicitAgentSelection::Accepted
+    );
+    for id in ["custom:missing", "custom:cli-only"] {
+        metadata.agent_id = Some(id.into());
+        assert!(
+            resolve_custom_agent_selection(&state, &metadata, HelperId(42))
+                .await
+                .is_err()
+        );
+    }
+    metadata.agent_id = Some("custom:work".into());
+    metadata.agent_source = Some("wsl".into());
+    metadata.wsl_distro = Some("Ubuntu".into());
+    assert!(
+        resolve_custom_agent_selection(&state, &metadata, HelperId(42))
+            .await
+            .is_err()
+    );
+    assert_eq!(
+        mock.calls().len(),
+        3,
+        "a rejected source must not query settings"
+    );
+}
+
+#[tokio::test(flavor = "current_thread")]
 async fn session_telemetry_binding_survives_initialize_without_model_catalog() {
     tokio::task::LocalSet::new()
         .run_until(async {
@@ -12511,6 +12560,83 @@ async fn sidebar_activation_native_hook_unset_origin_resumes_without_reclassifyi
 }
 
 #[tokio::test]
+async fn sidebar_activation_custom_agent_uses_configured_resume_and_preserves_identity() {
+    use crate::agent_sessions::{AgentStatus, CliSource, SessionLocation, SessionOrigin};
+    use crate::session_registry::{SessionActivateParams, SessionIdentity, SessionInfo};
+    use std::path::PathBuf;
+
+    for (session_id, has_resume, location, accepted) in [
+        ("session-123", true, SessionLocation::Host, true),
+        ("session-123", false, SessionLocation::Host, false),
+        ("-option", true, SessionLocation::Host, false),
+        (
+            "session-123",
+            true,
+            SessionLocation::Wsl {
+                distro: "Ubuntu".into(),
+            },
+            false,
+        ),
+    ] {
+        let mut definition = serde_json::json!({
+            "id": "custom:work",
+            "cli": {"command": "work.exe", "args": ["--startup-only"]}
+        });
+        if has_resume {
+            definition["resume"] = serde_json::json!({
+                "command": "resume-work.exe", "args": ["--config", "C:\\config dir\\work.json", "{sessionId}"]
+            });
+        }
+        let mock = Arc::new(MockWtChannel::responding(serde_json::json!({
+            "customAgents": [definition],
+            "session_id": "custom-resumed-pane"
+        })));
+        let mut state = make_state_with_wt(mock.clone());
+        Arc::get_mut(&mut state).unwrap().allowed_agent_ids = Some(HashSet::new());
+        let mut row = SessionInfo::new(SessionId::new(session_id), PathBuf::from("C:\\repo"));
+        row.provider_id = Some("custom:work".into());
+        row.cli_source = Some(CliSource::Custom("custom:work".into()));
+        row.location = location;
+        row.origin = Some(SessionOrigin::Unknown);
+        row.status = Some(AgentStatus::Historical);
+        let identity = SessionIdentity::from_info(&row);
+        state.registry.upsert(row.clone()).await;
+        let response = execute_session_activation(
+            &state,
+            &SessionActivateParams {
+                identity: identity.clone(),
+                window_id: 42,
+                activation_id: "custom-activation".into(),
+            },
+        )
+        .await;
+        assert_eq!(response.accepted, accepted, "{response:?}");
+        let calls = mock.calls();
+        assert_eq!(calls[0].0, "get_settings");
+        if accepted {
+            assert_eq!(calls[1].0, "create_tab");
+            assert_eq!(calls[1].1["native_agent_provider_id"], "custom:work");
+            assert_eq!(
+                calls[1].1["commandline"],
+                r#"resume-work.exe --config "C:\config dir\work.json" session-123"#
+            );
+            let resumed = state.registry.lookup_identity(&identity).await.unwrap();
+            assert_eq!(resumed.provider_id, row.provider_id);
+            assert_eq!(
+                resumed.pane_session_id.as_deref(),
+                Some("custom-resumed-pane")
+            );
+        } else {
+            assert_eq!(calls.len(), 1);
+            assert_eq!(
+                state.registry.lookup_identity(&identity).await.unwrap(),
+                row
+            );
+        }
+    }
+}
+
+#[tokio::test]
 async fn sidebar_activation_unknown_provider_or_location_never_creates_tab() {
     use crate::agent_sessions::{AgentStatus, CliSource, SessionLocation, SessionOrigin};
     use crate::session_registry::{SessionActivateParams, SessionIdentity, SessionInfo};
@@ -14319,6 +14445,113 @@ fn sidebar_history_discovery_checks_policy_before_installation() {
 }
 
 #[tokio::test]
+async fn sidebar_custom_history_discovery_checks_policy_before_reading_settings() {
+    let mock = Arc::new(MockWtChannel::responding(serde_json::json!({
+        "customAgents": [
+            {"id": "custom:unselected", "acp": {"command": "adapter.exe", "args": ["--stdio"]}},
+            {"id": "custom:cli-only", "cli": {"command": "interactive.exe"}}
+        ]
+    })));
+    let mut state = make_state_with_wt(mock.clone());
+    Arc::get_mut(&mut state).unwrap().allowed_agent_ids = Some(HashSet::new());
+    assert!(configured_custom_history_agents(&state, false)
+        .await
+        .unwrap()
+        .is_empty());
+    assert!(mock.calls().is_empty());
+    let agents = configured_custom_history_agents(&state, true)
+        .await
+        .unwrap();
+    assert_eq!(agents.len(), 1);
+    assert_eq!(agents[0].id, "custom:unselected");
+    assert_eq!(agents[0].command, "adapter.exe --stdio");
+    assert_eq!(state.default_agent_id.as_deref(), Some("copilot"));
+    assert_eq!(
+        mock.calls(),
+        [("get_settings".into(), serde_json::Value::Null)]
+    );
+}
+
+#[tokio::test]
+async fn sidebar_custom_history_discovery_lists_all_providers_without_helpers() {
+    use crate::agent_sessions::CliSource;
+    tokio::task::LocalSet::new()
+        .run_until(async {
+            let mock = Arc::new(MockWtChannel::responding(serde_json::json!({
+                "customAgents": [
+                    {"id": "custom:one", "acp": {"command": "adapter.exe", "args": ["--profile", "one"]}},
+                    {"id": "custom:two", "acp": {"command": "adapter.exe", "args": ["--profile", "two"]}},
+                    {"id": "custom:cli-only", "cli": {"command": "interactive.exe"}}
+                ]
+            })));
+            let mut state = make_state_with_wt(mock);
+            Arc::get_mut(&mut state).unwrap().allowed_agent_ids = Some(HashSet::new());
+            let launches = configured_custom_history_agents(&state, true).await.unwrap();
+            let mut agents = Vec::new();
+            for launch in &launches {
+                let mut agent = listing_agent(CliSource::Custom(launch.id.clone()), &["shared-id"]);
+                Arc::get_mut(&mut agent).unwrap().cmd_key =
+                    agent_cmd_key(&launch.command, Some(&launch.id), &agent.source);
+                add_test_agent_to_pool(&state, &agent).await;
+                agents.push(agent);
+            }
+            for _ in 0..2 {
+                request_host_history_refresh(&state);
+                let _finished = state.history_refresh.lock().await;
+                let response = handle_sessions_list(&state, None, &Default::default()).await.unwrap();
+                let snapshot = crate::session_registry::parse_sessions_list_response(&response.0).unwrap();
+                assert_eq!(snapshot.sessions.len(), 2);
+                let providers: std::collections::BTreeSet<_> = snapshot.sessions.iter()
+                    .map(|row| row.provider_id.as_deref().unwrap()).collect();
+                assert_eq!(providers, std::collections::BTreeSet::from(["custom:one", "custom:two"]));
+                assert_eq!(state.default_agent_id.as_deref(), Some("copilot"));
+                assert!(state.session_to_helper.lock().await.is_empty());
+                let pool = state.agents.lock().await;
+                assert_eq!(pool.len(), 2);
+                for agent in &agents {
+                    assert!(Arc::ptr_eq(pool[&agent.cmd_key].get().unwrap(), agent));
+                    assert!(agent.bound_helpers.lock().await.is_empty());
+                }
+            }
+        }).await;
+}
+
+#[tokio::test(start_paused = true)]
+async fn sidebar_custom_history_discovery_retries_settings_without_losing_existing_rows() {
+    tokio::task::LocalSet::new()
+        .run_until(async {
+            let mock = Arc::new(MockWtChannel::failing("settings temporarily unavailable"));
+            let mut state = make_state_with_wt(mock.clone());
+            Arc::get_mut(&mut state).unwrap().allowed_agent_ids = Some(HashSet::new());
+            let row = crate::session_registry::SessionInfo::new(
+                SessionId::new("existing-history"),
+                PathBuf::from("C:\\repo"),
+            );
+            state.registry.upsert(row.clone()).await;
+            for _ in 0..2 {
+                request_host_history_refresh(&state);
+                let _finished = state.history_refresh.lock().await;
+                assert_eq!(state.registry.snapshot().await, [row.clone()]);
+                assert!(!state.history_discovery_errors.lock().await.is_empty());
+            }
+            assert_eq!(
+                mock.calls().len(),
+                1,
+                "explicit rescans honor settings retry backoff"
+            );
+            tokio::time::advance(std::time::Duration::from_secs(5)).await;
+            Arc::get_mut(&mut state).unwrap().wt =
+                Some(Arc::new(MockWtChannel::responding(serde_json::json!({}))));
+            request_host_history_refresh(&state);
+            let _finished = state.history_refresh.lock().await;
+            assert!(state.history_discovery_errors.lock().await.is_empty());
+            assert!(state.history_discovery_retries.lock().await.is_empty());
+            assert_eq!(state.registry.snapshot().await, [row]);
+        })
+        .await;
+}
+
+#[tokio::test]
 async fn sidebar_history_discovery_keeps_registered_gemini_sessions() {
     tokio::task::LocalSet::new()
         .run_until(async {
@@ -14533,7 +14766,7 @@ async fn sidebar_history_discovery_reuses_resident_agents_and_preserves_live_row
             state.registry.upsert(live.clone()).await;
             let ids = ["copilot", "claude", "codex", "opencode"];
             for _ in 0..2 {
-                assert!(refresh_host_history_agents(&state, &ids).await);
+                assert!(refresh_host_history_agents(&state, &native_history_launches(&ids)).await);
                 let rows = state.registry.snapshot().await;
                 assert_eq!(
                     rows.len(),
@@ -14576,7 +14809,7 @@ async fn sidebar_history_discovery_isolates_failed_and_unsupported_agents() {
             let state = make_state();
             let failed =
                 add_sidebar_listing_agent(&state, CliSource::Claude, &["kept-history"]).await;
-            assert!(refresh_host_history_agents(&state, &["claude"]).await);
+            assert!(refresh_host_history_agents(&state, &native_history_launches(&["claude"])).await);
             failed.conn.shutdown();
             *failed.history_refresh.gate.lock().await = HistoryRefreshState::default();
             add_sidebar_listing_agent(&state, CliSource::Copilot, &["healthy-history"]).await;
@@ -14595,9 +14828,9 @@ async fn sidebar_history_discovery_isolates_failed_and_unsupported_agents() {
                 .list = None;
             add_test_agent_to_pool(&state, &unsupported).await;
 
-            assert!(!refresh_host_history_agents(&state, &["claude", "copilot", "gemini"]).await);
+            assert!(!refresh_host_history_agents(&state, &native_history_launches(&["claude", "copilot", "gemini"])).await);
             assert!(
-                refresh_host_history_agents(&state, &["gemini"]).await,
+                refresh_host_history_agents(&state, &native_history_launches(&["gemini"])).await,
                 "unsupported session listing is not a load failure"
             );
             let rows = state.registry.snapshot().await;
@@ -17289,7 +17522,8 @@ async fn history_refresh_timeout_kind_distinguishes_mixed_failures_and_recovery(
             );
             add_test_agent_to_pool(&state, &other_agent).await;
 
-            let refresh = refresh_host_history_agents(&state, &["copilot"]);
+            let launches = native_history_launches(&["copilot"]);
+            let refresh = refresh_host_history_agents(&state, &launches);
             tokio::pin!(refresh);
             let late_reply = tokio::select! {
                 request = timeout_requests.recv() => request.unwrap(),
@@ -17905,7 +18139,10 @@ fn listing_agent_from(
         Some(crate::agent_sessions::CliSource::Gemini) => "gemini".to_string(),
         Some(crate::agent_sessions::CliSource::OpenCode) => "opencode".to_string(),
         Some(crate::agent_sessions::CliSource::Antigravity) => "antigravity".to_string(),
-        Some(crate::agent_sessions::CliSource::Unknown(id)) => id.clone(),
+        Some(
+            crate::agent_sessions::CliSource::Custom(id)
+            | crate::agent_sessions::CliSource::Unknown(id),
+        ) => id.clone(),
         None => "unknown".to_string(),
     };
     let mut cached_init_resp =

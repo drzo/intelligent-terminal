@@ -6,6 +6,7 @@
 #include "DynamicProfileUtils.h"
 #include "../inc/AgentProfileUtils.h"
 #include "../inc/AgentRegistry.h"
+#include "../inc/CustomAgentUtils.h"
 #include <mutex>
 
 using namespace winrt::Microsoft::Terminal::Settings::Model;
@@ -71,5 +72,23 @@ void AgentProfileGenerator::GenerateProfiles(std::vector<winrt::com_ptr<implemen
         profile->AgentProfileId(winrt::hstring{ agent.id });
         profile->Commandline(winrt::hstring{ AgentProfiles::BuildCommand(found->second.native(), agent.id, {}, {}, {}) });
         profiles.emplace_back(std::move(profile));
+    }
+    if (_customAgents && ::Microsoft::Terminal::Settings::Model::AgentPolicy::IsCustomAgentAllowed())
+    {
+        for (const auto& agent : _customAgents)
+        {
+            if (agent.CliCommand().empty())
+            {
+                continue;
+            }
+            const auto identity = std::wstring{ AgentProfiles::Source } + L":" + std::wstring{ agent.Id() };
+            auto profile = CreateDynamicProfile(identity);
+            profile->Name(agent.Name());
+            profile->Icon(L"\uE99A");
+            profile->AgentProfileId(agent.Id());
+            profile->Commandline(winrt::hstring{ ::Microsoft::Terminal::CustomAgents::Format(
+                ::Microsoft::Terminal::CustomAgents::Parse(agent.CliCommand())) });
+            profiles.emplace_back(std::move(profile));
+        }
     }
 }
