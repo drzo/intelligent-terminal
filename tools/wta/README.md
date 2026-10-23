@@ -228,6 +228,11 @@ commands reuse the agent pool, including when the same executable implements
 several custom providers. Listing still requires the provider to advertise and
 successfully answer ACP `session/list`.
 
+Successful discovery retires custom history workers whose definitions were
+removed or whose ACP commands changed, without interrupting agent panes using
+an existing ACP connection. A failed settings lookup preserves current workers
+and history until the lookup can be retried.
+
 Discovery never automatically installs a native agent CLI. The pinned Claude and
 Codex ACP adapters are separate: their cache presence is not checked, and the
 existing `npx -y` launch behavior may download and bootstrap an uncached adapter

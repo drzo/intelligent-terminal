@@ -1095,11 +1095,16 @@ namespace winrt::Microsoft::Terminal::Settings::Editor::implementation
 
     void AIAgentsViewModel::EditCustomAcpAgent()
     {
-        if (_StartsWithCustom(_GlobalSettings.AcpAgent()))
+        EditCustomAcpAgent(_GlobalSettings.AcpAgent());
+    }
+
+    void AIAgentsViewModel::EditCustomAcpAgent(const winrt::hstring& settingsId)
+    {
+        if (!_GlobalSettings.IsCustomAgentPolicyLocked() && _StartsWithCustom(settingsId))
         {
             _isAddingCustomAcpAgent = true;
-            _editingCustomAcpAgentId = _GlobalSettings.AcpAgent();
-            _customAcpCommand = CustomAcpCommandPreview();
+            _editingCustomAcpAgentId = settingsId;
+            _customAcpCommand = winrt::hstring{ ::Microsoft::Terminal::CustomAgents::AcpCommand(_GlobalSettings, settingsId) };
             _LoadCustomAgentEditor(_editingCustomAcpAgentId);
             _NotifyChanges(L"IsAddingCustomAcpAgent", L"IsCustomAcpAgentSelected", L"CustomAcpCommand", L"ShowAcpModel", L"CustomModelProviderUnsupportedMessage");
         }
@@ -1277,11 +1282,8 @@ namespace winrt::Microsoft::Terminal::Settings::Editor::implementation
             if (const auto agent = ::Microsoft::Terminal::CustomAgents::Find(_GlobalSettings, value.Id());
                 agent && agent.AcpCommand().empty())
             {
-                _isAddingCustomAcpAgent = true;
-                _editingCustomAcpAgentId = agent.Id();
-                _customAcpCommand = L"";
-                _LoadCustomAgentEditor(agent.Id());
-                _NotifyChanges(L"CurrentAcpAgent", L"IsAddingCustomAcpAgent", L"IsCustomAcpAgentSelected", L"CustomAcpCommand", L"ShowAcpModel");
+                EditCustomAcpAgent(agent.Id());
+                _NotifyChanges(L"CurrentAcpAgent");
                 return;
             }
             if (_GlobalSettings.AcpAgent() == value.Id())

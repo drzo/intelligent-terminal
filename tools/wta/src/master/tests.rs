@@ -1769,7 +1769,7 @@ async fn history_refresh_pool_admission_retires_empty_cell_reaper_results() {
                 .unwrap();
                 assert!(Arc::ptr_eq(&acquired, &fresh));
                 assert!(stale.history_refresh.retired.load(Ordering::Acquire));
-                assert!(stale.history_refresh.cancelled.is_cancelled());
+                assert!(stale.history_refresh.cancellation_token().is_cancelled());
                 assert!(!stale.history_refresh.worker_started.load(Ordering::Acquire));
                 start_agent_history_worker(&state, &stale);
                 assert_eq!(
@@ -14852,11 +14852,20 @@ async fn sidebar_custom_history_discovery_retries_settings_without_losing_existi
                 PathBuf::from("C:\\repo"),
             );
             state.registry.upsert(row.clone()).await;
+            let existing_agent = listing_agent(
+                crate::agent_sessions::CliSource::Custom("custom:existing".into()),
+                &[],
+            );
+            add_test_agent_to_pool(&state, &existing_agent).await;
             for _ in 0..2 {
                 request_host_history_refresh(&state);
                 let _finished = state.history_refresh.lock().await;
                 assert_eq!(state.registry.snapshot().await, [row.clone()]);
                 assert!(!state.history_discovery_errors.lock().await.is_empty());
+                assert!(!existing_agent
+                    .history_refresh
+                    .retired
+                    .load(std::sync::atomic::Ordering::Acquire));
             }
             assert_eq!(
                 mock.calls().len(),
@@ -14871,6 +14880,109 @@ async fn sidebar_custom_history_discovery_retries_settings_without_losing_existi
             assert!(state.history_discovery_errors.lock().await.is_empty());
             assert!(state.history_discovery_retries.lock().await.is_empty());
             assert_eq!(state.registry.snapshot().await, [row]);
+        })
+        .await;
+}
+
+#[tokio::test]
+async fn sidebar_custom_history_discovery_retires_obsolete_queries_without_touching_chat() {
+    use std::sync::atomic::Ordering;
+    tokio::task::LocalSet::new()
+        .run_until(async {
+            for replacement in [Some("new-adapter.exe"), None] {
+                let state = make_state();
+                let (mut old, mut requests) = controlled_history_agent(
+                    "custom:edited",
+                    crate::agent_source::AgentSource::Host,
+                );
+                Arc::get_mut(&mut old).unwrap().cmd_key =
+                    agent_cmd_key("old-adapter.exe", Some("custom:edited"), &old.source);
+                let helper = HelperId(77);
+                old.bound_helpers.lock().await.insert(helper);
+                add_test_agent_to_pool(&state, &old).await;
+                let builtin = listing_agent(crate::agent_sessions::CliSource::Copilot, &[]);
+                add_test_agent_to_pool(&state, &builtin).await;
+                let launches: Vec<_> = replacement
+                    .into_iter()
+                    .map(|command| HistoryAgentLaunch {
+                        id: "custom:edited".into(),
+                        command: command.into(),
+                    })
+                    .collect();
+                start_agent_history_worker(&state, &old);
+                let reply = requests.recv().await.unwrap();
+                let old_cancelled = old.history_refresh.cancellation_token();
+                reconcile_custom_history_agents(&state, &launches).await;
+                assert!(state.registry.snapshot().await.is_empty());
+                assert!(old.history_refresh.retired.load(Ordering::Acquire));
+                assert!(old.history_refresh.cancellation_token().is_cancelled());
+                assert!(!old.history_refresh.worker_started.load(Ordering::Acquire));
+                assert!(!builtin.history_refresh.retired.load(Ordering::Acquire));
+                assert!(old.bound_helpers.lock().await.contains(&helper));
+                assert!(old
+                    .conn
+                    .list_sessions(acp::schema::v1::ListSessionsRequest::new())
+                    .await
+                    .is_ok());
+                assert!(Arc::ptr_eq(
+                    state.agents.lock().await[&old.cmd_key].get().unwrap(),
+                    &old,
+                ));
+                if let Some(command) = replacement {
+                    let mut new = listing_agent(
+                        crate::agent_sessions::CliSource::Custom("custom:edited".into()),
+                        &["new-store"],
+                    );
+                    Arc::get_mut(&mut new).unwrap().cmd_key =
+                        agent_cmd_key(command, Some("custom:edited"), &new.source);
+                    add_test_agent_to_pool(&state, &new).await;
+                    assert_eq!(
+                        refresh_agent_history(&state, &new, HistoryRefreshTrigger::Immediate).await,
+                        Some(1),
+                    );
+                    reconcile_custom_history_agents(
+                        &state,
+                        &[HistoryAgentLaunch {
+                            id: "custom:edited".into(),
+                            command: "old-adapter.exe".into(),
+                        }],
+                    )
+                    .await;
+                    assert!(!old.history_refresh.retired.load(Ordering::Acquire));
+                    assert!(old_cancelled.is_cancelled());
+                    assert!(!old.history_refresh.cancellation_token().is_cancelled());
+                    assert!(new.history_refresh.retired.load(Ordering::Acquire));
+                    old.history_refresh.gate.lock().await.query =
+                        history::HistoryQuery::mock(client_connection_to_listing_agent(vec![
+                            "restored-store".into(),
+                        ]));
+                    let generation = old.history_refresh.generation.load(Ordering::Acquire);
+                    start_agent_history_worker(&state, &old);
+                    tokio::time::timeout(std::time::Duration::from_secs(5), async {
+                        while old.history_refresh.generation.load(Ordering::Acquire) == generation {
+                            tokio::task::yield_now().await;
+                        }
+                    })
+                    .await
+                    .expect("restored command starts a fresh history worker");
+                    assert_eq!(old.history_refresh.gate.lock().await.last_count, Some(1));
+                }
+                let _ = reply.send(Ok(vec![acp::schema::v1::SessionInfo::new(
+                    "stale-store",
+                    "C:\\repo",
+                )]));
+                tokio::task::yield_now().await;
+                let rows = state.registry.snapshot().await;
+                assert!(rows
+                    .iter()
+                    .all(|row| row.session_id.0.as_ref() != "stale-store"));
+                assert_eq!(
+                    rows.iter()
+                        .any(|row| row.session_id.0.as_ref() == "restored-store"),
+                    replacement.is_some(),
+                );
+                retire_agent_history(&old).await;
+            }
         })
         .await;
 }
@@ -17215,7 +17327,7 @@ while ($null -ne ($line=[Console]::In.ReadLine())) {{
                 .await
                 .is_ok());
             agent.history_refresh.retired.store(true, Ordering::Release);
-            agent.history_refresh.cancelled.cancel();
+            agent.history_refresh.cancellation_token().cancel();
             tokio::time::timeout(std::time::Duration::from_secs(5), async {
                 while agent.history_refresh.worker_started.load(Ordering::Acquire) {
                     tokio::task::yield_now().await;

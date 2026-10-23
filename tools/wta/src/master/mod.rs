@@ -1902,13 +1902,24 @@ fn agent_admission_key_with_provider(
 #[derive(Default)]
 struct AgentHistoryRefresh {
     gate: Arc<Mutex<HistoryRefreshState>>,
+    lifecycle_gate: Mutex<()>,
     mutation_gate: Mutex<()>,
     generation: std::sync::atomic::AtomicU64,
     retired: std::sync::atomic::AtomicBool,
     failure: Mutex<Option<HistoryRefreshFailure>>,
     target: OnceLock<history::HistoryTarget>,
-    cancelled: tokio_util::sync::CancellationToken,
+    cancelled: std::sync::Mutex<tokio_util::sync::CancellationToken>,
     worker_started: std::sync::atomic::AtomicBool,
+    worker: std::sync::Mutex<Option<tokio::task::JoinHandle<()>>>,
+}
+
+impl AgentHistoryRefresh {
+    fn cancellation_token(&self) -> tokio_util::sync::CancellationToken {
+        self.cancelled
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone()
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -6479,6 +6490,7 @@ async fn reap_agent(
 }
 
 async fn retire_agent_history(agent: &AgentCli) {
+    let _lifecycle = agent.history_refresh.lifecycle_gate.lock().await;
     // Retirement and registry publication share a boundary, without holding
     // the pool lock or waiting for an ACP network request.
     let mutation = agent.history_refresh.mutation_gate.lock().await;
@@ -6486,7 +6498,7 @@ async fn retire_agent_history(agent: &AgentCli) {
         .history_refresh
         .retired
         .swap(true, std::sync::atomic::Ordering::AcqRel);
-    agent.history_refresh.cancelled.cancel();
+    agent.history_refresh.cancellation_token().cancel();
     drop(mutation);
     if first_retirement {
         let mut refresh = agent.history_refresh.gate.lock().await;
@@ -6494,6 +6506,17 @@ async fn retire_agent_history(agent: &AgentCli) {
             if let Err(error) = refresh.query.stop().await {
                 tracing::error!(target: "master_history", %error, "retired history process cleanup failed; replacement remains gated");
             }
+        }
+    }
+    let worker = agent
+        .history_refresh
+        .worker
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .take();
+    if let Some(worker) = worker {
+        if let Err(error) = worker.await {
+            tracing::warn!(target: "master_history", %error, "retired history worker failed");
         }
     }
 }
@@ -7138,11 +7161,12 @@ async fn host_session_list_raw(
                 .as_millis() as u64,
         );
     }
+    let cancelled = agent.history_refresh.cancellation_token();
     refresh
         .query
         .poll(
             agent.history_refresh.target.get(),
-            &agent.history_refresh.cancelled,
+            &cancelled,
             complete_inventory,
         )
         .await
@@ -7159,6 +7183,7 @@ async fn host_acp_cwd_from_later_pages(
     let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(2);
     let mut cursors = HashSet::new();
     let mut found = Vec::new();
+    let cancelled = agent.history_refresh.cancellation_token();
     for _ in 0..8 {
         if cursor.is_empty() || !cursors.insert(cursor.clone()) {
             tracing::warn!(target: "master_history", "host ACP cwd pagination cursor repeated");
@@ -7166,7 +7191,7 @@ async fn host_acp_cwd_from_later_pages(
         }
         let Some(response) = refresh
             .query
-            .list_cwd_page(cursor, deadline, &agent.history_refresh.cancelled)
+            .list_cwd_page(cursor, deadline, &cancelled)
             .await
         else {
             return (Vec::new(), false);
@@ -7837,6 +7862,9 @@ async fn publish_history_sync_status(state: &MasterStateInner) -> bool {
         .collect();
     let mut has_successful_agent = false;
     for agent in agents {
+        if agent.history_refresh.retired.load(Ordering::Acquire) {
+            continue;
+        }
         if let Some(failure) = *agent.history_refresh.failure.lock().await {
             failures.push(failure);
         } else if !agent.history_refresh.retired.load(Ordering::Acquire)
@@ -7895,6 +7923,11 @@ fn start_history_refresh_loop(state: &Arc<MasterStateInner>) {
 
 fn start_agent_history_worker(state: &Arc<MasterStateInner>, agent: &Arc<AgentCli>) {
     use std::sync::atomic::Ordering;
+    let mut worker_slot = agent
+        .history_refresh
+        .worker
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
     if agent
         .cached_init_resp
         .agent_capabilities
@@ -7921,7 +7954,8 @@ fn start_agent_history_worker(state: &Arc<MasterStateInner>, agent: &Arc<AgentCl
         }
     }
     let ownership = WorkerOwnership(Arc::clone(&agent));
-    tokio::spawn(async move {
+    let cancelled = agent.history_refresh.cancellation_token();
+    let worker = tokio::spawn(async move {
         let _ownership = ownership;
         loop {
             let Some(state) = state.upgrade() else { break };
@@ -7938,11 +7972,12 @@ fn start_agent_history_worker(state: &Arc<MasterStateInner>, agent: &Arc<AgentCl
                 .next_refresh_at
                 .unwrap_or_else(tokio::time::Instant::now);
             tokio::select! {
-                _ = agent.history_refresh.cancelled.cancelled() => break,
+                _ = cancelled.cancelled() => break,
                 _ = tokio::time::sleep_until(next) => {}
             }
         }
     });
+    *worker_slot = Some(worker);
 }
 
 fn host_history_agent_ids(
@@ -8048,6 +8083,74 @@ async fn discover_custom_history_agents(
             tracing::warn!(target: "master_history", %error, "could not discover configured custom agents");
             None
         }
+    }
+}
+
+async fn reconcile_custom_history_agents(
+    state: &Arc<MasterStateInner>,
+    launches: &[HistoryAgentLaunch],
+) {
+    let eligible_keys: HashSet<_> = launches
+        .iter()
+        .map(|launch| {
+            agent_cmd_key(
+                &launch.command,
+                Some(&launch.id),
+                &crate::agent_source::AgentSource::Host,
+            )
+        })
+        .collect();
+    let agents: Vec<_> = state
+        .agents
+        .lock()
+        .await
+        .values()
+        .filter(|cell| !agent_cell_is_retired(state, cell))
+        .filter_map(|cell| {
+            cell.get()
+                .map(|agent| (Arc::clone(cell), Arc::clone(agent)))
+        })
+        .filter(|(_, agent)| {
+            agent.source == crate::agent_source::AgentSource::Host
+                && agent.resolved_agent_id.starts_with("custom:")
+        })
+        .collect();
+    for (cell, agent) in agents {
+        if eligible_keys.contains(&agent.cmd_key) {
+            let _lifecycle = agent.history_refresh.lifecycle_gate.lock().await;
+            if !agent_cell_is_current(state, &agent.cmd_key, &cell).await {
+                continue;
+            }
+            if agent
+                .history_refresh
+                .retired
+                .load(std::sync::atomic::Ordering::Acquire)
+            {
+                // Retirement has drained the previous query and worker before
+                // a new token can make this exact command eligible again.
+                let mut refresh = agent.history_refresh.gate.lock().await;
+                if let Err(error) = refresh.query.stop().await {
+                    tracing::warn!(target: "master_history", %error, "cannot resume retired history query");
+                    continue;
+                }
+                *refresh = HistoryRefreshState::default();
+                *agent
+                    .history_refresh
+                    .cancelled
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner) =
+                    tokio_util::sync::CancellationToken::new();
+                *agent.history_refresh.failure.lock().await = None;
+                agent
+                    .history_refresh
+                    .retired
+                    .store(false, std::sync::atomic::Ordering::Release);
+            }
+            continue;
+        }
+        // Only the dedicated history query is retired. Helpers can still own
+        // the pooled ACP connection and its live sessions after a settings edit.
+        retire_agent_history(&agent).await;
     }
 }
 
@@ -8261,6 +8364,9 @@ fn request_host_history_discovery(state: &Arc<MasterStateInner>) {
             });
             let (discovery, custom) =
                 tokio::join!(discovery, discover_custom_history_agents(&state));
+            if let Some(launches) = custom.as_ref() {
+                reconcile_custom_history_agents(&state, launches).await;
+            }
             let complete = discovery.is_ok() && custom.is_some();
             let mut agents = custom.unwrap_or_default();
             match discovery {

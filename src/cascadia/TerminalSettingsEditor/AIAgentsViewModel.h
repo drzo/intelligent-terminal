@@ -118,6 +118,7 @@ namespace winrt::Microsoft::Terminal::Settings::Editor::implementation
         bool IsCustomAcpAgentSelected();
         winrt::hstring CustomAcpCommandPreview();
         void EditCustomAcpAgent();
+        void EditCustomAcpAgent(const winrt::hstring& settingsId);
         bool IsCustomDelegateAgentSelected();
         winrt::hstring CustomDelegateCommandPreview();
         void EditCustomDelegateAgent();

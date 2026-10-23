@@ -712,16 +712,25 @@ fn spawn_mock_pair(
                                 m.prompt(a).await.map(R::PromptResponse),
                             ),
                             Q::ExtMethodRequest(request) => {
-                                if let crate::session_registry::WtaExtRequest::CloseTabSession(
-                                    params,
-                                ) = crate::session_registry::parse_ext_request(request)
-                                {
-                                    m.close_tab_requests.lock().unwrap().push(params.tab_id);
-                                }
+                                let response = match crate::session_registry::parse_ext_request(request) {
+                                    crate::session_registry::WtaExtRequest::CloseTabSession(params) => {
+                                        m.close_tab_requests.lock().unwrap().push(params.tab_id);
+                                        serde_json::Value::Null
+                                    }
+                                    crate::session_registry::WtaExtRequest::SessionActivate(params) => {
+                                        serde_json::json!({
+                                            "activation_id": params.activation_id,
+                                            "action": "rejected",
+                                            "accepted": false,
+                                            "detail": "Custom agent definition was removed",
+                                        })
+                                    }
+                                    _ => serde_json::Value::Null,
+                                };
                                 conn::respond_enum(
                                     responder,
                                     Ok(R::ExtMethodResponse(acp::schema::v1::ExtResponse::new(
-                                        serde_json::value::to_raw_value(&serde_json::Value::Null)
+                                        serde_json::value::to_raw_value(&response)
                                             .unwrap()
                                             .into(),
                                     ))),
@@ -4668,6 +4677,61 @@ async fn dispatch_master_ext_session_focus_completes() {
                 Ok(_) => panic!("expected MasterMutationCompleted"),
                 _ => panic!("expected MasterMutationCompleted, got nothing"),
             }
+        })
+        .await;
+}
+
+#[tokio::test]
+async fn dispatch_master_ext_session_activation_rejection_preserves_existing_session() {
+    let local = tokio::task::LocalSet::new();
+    local
+        .run_until(async {
+            let h = connect_for_dispatch(MockBehavior::Reply);
+            let existing_session = acp::schema::v1::SessionId::new("existing-conversation");
+            let tab_to_session = Arc::new(tokio::sync::Mutex::new(HashMap::from([(
+                "t1".to_string(),
+                existing_session.clone(),
+            )])));
+            let mut event_rx = h.event_rx;
+
+            let task = dispatch_master_ext_request(
+                MasterExtRequest::SessionActivate {
+                    request_id: 10,
+                    identity: crate::session_registry::SessionIdentity {
+                        session_id: acp::schema::v1::SessionId::new("custom-history"),
+                        history_key: None,
+                    },
+                    window_id: 42,
+                    activation_id: "activation-1".to_string(),
+                    tab_id: "t1".to_string(),
+                },
+                &h.conn,
+                &h.event_tx,
+                &tab_to_session,
+                Arc::clone(&h.client.state),
+            );
+
+            tokio::time::timeout(std::time::Duration::from_secs(5), task)
+                .await
+                .expect("activation must complete")
+                .expect("activation task must not panic");
+
+            match event_rx.try_recv().expect("rejection must be visible") {
+                AppEvent::TabSystemMessage { tab_id, message } => {
+                    assert_eq!(tab_id, "t1");
+                    assert!(message.contains("Custom agent definition was removed"));
+                }
+                _ => panic!("expected a non-destructive TabSystemMessage"),
+            }
+            assert!(matches!(
+                event_rx.try_recv(),
+                Ok(AppEvent::MasterMutationCompleted { request_id: 10 })
+            ));
+            assert!(event_rx.try_recv().is_err(), "must not emit a TabError");
+            assert_eq!(
+                tab_to_session.lock().await.get("t1"),
+                Some(&existing_session)
+            );
         })
         .await;
 }

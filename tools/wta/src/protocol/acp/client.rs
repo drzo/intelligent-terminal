@@ -4341,7 +4341,7 @@ fn dispatch_master_ext_request_with_yolo_timeout(
                 .await;
                 if let Err(error) = result {
                     tracing::warn!(target: "agents_view", request_id, %error, "custom session activation failed");
-                    let _ = event_tx.send(AppEvent::TabError {
+                    let _ = event_tx.send(AppEvent::TabSystemMessage {
                         tab_id,
                         message: error.to_string(),
                     });

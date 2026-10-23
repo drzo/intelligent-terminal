@@ -16703,6 +16703,7 @@ namespace winrt::TerminalApp::implementation
         auto restoredAgent = newTerminalArgs ?
                                  ::Microsoft::Terminal::AgentPaneRestore::ParseResumeCommandline(newTerminalArgs.Commandline()) :
                                  ::Microsoft::Terminal::AgentPaneRestore::ResumeTarget{};
+        winrt::hstring customResumeProvider;
         if (newTerminalArgs && !newTerminalArgs.CustomAgentSessionId().empty())
         {
             namespace Custom = ::Microsoft::Terminal::CustomAgents;
@@ -16718,6 +16719,7 @@ namespace winrt::TerminalApp::implementation
             restoredAgent.sessionId = newTerminalArgs.CustomAgentSessionId();
             restoredAgent.backend = L"host:" + std::wstring{ id };
             restoredAgent.cwd = newTerminalArgs.StartingDirectory();
+            customResumeProvider = id;
         }
         if (newTerminalArgs && newTerminalArgs.NativeAgentProviderId().empty() && !restoredAgent.agent.empty())
         {
@@ -16761,7 +16763,9 @@ namespace winrt::TerminalApp::implementation
         const auto profileAgentId = profile.AgentProfileId();
         const auto profileProvider = ::Microsoft::Terminal::Settings::Model::AgentRegistry::CanonicalNativeAgentProviderId(
             std::wstring_view{ profileAgentId });
-        const auto nativeAgentProvider = !profileProvider.empty() ?
+        const auto nativeAgentProvider = !customResumeProvider.empty() ?
+                                             customResumeProvider :
+                                         !profileProvider.empty() ?
                                              winrt::hstring{ profileProvider } :
                                              newTerminalArgs ? newTerminalArgs.NativeAgentProviderId() : winrt::hstring{};
         const auto control = _CreateNewControlAndContent(controlSettings, connection, nativeAgentProvider);

@@ -4014,6 +4014,9 @@ namespace TerminalAppLocalTests
             agent.CliCommand(L"test-agent.exe");
             agent.ResumeCommand(L"test-agent.exe --resume {sessionId}");
             page->_settings.GlobalSettings().CustomAgents(winrt::single_threaded_vector<CustomAgent>({ agent }));
+            const auto defaultProfile = page->_settings.ActiveProfiles().GetAt(1);
+            defaultProfile.AgentProfileId(L"copilot");
+            page->_settings.GlobalSettings().DefaultProfile(defaultProfile.Guid());
 
             const auto actualId = ::Microsoft::Console::Utils::CreateGuid();
             const auto connection = winrt::make_self<TestConnection>(actualId, State::Connected);
@@ -4023,6 +4026,14 @@ namespace TerminalAppLocalTests
             VERIFY_ARE_EQUAL(winrt::guid{}, args.SessionId());
             const auto pane = page->_MakePane(args, nullptr, *connection);
             VERIFY_IS_NOT_NULL(pane);
+            const auto manager = winrt::get_self<winrt::TerminalApp::implementation::ContentManager>(page->_manager);
+            VERIFY_ARE_EQUAL(agent.Id(), manager->NativeAgentProviderId(pane->GetTerminalControl().ContentId()));
+            NewTerminalArgs ordinaryArgs;
+            const auto ordinaryConnection = winrt::make_self<TestConnection>(
+                ::Microsoft::Console::Utils::CreateGuid(), State::Connected);
+            const auto ordinaryPane = page->_MakePane(ordinaryArgs, nullptr, *ordinaryConnection);
+            VERIFY_IS_NOT_NULL(ordinaryPane);
+            VERIFY_ARE_EQUAL(winrt::hstring{ L"copilot" }, manager->NativeAgentProviderId(ordinaryPane->GetTerminalControl().ContentId()));
             VERIFY_IS_NOT_NULL(page->_CreateNewTabFromPane(pane));
             VERIFY_ARE_EQUAL(winrt::hstring{ L"known-conversation" }, page->_paneAgentSessions.at(actualId).sessionId);
             VERIFY_IS_TRUE(page->_paneAgentSessions.at(actualId).structuredCustomResume);
