@@ -2563,6 +2563,47 @@ pub(super) fn test_app_with_master_rx() -> (
 }
 
 #[test]
+fn session_activation_failed_enqueue_allows_retry() {
+    use crate::protocol::acp::client::MasterExtRequest;
+    let (mut app, master_rx) = test_app_with_master_rx();
+    app.window_id = Some("42".into());
+    let mut info = crate::session_registry::SessionInfo::new(
+        agent_client_protocol::schema::v1::SessionId::new("history"),
+        std::path::PathBuf::from(r"C:\repo"),
+    );
+    info.cli_source = Some(crate::agent_sessions::CliSource::Custom(
+        "custom:review".into(),
+    ));
+    let session = session_info_to_agent_session(&info);
+    drop(master_rx);
+
+    app.dispatch_custom_session_activation(&session);
+    assert!(app.pending_session_activations.is_empty());
+    let failed_request_id = app.current_tab().agents_view.next_request_id;
+
+    let (master_tx, mut master_rx) = tokio::sync::mpsc::unbounded_channel();
+    app.master_request_tx = master_tx;
+    app.reconcile_session_activations();
+    assert!(master_rx.try_recv().is_err());
+    app.dispatch_custom_session_activation(&session);
+    let MasterExtRequest::SessionActivate {
+        request_id,
+        activation_id,
+        status_only,
+        ..
+    } = master_rx
+        .try_recv()
+        .expect("retry must enqueue an activation")
+    else {
+        panic!("expected a session activation");
+    };
+    assert!(!status_only);
+    assert_ne!(request_id, failed_request_id);
+    assert!(app.pending_session_activations.contains_key(&activation_id));
+    assert_eq!(app.pending_session_activations.len(), 1);
+}
+
+#[test]
 fn session_activation_receipt_survives_disconnect_and_status_retries() {
     use crate::protocol::acp::client::MasterExtRequest;
     let (mut app, mut master_rx) = test_app_with_master_rx();
@@ -2589,6 +2630,11 @@ fn session_activation_receipt_survives_disconnect_and_status_retries() {
             }) if identity.session_id.to_string() == "history"
                 && activation_id == "retained-receipt" && tab_id == "origin-tab"));
     }
+    assert!(app
+        .pending_session_activations
+        .contains_key("retained-receipt"));
+    drop(master_rx);
+    app.reconcile_session_activations();
     assert!(app
         .pending_session_activations
         .contains_key("retained-receipt"));

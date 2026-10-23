@@ -432,6 +432,8 @@ Agent-pane activation requests also reconcile pending alias receipts with
 status-only queries instead of treating `accepted: false` as a rejection.
 Unresolved identities survive request cancellation and transport disconnection;
 only completed unsuccessful receipts report rejection to the originating tab.
+A failed initial enqueue releases its local receipt so reconnect can retry;
+failed status checks retain receipts for operations that may already have run.
 See [session tracking](../../doc/specs/hybrid-agent-session-tracking.md) for
 receipt retention and refresh cancellation/backoff behavior.
 

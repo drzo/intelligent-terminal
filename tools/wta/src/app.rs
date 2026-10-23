@@ -4008,8 +4008,9 @@ impl App {
             *status_only = true;
         }
         self.pending_session_activations
-            .insert(activation_id, retained);
+            .insert(activation_id.clone(), retained);
         if self.master_request_tx.send(request).is_err() {
+            self.pending_session_activations.remove(&activation_id);
             tracing::warn!(target: "agents_view", "custom session activation channel is unavailable");
             self.current_tab_mut().messages.push(ChatMessage::warning(
                 t!(
