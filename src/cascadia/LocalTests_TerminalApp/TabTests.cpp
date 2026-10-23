@@ -21719,6 +21719,8 @@ namespace TerminalAppLocalTests
             const auto root = container.ContentTemplateRoot().as<StackPanel>();
             VERIFY_ARE_EQUAL(uint8_t{ 0 }, container.Background().as<Media::SolidColorBrush>().Color().A);
             const auto headerGrid = root.Children().GetAt(0).as<Grid>();
+            header = headerGrid.FindName(L"TabHeaderPresenter").as<winrt::TerminalApp::TabHeaderControl>();
+            VERIFY_IS_NOT_NULL(header);
             const auto selectionBackground = headerGrid.FindName(L"TabSelectionBackground").as<Border>();
             const auto colorSelectionBackground = headerGrid.FindName(L"TabColorSelectionBackground").as<Border>();
             const auto hoverBackground = headerGrid.FindName(L"TabHoverBackground").as<Border>();
