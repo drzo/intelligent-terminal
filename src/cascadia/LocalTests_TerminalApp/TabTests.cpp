@@ -18902,25 +18902,48 @@ namespace TerminalAppLocalTests
     void TabTests::SidebarNavigationHotkeysCycleDisplayedTabs()
     {
         using Page = winrt::TerminalApp::implementation::TerminalPage;
+        using Tab = winrt::TerminalApp::implementation::Tab;
         using State = winrt::Microsoft::Terminal::TerminalConnection::ConnectionState;
         const auto connection = winrt::make_self<TestConnection>(
             winrt::guid{ L"{6239a42c-a001-49a3-80bd-e8fdd045185c}" }, State::Connected);
-        const auto page = _commonSetup(*connection, nullptr, std::nullopt, true);
+        Grid host{ nullptr };
+        UIElement previousContent{ nullptr };
+        TestOnUIThread([&]() {
+            previousContent = Window::Current().Content();
+            host = Grid{};
+            host.Width(1200);
+            host.Height(600);
+        });
+        const auto restoreContent = wil::scope_exit([&]() {
+            TestOnUIThread([&]() {
+                Window::Current().Content(previousContent);
+                host.Children().Clear();
+            });
+        });
+        const auto page = _commonSetup(*connection, host, std::nullopt, true);
+        winrt::com_ptr<Tab> first, middle, last;
+        winrt::com_ptr<TestConnection> lastConnection;
         TestOnUIThread([&]() {
             page->_historyRefreshInFlight = true;
-            const auto first = page->_GetFocusedTabImpl();
+            first = page->_GetFocusedTabImpl();
             first->SuppressAgentPrewarm();
             first->SetTabText(L"displayed-first");
             const auto middleConnection = winrt::make_self<TestConnection>(
                 winrt::guid{ L"{6239a42c-a002-49a3-80bd-e8fdd045185c}" }, State::Connected);
-            const auto lastConnection = winrt::make_self<TestConnection>(
+            lastConnection = winrt::make_self<TestConnection>(
                 winrt::guid{ L"{6239a42c-a003-49a3-80bd-e8fdd045185c}" }, State::Connected);
-            const auto middle = page->_GetTabImpl(page->_CreateNewTabFromPane(page->_MakePane(nullptr, nullptr, *middleConnection)));
-            const auto last = page->_GetTabImpl(page->_CreateNewTabFromPane(page->_MakePane(nullptr, nullptr, *lastConnection)));
+            middle = page->_GetTabImpl(page->_CreateNewTabFromPane(page->_MakePane(nullptr, nullptr, *middleConnection)));
+            last = page->_GetTabImpl(page->_CreateNewTabFromPane(page->_MakePane(nullptr, nullptr, *lastConnection)));
             middle->SuppressAgentPrewarm();
             last->SuppressAgentPrewarm();
             middle->SetTabText(L"other-middle");
             last->SetTabText(L"displayed-last");
+            page->UpdateLayout();
+        });
+        _waitForContentTransferReviewUI([&]() {
+            return last->GetActivePane()->GetTerminalControl().ActualWidth() > 400;
+        });
+        TestOnUIThread([&]() {
             const auto splitConnection = winrt::make_self<TestConnection>(
                 winrt::guid{ L"{6239a42c-a004-49a3-80bd-e8fdd045185c}" }, State::Connected);
             VERIFY_IS_TRUE(page->_SplitPane(last, SplitDirection::Right, 0.5f, page->_MakePane(nullptr, nullptr, *splitConnection), false));
@@ -19039,7 +19062,21 @@ namespace TerminalAppLocalTests
         using State = winrt::Microsoft::Terminal::TerminalConnection::ConnectionState;
         const auto connection = winrt::make_self<TestConnection>(
             winrt::guid{ L"{6239a42c-b001-49a3-80bd-e8fdd045185c}" }, State::Connected);
-        const auto page = _commonSetup(*connection, nullptr, std::nullopt, true);
+        Grid host{ nullptr };
+        UIElement previousContent{ nullptr };
+        TestOnUIThread([&]() {
+            previousContent = Window::Current().Content();
+            host = Grid{};
+            host.Width(1200);
+            host.Height(600);
+        });
+        const auto restoreContent = wil::scope_exit([&]() {
+            TestOnUIThread([&]() {
+                Window::Current().Content(previousContent);
+                host.Children().Clear();
+            });
+        });
+        const auto page = _commonSetup(*connection, host, std::nullopt, true);
         std::vector<winrt::com_ptr<Tab>> tabs;
         ScrollViewer scroll{ nullptr };
         winrt::com_ptr<winrt::TerminalApp::implementation::AppKeyBindings> keys;

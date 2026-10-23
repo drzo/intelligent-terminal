@@ -1009,6 +1009,33 @@ namespace winrt::TerminalApp::implementation
         return nullptr;
     }
 
+    void TabStrip::BringTabHeaderIntoView(IInspectable const& item)
+    {
+        if (_isRailCollapsed || !_isVerticalPresentation)
+        {
+            return;
+        }
+        auto header = HeaderForTab(item).try_as<FrameworkElement>();
+        if (!header)
+        {
+            header = HeaderForTab(item, true).try_as<FrameworkElement>();
+        }
+        if (header)
+        {
+            // The parent grid is the full header, without the group's pane rows.
+            if (const auto row = header.Parent().try_as<FrameworkElement>())
+            {
+                const auto list = ItemsList();
+                const auto bounds = row.TransformToVisual(list).TransformBounds(
+                    Rect{ 0, 0, static_cast<float>(row.ActualWidth()), static_cast<float>(row.ActualHeight()) });
+                if (bounds.Y < -0.5f || bounds.Y + bounds.Height > list.ActualHeight() + 0.5)
+                {
+                    row.StartBringIntoView();
+                }
+            }
+        }
+    }
+
     TerminalApp::TabStripDisplayItem TabStrip::DisplayItemForTab(IInspectable const& item) const
     {
         if (const auto tab = item.try_as<MUX::Controls::TabViewItem>())

@@ -1317,7 +1317,7 @@ namespace winrt::TerminalApp::implementation
             }
             else if (!_IsCollapsedVerticalRail())
             {
-                winrt::get_self<implementation::TabStrip>(_tabStrip)->HeaderForTab(tabItem, true);
+                winrt::get_self<implementation::TabStrip>(_tabStrip)->BringTabHeaderIntoView(tabItem);
             }
         }
         return true;

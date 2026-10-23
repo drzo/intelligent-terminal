@@ -215,6 +215,7 @@ Describe 'Feature: Sidebar tab keyboard navigation' -Tag @('Feature', 'SidebarTa
         $created = [Collections.Generic.List[object]]::new()
         $query = "viewport-$script:marker"
         $searchOpened = $false
+        $groupSplit = $null
         $window = [Windows.Automation.AutomationElement]::FromHandle([IntPtr][long]$script:app.Hwnd)
         $window.Current.ProcessId | Should -Be $script:app.Pid
         $windowPattern = $window.GetCurrentPattern([Windows.Automation.WindowPattern]::Pattern)
@@ -349,9 +350,75 @@ Describe 'Feature: Sidebar tab keyboard navigation' -Tag @('Feature', 'SidebarTa
             Send-WtWindowKey -App $script:app -Vk 0x28 -Ctrl -Alt -RequireForeground | Out-Null
             Assert-NavigationViewport -Tab $created[0] -Title $created[0].TestTitle -Label 'viewport-filtered-down'
             (Get-UiValue -App $script:app -Selector SearchTextBox) | Should -BeExactly $query
+
+            Invoke-UiClick -App $script:app -Selector SearchTabsButton | Out-Null
+            $searchOpened = $false
+            $group = $created[5]
+            $groupSplit = Split-WtPane -App $script:app -SessionId $group.session_id -Direction right `
+                -Command 'pwsh.exe -NoLogo -NoProfile -NoExit'
+            Set-WtPaneFocus -App $script:app -SessionId $group.session_id
+            $groupTitle = [string](@(Get-WtTabs -App $script:app -WindowId ([string]$script:app.WindowId)) |
+                Where-Object tab_id -eq $group.tab_id).title
+            function Get-GroupRow {
+                $condition = [Windows.Automation.PropertyCondition]::new(
+                    [Windows.Automation.AutomationElement]::ControlTypeProperty, [Windows.Automation.ControlType]::ListItem)
+                $rows = (Get-SidebarElement ItemsList).FindAll([Windows.Automation.TreeScope]::Descendants, $condition)
+                @($rows | Where-Object { Test-TabRowTitle -Row $_ -Title $groupTitle }) |
+                    Select-Object -First 1
+            }
+            $groupRow = Get-GroupRow
+            $groupRow | Should -Not -BeNullOrEmpty
+            $groupRow.GetCurrentPattern([Windows.Automation.ScrollItemPattern]::Pattern).ScrollIntoView()
+            $paneCondition = [Windows.Automation.PropertyCondition]::new(
+                [Windows.Automation.AutomationElement]::AutomationIdProperty, 'PaneActivateButton')
+            Wait-Until -TimeoutSec 6 -Because 'the split tab must have two expanded pane rows' -Condition {
+                (Get-GroupRow).FindAll([Windows.Automation.TreeScope]::Descendants, $paneCondition).Count -eq 2
+            } | Out-Null
+            $viewport = (Get-SidebarElement ItemsList).Current.BoundingRectangle
+            $range = $viewport.Height * (100.0 / $scroll.Current.VerticalViewSize - 1.0)
+            $targetTop = $viewport.Bottom - $rowHeight - 4.0
+            $offset = $range * $scroll.Current.VerticalScrollPercent / 100.0 +
+                (Get-GroupRow).Current.BoundingRectangle.Top - $targetTop
+            $offset | Should -BeGreaterThan 0
+            $offset | Should -BeLessThan $range
+            $scroll.SetScrollPercent([Windows.Automation.ScrollPattern]::NoScroll, 100.0 * $offset / $range)
+            Set-WtPaneFocus -App $script:app -SessionId $created[4].session_id
+            Wait-Until -TimeoutSec 6 -Because 'the split header must be visible while its children are clipped' -Condition {
+                $row = Get-GroupRow
+                $top = $row.Current.BoundingRectangle.Top
+                $children = $row.FindAll([Windows.Automation.TreeScope]::Descendants, $paneCondition)
+                $top -ge $viewport.Top - 1 -and $top + $rowHeight -le $viewport.Bottom + 1 -and
+                    @($children | Where-Object { $_.Current.IsOffscreen }).Count -gt 0
+            } | Out-Null
+            $groupOffset = $scroll.Current.VerticalScrollPercent
+            Save-UiScreenshot -App $script:app -Path (Join-Path $script:evidenceDir 'viewport-split-before.png') | Out-Null
+            Send-WtWindowKey -App $script:app -Vk 0x28 -Ctrl -Alt -RequireForeground | Out-Null
+            Assert-NavigationTab -Tab $group
+            Save-UiScreenshot -App $script:app -Path (Join-Path $script:evidenceDir 'viewport-split-after.png') | Out-Null
+            for ($sample = 0; $sample -lt 4; ++$sample) {
+                Start-Sleep -Milliseconds 150
+                [Math]::Abs($scroll.Current.VerticalScrollPercent - $groupOffset) |
+                    Should -BeLessOrEqual 0.1 -Because 'clipped pane children must not scroll an already-visible tab header'
+            }
+            Set-WtPaneFocus -App $script:app -SessionId $created[4].session_id
+            $scroll.SetScrollPercent([Windows.Automation.ScrollPattern]::NoScroll, 0)
+            Wait-Until -TimeoutSec 5 -Because 'the split header is offscreen before navigating back to it' -Condition {
+                $row = Get-GroupRow
+                $scroll.Current.VerticalScrollPercent -le 0.1 -and $row.Current.IsOffscreen
+            } | Out-Null
+            Send-WtWindowKey -App $script:app -Vk 0x28 -Ctrl -Alt -RequireForeground | Out-Null
+            Assert-NavigationTab -Tab $group
+            Wait-Until -TimeoutSec 6 -Because 'an offscreen split header must still be revealed' -Condition {
+                $row = Get-GroupRow
+                $top = $row.Current.BoundingRectangle.Top
+                -not $row.Current.IsOffscreen -and $top -ge $viewport.Top - 1 -and
+                    $top + $rowHeight -le $viewport.Bottom + 1
+            } | Out-Null
+            Save-UiScreenshot -App $script:app -Path (Join-Path $script:evidenceDir 'viewport-split-revealed.png') | Out-Null
         }
         finally {
             if ($searchOpened) { Invoke-UiClick -App $script:app -Selector SearchTabsButton | Out-Null }
+            if ($groupSplit) { Close-WtPane -App $script:app -SessionId $groupSplit.session_id }
             for ($index = $created.Count - 1; $index -ge 0; --$index) {
                 Close-WtPane -App $script:app -SessionId $created[$index].session_id
             }
