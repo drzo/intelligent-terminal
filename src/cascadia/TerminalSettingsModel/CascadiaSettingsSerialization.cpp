@@ -1937,7 +1937,7 @@ bool CascadiaSettings::InitializeNewTabMenu()
             entries.Append(winrt::make<ProfileEntry>(winrt::to_hstring(profile.Guid())));
         }
     }
-    // Persist the marker atomically with the menu, including for pre-existing
+    // Persist the marker atomically with the menu, including for preexisting
     // custom layouts. A failed settings write leaves initialization retryable.
     _globals->AgentProfileMenuInitialized(true);
     _resolveNewTabMenuProfiles();
@@ -2024,16 +2024,13 @@ void CascadiaSettings::_resolveNewTabMenuProfilesSet(const IVector<Model::NewTab
             // Find the profile by name
             const auto profile = GetProfileByName(profileEntry->ProfileName());
 
-            // If not found, or if the profile is hidden, skip it
-            if (profile == nullptr || profile.Hidden())
+            // Skip profiles that cannot be launched, retaining their saved reference.
+            uint32_t profileIndex;
+            if (profile == nullptr || profile.Hidden() || !_activeProfiles.IndexOf(profile, profileIndex))
             {
                 profileEntry->Profile(nullptr); // override "default" profile
                 break;
             }
-
-            // Find the index of the resulting profile and store the result in the entry
-            uint32_t profileIndex;
-            _activeProfiles.IndexOf(profile, profileIndex);
 
             profileEntry->Profile(profile);
             profileEntry->ProfileIndex(profileIndex);

@@ -184,13 +184,15 @@ probe failure propagates to the settings loader.
 Removing a CLI stops generation after the next successful uncached discovery.
 Its saved profile becomes orphaned and leaves the active profile list, while
 retaining user overrides. Reinstalling restores the same generated GUID and
-settings. Deleting a generated profile and saving settings suppresses it through
+settings. Saved menu entries for unavailable profiles are not rendered; their GUID
+references are retained so reinstalling restores the entries at the same positions.
+Deleting a generated profile and saving settings suppresses it through
 Terminal's generated-profile state; rediscovery does not make it visible again.
 Managed launches resolve the executable again at connection creation, so a stale
 menu entry cannot run an unavailable CLI.
 
 After generating profiles, settings loading initializes the agent menu once.
-This applies to both the default menu and pre-existing custom menus. Existing
+This applies to both the default menu and preexisting custom menus. Existing
 entries, folders, and their order are retained. Visible, available native agent
 profiles not already explicitly included or matched by a collection are appended
 as individual editable entries. A separator is added before them only when the

@@ -61,6 +61,7 @@ namespace SettingsModelUnitTests
         TEST_METHOD(CustomMenusAreAugmentedOnceWithoutDuplicates);
         TEST_METHOD(EditedMenuSurvivesReload);
         TEST_METHOD(NewShellsRemainDynamicWithoutAppendingNewAgents);
+        TEST_METHOD(SavedAgentEntriesExcludeUnavailableProfiles);
         TEST_METHOD(UnsavedInitializationCanRetry);
     };
 
@@ -239,6 +240,57 @@ namespace SettingsModelUnitTests
         for (const auto& [index, profile] : ordinary)
         {
             VERIFY_ARE_NOT_EQUAL(winrt::hstring{ L"IntelligentTerminal.AgentProfiles" }, profile.Source());
+        }
+    }
+
+    void NewTabMenuTests::SavedAgentEntriesExcludeUnavailableProfiles()
+    {
+        const auto settings = winrt::make_self<CascadiaSettings>(R"({})", profileDefaults);
+        VERIFY_IS_TRUE(settings->InitializeNewTabMenu());
+        const auto saved = settings->ToJson();
+        const auto user = toString(saved);
+
+        for (const bool disableSource : { false, true })
+        {
+            auto availableDefaults = VerifyParseSucceeded(profileDefaults);
+            auto& profiles = availableDefaults["profiles"];
+            Json::Value removed;
+            if (disableSource)
+            {
+                VERIFY_IS_TRUE(profiles.removeIndex(2, &removed));
+            }
+            VERIFY_IS_TRUE(profiles.removeIndex(0, &removed));
+            const auto defaults = toString(availableDefaults);
+            const auto reloaded = winrt::make_self<CascadiaSettings>(std::string_view{ user }, std::string_view{ defaults });
+            VERIFY_IS_FALSE(reloaded->InitializeNewTabMenu());
+            VERIFY_ARE_EQUAL(4u, reloaded->AllProfiles().Size());
+            VERIFY_ARE_EQUAL(disableSource ? 2u : 3u, reloaded->ActiveProfiles().Size());
+            const auto entries = reloaded->GlobalSettings().NewTabMenu();
+            VERIFY_IS_NULL(entries.GetAt(2).as<Model::ProfileEntry>().Profile());
+            const auto copilot = entries.GetAt(3).as<Model::ProfileEntry>();
+            if (disableSource)
+            {
+                VERIFY_IS_NULL(copilot.Profile());
+            }
+            else
+            {
+                VERIFY_IS_NOT_NULL(copilot.Profile());
+                VERIFY_ARE_EQUAL(copilot.Profile(), reloaded->ActiveProfiles().GetAt(copilot.ProfileIndex()));
+            }
+            const auto ordinary = entries.GetAt(0).as<Model::RemainingProfilesEntry>().Profiles();
+            VERIFY_ARE_EQUAL(2u, ordinary.Size());
+            VERIFY_IS_TRUE(saved["newTabMenu"] == reloaded->ToJson()["newTabMenu"]);
+
+            const auto reinstalledUser = toString(reloaded->ToJson());
+            const auto reinstalled = winrt::make_self<CascadiaSettings>(std::string_view{ reinstalledUser }, profileDefaults);
+            VERIFY_IS_FALSE(reinstalled->InitializeNewTabMenu());
+            VERIFY_IS_TRUE(saved["newTabMenu"] == reinstalled->ToJson()["newTabMenu"]);
+            for (const auto index : { 2u, 3u })
+            {
+                const auto entry = reinstalled->GlobalSettings().NewTabMenu().GetAt(index).as<Model::ProfileEntry>();
+                VERIFY_IS_NOT_NULL(entry.Profile());
+                VERIFY_ARE_EQUAL(entry.Profile(), reinstalled->ActiveProfiles().GetAt(entry.ProfileIndex()));
+            }
         }
     }
 
