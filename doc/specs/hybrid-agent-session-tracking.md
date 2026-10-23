@@ -178,6 +178,9 @@ but retains the live pane's provider and agent eligibility. The released row
 returns to History; stale activity cannot rebind it, while a legitimate session
 start may select a conversation again. Ordinary-shell OpenCode panes remain
 eligible while Sessions is ON without acquiring independent launch ownership.
+Superseded identity checks also prevent stale canonical/advisory caches from
+representing or highlighting the released row, regardless of manager/page
+notification order; a confirmed new selection retains precedence.
 Real session-end and connection-close events still end pane eligibility.
 When Sessions is ON, authoritative Ended/closed metadata also releases History
 representation immediately, even while an older pane-status cache remains.

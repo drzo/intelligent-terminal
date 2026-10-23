@@ -2324,6 +2324,23 @@ namespace winrt::TerminalApp::implementation
                         {
                             const auto canonical = _RichTabAgentInfoForControl(control);
                             const auto connection = control.Connection();
+                            if (canonical && metadata && _settings.GlobalSettings().EffectiveAgentSessionManagementEnabled())
+                            {
+                                const auto inferred = canonical->sessionId.empty() && canonical->inferredHistoryKey.isObject();
+                                const auto& key = canonical->inferredHistoryKey;
+                                const auto& location = inferred ? key["location"] : canonical->location;
+                                const auto host = location.isString() && location.asString() == "Host";
+                                const auto wsl = location.isObject() && location["Wsl"].isObject();
+                                if (metadata->IsSuperseded({
+                                        winrt::to_hstring(inferred ? key.get("session_id", "").asString() : canonical->sessionId),
+                                        winrt::to_hstring(inferred ? key.get("provider_id", "").asString() : canonical->providerId),
+                                        host ? L"host" : wsl ? L"wsl" : L"",
+                                        wsl ? winrt::to_hstring(location["Wsl"].get("distro", "").asString()) : winrt::hstring{},
+                                        inferred ? winrt::to_hstring(key.get("session_universe", "").asString()) : winrt::hstring{} }))
+                                {
+                                    return;
+                                }
+                            }
                             if (canonical && connection && !canonical->sessionId.empty() && !canonical->providerId.empty() &&
                                 canonical->paneSessionId == connection.SessionId() &&
                                 canonical->paneSessionId == pane->GetSessionId())

@@ -6882,6 +6882,8 @@ namespace winrt::TerminalApp::implementation
                 {
                     if (paneId == winrt::guid{} || !item.IsLive() ||
                         (metadata && metadata->state == ContentManager::PaneAgentState::Ended) ||
+                        (metadata && _settings.GlobalSettings().EffectiveAgentSessionManagementEnabled() &&
+                         metadata->IsSuperseded({ item.SessionId(), item.AgentId(), item.AgentSource(), item.WslDistro(), item.SessionUniverse() })) ||
                         _TryParsePaneSessionId(winrt::to_string(item.PaneSessionId())) != paneId)
                     {
                         continue;

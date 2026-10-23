@@ -23165,12 +23165,14 @@ namespace TerminalAppLocalTests
         using Page = winrt::TerminalApp::implementation::TerminalPage;
         using State = winrt::Microsoft::Terminal::TerminalConnection::ConnectionState;
         const auto baseline = winrt::make_self<TestConnection>(::Microsoft::Console::Utils::CreateGuid(), State::Connected);
-        auto page = _commonSetup(*baseline);
+        auto page = _commonSetup(*baseline, nullptr, std::nullopt, true);
         TestOnUIThread([&]() {
             page->_settings.GlobalSettings().AgentSessionManagementEnabled(true);
             page->_SyncNativeAgentStatusMode();
             const auto manager = winrt::get_self<Manager>(page->_manager);
-            for (const auto provider : { L"opencode", L"" })
+            for (const auto& [provider, pageFirst] : {
+                     std::pair{ L"opencode", false }, std::pair{ L"opencode", true },
+                     std::pair{ L"", false }, std::pair{ L"", true } })
             {
                 const auto connection = winrt::make_self<TestConnection>(::Microsoft::Console::Utils::CreateGuid(), State::Connected);
                 const auto id = connection->SessionId();
@@ -23181,7 +23183,16 @@ namespace TerminalAppLocalTests
                 const auto tab = page->_GetFocusedTabImpl();
                 const auto control = pane->GetTerminalControl();
                 const auto publish = [&](const std::string_view name, const std::string_view session = "released-conversation") {
-                    _publishPaneAgentEvent(page, page->_manager, _keepRunningHook(id, name, session, "opencode"));
+                    const auto event = _keepRunningHook(id, name, session, "opencode");
+                    if (pageFirst && name == "agent.session.unbind")
+                    {
+                        page->OnPaneAgentSessionChanged(event);
+                        page->_manager.OnPaneAgentSessionChanged(event);
+                    }
+                    else
+                    {
+                        _publishPaneAgentEvent(page, page->_manager, event);
+                    }
                 };
                 manager->BindPaneSession(
                     id, { L"released-conversation", L"opencode", L"opencode --session released-conversation", {}, L"C:\\project" },
@@ -23206,6 +23217,7 @@ namespace TerminalAppLocalTests
                 history.Status(L"Idle");
                 history.IsLive(true);
                 page->_tabStrip.HistoryActive(true);
+                VERIFY_IS_TRUE(page->_AreRecentAgentSessionsVisible());
                 const auto strip = winrt::get_self<winrt::TerminalApp::implementation::TabStrip>(page->_tabStrip);
                 strip->CommitHistorySnapshot({ history });
                 page->_ApplyTabListProjection();
@@ -23228,13 +23240,23 @@ namespace TerminalAppLocalTests
                 VERIFY_IS_TRUE(released.IsSuperseded({ L"released-conversation", L"opencode", L"host", {}, {} }));
                 VERIFY_IS_FALSE(page->_pendingRestoredSessionBindings.contains(id));
                 VERIFY_IS_FALSE(page->_richTabEndedSessionByPaneId.contains(id));
-                VERIFY_IS_FALSE(page->_richTabAgentStatusByPaneId.contains(id));
-                VERIFY_IS_FALSE(page->_RichTabAgentInfoForControl(control).has_value());
+                VERIFY_ARE_EQUAL(pageFirst, page->_richTabAgentStatusByPaneId.contains(id));
+                VERIFY_ARE_EQUAL(pageFirst, page->_RichTabAgentInfoForControl(control).has_value());
                 VERIFY_IS_TRUE(page->_TabHasCliAgent(tab));
                 VERIFY_IS_TRUE(page->_MatchesPaneAgentScope(
                     winrt::TerminalApp::implementation::Tab::VisiblePaneSnapshot{ .SessionId = id }));
                 VERIFY_ARE_EQUAL(1u, page->_tabStrip.HistoryItems().Size());
                 VERIFY_IS_TRUE(page->_tabStrip.HistoryItems().GetAt(0) == history);
+                page->_UpdateSidebarHistoryCurrentSession();
+                VERIFY_IS_FALSE(history.IsCurrent());
+                cached.sessionId.clear();
+                cached.inferredHistoryKey["session_id"] = "released-conversation";
+                cached.inferredHistoryKey["provider_id"] = "opencode";
+                cached.inferredHistoryKey["location"] = "Host";
+                page->_richTabAgentStatusByPaneId.insert_or_assign(id, cached);
+                page->_ApplyTabListProjection();
+                page->_UpdateSidebarHistoryCurrentSession();
+                VERIFY_ARE_EQUAL(1u, page->_tabStrip.HistoryItems().Size());
                 VERIFY_IS_FALSE(history.IsCurrent());
                 publish("agent.prompt.submit");
                 publish("agent.tool.starting");
@@ -23243,8 +23265,22 @@ namespace TerminalAppLocalTests
                     id, { L"released-conversation", L"opencode", {}, {}, {} }, L"host", {}, {});
                 VERIFY_IS_FALSE(manager->MetadataForPane(id)->HasSession());
                 VERIFY_IS_TRUE(manager->MetadataForPane(id)->HasAgent());
+                auto selected = winrt::make<winrt::TerminalApp::implementation::TabStripHistoryItem>();
+                selected.SessionId(L"new-conversation");
+                selected.AgentId(L"opencode");
+                selected.AgentSource(L"host");
+                selected.PaneSessionId(winrt::to_hstring(id));
+                selected.Title(L"New OpenCode selection");
+                selected.Status(L"Idle");
+                selected.IsLive(true);
+                strip->CommitHistorySnapshot({ history, selected });
                 publish("agent.session.start", "new-conversation");
                 VERIFY_ARE_EQUAL(winrt::hstring{ L"new-conversation" }, manager->MetadataForPane(id)->session.sessionId);
+                page->_ApplyTabListProjection();
+                page->_UpdateSidebarHistoryCurrentSession();
+                VERIFY_ARE_EQUAL(1u, page->_tabStrip.HistoryItems().Size());
+                VERIFY_IS_TRUE(page->_tabStrip.HistoryItems().GetAt(0) == history);
+                VERIFY_IS_FALSE(history.IsCurrent());
                 publish("agent.session.unbind");
                 VERIFY_ARE_EQUAL(winrt::hstring{ L"new-conversation" }, manager->MetadataForPane(id)->session.sessionId);
                 publish("agent.session.end", "new-conversation");
