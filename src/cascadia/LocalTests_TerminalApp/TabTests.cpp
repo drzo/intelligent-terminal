@@ -6471,7 +6471,7 @@ namespace TerminalAppLocalTests
                     else
                     {
                         VERIFY_ARE_EQUAL(40.0f, dragBounds.X);
-                        VERIFY_ARE_EQUAL(static_cast<float>(width - 123), dragBounds.Width);
+                        VERIFY_ARE_EQUAL(static_cast<float>(width - 111), dragBounds.Width);
                     }
                 }
             }
