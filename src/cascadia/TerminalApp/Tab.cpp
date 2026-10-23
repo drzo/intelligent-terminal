@@ -3394,15 +3394,13 @@ namespace winrt::TerminalApp::implementation
     void Tab::_RecalculateAndApplyTabColor()
     {
         // GetTabColor will return the color set by the color picker, or the
-        // color specified in the profile. Theme-derived backgrounds only apply
-        // to horizontal tabs; the sidebar uses native themed selection states
-        // unless an explicit tab color is set.
+        // color specified in the profile.
         const auto currentColor = GetTabColor();
         if (currentColor.has_value())
         {
             _ApplyTabColorOnUIThread(currentColor.value());
         }
-        else if (!_isVerticalTabLayout && _themeColor != nullptr)
+        else if (_themeColor != nullptr)
         {
             // Safely get the active control's brush.
             const Media::Brush terminalBrush{ _BackgroundBrush() };
