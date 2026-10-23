@@ -430,8 +430,8 @@ namespace SettingsModelUnitTests
         VERIFY_IS_TRUE(originalCli.args == Custom::FromJson(serialized["customAgents"][0]["cli"]).args);
         std::vector<winrt::com_ptr<implementation::Profile>> first;
         AgentProfileGenerator{ globals->CustomAgents() }.GenerateProfiles(first);
-        const auto find = [](const auto& profiles) {
-            return std::ranges::find_if(profiles, [](const auto& profile) { return profile->AgentProfileId() == L"custom:work"; });
+        const auto find = [](const auto& profiles, const std::wstring_view agentId = L"custom:work") {
+            return std::ranges::find_if(profiles, [agentId](const auto& profile) { return profile->AgentProfileId() == agentId; });
         };
         const auto generated = find(first);
         VERIFY_IS_TRUE(generated != first.end());
@@ -447,6 +447,21 @@ namespace SettingsModelUnitTests
         AgentProfileGenerator{ globals->CustomAgents() }.GenerateProfiles(second);
         VERIFY_ARE_EQUAL((*generated)->Guid(), (*find(second))->Guid());
         VERIFY_ARE_EQUAL(std::wstring{ L"\"work.exe\" \"resume\" \"abc-123\"" }, Custom::ResumeCommand(*globals, L"custom:work", L"abc-123"));
+        globals->CustomAgents().GetAt(0).Id(L"custom:WORK");
+        std::vector<winrt::com_ptr<implementation::Profile>> caseVariant;
+        AgentProfileGenerator{ globals->CustomAgents() }.GenerateProfiles(caseVariant);
+        const auto caseGenerated = find(caseVariant, L"custom:WORK");
+        VERIFY_IS_TRUE(caseGenerated != caseVariant.end());
+        VERIFY_ARE_EQUAL((*generated)->Guid(), (*caseGenerated)->Guid());
+        VERIFY_ARE_EQUAL(winrt::hstring{ L"custom:WORK" }, (*caseGenerated)->AgentProfileId());
+        VERIFY_ARE_EQUAL(winrt::hstring{ L"New name" }, (*caseGenerated)->Name());
+        VERIFY_ARE_EQUAL((*find(second))->Commandline(), (*caseGenerated)->Commandline());
+        globals->CustomAgents().GetAt(0).Id(L"custom:other");
+        std::vector<winrt::com_ptr<implementation::Profile>> distinct;
+        AgentProfileGenerator{ globals->CustomAgents() }.GenerateProfiles(distinct);
+        const auto distinctGenerated = find(distinct, L"custom:other");
+        VERIFY_IS_TRUE(distinctGenerated != distinct.end());
+        VERIFY_ARE_NOT_EQUAL((*generated)->Guid(), (*distinctGenerated)->Guid());
         layered->Commandline(L"explicit.exe");
         VERIFY_IS_FALSE(::Microsoft::Terminal::AgentProfiles::IsManaged(*layered));
     }
@@ -499,7 +514,7 @@ namespace SettingsModelUnitTests
                "$capture = @{ args = @($args); nativeArgs = [Environment]::GetCommandLineArgs(); commandLine = [Environment]::CommandLine }\n"
                "[IO.File]::WriteAllText((Join-Path $PSScriptRoot 'args.json'), (ConvertTo-Json -Compress -InputObject $capture))\n"
                "exit 0\n";
-        for (const auto unsupported : { L"", L"a\"b", LR"(quote " and ' & | ! ^)", L"C:\\path dir\\", L"C:\\path dir\\\\", L"C:\\path\tdir\\", L"C:\\path\u00a0dir\\" })
+        for (const auto unsupported : { L"", L"a\"b", LR"(quote " and ' & | ! ^)", L"C:\\path dir\\", L"C:\\path dir\\\\", L"C:\\path" L"\t" L"dir\\", L"C:\\path\u00a0dir\\" })
         {
             const Custom::Invocation invalid{ shim.native(), { unsupported } };
             HRESULT result = S_OK;

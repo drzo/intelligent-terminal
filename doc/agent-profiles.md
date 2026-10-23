@@ -179,9 +179,9 @@ Commands are an executable plus literal argument arrays, not shell scripts.
 Use an explicit launcher such as `pwsh.exe -File` for a script.
 Use the actual Windows launcher filename (for example, `qwen.cmd`, not the
 shell-resolved `qwen`); profile launches do not resolve PowerShell aliases.
-Custom `.cmd`/`.bat` startup and resume require an adjacent same-named `.ps1`
+Custom `.cmd`/`.bat` ACP, interactive startup, and resume require an adjacent same-named `.ps1`
 companion and invoke that exact companion through PowerShell, without inserting
-session IDs into `cmd` text. Missing executables or companions fail at launch,
+arguments into `cmd` text. Missing executables or companions fail at launch,
 not during profile generation. `%` environment expansion is not supported in
 managed custom CLI commands. Do not put secrets in arguments.
 Batch companions reject empty arguments, embedded double quotes, and arguments

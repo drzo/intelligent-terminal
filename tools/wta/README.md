@@ -228,6 +228,14 @@ commands reuse the agent pool, including when the same executable implements
 several custom providers. Listing still requires the provider to advertise and
 successfully answer ACP `session/list`.
 
+Windows-host ACP `.cmd` and `.bat` launches require an adjacent same-named
+`.ps1` companion, for both normal connections and history discovery. WTA invokes
+that exact companion without `cmd` parsing or environment-variable expansion.
+Missing companions and arguments Windows PowerShell cannot preserve (empty
+strings, embedded double quotes, or whitespace-containing arguments ending in a
+backslash) fail before spawning. Native executable arguments retain their
+original shapes.
+
 Successful discovery retires custom history workers whose definitions were
 removed or whose ACP commands changed, without interrupting agent panes using
 an existing ACP connection. Obsolete ACP instances are removed from the pool

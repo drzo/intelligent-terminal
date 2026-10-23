@@ -81,7 +81,9 @@ void AgentProfileGenerator::GenerateProfiles(std::vector<winrt::com_ptr<implemen
             {
                 continue;
             }
-            const auto identity = std::wstring{ AgentProfiles::Source } + L":" + std::wstring{ agent.Id() };
+            auto canonicalId = std::wstring{ agent.Id() };
+            std::ranges::transform(canonicalId, canonicalId.begin(), [](const wchar_t ch) -> wchar_t { return ch >= L'A' && ch <= L'Z' ? static_cast<wchar_t>(ch + (L'a' - L'A')) : ch; });
+            const auto identity = std::wstring{ AgentProfiles::Source } + L":" + canonicalId;
             auto profile = CreateDynamicProfile(identity);
             profile->Name(agent.Name());
             profile->Icon(L"\uE99A");
