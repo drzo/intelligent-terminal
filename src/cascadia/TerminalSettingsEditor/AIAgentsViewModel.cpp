@@ -1662,7 +1662,9 @@ namespace winrt::Microsoft::Terminal::Settings::Editor::implementation
             const auto commands =
                 _RemoveCustomCommand(_GlobalSettings.AcpCustomCommands(), settingsId);
             _GlobalSettings.AcpCustomCommands(commands);
-            if (_CustomCommandMatchesId(_GlobalSettings.AcpCustomCommand(), settingsId))
+            if (wasSelected ||
+                (!::Microsoft::Terminal::CustomAgents::Find(_GlobalSettings, _GlobalSettings.AcpAgent()) &&
+                 _CustomCommandMatchesId(_GlobalSettings.AcpCustomCommand(), settingsId)))
             {
                 _GlobalSettings.AcpCustomCommand(L"");
             }

@@ -785,16 +785,14 @@ namespace winrt::TerminalApp::implementation
             {
                 continue;
             }
-            if (::Microsoft::Terminal::CustomAgents::IsId(binding->second.agent))
+            if (binding->second.structuredCustomResume)
             {
-                const auto agent = ::Microsoft::Terminal::CustomAgents::Find(_settings.GlobalSettings(), binding->second.agent);
-                if (agent && !agent.ResumeCommand().empty())
+                terminalArgs.NativeAgentProviderId(binding->second.agent);
+                terminalArgs.CustomAgentSessionId(binding->second.sessionId);
+                terminalArgs.Commandline(L"");
+                if (!binding->second.cwd.empty())
                 {
-                    terminalArgs.NativeAgentProviderId(binding->second.agent);
-                    terminalArgs.CustomAgentSessionId(binding->second.sessionId);
-                    terminalArgs.Commandline(L"");
-                    if (!binding->second.cwd.empty())
-                        terminalArgs.StartingDirectory(binding->second.cwd);
+                    terminalArgs.StartingDirectory(binding->second.cwd);
                 }
                 continue;
             }

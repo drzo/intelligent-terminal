@@ -14861,7 +14861,7 @@ async fn sidebar_custom_history_discovery_retries_settings_without_losing_existi
             assert_eq!(
                 mock.calls().len(),
                 1,
-                "explicit rescans honor settings retry backoff"
+                "explicit refresh requests honor settings retry backoff"
             );
             tokio::time::advance(std::time::Duration::from_secs(5)).await;
             Arc::get_mut(&mut state).unwrap().wt =

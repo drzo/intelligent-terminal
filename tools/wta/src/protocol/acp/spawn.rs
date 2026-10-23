@@ -317,6 +317,45 @@ pub(crate) fn spawn_agent_process_with_provider(
     )
 }
 
+fn split_agent_commandline(commandline: &str) -> Result<Vec<String>> {
+    use windows_sys::Win32::Foundation::LocalFree;
+    use windows_sys::Win32::UI::Shell::CommandLineToArgvW;
+
+    anyhow::ensure!(!commandline.contains('\0'), "agent command contains NUL");
+    // A dummy argv[0] makes every configured token use argument escaping,
+    // matching join_windows_commandline, rather than argv[0]'s special rules.
+    let commandline: Vec<u16> = format!("wta {commandline}")
+        .encode_utf16()
+        .chain(std::iter::once(0))
+        .collect();
+    let mut count = 0;
+    // SAFETY: commandline is NUL-terminated and count is a valid output pointer.
+    let argv = unsafe { CommandLineToArgvW(commandline.as_ptr(), &mut count) };
+    anyhow::ensure!(
+        !argv.is_null(),
+        "failed to parse agent command: {}",
+        std::io::Error::last_os_error()
+    );
+    // SAFETY: Windows returns count NUL-terminated strings in one allocation.
+    // Copy them before releasing that allocation with LocalFree.
+    let args = unsafe {
+        let args = std::slice::from_raw_parts(argv, count as usize)
+            .iter()
+            .skip(1)
+            .map(|&arg| {
+                let mut len = 0;
+                while *arg.add(len) != 0 {
+                    len += 1;
+                }
+                String::from_utf16_lossy(std::slice::from_raw_parts(arg, len))
+            })
+            .collect();
+        LocalFree(argv.cast());
+        args
+    };
+    Ok(args)
+}
+
 fn spawn_host_agent_process(
     agent_cmd: &str,
     cwd: Option<&Path>,
@@ -324,7 +363,7 @@ fn spawn_host_agent_process(
     environment_policy: ChildEnvironmentPolicy,
     provider_selection: SharedProviderSelection<'_>,
 ) -> Result<AgentSpawn> {
-    let parts = crate::coordinator::split_windows_commandline(agent_cmd);
+    let parts = split_agent_commandline(agent_cmd)?;
     let raw_program = parts
         .first()
         .map(String::as_str)
@@ -628,7 +667,7 @@ fn spawn_wsl_agent_process(
     agent_id: Option<&str>,
     environment_policy: ChildEnvironmentPolicy,
 ) -> Result<AgentSpawn> {
-    let parts = crate::coordinator::split_windows_commandline(agent_cmd);
+    let parts = split_agent_commandline(agent_cmd)?;
     let raw_program = parts
         .first()
         .cloned()
@@ -806,6 +845,101 @@ fn canonicalize_posix_locale(tag: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn agent_commandline_round_trips_windows_arguments() {
+        let args = [
+            r"C:\Program Files\Custom Agent\agent.exe",
+            "--config",
+            "",
+            "--stdio",
+            r"C:\directory with spaces\",
+            r#"embedded "quotes" and \"escaped quotes\""#,
+            "tab\tseparated",
+            r"\\server\share\",
+        ];
+        assert_eq!(
+            split_agent_commandline(&crate::coordinator::join_windows_commandline(&args)).unwrap(),
+            args
+        );
+        assert!(split_agent_commandline(" \t ").unwrap().is_empty());
+        assert!(split_agent_commandline("agent\0ignored").is_err());
+    }
+
+    #[cfg(windows)]
+    #[tokio::test]
+    async fn host_spawns_round_trip_windows_arguments() {
+        use tokio::io::AsyncReadExt;
+
+        let directory = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .unwrap()
+            .parent()
+            .unwrap()
+            .join("Generated Files")
+            .join(format!("agent argv {}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&directory).unwrap();
+        let script = directory.join("echo arguments.ps1");
+        std::fs::write(
+            &script,
+            "[Console]::WriteLine((ConvertTo-Json -Compress -InputObject @($args)))",
+        )
+        .unwrap();
+        let expected = [
+            "--config",
+            "",
+            "--stdio",
+            r"C:\directory with spaces\",
+            r#"embedded "quotes" and \"escaped quotes\""#,
+            "argument with spaces",
+        ];
+        let mut args = vec![
+            "pwsh.exe",
+            "-NoLogo",
+            "-NoProfile",
+            "-NonInteractive",
+            "-File",
+            script.to_str().unwrap(),
+        ];
+        args.extend(expected);
+        let command = crate::coordinator::join_windows_commandline(&args);
+        for history_only in [false, true] {
+            let mut spawned = if history_only {
+                spawn_history_agent_process(
+                    &command,
+                    "custom:argv-test",
+                    &crate::agent_source::AgentSource::Host,
+                    SharedProviderSelection::Disabled,
+                )
+            } else {
+                spawn_agent_process_with_provider(
+                    &command,
+                    Some(&directory),
+                    Some("custom:argv-test"),
+                    ChildEnvironmentPolicy::CleanCloudDiscovery,
+                    SharedProviderSelection::Disabled,
+                )
+            }
+            .unwrap();
+            let mut stdout = String::new();
+            tokio::time::timeout(
+                Duration::from_secs(10),
+                spawned
+                    .child
+                    .take_stdout()
+                    .await
+                    .unwrap()
+                    .read_to_string(&mut stdout),
+            )
+            .await
+            .unwrap()
+            .unwrap();
+            assert!(spawned.child.wait().await.unwrap().success());
+            let actual: Vec<String> = serde_json::from_str(stdout.trim()).unwrap();
+            assert_eq!(actual, expected, "history_only={history_only}");
+        }
+        std::fs::remove_dir_all(directory).unwrap();
+    }
 
     #[cfg(windows)]
     #[tokio::test]

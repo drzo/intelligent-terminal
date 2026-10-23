@@ -15,10 +15,6 @@ WTA is a Rust binary with three launch modes:
   host agents other than Gemini and Antigravity initialize in the background at
   startup and remain resident. Gemini and Antigravity are excluded from automatic
   sidebar discovery; explicit selections initialize on demand.
-  Configured Windows-host custom ACP agents also participate in automatic history
-  discovery, independently of the selected agent. Their commands come from trusted
-  Terminal settings, are gated by `AllowCustomAgents`, and reuse the same pool and
-  history refresh workers. CLI-only custom definitions are excluded.
   Implementation: `src/master/mod.rs`.
 - **Helper** (`--connect-master <pipe>`): one ratatui UI per agent pane. It is
   an ACP client of master and owns pane-local UI state and `ShellManager`.

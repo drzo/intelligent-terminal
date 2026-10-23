@@ -11182,6 +11182,7 @@ namespace winrt::TerminalApp::implementation
             winrt::hstring{ sessionId },
             winrt::hstring{ agent },
             winrt::hstring{ resumeCommandline } };
+        binding.structuredCustomResume = custom;
         if (const auto existing = _interactiveResumeSessions.find(*paneSessionId);
             existing != _interactiveResumeSessions.end() &&
             existing->second.sessionId == binding.sessionId &&
@@ -11663,6 +11664,14 @@ namespace winrt::TerminalApp::implementation
                             {
                                 clearExplicitResume();
                             }
+                            const auto previous = _paneAgentSessions.find(*paneSessionId);
+                            const auto custom = ::Microsoft::Terminal::CustomAgents::Find(_settings.GlobalSettings(), winrt::to_hstring(agent));
+                            const auto structuredCustomResume =
+                                (custom && !custom.ResumeCommand().empty()) ||
+                                (previous != _paneAgentSessions.end() &&
+                                 previous->second.agent == winrt::to_hstring(agent) &&
+                                 previous->second.sessionId == winrt::to_hstring(agentSessionId) &&
+                                 previous->second.structuredCustomResume);
                             _paneAgentSessions.insert_or_assign(
                                 *paneSessionId,
                                 _PaneAgentSession{
@@ -11670,7 +11679,8 @@ namespace winrt::TerminalApp::implementation
                                     winrt::to_hstring(agent),
                                     winrt::to_hstring(resumeCommandline),
                                     bindingBackend,
-                                    bindingCwd });
+                                    bindingCwd,
+                                    structuredCustomResume });
                             _agentPaneLog("OnPaneAgentSessionChanged: bound pane " + paneId + " to session " + agentSessionId);
                         }
                         else
@@ -16801,7 +16811,9 @@ namespace winrt::TerminalApp::implementation
 
         // The master may not be listening yet. Retain the binding for independent
         // master registration and the owning helper's later subscription replay.
-        if (newTerminalArgs && (hasSessionId || !_settings.GlobalSettings().EffectiveAgentSessionManagementEnabled()))
+        if (newTerminalArgs && (hasSessionId ||
+                                !newTerminalArgs.CustomAgentSessionId().empty() ||
+                                !_settings.GlobalSettings().EffectiveAgentSessionManagementEnabled()))
         {
             const auto& target = restoredAgent;
             if (!target.agent.empty())
@@ -16814,7 +16826,8 @@ namespace winrt::TerminalApp::implementation
                         winrt::hstring{ target.agent },
                         newTerminalArgs.Commandline(),
                         winrt::hstring{ target.backend },
-                        winrt::hstring{ target.cwd } });
+                        winrt::hstring{ target.cwd },
+                        !newTerminalArgs.CustomAgentSessionId().empty() });
                 _pendingRestoredSessionBindings.insert_or_assign(
                     connection.SessionId(),
                     _PendingRestoredSessionBinding{
