@@ -1315,8 +1315,19 @@ namespace winrt::TerminalApp::implementation
             const auto isGroup = display.IsGroup();
             const auto hoverBrush = !isGroup && !_highContrast ? _tabHoverBrush(display.Tab()) : nullptr;
             const auto hovered = hoverBrush && winrt::get_self<TabStripDisplayItem>(display)->IsPointerOver();
-            const auto selected = display.SelectionVisibility() == Visibility::Visible &&
-                                  (!isGroup || display.ChildrenVisibility() != Visibility::Visible);
+            bool selectedPaneVisible = false;
+            if (isGroup && display.ChildrenVisibility() == Visibility::Visible)
+            {
+                for (const auto& pane : display.PaneItems())
+                {
+                    if (pane.ActiveIndicatorVisibility() == Visibility::Visible)
+                    {
+                        selectedPaneVisible = true;
+                        break;
+                    }
+                }
+            }
+            const auto selected = display.SelectionVisibility() == Visibility::Visible && !selectedPaneVisible;
             const auto pointerOver = winrt::get_self<TabStripDisplayItem>(display)->IsPointerOver();
             if (const auto hoverBackground = grid.FindName(L"TabHoverBackground").try_as<WUX::Controls::Border>())
             {
@@ -1374,7 +1385,12 @@ namespace winrt::TerminalApp::implementation
             const auto header = grid.FindName(L"TabHeaderPresenter").try_as<WUX::Controls::Control>();
             const auto close = grid.FindName(L"TabCloseButton").try_as<WUX::Controls::Control>();
             const auto iconPresenter = grid.FindName(L"TabIconPresenter").try_as<ContentPresenter>();
-            const auto foregroundBrush = selected ? tabColor : hovered ? hoverBrush : nullptr;
+            const auto inactiveBrush = !selected && !pointerOver && !_highContrast && selectionBackground ?
+                                           selectionBackground.Background().try_as<WUX::Media::SolidColorBrush>() :
+                                           nullptr;
+            const auto foregroundBrush = selected ? tabColor :
+                                            hovered ? hoverBrush :
+                                            inactiveBrush && inactiveBrush.Color().A > 0 && inactiveBrush.Opacity() > 0 ? inactiveBrush : nullptr;
             if (foregroundBrush)
             {
                 const auto foreground = WUX::Media::SolidColorBrush{ _tabSelectionForeground(foregroundBrush, _sidebarBackdropColor(Background(), grid.ActualTheme())) };

@@ -15612,8 +15612,8 @@ namespace TerminalAppLocalTests
             host.UpdateLayout();
             const auto selectionBackground = headerRoot.FindName(L"TabSelectionBackground").as<Border>();
             VERIFY_ARE_EQUAL(Visibility::Collapsed, selectionBackground.Visibility());
-            VERIFY_ARE_EQUAL(headerRoot.ActualHeight(), selectionBackground.ActualHeight());
-            VERIFY_IS_TRUE(container.ActualHeight() > selectionBackground.ActualHeight());
+            VERIFY_ARE_EQUAL(headerRoot.ActualHeight(), groupSelection.ActualHeight());
+            VERIFY_IS_TRUE(container.ActualHeight() > groupSelection.ActualHeight());
 
             strip.SetPaneItems(tab, display.PaneItems(), false);
             VERIFY_ARE_EQUAL(Visibility::Visible, selectionBackground.Visibility());
@@ -21725,9 +21725,9 @@ namespace TerminalAppLocalTests
             VERIFY_IS_NOT_NULL(selectionBackground);
             VERIFY_IS_NOT_NULL(colorSelectionBackground);
             VERIFY_IS_NOT_NULL(hoverBackground);
-            VERIFY_ARE_EQUAL(selectionBackground.ActualWidth(), hoverBackground.ActualWidth());
-            VERIFY_ARE_EQUAL(selectionBackground.ActualHeight(), hoverBackground.ActualHeight());
-            VERIFY_ARE_EQUAL(selectionBackground.TransformToVisual(headerGrid).TransformPoint({ 0, 0 }),
+            VERIFY_ARE_EQUAL(colorSelectionBackground.ActualWidth(), hoverBackground.ActualWidth());
+            VERIFY_ARE_EQUAL(colorSelectionBackground.ActualHeight(), hoverBackground.ActualHeight());
+            VERIFY_ARE_EQUAL(colorSelectionBackground.TransformToVisual(headerGrid).TransformPoint({ 0, 0 }),
                              hoverBackground.TransformToVisual(headerGrid).TransformPoint({ 0, 0 }));
             VERIFY_ARE_EQUAL(CornerRadiusHelper::FromUniformRadius(6), headerGrid.CornerRadius());
             strip.SelectedItem(nullptr);
@@ -21739,7 +21739,8 @@ namespace TerminalAppLocalTests
             winrt::get_self<winrt::TerminalApp::implementation::TabStripDisplayItem>(impl->DisplayItemForTab(tab))->SetPointerOver(false, false);
             impl->RefreshTabColor(tab);
             VERIFY_ARE_EQUAL(0.0, hoverBackground.Opacity());
-            VERIFY_IS_TRUE(header.ReadLocalValue(Control::ForegroundProperty()) == DependencyProperty::UnsetValue());
+            VERIFY_ARE_EQUAL(highContrast,
+                             header.ReadLocalValue(Control::ForegroundProperty()) == DependencyProperty::UnsetValue());
 
             for (const auto color : { winrt::Windows::UI::Colors::Black(), winrt::Windows::UI::Colors::White() })
             {
@@ -21769,7 +21770,8 @@ namespace TerminalAppLocalTests
                 {
                     VERIFY_ARE_EQUAL(color, colorSelectionBackground.Background().as<Media::SolidColorBrush>().Color());
                 }
-                VERIFY_IS_TRUE(header.ReadLocalValue(Control::ForegroundProperty()) == DependencyProperty::UnsetValue());
+                VERIFY_ARE_EQUAL(highContrast,
+                                 header.ReadLocalValue(Control::ForegroundProperty()) == DependencyProperty::UnsetValue());
             }
             const auto display = impl->DisplayItemForTab(tab);
             winrt::MUX::Controls::BitmapIconSource coloredIdentity;
@@ -21970,6 +21972,19 @@ namespace TerminalAppLocalTests
             VERIFY_ARE_EQUAL(uint8_t{ 0 }, colorSelection.Background().as<Media::SolidColorBrush>().Color().A);
             VERIFY_ARE_EQUAL(Visibility::Collapsed, nativeSelection.Visibility());
             VERIFY_ARE_EQUAL(winrt::Windows::UI::Colors::Black(), headerText.Foreground().as<Media::SolidColorBrush>().Color());
+
+            inactive.Opacity(1.0);
+            winrt::get_self<winrt::TerminalApp::implementation::TabStripDisplayItem>(impl->DisplayItemForTab(tab))->SetPointerOver(false, false);
+            strip.SelectedItem(nullptr);
+            impl->RefreshTabColor(tab);
+            VERIFY_ARE_EQUAL(winrt::Windows::UI::Colors::Black(), colorSelection.Background().as<Media::SolidColorBrush>().Color());
+            VERIFY_ARE_EQUAL(winrt::Windows::UI::Colors::White(), headerText.Foreground().as<Media::SolidColorBrush>().Color());
+            inactive.Opacity(0.3);
+            impl->RefreshTabColor(tab);
+            VERIFY_ARE_EQUAL(winrt::Windows::UI::Colors::Black(), headerText.Foreground().as<Media::SolidColorBrush>().Color());
+            inactive.Color(winrt::Windows::UI::Colors::Transparent());
+            impl->RefreshTabColor(tab);
+            VERIFY_IS_TRUE(headerText.ReadLocalValue(Control::ForegroundProperty()) == DependencyProperty::UnsetValue());
         });
     }
 
@@ -22155,6 +22170,8 @@ namespace TerminalAppLocalTests
         TestOnUIThread([&]() {
             const auto tab = page->_GetFocusedTabImpl();
             VERIFY_IS_NOT_NULL(tab);
+            const auto sourcePane = tab->GetActivePane();
+            VERIFY_IS_TRUE(sourcePane && sourcePane->Id().has_value());
 
             const auto agentPane = page->_MakePane(nullptr, nullptr, nullptr);
             VERIFY_IS_NOT_NULL(agentPane);
@@ -22191,9 +22208,21 @@ namespace TerminalAppLocalTests
             VERIFY_ARE_EQUAL(Visibility::Visible, display.GroupVisibility());
             VERIFY_ARE_EQUAL(Visibility::Visible, display.ChildrenVisibility());
 
+            VERIFY_IS_TRUE(tab->FocusPane(sourcePane->Id().value()));
+            page->_ApplyTabListProjection();
+            page->_tabStrip.UpdateLayout();
+            VERIFY_ARE_EQUAL(1u, display.PaneItems().Size());
+            VERIFY_ARE_EQUAL(Visibility::Visible, display.SelectionVisibility());
+            VERIFY_ARE_EQUAL(Visibility::Collapsed, display.PaneItems().GetAt(0).ActiveIndicatorVisibility());
+            const auto headerRoot = page->_tabStrip.ContainerFromIndex(0).as<ListViewItem>()
+                                        .ContentTemplateRoot().as<StackPanel>().Children().GetAt(0).as<Grid>();
+            const auto nativeSelection = headerRoot.FindName(L"TabSelectionBackground").as<Border>();
+            VERIFY_ARE_EQUAL(Visibility::Visible, nativeSelection.Visibility());
+
             page->_tabFilterMode = winrt::TerminalApp::TabStripFilterMode::AllTabs;
             page->_ApplyTabListProjection();
             VERIFY_ARE_EQUAL(2u, display.PaneItems().Size());
+            VERIFY_ARE_EQUAL(Visibility::Collapsed, nativeSelection.Visibility());
         });
     }
 
