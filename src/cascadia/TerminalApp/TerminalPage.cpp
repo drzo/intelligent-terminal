@@ -11170,6 +11170,11 @@ namespace winrt::TerminalApp::implementation
     {
         const auto paneSessionId = _TryParsePaneSessionId(paneId);
         const auto custom = ::Microsoft::Terminal::CustomAgents::IsId(agent);
+        if (custom &&
+            (!::Microsoft::Terminal::AgentPaneRestore::IsValidSessionId(sessionId) || sessionId.starts_with(L"-")))
+        {
+            return;
+        }
         const auto resumeCommandline = custom ?
                                            std::wstring{} :
                                            ::Microsoft::Terminal::AgentPaneRestore::BuildResumeCommandline(agent, sessionId);

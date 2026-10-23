@@ -410,7 +410,7 @@ namespace SettingsModelUnitTests
             "customAgents": [
                 {"id":"custom:work","name":"Work",
                  "acp":{"command":"adapter.exe","args":["--stdio"]},
-                 "cli":{"command":"work.exe","args":["--config","C:\\config dir\\work.json",""]},
+                 "cli":{"command":"work.exe","args":["--config","C:\\config dir\\work.json","","--pattern","|","&&","||",">","<"]},
                  "resume":{"command":"work.exe","args":["resume","{sessionId}"]}},
                 {"id":"custom:acp-only","acp":{"command":"adapter.exe"}}
             ]
@@ -424,6 +424,10 @@ namespace SettingsModelUnitTests
         const auto serialized = copy->ToJson();
         VERIFY_ARE_EQUAL(std::string{ "custom:work" }, serialized["customAgents"][0]["id"].asString());
         VERIFY_ARE_EQUAL(std::string{ "" }, serialized["customAgents"][0]["cli"]["args"][2].asString());
+        const auto originalCli = Custom::FromJson(json["customAgents"][0]["cli"]);
+        const auto roundtripCli = Custom::Parse(copy->CustomAgents().GetAt(0).CliCommand());
+        VERIFY_IS_TRUE(originalCli.args == roundtripCli.args);
+        VERIFY_IS_TRUE(originalCli.args == Custom::FromJson(serialized["customAgents"][0]["cli"]).args);
         std::vector<winrt::com_ptr<implementation::Profile>> first;
         AgentProfileGenerator{ globals->CustomAgents() }.GenerateProfiles(first);
         const auto find = [](const auto& profiles) {
@@ -465,7 +469,12 @@ namespace SettingsModelUnitTests
         const auto parsed = Custom::Parse(Custom::Format(invocation));
         VERIFY_ARE_EQUAL(invocation.command, parsed.command);
         VERIFY_IS_TRUE(invocation.args == parsed.args);
-        VERIFY_THROWS(Custom::Parse(L"agent.exe | other.exe"), wil::ResultException);
+        for (const auto op : { L"&&", L"||", L"|", L">", L"<" })
+        {
+            VERIFY_THROWS(Custom::Parse(std::wstring{ L"agent.exe " } + op + L" other.exe"), wil::ResultException);
+            const auto literal = Custom::Parse(std::wstring{ L"agent.exe \"" } + op + L"\"");
+            VERIFY_ARE_EQUAL(std::wstring{ op }, literal.args.at(0));
+        }
         VERIFY_THROWS(Custom::Parse(L"agent.exe \"unfinished"), wil::ResultException);
     }
 
@@ -479,12 +488,45 @@ namespace SettingsModelUnitTests
         const auto cleanup = wil::scope_exit([&]() { std::filesystem::remove_all(root); });
         const auto shim = root / L"agent.cmd";
         std::ofstream{ shim } << "@exit /b 88\n";
-        Custom::Invocation invocation{ shim.native(), { L"resume", L"abc-123", LR"(quote " and ' & | ! ^)", L"C:\\path dir\\" } };
+        Custom::Invocation invocation{ shim.native(), { L"resume", L"abc-123", LR"(space and ' & | ! ^)", L"C:\\path dir\\file", L"C:\\plain\\", L"|", L"&&" } };
         VERIFY_THROWS(Custom::LaunchCommand(invocation), wil::ResultException);
         std::ofstream{ root / L"agent.ps1" }
             << "$ErrorActionPreference='Stop'\n"
-               "[IO.File]::WriteAllText((Join-Path $PSScriptRoot 'args.json'), (ConvertTo-Json -Compress -InputObject @($args)))\n"
+               "& powershell.exe -NoLogo -NoProfile -File (Join-Path $PSScriptRoot 'capture.ps1') @args\n"
+               "exit $LASTEXITCODE\n";
+        std::ofstream{ root / L"capture.ps1" }
+            << "$ErrorActionPreference='Stop'\n"
+               "$capture = @{ args = @($args); nativeArgs = [Environment]::GetCommandLineArgs(); commandLine = [Environment]::CommandLine }\n"
+               "[IO.File]::WriteAllText((Join-Path $PSScriptRoot 'args.json'), (ConvertTo-Json -Compress -InputObject $capture))\n"
                "exit 0\n";
+        for (const auto unsupported : { L"", L"a\"b", LR"(quote " and ' & | ! ^)", L"C:\\path dir\\", L"C:\\path dir\\\\", L"C:\\path\tdir\\", L"C:\\path\u00a0dir\\" })
+        {
+            const Custom::Invocation invalid{ shim.native(), { unsupported } };
+            HRESULT result = S_OK;
+            try
+            {
+                Custom::LaunchCommand(invalid);
+            }
+            catch (const wil::ResultException& error)
+            {
+                result = error.GetErrorCode();
+            }
+            VERIFY_ARE_EQUAL(E_INVALIDARG, result);
+            auto native = invalid;
+            native.command = L"agent.exe";
+            VERIFY_ARE_EQUAL(std::wstring{ unsupported }, Custom::Parse(Custom::LaunchCommand(native)).args.at(0));
+        }
+        auto globals = winrt::make_self<implementation::GlobalAppSettings>();
+        globals->LayerJson(VerifyParseSucceeded(R"({"customAgents":[
+            {"id":"custom:batch","cli":{"command":"agent.cmd","args":[""]}},
+            {"id":"custom:native","cli":{"command":"agent.exe","args":["--pattern","|"]}}
+        ]})"), OriginTag::User);
+        std::vector<winrt::com_ptr<implementation::Profile>> profiles;
+        AgentProfileGenerator{ globals->CustomAgents() }.GenerateProfiles(profiles);
+        for (const auto id : { L"custom:batch", L"custom:native" })
+        {
+            VERIFY_IS_TRUE(std::ranges::any_of(profiles, [&](const auto& profile) { return profile->AgentProfileId() == id; }));
+        }
         auto command = Custom::LaunchCommand(invocation);
         wil::unique_process_information process;
         STARTUPINFOW startup{ sizeof(startup) };
@@ -502,11 +544,15 @@ namespace SettingsModelUnitTests
         VERIFY_ARE_EQUAL(0u, exitCode);
         std::ifstream output{ root / L"args.json" };
         const std::string text{ std::istreambuf_iterator<char>{ output }, std::istreambuf_iterator<char>{} };
-        const auto args = VerifyParseSucceeded(text);
+        const auto capture = VerifyParseSucceeded(text);
+        const auto& args = capture["args"];
+        const auto& nativeArgs = capture["nativeArgs"];
         VERIFY_ARE_EQUAL(static_cast<Json::ArrayIndex>(invocation.args.size()), args.size());
+        VERIFY_ARE_EQUAL(static_cast<Json::ArrayIndex>(invocation.args.size() + 5), nativeArgs.size());
         for (Json::ArrayIndex i = 0; i < args.size(); ++i)
         {
             VERIFY_ARE_EQUAL(winrt::to_string(invocation.args[i]), args[i].asString());
+            VERIFY_ARE_EQUAL(winrt::to_string(invocation.args[i]), nativeArgs[i + 5].asString());
         }
     }
 

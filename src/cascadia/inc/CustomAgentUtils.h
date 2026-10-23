@@ -53,14 +53,30 @@ namespace Microsoft::Terminal::CustomAgents
         THROW_HR_IF(E_INVALIDARG, commandline.empty() || commandline.find(L'\0') != std::wstring_view::npos);
         bool quoted = false;
         size_t slashes = 0;
+        size_t tokenStart = 0;
+        bool tokenQuoted = false;
+        const auto checkToken = [&](const size_t end) {
+            const auto token = commandline.substr(tokenStart, end - tokenStart);
+            THROW_HR_IF_MSG(E_INVALIDARG, !tokenQuoted && (token == L"&&" || token == L"||" || token == L"|" || token == L">" || token == L"<"), "Custom agent commands require an executable and arguments, not shell operators");
+        };
+        size_t offset = 0;
         for (const auto ch : commandline)
         {
+            if (!quoted && (ch == L' ' || ch == L'\t'))
+            {
+                checkToken(offset);
+                tokenStart = offset + 1;
+                tokenQuoted = false;
+            }
             if (ch == L'"' && slashes % 2 == 0)
             {
                 quoted = !quoted;
+                tokenQuoted = true;
             }
             slashes = ch == L'\\' ? slashes + 1 : 0;
+            ++offset;
         }
+        checkToken(commandline.size());
         THROW_HR_IF_MSG(E_INVALIDARG, quoted, "Unclosed quote in custom agent command");
         const auto first = commandline.find_first_not_of(L" \t");
         THROW_HR_IF(E_INVALIDARG, first == std::wstring_view::npos);
@@ -73,7 +89,6 @@ namespace Microsoft::Terminal::CustomAgents
         for (int i = 1; i < argc; ++i)
         {
             const std::wstring_view argument{ argv[i] };
-            THROW_HR_IF_MSG(E_INVALIDARG, argument == L"&&" || argument == L"||" || argument == L"|" || argument == L">" || argument == L"<", "Custom agent commands require an executable and arguments, not shell operators");
             invocation.args.emplace_back(argument);
         }
         Validate(invocation, resume);
@@ -125,6 +140,16 @@ namespace Microsoft::Terminal::CustomAgents
         const auto extension = std::filesystem::path{ invocation.command }.extension().native();
         if (til::equals_insensitive_ascii(extension, L".cmd") || til::equals_insensitive_ascii(extension, L".bat"))
         {
+            // Windows PowerShell 5 loses these values when a companion forwards
+            // $args to a native executable, even though the script receives them.
+            const auto unsupported = std::ranges::any_of(invocation.args, [](const auto& arg) {
+                // Match .NET Char.IsWhiteSpace, which determines legacy native
+                // quoting. A trailing backslash then escapes the closing quote.
+                constexpr std::wstring_view whitespace{ L" \t\r\n\v\f\u0085\u00a0\u1680\u2000\u2001\u2002\u2003\u2004\u2005\u2006\u2007\u2008\u2009\u200a\u2028\u2029\u202f\u205f\u3000" };
+                return arg.empty() || arg.find(L'"') != std::wstring::npos ||
+                       (arg.back() == L'\\' && arg.find_first_of(whitespace) != std::wstring::npos);
+            });
+            THROW_HR_IF_MSG(E_INVALIDARG, unsupported, "Custom agent batch companions cannot forward empty arguments, embedded double quotes, or whitespace-containing arguments ending in a backslash; use a native executable");
             auto shim = std::filesystem::path{ invocation.command };
             if (!std::filesystem::is_regular_file(shim) && !shim.has_parent_path())
             {

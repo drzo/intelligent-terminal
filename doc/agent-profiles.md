@@ -184,6 +184,10 @@ companion and invoke that exact companion through PowerShell, without inserting
 session IDs into `cmd` text. Missing executables or companions fail at launch,
 not during profile generation. `%` environment expansion is not supported in
 managed custom CLI commands. Do not put secrets in arguments.
+Batch companions reject empty arguments, embedded double quotes, and arguments
+containing whitespace that end in a backslash because Windows PowerShell cannot
+preserve them when forwarding to a native process. Use a native executable
+invocation when these values are needed.
 
 `resume` requires `cli` and exactly one complete `{sessionId}` argument.
 The resume invocation is independent of the startup invocation; repeat any

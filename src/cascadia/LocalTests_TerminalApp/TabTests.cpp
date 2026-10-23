@@ -661,6 +661,7 @@ namespace TerminalAppLocalTests
         TEST_METHOD(PaneContextPropagatesCaptureFailure);
         TEST_METHOD(AgentSessionRestoreRequiresPersistedBufferPath);
         TEST_METHOD(InteractiveResumeCommandPublishesSessionLifecycle);
+        TEST_METHOD(CustomInteractiveResumeRejectsInvalidSessionIds);
         TEST_METHOD(InteractiveResumeOscPersistsSessionWithoutHooks);
         TEST_METHOD(AgentPaneRestoreRecordRoundTrips);
         TEST_METHOD(AgentPaneRestorePreservesSettingsBinding);
@@ -1339,6 +1340,92 @@ namespace TerminalAppLocalTests
             page->_settings.GlobalSettings().AgentSessionManagementEnabled(false);
             page->_SyncNativeAgentStatusMode();
             VERIFY_ARE_EQUAL(winrt::hstring{ L"copilot" }, manager->NativeAgentProviderId(launchedControl.ContentId()));
+        });
+    }
+
+    void TabTests::CustomInteractiveResumeRejectsInvalidSessionIds()
+    {
+        const winrt::guid paneId{ L"{5d9cc4ac-1a11-4bb0-99ca-82a71e94fa80}" };
+        const auto connection = winrt::make_self<TestConnection>(
+            paneId,
+            winrt::Microsoft::Terminal::TerminalConnection::ConnectionState::Connected);
+        const auto page = _commonSetup(*connection);
+
+        TestOnUIThread([&]() {
+            page->_settings.GlobalSettings().AgentSessionManagementEnabled(true);
+            page->_SyncNativeAgentStatusMode();
+            const auto tab = page->_GetFocusedTabImpl();
+            const auto control = tab->GetActiveTerminalControl();
+            const auto paneIdText = _formatPaneId(paneId);
+            const auto tabId = winrt::to_string(tab->StableId());
+            const auto manager = winrt::get_self<winrt::TerminalApp::implementation::ContentManager>(page->_manager);
+            const auto originalProvider = manager->NativeAgentProviderId(control.ContentId());
+            size_t births = 0;
+            const auto token = page->ProtocolVtSequenceReceived([&](auto&&, const winrt::hstring& payload) {
+                Json::Value event;
+                Json::CharReaderBuilder reader;
+                std::istringstream stream{ winrt::to_string(payload) };
+                std::string errors;
+                if (Json::parseFromStream(reader, stream, &event, &errors) &&
+                    event["method"] == "session_born_bound")
+                {
+                    ++births;
+                }
+            });
+            const auto revoke = wil::scope_exit([&]() {
+                page->ProtocolVtSequenceReceived(token);
+            });
+            const std::vector<std::wstring> invalidIds{
+                L"", L"-option", L"two tokens", L"session;command", L"sidekick-session", std::wstring(257, L'a')
+            };
+            for (const auto& sessionId : invalidIds)
+            {
+                page->_TryPublishInteractiveResumeBinding(control, paneIdText, tabId, L"custom:binding-test", sessionId);
+                VERIFY_IS_FALSE(page->_paneAgentSessions.contains(paneId));
+                VERIFY_IS_FALSE(page->_interactiveResumeSessions.contains(paneId));
+                VERIFY_IS_FALSE(page->_explicitNativeAgentSessions.contains(paneId));
+                VERIFY_ARE_EQUAL(originalProvider, manager->NativeAgentProviderId(control.ContentId()));
+            }
+            VERIFY_ARE_EQUAL(size_t{ 0 }, births);
+
+            NewTerminalArgs rejected;
+            rejected.SessionId(paneId);
+            rejected.Commandline(L"original-command.exe");
+            NewTabArgs rejectedTabArgs{ rejected };
+            ActionAndArgs rejectedAction{ ShortcutAction::NewTab, rejectedTabArgs };
+            std::vector<ActionAndArgs> rejectedActions{ rejectedAction };
+            page->_StampAgentResumeCommandlines(rejectedActions);
+            VERIFY_ARE_EQUAL(winrt::hstring{ L"original-command.exe" }, rejected.Commandline());
+            VERIFY_IS_TRUE(rejected.CustomAgentSessionId().empty());
+
+            // A live session remains resumable metadata even after its definition is removed.
+            page->_settings.GlobalSettings().CustomAgents(winrt::single_threaded_vector<CustomAgent>());
+            const std::wstring validId(256, L'a');
+            page->_TryPublishInteractiveResumeBinding(control, paneIdText, tabId, L"custom:binding-test", validId);
+            VERIFY_ARE_EQUAL(size_t{ 1 }, births);
+            VERIFY_IS_TRUE(page->_paneAgentSessions.at(paneId).structuredCustomResume);
+            VERIFY_IS_TRUE(page->_explicitNativeAgentSessions.contains(paneId));
+            VERIFY_ARE_EQUAL(winrt::hstring{ L"custom:binding-test" }, manager->NativeAgentProviderId(control.ContentId()));
+            for (const auto& sessionId : invalidIds)
+            {
+                page->_TryPublishInteractiveResumeBinding(control, paneIdText, tabId, L"custom:replacement", sessionId);
+                VERIFY_ARE_EQUAL(winrt::hstring{ validId }, page->_paneAgentSessions.at(paneId).sessionId);
+                VERIFY_ARE_EQUAL(winrt::hstring{ L"custom:binding-test" }, page->_paneAgentSessions.at(paneId).agent);
+                VERIFY_ARE_EQUAL(winrt::hstring{ validId }, page->_interactiveResumeSessions.at(paneId).sessionId);
+                VERIFY_ARE_EQUAL(winrt::hstring{ L"custom:binding-test" }, manager->NativeAgentProviderId(control.ContentId()));
+            }
+            VERIFY_ARE_EQUAL(size_t{ 1 }, births);
+
+            NewTerminalArgs persisted;
+            persisted.SessionId(paneId);
+            persisted.Commandline(L"original-command.exe");
+            NewTabArgs tabArgs{ persisted };
+            ActionAndArgs action{ ShortcutAction::NewTab, tabArgs };
+            std::vector<ActionAndArgs> actions{ action };
+            page->_StampAgentResumeCommandlines(actions);
+            VERIFY_ARE_EQUAL(winrt::hstring{ L"custom:binding-test" }, persisted.NativeAgentProviderId());
+            VERIFY_ARE_EQUAL(winrt::hstring{ validId }, persisted.CustomAgentSessionId());
+            VERIFY_IS_TRUE(persisted.Commandline().empty());
         });
     }
 

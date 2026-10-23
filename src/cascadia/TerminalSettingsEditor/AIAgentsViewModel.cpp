@@ -1676,6 +1676,8 @@ namespace winrt::Microsoft::Terminal::Settings::Editor::implementation
             if (AgentRegistry::AgentIdEquals(_editingCustomAcpAgentId, settingsId))
             {
                 _editingCustomAcpAgentId = L"";
+                _customAcpCommand = L"";
+                _LoadCustomAgentEditor(L"");
             }
             _RebuildCustomEntries(_acpAgentList, commands, true);
 
@@ -1690,6 +1692,7 @@ namespace winrt::Microsoft::Terminal::Settings::Editor::implementation
                 _isAddingCustomAcpAgent = true;
                 _editingCustomAcpAgentId = L"";
                 _customAcpCommand = L"";
+                _LoadCustomAgentEditor(L"");
                 _GlobalSettings.AcpAgent(L"");
                 _GlobalSettings.AcpModel(L"");
                 _TriggerAcpModelProbe();

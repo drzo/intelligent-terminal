@@ -1223,7 +1223,7 @@ identity; their executable basename is not treated as a configured provider.
 
 Custom history resumes also pass the trusted conversation ID through
 `wtcli --custom-agent-session`, requiring the `resume_custom_agent_cli_tab`
-capability. Terminal revalidates the provider's current resume definition and
+capability. Terminal validates the provider's current resume definition and
 policy before launch, preserving the resolved profile's settings and binding
 the new pane to that provider and conversation instead of an inherited identity.
 
