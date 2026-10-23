@@ -11194,11 +11194,17 @@ namespace winrt::TerminalApp::implementation
             binding.backend = winrt::hstring{ Backend::AgentPaneBackend::Host(agent) };
             if (const auto previous = _paneAgentSessions.find(*paneSessionId);
                 previous != _paneAgentSessions.end() &&
-                previous->second.agent == binding.agent &&
+                Backend::AgentRegistry::AgentIdEquals(previous->second.agent, binding.agent) &&
                 previous->second.sessionId == binding.sessionId &&
                 !previous->second.backend.empty())
             {
-                binding.backend = previous->second.backend;
+                if (const auto backend = Backend::AgentPaneBackend::Parse(std::wstring_view{ previous->second.backend });
+                    backend && Backend::AgentRegistry::AgentIdEquals(backend->agentId, agent))
+                {
+                    binding.backend = winrt::hstring{ backend->source == Backend::AgentPaneBackendSource::Wsl ?
+                                                         Backend::AgentPaneBackend::Wsl(backend->wslDistro, agent) :
+                                                         Backend::AgentPaneBackend::Host(agent) };
+                }
             }
             // An explicit owning-shell source wins; a default host shell must not
             // erase the qualified provenance of an already bound conversation.
@@ -11212,7 +11218,7 @@ namespace winrt::TerminalApp::implementation
         if (const auto existing = _interactiveResumeSessions.find(*paneSessionId);
             existing != _interactiveResumeSessions.end() &&
             existing->second.sessionId == binding.sessionId &&
-            existing->second.agent == binding.agent &&
+            ::Microsoft::Terminal::Settings::Model::AgentRegistry::AgentIdEquals(existing->second.agent, binding.agent) &&
             existing->second.backend == binding.backend)
         {
             return;
@@ -11647,7 +11653,7 @@ namespace winrt::TerminalApp::implementation
                             winrt::hstring bindingBackend;
                             if (const auto previous = _paneAgentSessions.find(*paneSessionId);
                                 previous != _paneAgentSessions.end() &&
-                                previous->second.agent == winrt::to_hstring(agent) &&
+                                Backend::AgentRegistry::AgentIdEquals(previous->second.agent, winrt::to_hstring(agent)) &&
                                 previous->second.sessionId == winrt::to_hstring(agentSessionId))
                             {
                                 bindingBackend = previous->second.backend;
@@ -11686,6 +11692,14 @@ namespace winrt::TerminalApp::implementation
                                 bindingBackend = winrt::hstring{ Backend::AgentPaneBackend::Wsl(
                                     shell.substr(4), std::wstring_view{ winrt::to_hstring(agent) }) };
                             }
+                            // Persist the backend with the same provider spelling as its owner.
+                            if (const auto backend = Backend::AgentPaneBackend::Parse(std::wstring_view{ bindingBackend });
+                                backend && Backend::AgentRegistry::AgentIdEquals(backend->agentId, winrt::to_hstring(agent)))
+                            {
+                                bindingBackend = winrt::hstring{ backend->source == Backend::AgentPaneBackendSource::Wsl ?
+                                                                    Backend::AgentPaneBackend::Wsl(backend->wslDistro, winrt::to_hstring(agent)) :
+                                                                    Backend::AgentPaneBackend::Host(winrt::to_hstring(agent)) };
+                            }
                             const auto& payload = params["payload"];
                             const auto cwd = params.isMember("cwd") ? params["cwd"] :
                                              payload.isObject()     ? payload.get("cwd", Json::Value{}) :
@@ -11704,7 +11718,7 @@ namespace winrt::TerminalApp::implementation
                             if (const auto previous = _paneAgentSessions.find(*paneSessionId);
                                 previous == _paneAgentSessions.end() ||
                                 previous->second.sessionId != winrt::to_hstring(agentSessionId) ||
-                                previous->second.agent != winrt::to_hstring(agent))
+                                !Backend::AgentRegistry::AgentIdEquals(previous->second.agent, winrt::to_hstring(agent)))
                             {
                                 clearExplicitResume();
                             }
@@ -11713,7 +11727,7 @@ namespace winrt::TerminalApp::implementation
                             const auto structuredCustomResume =
                                 (custom && !custom.ResumeCommand().empty()) ||
                                 (previous != _paneAgentSessions.end() &&
-                                 previous->second.agent == winrt::to_hstring(agent) &&
+                                 Backend::AgentRegistry::AgentIdEquals(previous->second.agent, winrt::to_hstring(agent)) &&
                                  previous->second.sessionId == winrt::to_hstring(agentSessionId) &&
                                  previous->second.structuredCustomResume);
                             _paneAgentSessions.insert_or_assign(

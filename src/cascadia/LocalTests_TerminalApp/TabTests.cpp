@@ -4218,13 +4218,14 @@ namespace TerminalAppLocalTests
             std::string errors;
             VERIFY_IS_TRUE(Json::parseFromStream(reader, stream, &event, &errors));
             event["params"]["wsl_distro"] = "Ubuntu";
+            event["params"]["agent_backend"] = "wsl:Ubuntu:custom:BACKEND-fixture";
             page->OnPaneAgentSessionChanged(winrt::to_hstring(Json::writeString(Json::StreamWriterBuilder{}, event)));
             const auto& binding = page->_paneAgentSessions.at(paneId);
             VERIFY_IS_TRUE(binding.structuredCustomResume);
             VERIFY_ARE_EQUAL(winrt::hstring{ L"wsl:Ubuntu:custom:backend-fixture" }, binding.backend);
             page->OnPaneAgentSessionChanged(_keepRunningHook(
-                paneId, "agent.prompt.submit", "same-session", "custom:backend-fixture"));
-            VERIFY_ARE_EQUAL(winrt::hstring{ L"wsl:Ubuntu:custom:backend-fixture" }, page->_paneAgentSessions.at(paneId).backend);
+                paneId, "agent.prompt.submit", "same-session", "custom:BACKEND-fixture"));
+            VERIFY_ARE_EQUAL(winrt::hstring{ L"wsl:Ubuntu:custom:BACKEND-fixture" }, page->_paneAgentSessions.at(paneId).backend);
             token = page->ProtocolVtSequenceReceived([&](auto&&, const winrt::hstring& payload) {
                 Json::Value event;
                 Json::CharReaderBuilder reader;
@@ -4329,6 +4330,17 @@ namespace TerminalAppLocalTests
             VERIFY_IS_TRUE(page->_pendingRestoredSessionBindings.contains(actualId));
             VERIFY_IS_FALSE(page->_paneAgentSessions.contains(winrt::guid{}));
 
+            page->OnPaneAgentSessionChanged(_keepRunningHook(
+                actualId, "agent.prompt.submit", "known-conversation", "custom:PERSISTENCE-test"));
+            NewTerminalArgs caseVariant;
+            caseVariant.SessionId(actualId);
+            NewTabArgs caseVariantTab{ caseVariant };
+            std::vector<ActionAndArgs> caseVariantActions{ ActionAndArgs{ ShortcutAction::NewTab, caseVariantTab } };
+            page->_StampAgentResumeCommandlines(caseVariantActions);
+            VERIFY_ARE_EQUAL(winrt::hstring{ L"custom:PERSISTENCE-test" }, caseVariant.NativeAgentProviderId());
+            VERIFY_ARE_EQUAL(winrt::hstring{ L"host:custom:PERSISTENCE-test" }, caseVariant.CustomAgentBackend());
+            VERIFY_IS_NOT_NULL(page->_MakePane(caseVariant, nullptr, *connection));
+
             agent.ResumeCommand(L"updated-agent.exe --continue {sessionId}");
             const auto updatedConnection = winrt::make_self<TestConnection>(
                 ::Microsoft::Console::Utils::CreateGuid(), State::Connected);
@@ -4343,8 +4355,11 @@ namespace TerminalAppLocalTests
                     page->_settings.GlobalSettings().CustomAgents(winrt::single_threaded_vector<CustomAgent>());
                 }
                 page->OnPaneAgentSessionChanged(_keepRunningHook(
-                    actualId, "agent.prompt.submit", "known-conversation", "custom:persistence-test"));
+                    actualId, "agent.prompt.submit", "known-conversation",
+                    removeDefinition ? "custom:PERSISTENCE-test" : "custom:persistence-test"));
                 VERIFY_IS_TRUE(page->_paneAgentSessions.at(actualId).structuredCustomResume);
+                const auto& binding = page->_paneAgentSessions.at(actualId);
+                VERIFY_ARE_EQUAL(winrt::hstring{ L"host:" + std::wstring{ binding.agent } }, binding.backend);
                 NewTerminalArgs persisted;
                 persisted.SessionId(actualId);
                 persisted.Commandline(L"stale-agent.exe --resume known-conversation");
@@ -4352,13 +4367,13 @@ namespace TerminalAppLocalTests
                 ActionAndArgs action{ ShortcutAction::NewTab, tabArgs };
                 std::vector<ActionAndArgs> actions{ action };
                 page->_StampAgentResumeCommandlines(actions);
-                VERIFY_ARE_EQUAL(agent.Id(), persisted.NativeAgentProviderId());
+                VERIFY_ARE_EQUAL(binding.agent, persisted.NativeAgentProviderId());
                 VERIFY_ARE_EQUAL(winrt::hstring{ L"known-conversation" }, persisted.CustomAgentSessionId());
                 VERIFY_IS_TRUE(persisted.Commandline().empty());
                 WindowLayout layout;
                 layout.TabLayout(winrt::single_threaded_vector<ActionAndArgs>(std::move(actions)));
                 const auto restored = _getTerminalArgs(WindowLayout::FromJson(WindowLayout::ToJson(layout)).TabLayout().GetAt(0));
-                VERIFY_ARE_EQUAL(agent.Id(), restored.NativeAgentProviderId());
+                VERIFY_ARE_EQUAL(binding.agent, restored.NativeAgentProviderId());
                 VERIFY_ARE_EQUAL(winrt::hstring{ L"known-conversation" }, restored.CustomAgentSessionId());
                 VERIFY_IS_TRUE(restored.Commandline().empty());
                 VERIFY_THROWS(page->_MakePane(restored, nullptr, *connection), winrt::hresult_error);
