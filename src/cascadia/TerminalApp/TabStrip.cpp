@@ -1349,6 +1349,11 @@ namespace winrt::TerminalApp::implementation
             {
                 if (const auto presenter = _findNamedElement(container, L"SidebarItemPresenter").try_as<Primitives::ListViewItemPresenter>())
                 {
+                    if (Windows::Foundation::Metadata::ApiInformation::IsPropertyPresent(
+                            L"Windows.UI.Xaml.Controls.Primitives.ListViewItemPresenter", L"SelectionIndicatorVisualEnabled"))
+                    {
+                        presenter.SelectionIndicatorVisualEnabled(!selectedPaneVisible);
+                    }
                     const auto marker = box_value(L"SidebarThemedHover");
                     if (!_highContrast)
                     {
@@ -1742,10 +1747,6 @@ namespace winrt::TerminalApp::implementation
                 if (const auto title = _findNamedElement(root, L"PaneTitleText").try_as<TerminalApp::HighlightedTextControl>())
                 {
                     title.Text(pane.Title());
-                }
-                if (const auto indicator = _findNamedElement(root, L"PaneActiveIndicator"))
-                {
-                    indicator.Visibility(pane.ActiveIndicatorVisibility());
                 }
                 if (const auto close = _findNamedElement(root, L"PaneCloseButton"))
                 {
@@ -2718,10 +2719,18 @@ namespace winrt::TerminalApp::implementation
         if (!display)
         {
             if (const auto presenter = _findNamedElement(container, L"SidebarItemPresenter").try_as<Primitives::ListViewItemPresenter>();
-                presenter && presenter.Resources().HasKey(box_value(L"SidebarThemedHover")))
+                presenter)
             {
-                presenter.PointerOverBackground(SidebarDefaultHoverBrush().Background());
-                presenter.Resources().Remove(box_value(L"SidebarThemedHover"));
+                if (Windows::Foundation::Metadata::ApiInformation::IsPropertyPresent(
+                        L"Windows.UI.Xaml.Controls.Primitives.ListViewItemPresenter", L"SelectionIndicatorVisualEnabled"))
+                {
+                    presenter.SelectionIndicatorVisualEnabled(true);
+                }
+                if (presenter.Resources().HasKey(box_value(L"SidebarThemedHover")))
+                {
+                    presenter.PointerOverBackground(SidebarDefaultHoverBrush().Background());
+                    presenter.Resources().Remove(box_value(L"SidebarThemedHover"));
+                }
             }
         }
         container.IsTabStop(!header);

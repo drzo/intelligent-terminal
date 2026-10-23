@@ -29,6 +29,8 @@
                     <ResourceDictionary.ThemeDictionaries>
                         <ResourceDictionary x:Key="Light">
                             <SolidColorBrush x:Key="AgentsOnlyIndicatorBrush" Color="#005FB7" />
+                            <StaticResource x:Key="PaneActiveIndicatorBrush"
+                                            ResourceKey="SystemControlForegroundBaseHighBrush" />
                             <StaticResource x:Key="PaneProgressAccentBrush"
                                             ResourceKey="SystemControlForegroundAccentBrush" />
                             <StaticResource x:Key="PaneProgressCriticalBrush"
@@ -38,6 +40,8 @@
                         </ResourceDictionary>
                         <ResourceDictionary x:Key="Dark">
                             <SolidColorBrush x:Key="AgentsOnlyIndicatorBrush" Color="#60CDFF" />
+                            <StaticResource x:Key="PaneActiveIndicatorBrush"
+                                            ResourceKey="SystemControlForegroundBaseHighBrush" />
                             <StaticResource x:Key="PaneProgressAccentBrush"
                                             ResourceKey="SystemControlForegroundAccentBrush" />
                             <StaticResource x:Key="PaneProgressCriticalBrush"
@@ -47,6 +51,8 @@
                         </ResourceDictionary>
                         <ResourceDictionary x:Key="HighContrast">
                             <StaticResource x:Key="AgentsOnlyIndicatorBrush"
+                                            ResourceKey="SystemColorWindowTextColorBrush" />
+                            <StaticResource x:Key="PaneActiveIndicatorBrush"
                                             ResourceKey="SystemColorWindowTextColorBrush" />
                             <StaticResource x:Key="PaneProgressAccentBrush"
                                             ResourceKey="SystemControlForegroundAccentBrush" />
@@ -689,9 +695,24 @@
                             </Button>
                         </Grid>
                         <ItemsControl x:Name="TabPaneItems"
-                                      Margin="22,0,0,0"
+                                      Margin="10,0,0,0"
                                       ItemsSource="{x:Bind PaneItems, Mode=OneWay}"
                                       Visibility="{x:Bind ChildrenVisibility, Mode=OneWay}">
+                            <ItemsControl.Template>
+                                <ControlTemplate TargetType="ItemsControl">
+                                    <Grid>
+                                        <Border x:Name="PaneGroupIndicator"
+                                                Width="3"
+                                                Margin="0,5"
+                                                HorizontalAlignment="Left"
+                                                Background="{ThemeResource PaneActiveIndicatorBrush}"
+                                                CornerRadius="2"
+                                                IsHitTestVisible="False"
+                                                Visibility="{Binding SelectionVisibility, Mode=OneWay}" />
+                                        <ItemsPresenter />
+                                    </Grid>
+                                </ControlTemplate>
+                            </ItemsControl.Template>
                             <ItemsControl.ItemTemplate>
                                 <DataTemplate x:DataType="local:TabStripPaneItem">
                                     <Grid MinHeight="30"
@@ -712,24 +733,28 @@
                                         </Grid.ColumnDefinitions>
                                         <Border x:Name="PaneActiveBackground"
                                                 Grid.ColumnSpan="2"
+                                                Margin="10,0,0,0"
                                                 Background="{ThemeResource ListViewItemBackgroundSelected}"
                                                 CornerRadius="{StaticResource SidebarTabCornerRadius}"
                                                 IsHitTestVisible="False"
                                                 Visibility="Collapsed" />
                                         <Border x:Name="PaneColorSelectionBackground"
                                                 Grid.ColumnSpan="2"
+                                                Margin="10,0,0,0"
                                                 Background="Transparent"
                                                 CornerRadius="{StaticResource SidebarTabCornerRadius}"
                                                 IsHitTestVisible="False"
                                                 Visibility="{x:Bind ActiveIndicatorVisibility, Mode=OneWay}" />
                                         <Border x:Name="PaneHoverBackground"
                                                 Grid.ColumnSpan="2"
+                                                Margin="10,0,0,0"
                                                 Background="{ThemeResource TabViewItemHeaderBackgroundPointerOver}"
                                                 CornerRadius="{StaticResource SidebarTabCornerRadius}"
                                                 IsHitTestVisible="False"
                                                 Opacity="0" />
                                         <Border x:Name="PaneColorHoverBackground"
                                                 Grid.ColumnSpan="2"
+                                                Margin="10,0,0,0"
                                                 CornerRadius="{StaticResource SidebarTabCornerRadius}"
                                                 IsHitTestVisible="False"
                                                 Opacity="0" />
@@ -750,7 +775,7 @@
                                                 <SolidColorBrush x:Key="ButtonBackgroundPressed"
                                                                  Color="Transparent" />
                                             </Button.Resources>
-                                            <Grid Margin="0,0,30,0">
+                                            <Grid Margin="12,0,30,0">
                                                 <Grid.RowDefinitions>
                                                     <RowDefinition Height="Auto" />
                                                     <RowDefinition Height="Auto" />
@@ -760,15 +785,6 @@
                                                     <ColumnDefinition Width="28" />
                                                     <ColumnDefinition Width="*" />
                                                 </Grid.ColumnDefinitions>
-                                                <Border x:Name="PaneActiveIndicator"
-                                                        Grid.Column="0"
-                                                        Grid.RowSpan="2"
-                                                        Width="3"
-                                                        Margin="0,5"
-                                                        HorizontalAlignment="Left"
-                                                        Background="{ThemeResource SystemAccentColor}"
-                                                        CornerRadius="2"
-                                                        Visibility="{x:Bind ActiveIndicatorVisibility, Mode=OneWay}" />
                                                 <ContentPresenter x:Name="PaneIconPresenter"
                                                                   Grid.Column="1"
                                                                   Grid.RowSpan="2"

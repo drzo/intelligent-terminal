@@ -15577,7 +15577,7 @@ namespace TerminalAppLocalTests
             const auto secondPaneActivateButton = secondPaneRoot.FindName(L"PaneActivateButton").as<Button>();
             const auto secondPaneClose = secondPaneRoot.FindName(L"PaneCloseButton").as<Button>();
             VERIFY_ARE_EQUAL(Visibility::Visible, firstPaneBackground.Visibility());
-            VERIFY_ARE_EQUAL(firstPaneRoot.ActualWidth(), firstPaneBackground.ActualWidth());
+            VERIFY_ARE_EQUAL(firstPaneRoot.ActualWidth() - 10, firstPaneBackground.ActualWidth());
             VERIFY_ARE_EQUAL(firstPaneRoot.ActualWidth(), firstPaneActivateButton.ActualWidth());
             const auto tabSelection = headerRoot.FindName(L"TabSelectionBackground").as<Border>();
             VERIFY_ARE_EQUAL(tabSelection.Background().as<Media::SolidColorBrush>().Color(),
@@ -15635,7 +15635,6 @@ namespace TerminalAppLocalTests
             const auto firstPaneTitle = firstPaneRoot.FindName(L"PaneTitleText").as<winrt::TerminalApp::HighlightedTextControl>();
             VERIFY_ARE_EQUAL(winrt::hstring{ L"Renamed pane" }, firstPaneTitle.Text());
             VERIFY_ARE_EQUAL(winrt::hstring{ L"Renamed pane" }, winrt::unbox_value<winrt::hstring>(ToolTipService::GetToolTip(firstPaneActivateButton)));
-            VERIFY_ARE_EQUAL(Visibility::Collapsed, firstPaneRoot.FindName(L"PaneActiveIndicator").as<FrameworkElement>().Visibility());
 
             stripImpl->SetTabSearchText(tab, L"pane");
             VERIFY_ARE_EQUAL(winrt::hstring{ L"pane" }, display.SearchText());
@@ -15800,13 +15799,38 @@ namespace TerminalAppLocalTests
             const auto secondDisplay = impl->DisplayItemForTab(second);
             const auto firstActive = firstDisplay.PaneItems().GetAt(1);
             const auto secondActive = secondDisplay.PaneItems().GetAt(0);
+            const auto hasNativeIndicator = winrt::Windows::Foundation::Metadata::ApiInformation::IsPropertyPresent(
+                L"Windows.UI.Xaml.Controls.Primitives.ListViewItemPresenter", L"SelectionIndicatorVisualEnabled");
+            const auto findPresenter = [](const auto& self, const DependencyObject& element) -> Primitives::ListViewItemPresenter {
+                if (const auto presenter = element.try_as<Primitives::ListViewItemPresenter>())
+                {
+                    return presenter;
+                }
+                for (auto index = 0; index < Media::VisualTreeHelper::GetChildrenCount(element); ++index)
+                {
+                    if (const auto presenter = self(self, Media::VisualTreeHelper::GetChild(element, index)))
+                    {
+                        return presenter;
+                    }
+                }
+                return nullptr;
+            };
             const auto verifySelection = [&](const auto& display, const int32_t selectedPane) {
                 host.UpdateLayout();
                 const auto container = strip.ContainerFromIndex(display == firstDisplay ? 0 : 1).as<ListViewItem>();
                 VERIFY_IS_NOT_NULL(container);
+                const auto nativePresenter = findPresenter(findPresenter, container);
+                VERIFY_IS_NOT_NULL(nativePresenter);
+                if (hasNativeIndicator)
+                {
+                    VERIFY_ARE_EQUAL(selectedPane < 0, nativePresenter.SelectionIndicatorVisualEnabled());
+                }
                 const auto root = container.ContentTemplateRoot().as<StackPanel>();
                 VERIFY_IS_NOT_NULL(root);
                 const auto paneList = root.Children().GetAt(1).as<ItemsControl>();
+                const auto groupIndicator = Media::VisualTreeHelper::GetChild(paneList, 0).as<Grid>().Children().GetAt(0).as<Border>();
+                VERIFY_ARE_EQUAL(10.0, paneList.Margin().Left);
+                VERIFY_ARE_EQUAL(selectedPane < 0 ? Visibility::Collapsed : Visibility::Visible, groupIndicator.Visibility());
                 for (uint32_t index = 0; index < display.PaneItems().Size(); ++index)
                 {
                     const auto expected = static_cast<int32_t>(index) == selectedPane ? Visibility::Visible : Visibility::Collapsed;
@@ -15814,16 +15838,65 @@ namespace TerminalAppLocalTests
                     const auto presenter = paneList.ContainerFromIndex(index).as<ContentPresenter>();
                     VERIFY_IS_NOT_NULL(presenter);
                     const auto paneRoot = Media::VisualTreeHelper::GetChild(presenter, 0).as<FrameworkElement>();
-                    VERIFY_ARE_EQUAL(expected, paneRoot.FindName(L"PaneActiveBackground").as<Border>().Visibility());
-                    VERIFY_ARE_EQUAL(expected, paneRoot.FindName(L"PaneActiveIndicator").as<Border>().Visibility());
+                    const auto background = paneRoot.FindName(L"PaneActiveBackground").as<Border>();
+                    VERIFY_ARE_EQUAL(expected, background.Visibility());
+                    VERIFY_ARE_EQUAL(10.0, background.Margin().Left);
                 }
+                VERIFY_ARE_EQUAL(paneList.ActualHeight() - 10, groupIndicator.ActualHeight());
             };
             verifySelection(firstDisplay, 1);
             verifySelection(secondDisplay, -1);
+            setPanes(first, true);
+            verifySelection(firstDisplay, 0);
+            setPanes(first, false);
+            verifySelection(firstDisplay, 1);
+            const auto firstHeader = strip.ContainerFromIndex(0).as<ListViewItem>().ContentTemplateRoot().as<StackPanel>().Children().GetAt(0).as<Grid>();
+            const auto groupToggle = firstHeader.FindName(L"TabGroupToggleButton").as<Button>();
+            impl->OnGroupToggleClick(groupToggle, RoutedEventArgs{});
+            host.UpdateLayout();
+            if (hasNativeIndicator)
+            {
+                VERIFY_IS_TRUE(findPresenter(findPresenter, strip.ContainerFromIndex(0)).SelectionIndicatorVisualEnabled());
+            }
+            VERIFY_ARE_EQUAL(Visibility::Collapsed, firstDisplay.ChildrenVisibility());
+            impl->OnGroupToggleClick(groupToggle, RoutedEventArgs{});
+            verifySelection(firstDisplay, 1);
+
+            if (!winrt::Windows::UI::ViewManagement::AccessibilitySettings{}.HighContrast())
+            {
+                for (const auto theme : { ElementTheme::Dark, ElementTheme::Light })
+                {
+                    strip.RequestedTheme(theme);
+                    host.UpdateLayout();
+                    const auto root = strip.ContainerFromIndex(0).as<ListViewItem>().ContentTemplateRoot().as<StackPanel>();
+                    const auto paneList = root.Children().GetAt(1).as<ItemsControl>();
+                    const auto indicator = Media::VisualTreeHelper::GetChild(paneList, 0).as<Grid>().Children().GetAt(0).as<Border>();
+                    const auto actual = indicator.Background().as<Media::SolidColorBrush>();
+                    VERIFY_ARE_EQUAL(theme, paneList.ActualTheme());
+                    VERIFY_ARE_EQUAL(Visibility::Visible, indicator.Visibility());
+                    VERIFY_ARE_EQUAL(actual.Color().R, actual.Color().G);
+                    VERIFY_ARE_EQUAL(actual.Color().R, actual.Color().B);
+                    VERIFY_ARE_EQUAL(1.0, actual.Opacity());
+                    if (theme == ElementTheme::Dark)
+                    {
+                        VERIFY_ARE_EQUAL(winrt::Windows::UI::Colors::White(), actual.Color());
+                    }
+                    else
+                    {
+                        VERIFY_IS_TRUE(actual.Color().R < 128);
+                    }
+                }
+                strip.RequestedTheme(ElementTheme::Default);
+                host.UpdateLayout();
+            }
 
             strip.SelectedItem(single);
             verifySelection(firstDisplay, -1);
             verifySelection(secondDisplay, -1);
+            if (hasNativeIndicator)
+            {
+                VERIFY_IS_TRUE(findPresenter(findPresenter, strip.ContainerFromIndex(2)).SelectionIndicatorVisualEnabled());
+            }
             VERIFY_IS_TRUE(firstActive.IsActive());
             VERIFY_IS_TRUE(secondActive.IsActive());
 
