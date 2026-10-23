@@ -74,12 +74,8 @@ namespace winrt::TerminalApp::implementation
         }
     }
 
-    static void _RetirePaneSession(ContentManager::PaneMetadata& metadata)
+    static void _ClearPaneSession(ContentManager::PaneMetadata& metadata)
     {
-        if (!metadata.session.sessionId.empty())
-        {
-            metadata.supersededSessions.emplace_back(metadata.Identity());
-        }
         metadata.session = {};
         metadata.source.clear();
         metadata.wslDistro.clear();
@@ -91,6 +87,15 @@ namespace winrt::TerminalApp::implementation
         metadata.awaitingSessionStart = false;
         metadata.sessionStartConfirmed = false;
         metadata.eventJson.clear();
+    }
+
+    static void _RetirePaneSession(ContentManager::PaneMetadata& metadata)
+    {
+        if (!metadata.session.sessionId.empty())
+        {
+            metadata.supersededSessions.emplace_back(metadata.Identity());
+        }
+        _ClearPaneSession(metadata);
     }
 
     ControlInteractivity ContentManager::CreateCore(const Microsoft::Terminal::Control::IControlSettings& settings,
@@ -305,10 +310,11 @@ namespace winrt::TerminalApp::implementation
                     metadata.eventJson.clear();
                     if (!metadata.explicitNativeAgent)
                     {
-                        const auto retainLaunch = metadata.HasAgent() && !metadata.connectionClosed &&
-                                                  !metadata.launchProvider.empty();
-                        _RetirePaneSession(metadata);
-                        metadata.state = retainLaunch ? PaneAgentState::Starting : PaneAgentState::Ended;
+                        const auto recoverable = !metadata.connectionClosed && metadata.state != PaneAgentState::Ended;
+                        const auto retainLaunch = recoverable && !metadata.launchProvider.empty();
+                        _ClearPaneSession(metadata);
+                        metadata.state = retainLaunch ? PaneAgentState::Starting :
+                                         recoverable ? PaneAgentState::Unknown : PaneAgentState::Ended;
                         metadata.activity.clear();
                         if (retainLaunch)
                         {

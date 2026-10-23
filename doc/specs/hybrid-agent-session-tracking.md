@@ -81,6 +81,12 @@ bindings but preserves a live launch-owned pane's agent eligibility and explicit
 resume bindings. Repeating the same mode synchronization from another window
 does not retire metadata again or revive ended/closed panes. OFF observations
 use the shared launch provider, including provider refinements admitted while ON.
+Mode-only clearing does not mark the live conversation superseded: after
+OFF-to-ON, a same-conversation prompt or history enrichment can recover its
+binding without a new session-start event. An ordinary-shell launch becomes
+Unknown while its hook binding is cleared; a native launch stays Starting.
+Previously superseded identities and genuinely ended/closed panes keep their
+stale-update guards.
 Connection restarts rekey metadata before the replacement CLI starts. When the
 replacement executes the identical command, an explicit selected resume retains
 its qualified source, distro, universe, exact command and command trust in either

@@ -563,6 +563,7 @@ namespace TerminalAppLocalTests
         TEST_METHOD(RunningAgentIconOverridesProfileIcon);
         TEST_METHOD(AgentsOnlyPaneIconsFollowRowForeground);
         TEST_METHOD(NativeAgentCreationOwnsProviderBeforeHooks);
+        TEST_METHOD(NativeAgentModeRoundTripRecoversSameConversation);
         TEST_METHOD(NativeAgentCreationMetadataSurvivesAdmissionLifecycle);
         TEST_METHOD(NativeAgentLaunchSourceRefinesOnlyDeclaredPane);
         TEST_METHOD(NativeAgentOnUnbindClearsMatchingTemporaryResumeProvider);
@@ -23306,6 +23307,99 @@ namespace TerminalAppLocalTests
             page->OnPaneAgentSessionChanged(shellActivity);
             VERIFY_IS_TRUE(manager->NativeAgentProviderId(shell.ContentId()).empty());
             VERIFY_ARE_EQUAL(shellActivity, manager->AgentSessionEvent(shell.ContentId()));
+        });
+    }
+
+    void TabTests::NativeAgentModeRoundTripRecoversSameConversation()
+    {
+        using Manager = winrt::TerminalApp::implementation::ContentManager;
+        using State = winrt::Microsoft::Terminal::TerminalConnection::ConnectionState;
+        const auto baseline = winrt::make_self<TestConnection>(::Microsoft::Console::Utils::CreateGuid(), State::Connected);
+        auto page = _commonSetup(*baseline);
+        TestOnUIThread([&]() {
+            const auto manager = winrt::get_self<Manager>(page->_manager);
+            manager->SetNativeAgentSessionEventsEnabled(true);
+            for (const auto provider : { L"", L"copilot" })
+            {
+                for (const auto historyFirst : { true, false })
+                {
+                    const auto connection = winrt::make_self<TestConnection>(::Microsoft::Console::Utils::CreateGuid(), State::Connected);
+                    const auto id = connection->SessionId();
+                    NewTerminalArgs args;
+                    args.NativeAgentProviderId(provider);
+                    const auto pane = page->_MakePane(args, nullptr, *connection);
+                    VERIFY_IS_NOT_NULL(page->_CreateNewTabFromPane(pane));
+                    const auto tab = page->_GetFocusedTabImpl();
+                    const auto hook = [&](const std::string_view name, const std::string_view session = "current-conversation") {
+                        manager->OnPaneAgentSessionChanged(_keepRunningHook(id, name, session, "copilot"), false);
+                    };
+                    const auto enrich = [&](const winrt::hstring& session = L"current-conversation") {
+                        manager->UpdatePaneSessionIdentity(
+                            id, { session, L"copilot", {}, {}, L"C:\\same-conversation" }, L"host", {}, L"mode-store");
+                    };
+                    hook("agent.session.start", "superseded-conversation");
+                    hook("agent.session.start");
+                    const auto before = manager->MetadataForPane(id).value();
+                    VERIFY_IS_FALSE(before.explicitNativeAgent);
+                    VERIFY_IS_TRUE(before.HasSession());
+                    VERIFY_IS_TRUE(before.IsSuperseded({ L"superseded-conversation", L"copilot", {}, {}, {} }));
+                    VERIFY_IS_FALSE(before.IsSuperseded(before.Identity()));
+                    manager->SetNativeAgentSessionEventsEnabled(false);
+                    const auto disabled = manager->MetadataForPane(id).value();
+                    VERIFY_IS_TRUE(disabled.session.sessionId.empty());
+                    VERIFY_IS_TRUE(disabled.state == (std::wstring_view{ provider }.empty() ?
+                                                          Manager::PaneAgentState::Unknown : Manager::PaneAgentState::Starting));
+                    VERIFY_ARE_EQUAL(before.supersededSessions.size(), disabled.supersededSessions.size());
+                    VERIFY_IS_TRUE(disabled.IsSuperseded({ L"superseded-conversation", L"copilot", {}, {}, {} }));
+                    VERIFY_IS_FALSE(disabled.IsSuperseded(before.Identity()));
+                    manager->SetNativeAgentSessionEventsEnabled(true);
+                    hook("agent.prompt.submit", "superseded-conversation");
+                    enrich(L"superseded-conversation");
+                    VERIFY_IS_TRUE(manager->MetadataForPane(id)->session.sessionId.empty());
+                    // Recover the same conversation without another session.start, in either ingress order.
+                    if (historyFirst)
+                    {
+                        enrich();
+                    }
+                    else
+                    {
+                        hook("agent.prompt.submit");
+                    }
+                    VERIFY_ARE_EQUAL(winrt::hstring{ L"current-conversation" }, manager->MetadataForPane(id)->session.sessionId);
+                    hook("agent.prompt.submit");
+                    hook("agent.stop");
+                    VERIFY_ARE_EQUAL(winrt::hstring{ L"Idle" }, manager->MetadataForPane(id)->activity);
+                    hook("agent.tool.starting");
+                    VERIFY_ARE_EQUAL(winrt::hstring{ L"Working" }, manager->MetadataForPane(id)->activity);
+                    enrich();
+                    VERIFY_ARE_EQUAL(winrt::hstring{ L"C:\\same-conversation" }, manager->MetadataForPane(id)->session.cwd);
+                    VERIFY_ARE_EQUAL(winrt::hstring{ L"mode-store" }, manager->MetadataForPane(id)->universe);
+                    VERIFY_IS_TRUE(page->_TabHasCliAgent(tab));
+                    VERIFY_IS_TRUE(page->_MatchesPaneAgentScope(
+                        winrt::TerminalApp::implementation::Tab::VisiblePaneSnapshot{ .SessionId = id }));
+                    hook("agent.prompt.submit", "superseded-conversation");
+                    enrich(L"superseded-conversation");
+                    VERIFY_ARE_EQUAL(winrt::hstring{ L"current-conversation" }, manager->MetadataForPane(id)->session.sessionId);
+                    VERIFY_ARE_EQUAL(before.supersededSessions.size(), manager->MetadataForPane(id)->supersededSessions.size());
+                    manager->EndPaneSession(id);
+                    manager->SetNativeAgentSessionEventsEnabled(false);
+                    manager->SetNativeAgentSessionEventsEnabled(true);
+                    hook("agent.prompt.submit");
+                    hook("agent.tool.starting");
+                    enrich();
+                    VERIFY_IS_TRUE(manager->MetadataForPane(id)->state == Manager::PaneAgentState::Ended);
+                    VERIFY_IS_FALSE(manager->MetadataForPane(id)->HasSession());
+                    VERIFY_IS_TRUE(manager->MetadataForPane(id)->IsSuperseded(before.Identity()));
+                    manager->SetPaneConnectionState(id, false);
+                    manager->SetNativeAgentSessionEventsEnabled(false);
+                    manager->SetNativeAgentSessionEventsEnabled(true);
+                    hook("agent.prompt.submit");
+                    enrich();
+                    VERIFY_IS_TRUE(manager->MetadataForPane(id)->connectionClosed);
+                    VERIFY_IS_TRUE(manager->MetadataForPane(id)->state == Manager::PaneAgentState::Ended);
+                    VERIFY_IS_FALSE(manager->MetadataForPane(id)->HasSession());
+                }
+            }
         });
     }
 
