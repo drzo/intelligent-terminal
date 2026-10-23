@@ -3044,7 +3044,7 @@ pub async fn run_acp_client_over_pipe(
     mut rename_session_rx: mpsc::UnboundedReceiver<RenameSessionRequest>,
     mut restart_rx: mpsc::UnboundedReceiver<AgentLifecycleRequest>,
     mut session_hook_rx: mpsc::UnboundedReceiver<crate::app::QueuedSessionHook>,
-    mut master_ext_rx: mpsc::UnboundedReceiver<MasterExtRequest>,
+    master_ext_rx: mpsc::UnboundedReceiver<MasterExtRequest>,
     shell_mgr: Arc<ShellManager>,
     wt_connected: bool,
     post_login_reconnect: bool,
@@ -3054,6 +3054,10 @@ pub async fn run_acp_client_over_pipe(
     >,
     proposal_channels: Arc<crate::agent_tools::action_proposal::channel::ProposalChannelManager>,
 ) -> Result<AcpClientExit> {
+    let mut master_ext_rx = PendingMasterRequests {
+        receiver: master_ext_rx,
+        event_tx: event_tx.clone(),
+    };
     let startup_probe = StartupProbe::new();
     let usage_family_id = agent_id.as_deref().and_then(|agent_id| {
         let family_id = agent_id.trim().to_ascii_lowercase();
@@ -3966,7 +3970,7 @@ pub async fn run_acp_client_over_pipe(
                     }
                 }));
             }
-            Some(req) = master_ext_rx.recv() => {
+            Some(req) = master_ext_rx.receiver.recv() => {
                 lifecycle_tasks.retain(|task| !task.is_finished());
                 lifecycle_tasks.push(dispatch_master_ext_request(
                     req,
@@ -5469,6 +5473,45 @@ fn retire_queued_prompt_submissions(prompt_rx: &mut mpsc::UnboundedReceiver<Prom
     }
 }
 
+// Own the queue across startup errors, normal teardown, and task cancellation.
+// Only requests still in this queue are definitely never dispatched.
+pub(crate) struct PendingMasterRequests {
+    pub(crate) receiver: mpsc::UnboundedReceiver<MasterExtRequest>,
+    pub(crate) event_tx: mpsc::UnboundedSender<AppEvent>,
+}
+
+impl PendingMasterRequests {
+    fn close(&mut self) {
+        self.receiver.close();
+        while let Ok(request) = self.receiver.try_recv() {
+            if let MasterExtRequest::SessionActivate {
+                identity,
+                window_id,
+                activation_id,
+                tab_id,
+                status_only: false,
+                ..
+            } = request
+            {
+                let _ = self
+                    .event_tx
+                    .send(AppEvent::SessionActivationNotDispatched {
+                        identity,
+                        window_id,
+                        activation_id,
+                        tab_id,
+                    });
+            }
+        }
+    }
+}
+
+impl Drop for PendingMasterRequests {
+    fn drop(&mut self) {
+        self.close();
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 fn close_client_receivers(
     prompt_rx: &mut mpsc::UnboundedReceiver<PromptSubmission>,
@@ -5478,7 +5521,7 @@ fn close_client_receivers(
     rename_session_rx: &mut mpsc::UnboundedReceiver<RenameSessionRequest>,
     restart_rx: &mut mpsc::UnboundedReceiver<AgentLifecycleRequest>,
     session_hook_rx: &mut mpsc::UnboundedReceiver<crate::agent_sessions::SessionEvent>,
-    master_ext_rx: &mut mpsc::UnboundedReceiver<MasterExtRequest>,
+    master_ext_rx: &mut PendingMasterRequests,
 ) {
     retire_queued_prompt_submissions(prompt_rx);
     new_session_rx.close();

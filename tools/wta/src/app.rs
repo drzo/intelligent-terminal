@@ -5846,6 +5846,7 @@ impl App {
             AppEvent::RegisterBornBoundSession { .. } => "register_born_bound_session",
             AppEvent::MasterMutationCompleted { .. } => "master_mutation_completed",
             AppEvent::SessionActivationCompleted { .. } => "session_activation_completed",
+            AppEvent::SessionActivationNotDispatched { .. } => "session_activation_not_dispatched",
             AppEvent::DirectTerminalActionProposal { .. } => "direct_terminal_action_proposal",
             AppEvent::DirectTerminalActionProposalCommit { .. } => {
                 "direct_terminal_action_proposal_commit"

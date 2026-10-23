@@ -2824,6 +2824,27 @@ impl App {
             AppEvent::SessionActivationCompleted { activation_id } => {
                 self.pending_session_activations.remove(&activation_id);
             }
+            AppEvent::SessionActivationNotDispatched {
+                identity,
+                window_id,
+                activation_id,
+                tab_id,
+            } => {
+                if self
+                    .pending_session_activations
+                    .get(&activation_id)
+                    .is_some_and(|request| {
+                        matches!(request,
+                        crate::protocol::acp::client::MasterExtRequest::SessionActivate {
+                            identity: pending_identity, window_id: pending_window,
+                            activation_id: pending_id, tab_id: pending_tab, ..
+                        } if pending_identity == &identity && *pending_window == window_id
+                            && pending_id == &activation_id && pending_tab == &tab_id)
+                    })
+                {
+                    self.pending_session_activations.remove(&activation_id);
+                }
+            }
             AppEvent::WtEvent {
                 method,
                 pane_id,
