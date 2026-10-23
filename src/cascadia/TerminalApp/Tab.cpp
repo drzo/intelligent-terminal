@@ -529,19 +529,20 @@ namespace winrt::TerminalApp::implementation
 
     void Tab::_UpdateIconVisibility()
     {
-        // Retain identity independently of progress. Horizontal progress uses
+        // Retain identity independently of bell/progress. Horizontal status uses
         // the native icon slot, which survives Compact's hidden header. An empty
         // native source keeps that slot enabled without painting an identity;
         // the Sidebar descriptor never receives this presentation-only source.
         const auto source = _iconHidden ? IconSource{ nullptr } : _iconSource;
+        const auto showStatusIcon = _tabStatus.BellIndicator() || _tabStatus.IsProgressRingActive();
         _headerControl.Presentation().IconSource(source);
-        TabViewItem().IconSource(_tabStatus.IsProgressRingActive() ? _progressIconSource : source);
+        TabViewItem().IconSource(showStatusIcon ? _progressIconSource : source);
         if (Media::VisualTreeHelper::GetChildrenCount(TabViewItem()) > 0)
         {
             const auto root = Media::VisualTreeHelper::GetChild(TabViewItem(), 0).as<FrameworkElement>();
             if (const auto icon = root.FindName(L"IconControl").try_as<WUX::Controls::ContentControl>())
             {
-                icon.Visibility(_tabStatus.IsProgressRingActive() ? Visibility::Collapsed : Visibility::Visible);
+                icon.Visibility(showStatusIcon ? Visibility::Collapsed : Visibility::Visible);
             }
         }
     }
@@ -554,7 +555,12 @@ namespace winrt::TerminalApp::implementation
     {
         ASSERT_UI_THREAD();
 
-        _tabStatus.BellIndicator(show);
+        if (_tabStatus.BellIndicator() != show)
+        {
+            _tabStatus.BellIndicator(show);
+            _UpdateIconVisibility();
+            PropertyChanged.raise(*this, WUX::Data::PropertyChangedEventArgs{ L"Icon" });
+        }
     }
 
     // Method Description:

@@ -403,15 +403,17 @@ namespace winrt::TerminalApp::implementation
         const auto isGroup = IsGroup();
         const auto showPaneRows = verticalPresentation && isGroup && !railCollapsed && IsExpanded();
         const auto status = Presentation().TabStatus();
-        const auto showHeaderProgressRing = status && status.IsProgressRingActive() &&
+        const auto showBell = status && status.BellIndicator();
+        const auto showHeaderProgressRing = status && !showBell && status.IsProgressRingActive() &&
                                             (!showPaneRows || !HeaderProgressProjectedToPaneRows());
 
         ShowProgressRing(showHeaderProgressRing);
+        ShowStatusIcon(showBell || showHeaderProgressRing);
 
         GroupVisibility(isGroup && !railCollapsed ? Visibility::Visible : Visibility::Collapsed);
         ChildrenVisibility(showPaneRows ? Visibility::Visible : Visibility::Collapsed);
         const auto bitmap = IconSource().try_as<MUX::Controls::BitmapIconSource>();
-        IconVisibility(showHeaderProgressRing || (isGroup && !railCollapsed) || (bitmap && !bitmap.UriSource()) ? Visibility::Collapsed : Visibility::Visible);
+        IconVisibility(ShowStatusIcon() || (isGroup && !railCollapsed) || (bitmap && !bitmap.UriSource()) ? Visibility::Collapsed : Visibility::Visible);
         PinnedIconVisibility(railCollapsed && IsPinned() ? Visibility::Visible : Visibility::Collapsed);
         HeaderMinHeight(railCollapsed ? 32.0 : 40.0);
         LeadingContentMargin(railCollapsed ? WUX::Thickness{} : WUX::Thickness{ 6, 0, 10, 0 });

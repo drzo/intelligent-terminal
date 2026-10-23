@@ -80,7 +80,7 @@ namespace winrt::TerminalApp::implementation
     void TabHeaderControl::_AttachProgressToNativeIconSlot()
     {
         // WinUI Compact hides the unselected tab's entire header. Move this
-        // header's existing progress presenter into the native leading icon
+        // header's existing bell/progress presenter into the native leading icon
         // slot instead; never share a UIElement between two visual parents.
         using namespace Windows::UI::Xaml;
         using namespace Windows::UI::Xaml::Controls;
@@ -128,7 +128,7 @@ namespace winrt::TerminalApp::implementation
         slot.Children().Append(icon);
         slot.Children().Append(progress);
         box.Child(slot);
-        icon.Visibility(TabStatus() && TabStatus().IsProgressRingActive() ?
+        icon.Visibility(TabStatus() && (TabStatus().BellIndicator() || TabStatus().IsProgressRingActive()) ?
                             Windows::UI::Xaml::Visibility::Collapsed :
                             Windows::UI::Xaml::Visibility::Visible);
     }

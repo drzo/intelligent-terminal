@@ -586,7 +586,7 @@
                                               FontFamily="{ThemeResource SymbolThemeFontFamily}"
                                               FontSize="10"
                                               Glyph="{x:Bind ChevronGlyph, Mode=OneWay}"
-                                              Visibility="{x:Bind mtu:Converters.InvertedBooleanToVisibility(ShowProgressRing), Mode=OneWay}" />
+                                              Visibility="{x:Bind mtu:Converters.InvertedBooleanToVisibility(ShowStatusIcon), Mode=OneWay}" />
                                 </Button>
                                 <ContentPresenter x:Name="TabIconPresenter"
                                                   Width="16"
@@ -595,6 +595,17 @@
                                                   VerticalAlignment="Center"
                                                   Content="{x:Bind CreateIcon(IconSource), Mode=OneWay}"
                                                   Visibility="{x:Bind IconVisibility, Mode=OneWay}" />
+                                <FontIcon x:Name="TabBellIndicator"
+                                          Width="16"
+                                          Height="16"
+                                          HorizontalAlignment="Center"
+                                          VerticalAlignment="Center"
+                                          FontFamily="{ThemeResource SymbolThemeFontFamily}"
+                                          FontSize="12"
+                                          Foreground="{Binding Foreground, ElementName=TabHeaderPresenter, Mode=OneWay}"
+                                          Glyph="&#xEA8F;"
+                                          IsHitTestVisible="False"
+                                          Visibility="{x:Bind Presentation.TabStatus.BellIndicator, Mode=OneWay}" />
                                 <Grid IsHitTestVisible="False"
                                       HorizontalAlignment="Center"
                                       VerticalAlignment="Center"
