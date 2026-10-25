@@ -623,17 +623,42 @@ fn program_status_badge(pane: &PaneAgentStatus) -> Option<(String, Style)> {
         ProgramState::Idle => (t!("agents.status.idle").into_owned(), SOFT_WHITE),
     };
     if let Some(program) = &pane.program_status {
-        if state != ProgramState::Error && program.unseen_error != 0 {
-            label.push_str(" [!]");
-        }
         if state == ProgramState::Working && program.working == 1 {
             if let Some(progress) = program.progress {
                 label.push_str(&format!(" {progress}%"));
             }
         }
-        if state != ProgramState::Done && program.unseen_done != 0 {
-            label.push_str(" | ");
-            label.push_str(&t!("agents.status.completed"));
+        let description = if pane.input_required
+            || (pane.status == AgentStatus::Attention
+                && program.blocked == 0
+                && !pane.canonical_error)
+        {
+            pane.input_message.as_deref()
+        } else if !pane.canonical_error && program.state == Some(state) {
+            program
+                .message
+                .as_deref()
+                .filter(|message| !message.is_empty())
+                .or(program.title.as_deref())
+        } else {
+            None
+        };
+        if let Some(description) = description {
+            let description: String = description
+                .chars()
+                .filter(|ch| {
+                    !ch.is_control()
+                        && !matches!(
+                            ch,
+                            '\u{061c}' | '\u{200e}' | '\u{200f}' | '\u{2028}'..='\u{202e}' | '\u{2066}'..='\u{2069}'
+                        )
+                })
+                .collect();
+            if !description.is_empty() {
+                label.push_str(" · \u{2068}");
+                label.push_str(&description);
+                label.push('\u{2069}');
+            }
         }
     }
     Some((label, Style::default().fg(color)))
@@ -1310,19 +1335,17 @@ mod tests {
         .unwrap();
         assert_eq!(program_status_badge(&pane).unwrap().0, "Completed");
         pane.canonical_working = true;
-        assert_eq!(program_status_badge(&pane).unwrap().0, "Active | Completed");
+        assert_eq!(program_status_badge(&pane).unwrap().0, "Active");
         pane.program_status.as_mut().unwrap().unseen_error = 1;
-        assert_eq!(
-            program_status_badge(&pane).unwrap().0,
-            "Active [!] | Completed"
-        );
+        assert_eq!(program_status_badge(&pane).unwrap().0, "Active");
         pane.program_status.as_mut().unwrap().unseen_error = 0;
         pane.canonical_error = true;
-        assert_eq!(program_status_badge(&pane).unwrap().0, "Error | Completed");
+        assert_eq!(program_status_badge(&pane).unwrap().0, "Error");
         pane.input_required = true;
+        pane.input_message = Some("Approve deployment".into());
         assert_eq!(
             program_status_badge(&pane).unwrap().0,
-            "Waiting for input | Completed"
+            "Waiting for input · \u{2068}Approve deployment\u{2069}"
         );
         assert_eq!(pane.status, AgentStatus::Idle);
         pane.program_status.as_mut().unwrap().observed = false;
@@ -1333,5 +1356,43 @@ mod tests {
         pane.program_status.as_mut().unwrap().observed = true;
         rust_i18n::set_locale("zh-CN");
         assert_eq!(program_status_badge(&pane).unwrap().0, "已完成");
+    }
+
+    #[test]
+    fn program_status_badge_appends_current_messages_without_result_badges() {
+        let _guard = crate::test_support::lock_locale();
+        set_test_locale();
+        for (state, label) in [
+            ("idle", "Idle"),
+            ("working", "Active"),
+            ("blocked", "Waiting for input"),
+            ("done", "Completed"),
+            ("error", "Error"),
+        ] {
+            let mut pane: PaneAgentStatus = serde_json::from_value(serde_json::json!({
+                "pane_id": "pane", "provider_id": "codex", "status": "Idle",
+                "program_status": {
+                    "revision": 1, "observed": true, "state": state,
+                    "working": u32::from(state == "working"),
+                    "blocked": u32::from(state == "blocked"),
+                    "done": u32::from(state == "done"),
+                    "error": u32::from(state == "error"),
+                    "unseen_done": u32::from(state != "idle"),
+                    "unseen_error": u32::from(state != "idle" && state != "done"),
+                    "title": "Task title",
+                    "message": "Current\u{202e} message"
+                }
+            }))
+            .unwrap();
+            assert_eq!(
+                program_status_badge(&pane).unwrap().0,
+                format!("{label} · \u{2068}Current message\u{2069}")
+            );
+            pane.program_status.as_mut().unwrap().message = Some(String::new());
+            assert_eq!(
+                program_status_badge(&pane).unwrap().0,
+                format!("{label} · \u{2068}Task title\u{2069}")
+            );
+        }
     }
 }

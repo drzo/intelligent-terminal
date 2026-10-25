@@ -20,6 +20,8 @@ namespace TerminalAppUnitTests
         TEST_METHOD(AttentionNavigationPrioritizesRequestsAndWrapsWithoutAcknowledging);
         TEST_METHOD(UntrustedTextCannotOverrideChromeDirection);
         TEST_METHOD(SingleStatusUsesTheWinningFactsDescription);
+        TEST_METHOD(CurrentMessagesTakePrecedenceOverTitles);
+        TEST_METHOD(StatusTextAppendsMessagesWithoutResultBadges);
         TEST_METHOD(HookAndProgramArrivalOrderPreservesIndependentFacts);
     };
 
@@ -148,7 +150,7 @@ namespace TerminalAppUnitTests
         auto result = Reduce(panes);
         VERIFY_IS_TRUE(result.category == Category::Working);
         VERIFY_ARE_EQUAL(1u, result.errorPanes);
-        VERIFY_ARE_EQUAL(std::wstring{ L"Running tests" }, result.description);
+        VERIFY_ARE_EQUAL(std::wstring{ L"Detailed output" }, result.description);
 
         panes[0].canonicalInput = true;
         panes[0].inputMessage = L"Approve deployment";
@@ -170,7 +172,65 @@ namespace TerminalAppUnitTests
         result = Reduce(panes);
         VERIFY_IS_TRUE(result.category == Category::Blocked);
         VERIFY_ARE_EQUAL(std::string{ "permission" }, result.blockKind);
-        VERIFY_ARE_EQUAL(std::wstring{ L"Running tests" }, result.description);
+        VERIFY_ARE_EQUAL(std::wstring{ L"Detailed output" }, result.description);
+    }
+
+    void ProgramStatusPresentationTests::CurrentMessagesTakePrecedenceOverTitles()
+    {
+        for (const auto& [state, category] : {
+                 std::pair{ "idle", Category::Idle },
+                 std::pair{ "working", Category::Working },
+                 std::pair{ "blocked", Category::Blocked },
+                 std::pair{ "done", Category::Done },
+                 std::pair{ "error", Category::Error },
+             })
+        {
+            PaneStatus pane{
+                .observed = true,
+                .working = category == Category::Working ? 1u : 0u,
+                .blocked = category == Category::Blocked ? 1u : 0u,
+                .unseenDone = category == Category::Done ? 1u : 0u,
+                .unseenError = category == Category::Error ? 1u : 0u,
+                .taskState = state,
+                .title = L"Task title",
+                .message = L"Current\u202e message",
+            };
+            const auto result = Reduce(std::span{ &pane, 1 });
+            VERIFY_IS_TRUE(result.category == category);
+            VERIFY_ARE_EQUAL(std::wstring{ L"Current message" }, result.description);
+            pane.message.clear();
+            VERIFY_ARE_EQUAL(std::wstring{ L"Task title" }, Reduce(std::span{ &pane, 1 }).description);
+        }
+    }
+
+    void ProgramStatusPresentationTests::StatusTextAppendsMessagesWithoutResultBadges()
+    {
+        PaneStatus pane{
+            .observed = true,
+            .working = 1,
+            .unseenDone = 1,
+            .unseenError = 1,
+            .taskState = "working",
+            .title = L"Task title",
+            .message = L"Running tests",
+        };
+        auto summary = Reduce(std::span{ &pane, 1 });
+        VERIFY_ARE_EQUAL(std::wstring{ L"Active \u00b7 \u2068Running tests\u2069" }, FormatText(summary, L"Active"));
+        pane.unseenError = 0;
+        pane.progress = 40;
+        summary = Reduce(std::span{ &pane, 1 });
+        VERIFY_ARE_EQUAL(40u, summary.progress.value());
+        VERIFY_ARE_EQUAL(std::wstring{ L"Active 40% \u00b7 \u2068Running tests\u2069" }, FormatText(summary, L"Active", L"40%"));
+        pane.working = 0;
+        pane.taskState = "done";
+        pane.message = L"Tests passed";
+        summary = Reduce(std::span{ &pane, 1 });
+        VERIFY_IS_TRUE(summary.category == Category::Done);
+        VERIFY_ARE_EQUAL(std::wstring{ L"Completed \u00b7 \u2068Tests passed\u2069" }, FormatText(summary, L"Completed"));
+        pane.unseenDone = 0;
+        summary = Reduce(std::span{ &pane, 1 });
+        VERIFY_IS_TRUE(summary.category == Category::Idle);
+        VERIFY_ARE_EQUAL(std::wstring{ L"Idle" }, FormatText(summary, L"Idle"));
     }
 
     void ProgramStatusPresentationTests::HookAndProgramArrivalOrderPreservesIndependentFacts()

@@ -12524,27 +12524,8 @@ namespace winrt::TerminalApp::implementation
         {
             text = RS_(L"ProgramStatusWaitingAuthentication");
         }
-        if (summary.errorPanes != 0 && summary.category != Category::Error)
-        {
-            text.append(L" [!]");
-        }
-        if (summary.completedPanes != 0 && summary.category != Category::Done)
-        {
-            text.append(L" [\u2713]");
-        }
-        if (summary.progress)
-        {
-            text.append(L" ");
-            text.append(_FormatLocalizedPercentValue(*summary.progress));
-        }
-        if (!summary.description.empty())
-        {
-            text.append(L" \u00b7 ");
-            text.append(L"\u2068");
-            text.append(summary.description);
-            text.append(L"\u2069");
-        }
-        return winrt::hstring{ text };
+        return winrt::hstring{ ::Microsoft::Terminal::ProgramStatusPresentation::FormatText(
+            summary, text, summary.progress ? _FormatLocalizedPercentValue(*summary.progress) : winrt::hstring{}) };
     }
 
     static winrt::hstring _ProgramStatusDetails(const Json::Value& snapshot, const ::Microsoft::Terminal::ProgramStatusPresentation::PaneStatus* status = nullptr)

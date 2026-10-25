@@ -167,15 +167,33 @@ namespace Microsoft::Terminal::ProgramStatusPresentation
             const auto matches = (result.category == Category::Blocked && pane.taskState == "blocked") ||
                                  (result.category == Category::Working && pane.taskState == "working") ||
                                  (result.category == Category::Error && !connectionError && pane.taskState == "error") ||
-                                 (result.category == Category::Done && pane.taskState == "done");
+                                 (result.category == Category::Done && pane.taskState == "done") ||
+                                 (result.category == Category::Idle && pane.taskState == "idle");
             if (matches)
             {
                 result.blockKind = pane.blockKind;
-                result.description = DisplayText(pane.title.empty() ? pane.message : pane.title);
+                result.description = DisplayText(pane.message.empty() ? pane.title : pane.message);
                 break;
             }
         }
         return result;
+    }
+
+    inline std::wstring FormatText(const Summary& summary, const std::wstring_view label, const std::wstring_view progress = {})
+    {
+        std::wstring text{ label };
+        if (!progress.empty())
+        {
+            text.append(L" ");
+            text.append(progress);
+        }
+        if (!summary.description.empty())
+        {
+            text.append(L" \u00b7 \u2068");
+            text.append(summary.description);
+            text.append(L"\u2069");
+        }
+        return text;
     }
 
     inline std::string_view StatusId(const Category category) noexcept

@@ -12,7 +12,8 @@ terminal connection, not a title, executable name or inferred conversation.
 
 The wire field for explanatory text is `msg` (base64 UTF-8), not `message`.
 It is exposed as `message` in internal snapshots and events. The status line
-uses the task's title when present, otherwise its message; tooltips retain both.
+appends the current task's message when present, otherwise its title; tooltips
+retain both.
 
 ## Display and attention
 
@@ -26,13 +27,15 @@ In open sidebar tabs and panes, program activity occupies the existing
 titles and working directories are unchanged. Turning that field off hides the
 program-status line in those entries. Recent agent-session rows retain their
 independent status/age visibility and are not controlled by the tab metadata
-selection. The line has one localized primary
-status, compact unread-result markers (`[!]` for errors, `[check mark]` for
-completions), an optional percentage, and a representative task title or message.
-Markers and percentages precede the ellipsized task description so long program
-text cannot push the important status off the line. Full task details remain in
-the tooltip. A real input request uses its own description, never an unrelated
-Working task's title.
+selection. The line has one localized primary status, an optional percentage,
+and the representative task's message (or title when its message is empty).
+It does not add unread-result symbols or secondary completion labels:
+for example, `Active 40% · Running tests` or `Completed · Tests passed`.
+The status and percentage precede the ellipsized description so long program
+text cannot push the important status off the line. Current Idle messages also
+appear after the status; old Done descriptions are not relabeled as current
+Idle messages. Full task details remain in the tooltip. A real input request
+uses its own description, never an unrelated Working task's message.
 
 Blocked work takes precedence over working work. An actual hook/ACP input request
 cannot be answered by a program reporting Working, Done or Clear. Unseen errors
@@ -70,7 +73,8 @@ Idle or Clear; retained results do not imply that the agent has stopped working.
 Conversely, a hook's turn-end Stop/Idle does not delete program-reported Working
 or Blocked tasks. Each source updates its own facts and the presentation reduces
 both, rather than choosing the last event received. While work continues, an
-unseen task error is a separate result marker, not proof that all work failed.
+unseen task error is retained in the result facet and task details, not appended
+as a decorative status marker or treated as proof that all work failed.
 Actual connection/canonical failures still take precedence over Working.
 
 Within a connection/epoch, older or duplicate program revisions are rejected;
@@ -95,8 +99,8 @@ Live session-list rows also receive response-only `pane_status` metadata when
 exactly one live conversation owns the matching provider, execution source,
 history universe and pane. Historical, ambiguous and merely inferred
 conversations do not receive it.
-The session picker and sidebar history use that facet for working/progress,
-blocked, unread error and completion badges without changing canonical status,
+The session picker and sidebar history use that facet for the primary status,
+working progress and current message without changing canonical status,
 identity, activation or resume behavior. Refreshes update retained sidebar rows
 in place; closing or rebinding a pane removes the facet. It is not registry or
 persisted history state.
