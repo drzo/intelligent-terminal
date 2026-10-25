@@ -60,6 +60,40 @@ text and fields are isolated from surrounding chrome; natural RTL text and
 language-shaping joiners are preserved. A retained result whose task has moved
 on is explicitly labeled **Previous result**, not presented as its current state.
 
+### Complete status text examples
+
+These examples use the English native UI and illustrative producer messages.
+Unless stated otherwise, no other canonical activity or unread result takes
+precedence. The previous column compares the same compatible activity value
+before OSC support; it does not imply the previous terminal parsed OSC.
+Ordinary CLIs could previously have no Agent status field at all.
+
+| OSC report / result situation | Compatible activity | Previous complete text | Current complete text |
+|---|---|---|---|
+| `idle`, no message or unread result | `Idle` | `Idle` | `Idle` |
+| `idle`, `msg=Ready`, no unread result | `Idle` | `Idle` | `Idle · Ready` |
+| `working`, progress 40%, `title=Build`, `msg=Running tests` | `Working` | `Active` | `Active 40% · Running tests` |
+| The same Working report, plus unread Done | `Working` | `Active` | `Active 40% · Running tests` |
+| The same Working report, plus unread Error | `Working` | `Active` | `Active · Running tests` |
+| Canonical hook/ACP activity remains Working; OSC reports Done | `Working` | `Active` | `Active` |
+| `blocked/question`, `msg=Choose an option` | `Attention` | `Waiting for input` | `Waiting for input · Choose an option` |
+| `blocked/permission`, `msg=Approve deployment` | `Attention` | `Waiting for input` | `Permission requested · Approve deployment` |
+| `blocked/auth`, `msg=Sign in` | `Attention` | `Waiting for input` | `Waiting for authorization... · Sign in` |
+| Canonical input request, `input_message=Approve command?` | `Attention` | `Waiting for input` | `Waiting for input · Approve command?` |
+| `done`, `msg=Tests passed`, unread | `Idle` | `Idle` | `Completed · Tests passed` |
+| Done replaced by Idle, completion unread, no current message | `Idle` | `Idle` | `Completed` |
+| Done acknowledged, otherwise inactive | `Idle` | `Idle` | `Idle` |
+| `error`, `msg=Build failed`, unread | `Error` | `Error` | `Error · Build failed` |
+| The same Error report, plus another unread Done | `Error` | `Error` | `Error · Build failed` |
+| Clear removes all records/results, otherwise inactive | `Idle` | `Idle` | `Idle` |
+| Live session in another window, Done unread, `msg=Tests passed` | `Idle` | `Idle · In another window` | `Completed · Tests passed · In another window` |
+
+The composition is `status + optional progress + optional description`, without
+decorative result markers. The matching current message wins over its title;
+if the message is empty, the title is the fallback. An unread Error suppresses
+the percentage. The other-window suffix keeps its existing eligibility rules.
+Directory/repository/branch metadata remains in its existing separate fields.
+
 ## Hooks and sessions
 
 OSC status is an additive facet of an already admitted native agent pane. It
