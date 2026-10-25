@@ -5,14 +5,17 @@ use ratatui::{
     widgets::{List, ListItem, ListState, Paragraph},
     Frame,
 };
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::{
+    collections::HashMap,
+    time::{SystemTime, UNIX_EPOCH},
+};
 use unicode_width::UnicodeWidthStr;
 
 use crate::agent_sessions::{
     AgentSession, AgentSessionRegistry, AgentStatus, CliSource, OriginFilter, SessionLocation,
     SessionOrigin,
 };
-use crate::session_registry::SessionInfo;
+use crate::session_registry::{PaneAgentStatus, ProgramState, SessionInfo};
 use crate::theme;
 use crate::ui::shimmer;
 
@@ -227,6 +230,20 @@ pub fn render(
         return;
     }
 
+    let program_panes: HashMap<(&str, &str, &SessionLocation), &PaneAgentStatus> = snapshot
+        .into_iter()
+        .flatten()
+        .filter_map(|row| {
+            Some((
+                (
+                    row.session_id.0.as_ref(),
+                    row.pane_session_id.as_deref()?,
+                    &row.location,
+                ),
+                row.pane_status.as_ref()?,
+            ))
+        })
+        .collect();
     let selected = list_state.selected();
     let row_width = list_area.width as usize;
     let rows: Vec<ListItem> = sorted
@@ -239,6 +256,11 @@ pub fn render(
                 pane_focused,
                 row_width,
                 &folded_query,
+                s.pane_session_id.as_deref().and_then(|pane| {
+                    program_panes
+                        .get(&(s.key.as_str(), pane, &s.location))
+                        .copied()
+                }),
             )
         })
         .collect();
@@ -355,6 +377,7 @@ fn row_for(
     pane_focused: bool,
     row_width: usize,
     folded_query: &str,
+    program: Option<&PaneAgentStatus>,
 ) -> ListItem<'static> {
     let origin_prefix = origin_prefix_for(s);
     let prefix_w = origin_prefix
@@ -362,8 +385,18 @@ fn row_for(
         .map(UnicodeWidthStr::width)
         .unwrap_or(0);
     let title_text = display_title(s, prefix_w);
-    let badge = status_badge(s);
-    let badge_style = badge_style(s);
+    let (badge, badge_style) = program
+        .filter(|_| {
+            matches!(
+                s.status,
+                AgentStatus::Idle
+                    | AgentStatus::Working
+                    | AgentStatus::Attention
+                    | AgentStatus::Error
+            )
+        })
+        .and_then(program_status_badge)
+        .unwrap_or_else(|| (status_badge(s), badge_style(s)));
     let age = relative_age(s.last_activity_at);
 
     // Unselected rows: no `.fg(...)` override — fall through to the
@@ -577,10 +610,36 @@ fn cwd_basename(s: &AgentSession) -> String {
         .to_string()
 }
 
-/// Inline status text shown next to the title. Empty for Ended / Historical
-/// rows — those carry no live state. Idle gets a soft "Idle" tag so the
-/// user can tell at a glance that the session is bound to a pane but not
-/// actively running a tool.
+fn program_status_badge(pane: &PaneAgentStatus) -> Option<(String, Style)> {
+    let state = pane.program_display_state()?;
+    let (mut label, color) = match state {
+        ProgramState::Blocked => (
+            t!("agents.status.waiting_for_input").into_owned(),
+            ACCENT_YELLOW,
+        ),
+        ProgramState::Error => (t!("agents.status.error").into_owned(), ACCENT_RED),
+        ProgramState::Working => (t!("agents.status.active").into_owned(), ACCENT_GREEN),
+        ProgramState::Done => (t!("agents.status.completed").into_owned(), ACCENT_GREEN),
+        ProgramState::Idle => (t!("agents.status.idle").into_owned(), SOFT_WHITE),
+    };
+    if let Some(program) = &pane.program_status {
+        if state != ProgramState::Error && program.unseen_error != 0 {
+            label.push_str(" [!]");
+        }
+        if state == ProgramState::Working && program.working == 1 {
+            if let Some(progress) = program.progress {
+                label.push_str(&format!(" {progress}%"));
+            }
+        }
+        if state != ProgramState::Done && program.unseen_done != 0 {
+            label.push_str(" | ");
+            label.push_str(&t!("agents.status.completed"));
+        }
+    }
+    Some((label, Style::default().fg(color)))
+}
+
+/// Inline canonical activity; ended and historical rows carry no live badge.
 fn status_badge(s: &AgentSession) -> String {
     match s.status {
         AgentStatus::Working => t!("agents.status.active").into_owned(),
@@ -1235,5 +1294,44 @@ mod tests {
         // Terminal / on-disk rows render an empty badge — no live activity to show.
         assert_eq!(status_badge(&mk(AgentStatus::Ended)), "");
         assert_eq!(status_badge(&mk(AgentStatus::Historical)), "");
+    }
+
+    #[test]
+    fn program_status_badge_preserves_canonical_authority() {
+        let _guard = crate::test_support::lock_locale();
+        set_test_locale();
+        let mut pane: PaneAgentStatus = serde_json::from_value(serde_json::json!({
+            "pane_id": "pane", "provider_id": "codex", "status": "Idle",
+            "program_status": {
+                "revision": 1, "observed": true, "state": "done",
+                "done": 1, "unseen_done": 1
+            }
+        }))
+        .unwrap();
+        assert_eq!(program_status_badge(&pane).unwrap().0, "Completed");
+        pane.canonical_working = true;
+        assert_eq!(program_status_badge(&pane).unwrap().0, "Active | Completed");
+        pane.program_status.as_mut().unwrap().unseen_error = 1;
+        assert_eq!(
+            program_status_badge(&pane).unwrap().0,
+            "Active [!] | Completed"
+        );
+        pane.program_status.as_mut().unwrap().unseen_error = 0;
+        pane.canonical_error = true;
+        assert_eq!(program_status_badge(&pane).unwrap().0, "Error | Completed");
+        pane.input_required = true;
+        assert_eq!(
+            program_status_badge(&pane).unwrap().0,
+            "Waiting for input | Completed"
+        );
+        assert_eq!(pane.status, AgentStatus::Idle);
+        pane.program_status.as_mut().unwrap().observed = false;
+        assert!(program_status_badge(&pane).is_none());
+        pane.input_required = false;
+        pane.canonical_error = false;
+        pane.canonical_working = false;
+        pane.program_status.as_mut().unwrap().observed = true;
+        rust_i18n::set_locale("zh-CN");
+        assert_eq!(program_status_badge(&pane).unwrap().0, "已完成");
     }
 }

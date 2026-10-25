@@ -69,6 +69,7 @@ namespace winrt::TerminalApp::implementation
         void UpdateSettings(const winrt::Microsoft::Terminal::Settings::Model::CascadiaSettings& settings);
         void UpdateTitle();
         void SetRichTabPresentation(const std::optional<::Microsoft::Terminal::RichTab::Provider::Presentation>& presentation);
+        void SetProgramStatusPresentation(const winrt::hstring& text, const winrt::hstring& details, std::vector<Pane::TaskbarStateWithContentId> states, std::string_view status = "Idle", bool visible = true);
 
         void Close();
         void Shutdown();
@@ -264,6 +265,8 @@ namespace winrt::TerminalApp::implementation
         til::typed_event<TerminalApp::Tab, winrt::Microsoft::Terminal::Settings::Model::TabLayout> TabLayoutChangeRequested;
         til::event<winrt::delegate<>> KeepRunningEnabledByUser;
         til::event<winrt::delegate<bool>> PinRequested;
+        til::event<winrt::delegate<>> ProgramStatusAcknowledgeRequested;
+        til::event<winrt::delegate<>> NextProgramAttentionRequested;
 
         til::event<winrt::Windows::Foundation::EventHandler<winrt::Windows::Foundation::IInspectable>> Closed;
         til::event<winrt::Windows::Foundation::EventHandler<winrt::Windows::Foundation::IInspectable>> CloseRequested;
@@ -327,6 +330,7 @@ namespace winrt::TerminalApp::implementation
         Microsoft::Terminal::Settings::Model::TabCloseButtonVisibility _closeButtonVisibility{ Microsoft::Terminal::Settings::Model::TabCloseButtonVisibility::Always };
         winrt::Microsoft::Terminal::Settings::Model::TabLayout _switchTabLayoutTarget{ winrt::Microsoft::Terminal::Settings::Model::TabLayout::Vertical };
         std::optional<winrt::Microsoft::Terminal::Settings::Model::TabLayout> _pendingTabLayoutChange;
+        bool _pendingProgramAttentionNavigation{};
 
         std::shared_ptr<Pane> _rootPane{ nullptr };
         std::shared_ptr<Pane> _activePane{ nullptr };
@@ -404,6 +408,11 @@ namespace winrt::TerminalApp::implementation
 
         winrt::hstring _runtimeTabText{};
         std::optional<::Microsoft::Terminal::RichTab::Provider::Presentation> _richTabPresentation;
+        winrt::hstring _programStatusText;
+        winrt::hstring _programStatusDetails;
+        std::string _programStatusId;
+        bool _programStatusVisible{ true };
+        std::vector<Pane::TaskbarStateWithContentId> _programTaskbarStates;
         winrt::hstring _richTabTooltipText{};
         winrt::hstring _richTabAccessibilityText{};
         bool _inRename{ false };
