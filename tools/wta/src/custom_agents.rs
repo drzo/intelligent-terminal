@@ -147,7 +147,7 @@ impl Invocation {
             );
             let tokens = std::iter::once(companion.to_string_lossy().into_owned())
                 .chain(args.iter().map(|arg| (*arg).to_string()))
-                .map(|arg| format!("'{}'", arg.replace('\'', "''")))
+                .map(|arg| crate::coordinator::ps_single_quote(&arg))
                 .collect::<Vec<_>>()
                 .join(" ");
             let script = format!("$ErrorActionPreference='Stop'; & {tokens}; exit $LASTEXITCODE");
@@ -547,7 +547,10 @@ mod tests {
             .parent()
             .unwrap()
             .join("Generated Files")
-            .join(format!("custom {{agent}} {}", uuid::Uuid::new_v4()));
+            .join(format!(
+                "custom O\u{2019}Brien \u{2018}\u{201a}\u{201b} {{agent}} {}",
+                uuid::Uuid::new_v4()
+            ));
         std::fs::create_dir_all(&directory).unwrap();
         let shim = directory.join("agent.cmd");
         std::fs::write(&shim, "@exit /b 88\r\n").unwrap();
@@ -556,7 +559,7 @@ mod tests {
             args: vec![
                 "resume".into(),
                 "{sessionId}".into(),
-                "quote \" and ' & | ! ^".into(),
+                "quote \" and ' & | ! ^ don\u{2019}t \u{2018}\u{201a}\u{201b}".into(),
             ],
             can_resume_acp_sessions: false,
         };
@@ -606,7 +609,14 @@ mod tests {
         assert!(status.success(), "{status}");
         let args: Vec<String> =
             serde_json::from_slice(&std::fs::read(directory.join("args.json")).unwrap()).unwrap();
-        assert_eq!(args, vec!["resume", "abc-123", "quote \" and ' & | ! ^"]);
+        assert_eq!(
+            args,
+            vec![
+                "resume",
+                "abc-123",
+                "quote \" and ' & | ! ^ don\u{2019}t \u{2018}\u{201a}\u{201b}"
+            ]
+        );
 
         let source = directory.join("argv.cs");
         let executable = directory.join("native argv.exe");
@@ -641,6 +651,7 @@ foreach (string arg in args) Console.WriteLine(Convert.ToBase64String(Encoding.U
                     "resume".into(),
                     "{sessionId}".into(),
                     "literal ' & | ! ^".into(),
+                    "don\u{2019}t \u{2018}\u{201a}\u{201b} $env:PATH $(throw 'not literal')".into(),
                 ],
                 can_resume_acp_sessions: false,
             };

@@ -170,7 +170,8 @@ namespace Microsoft::Terminal::CustomAgents
                 for (const auto ch : value)
                 {
                     result.push_back(ch);
-                    if (ch == L'\'')
+                    // PowerShell IsSingleQuote also recognizes these typographic delimiters.
+                    if (ch == L'\'' || (ch >= L'\u2018' && ch <= L'\u201b'))
                         result.push_back(ch);
                 }
                 result.push_back(L'\'');

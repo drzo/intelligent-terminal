@@ -547,7 +547,7 @@ fn batch_companion_command(
         shim.is_file() && companion.is_file(),
         "ACP batch launch is unsupported without an adjacent PowerShell companion"
     );
-    let quote = |value: &str| format!("'{}'", value.replace('\'', "''"));
+    let quote = crate::coordinator::ps_single_quote;
     let call = std::iter::once(quote(&companion.to_string_lossy()))
         .chain(args.iter().map(|arg| quote(arg)))
         .collect::<Vec<_>>()
@@ -972,7 +972,10 @@ mod tests {
 
         let directory = Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("target")
-            .join(format!("batch argv {}", uuid::Uuid::new_v4()));
+            .join(format!(
+                "batch O\u{2019}Brien \u{2018}\u{201a}\u{201b} argv {}",
+                uuid::Uuid::new_v4()
+            ));
         std::fs::create_dir_all(&directory).unwrap();
         let source = directory.join("argv.cs");
         let executable = directory.join("native argv.exe");
@@ -1044,6 +1047,7 @@ foreach (string arg in args) Console.WriteLine(Convert.ToBase64String(Encoding.U
             "a&b",
             "%SystemRoot%",
             "it's literal",
+            "don\u{2019}t \u{2018}\u{201a}\u{201b} $env:PATH $(throw 'not literal')",
         ];
         let native_only = ["", r#"embedded "quotes""#, r"C:\space here\"];
         for program in [&shim, &executable] {
