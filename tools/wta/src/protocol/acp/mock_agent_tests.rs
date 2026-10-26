@@ -15,11 +15,11 @@
 use super::{
     dispatch_drop_session, dispatch_drop_session_with_aliases, dispatch_load_session,
     dispatch_load_session_with_aliases, dispatch_master_ext_request,
-    dispatch_master_ext_request_with_aliases, dispatch_master_ext_request_with_yolo_timeout,
-    dispatch_new_session, dispatch_new_session_with_aliases, dispatch_prompt,
-    dispatch_prompt_with_aliases, dispatch_rename_session, dispatch_rename_session_with_aliases,
-    finalize_client_transport, publish_current_native_config_options, take_retired_session_result,
-    AutofixTextKind, ClientTransportGuard, DropSessionRequest, LoadSessionForTab, MasterExtRequest,
+    dispatch_master_ext_request_with_yolo_timeout, dispatch_new_session,
+    dispatch_new_session_with_aliases, dispatch_prompt, dispatch_prompt_with_aliases,
+    dispatch_rename_session, dispatch_rename_session_with_aliases, finalize_client_transport,
+    publish_current_native_config_options, take_retired_session_result, AutofixTextKind,
+    ClientTransportGuard, DropSessionRequest, LoadSessionForTab, MasterExtRequest,
     NewSessionForTab, PromptSubmission, RenameSessionRequest,
 };
 use super::{ClientState, PromptUsageIdentity, ProviderProbeCapture, WtaClient};
@@ -4755,7 +4755,7 @@ async fn dispatch_master_ext_session_activation_pending_alias_reconciles() {
                 );
                 if rejected {
                     assert!(matches!(h.event_rx.try_recv(),
-                    Ok(AppEvent::TabSystemMessage { tab_id, .. }) if tab_id == "origin-tab"));
+                    Ok(AppEvent::SessionActivationRejected { activation_id, .. }) if activation_id == "alias-receipt"));
                 }
                 assert!(matches!(
                     h.event_rx.try_recv(),
@@ -4787,14 +4787,25 @@ fn activation_test_request(status_only: bool) -> MasterExtRequest {
 
 #[tokio::test]
 async fn session_activation_rejection_follows_pending_window_move() {
+    activation_rejection_after_window_move(false).await;
+}
+
+#[tokio::test]
+async fn session_activation_rejection_follows_window_move_and_reconnect() {
+    activation_rejection_after_window_move(true).await;
+}
+
+async fn activation_rejection_after_window_move(reconnect: bool) {
     tokio::task::LocalSet::new()
         .run_until(async {
-            let started = Arc::new(tokio::sync::Notify::new());
-            let release = Arc::new(tokio::sync::Notify::new());
+            let mut started = Arc::new(tokio::sync::Notify::new());
+            let mut release = Arc::new(tokio::sync::Notify::new());
             let mut h = connect_for_dispatch_with_activation_barrier(
                 MockBehavior::ActivationFailure,
                 Some((Arc::clone(&started), Arc::clone(&release))),
             );
+            let original_requests = Arc::clone(&h.activation_requests);
+            let (master_tx, mut master_rx) = mpsc::unbounded_channel();
             let mut app = crate::app::App::new(
                 mpsc::unbounded_channel().0,
                 mpsc::unbounded_channel().0,
@@ -4804,7 +4815,7 @@ async fn session_activation_rejection_follows_pending_window_move() {
                 mpsc::unbounded_channel().0,
                 mpsc::unbounded_channel().0,
                 mpsc::unbounded_channel().0,
-                mpsc::unbounded_channel().0,
+                master_tx,
                 Arc::new(AtomicBool::new(false)),
                 true,
                 false,
@@ -4828,13 +4839,13 @@ async fn session_activation_rejection_follows_pending_window_move() {
                 "origin-tab".to_string(),
                 7,
             )])));
-            let task = dispatch_master_ext_request_with_aliases(
+            app.retain_test_session_activation("alias-receipt", activation_test_request(true));
+            let task = dispatch_master_ext_request(
                 activation_test_request(false),
                 &h.conn,
                 &h.event_tx,
                 &sessions,
                 Arc::clone(&h.client.state),
-                &aliases,
             );
             tokio::time::timeout(std::time::Duration::from_secs(2), started.notified())
                 .await
@@ -4857,11 +4868,46 @@ async fn session_activation_rejection_follows_pending_window_move() {
                 )
                 .await;
             }
-            release.notify_one();
-            task.await.unwrap();
+            if reconnect {
+                let mut guard = ClientTransportGuard {
+                    conn: h.conn.clone(),
+                    suppress_transport_error: Arc::new(AtomicBool::new(true)),
+                    event_tx: h.event_tx.clone(),
+                    io_task: Some(tokio::task::spawn_local(std::future::pending::<()>())),
+                    retirement_published: false,
+                };
+                finalize_client_transport(
+                    &mut guard, true, &mut Vec::new(), &in_flight, &mut vec![task],
+                ).await;
+                while let Ok(event) = h.event_rx.try_recv() {
+                    app.handle_test_event(event);
+                }
+                started = Arc::new(tokio::sync::Notify::new());
+                release = Arc::new(tokio::sync::Notify::new());
+                h = connect_for_dispatch_with_activation_barrier(
+                    MockBehavior::ActivationFailure,
+                    Some((Arc::clone(&started), Arc::clone(&release))),
+                );
+                app.handle_test_event(AppEvent::AgentsSnapshotLoaded {
+                    request_id: 0,
+                    sessions: Vec::new(),
+                });
+                // The new connection has no previous transport routing state.
+                let task = dispatch_master_ext_request(
+                    master_rx.try_recv().unwrap(),
+                    &h.conn, &h.event_tx, &sessions, Arc::clone(&h.client.state),
+                );
+                tokio::time::timeout(std::time::Duration::from_secs(2), started.notified())
+                    .await.unwrap();
+                release.notify_one();
+                task.await.unwrap();
+            } else {
+                release.notify_one();
+                task.await.unwrap();
+            }
             let rejection = h.event_rx.try_recv().unwrap();
             assert!(matches!(&rejection,
-                AppEvent::TabSystemMessage { tab_id, .. } if tab_id == "moved-tab"));
+                AppEvent::SessionActivationRejected { activation_id, .. } if activation_id == "alias-receipt"));
             app.handle_test_event(rejection);
             assert!(!app.tab_sessions.contains_key("origin-tab"));
             assert!(!app.tab_sessions.contains_key("middle-tab"));
@@ -4880,29 +4926,39 @@ async fn session_activation_rejection_follows_pending_window_move() {
                 *sessions.lock().await,
                 HashMap::from([("moved-tab".to_string(), sid)])
             );
-            assert_eq!(
-                *in_flight.lock().unwrap(),
-                HashMap::from([("moved-tab".to_string(), 7)])
-            );
+            if reconnect {
+                assert!(in_flight.lock().unwrap().is_empty(), "retired prompt slots must be released");
+            } else {
+                assert_eq!(
+                    *in_flight.lock().unwrap(),
+                    HashMap::from([("moved-tab".to_string(), 7)])
+                );
+            }
 
             // A retained receipt retries status only, with the original session/window.
-            let retry = dispatch_master_ext_request_with_aliases(
-                activation_test_request(true),
+            app.handle_test_event(AppEvent::AgentsSnapshotLoaded {
+                request_id: 0,
+                sessions: Vec::new(),
+            });
+            let retry = dispatch_master_ext_request(
+                master_rx.try_recv().unwrap(),
                 &h.conn,
                 &h.event_tx,
                 &sessions,
                 Arc::clone(&h.client.state),
-                &aliases,
             );
             tokio::time::timeout(std::time::Duration::from_secs(2), started.notified())
                 .await
                 .unwrap();
             release.notify_one();
             retry.await.unwrap();
-            let requests = h.activation_requests.lock().unwrap();
-            assert_eq!(requests.len(), 3);
+            let mut requests = original_requests.lock().unwrap().clone();
+            if reconnect {
+                requests.extend(h.activation_requests.lock().unwrap().clone());
+            }
+            assert_eq!(requests.len(), if reconnect { 4 } else { 3 });
             assert!(!requests[0].0);
-            assert!(requests[1].0 && requests[2].0);
+            assert!(requests.iter().skip(1).all(|(status_only, _)| *status_only));
             assert!(requests.iter().all(|(_, params)| params == &requests[0].1));
             assert_eq!(requests[0].1.window_id, 42);
         })
@@ -4987,12 +5043,12 @@ async fn dispatch_master_ext_session_activation_rejection_preserves_existing_ses
                 .expect("activation task must not panic");
 
             match event_rx.try_recv().expect("rejection must be visible") {
-                AppEvent::TabSystemMessage { tab_id, message } => {
-                    assert_eq!(tab_id, "t1");
+                AppEvent::SessionActivationRejected { activation_id, message } => {
+                    assert_eq!(activation_id, "activation-1");
                     assert_eq!(message, rust_i18n::t!("agents.status.error").to_string());
                     assert!(!message.contains("Custom agent definition was removed"));
                 }
-                _ => panic!("expected a non-destructive TabSystemMessage"),
+                _ => panic!("expected a non-destructive activation rejection"),
             }
             assert!(matches!(
                 event_rx.try_recv(),
@@ -5466,7 +5522,6 @@ async fn native_disable_config_timeout_requests_restart() {
                 &tab_to_session,
                 Arc::clone(&h.client.state),
                 std::time::Duration::from_millis(20),
-                &Arc::new(Mutex::new(HashMap::new())),
             );
 
             tokio::time::timeout(
@@ -5925,7 +5980,6 @@ async fn fail_closed_yolo_reconcile_has_one_deadline_across_sessions() {
                 &tab_to_session,
                 Arc::clone(&h.client.state),
                 std::time::Duration::from_millis(50),
-                &Arc::new(Mutex::new(HashMap::new())),
             );
 
             tokio::time::timeout(
@@ -5996,7 +6050,6 @@ async fn fail_closed_yolo_reconcile_stops_after_first_error() {
                 &tab_to_session,
                 Arc::clone(&h.client.state),
                 std::time::Duration::from_millis(250),
-                &Arc::new(Mutex::new(HashMap::new())),
             );
 
             let (_, fail_closed, restart_required, result) =
@@ -6056,7 +6109,6 @@ async fn timed_out_mode_yolo_change_requests_restart() {
                 &tab_to_session,
                 Arc::clone(&h.client.state),
                 std::time::Duration::from_millis(20),
-                &Arc::new(Mutex::new(HashMap::new())),
             );
 
             tokio::time::timeout(
@@ -6136,7 +6188,6 @@ async fn non_fail_closed_yolo_reconcile_continues_after_known_error() {
                 &tab_to_session,
                 Arc::clone(&h.client.state),
                 std::time::Duration::from_millis(250),
-                &Arc::new(Mutex::new(HashMap::new())),
             );
 
             let (_, fail_closed, restart_required, result) =

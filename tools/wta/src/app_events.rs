@@ -500,6 +500,16 @@ impl App {
         self.handle_event(event);
     }
 
+    #[cfg(test)]
+    pub(crate) fn retain_test_session_activation(
+        &mut self,
+        activation_id: &str,
+        request: crate::protocol::acp::client::MasterExtRequest,
+    ) {
+        self.pending_session_activations
+            .insert(activation_id.into(), request.into());
+    }
+
     pub(super) fn handle_event(&mut self, event: AppEvent) {
         self.sync_agent_markdown_selection();
         // Async cards can take and release draft ownership without a key/focus event.
@@ -1665,6 +1675,7 @@ impl App {
                 tab.scroll_to_bottom();
                 self.project_tab_state(&tab_id);
             }
+            #[cfg(test)]
             AppEvent::TabSystemMessage { tab_id, message } => {
                 let tab = self.tab_mut(&tab_id);
                 tab.messages.push(ChatMessage::info(message));
@@ -2829,6 +2840,18 @@ impl App {
             AppEvent::SessionActivationCompleted { activation_id } => {
                 self.pending_session_activations.remove(&activation_id);
             }
+            AppEvent::SessionActivationRejected {
+                activation_id,
+                message,
+            } => {
+                if let Some(tab) = self
+                    .pending_session_activations
+                    .get(&activation_id)
+                    .and_then(|pending| self.tab_sessions.get_mut(&pending.delivery_tab_id))
+                {
+                    tab.messages.push(ChatMessage::info(message));
+                }
+            }
             AppEvent::SessionActivationNotDispatched {
                 identity,
                 window_id,
@@ -2838,8 +2861,8 @@ impl App {
                 if self
                     .pending_session_activations
                     .get(&activation_id)
-                    .is_some_and(|request| {
-                        matches!(request,
+                    .is_some_and(|pending| {
+                        matches!(&pending.request,
                         crate::protocol::acp::client::MasterExtRequest::SessionActivate {
                             identity: pending_identity, window_id: pending_window,
                             activation_id: pending_id, tab_id: pending_tab, ..

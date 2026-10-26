@@ -2624,7 +2624,7 @@ fn session_activation_shutdown_retains_status_queries_and_dequeued_requests() {
         status_only: false,
     };
     app.pending_session_activations
-        .insert("retained".into(), request.clone());
+        .insert("retained".into(), request.clone().into());
     app.master_request_tx.send(request.clone()).unwrap();
     let _dispatched = master_rx.try_recv().unwrap();
     let mut status = request;
@@ -2640,6 +2640,11 @@ fn session_activation_shutdown_retains_status_queries_and_dequeued_requests() {
     assert!(event_rx.try_recv().is_err());
     assert!(app.pending_session_activations.contains_key("retained"));
 
+    app.handle_event(AppEvent::TabRenamed {
+        old_tab_id: "origin".into(),
+        new_tab_id: "moved".into(),
+        new_window_id: Some("99".into()),
+    });
     for mismatch in 0..5 {
         let mut identity = crate::session_registry::SessionIdentity {
             session_id: agent_client_protocol::schema::v1::SessionId::new("history"),
@@ -2703,6 +2708,49 @@ fn session_activation_failed_enqueue_allows_retry() {
 }
 
 #[test]
+fn session_activation_retry_after_window_move_keeps_original_receipt() {
+    use crate::protocol::acp::client::MasterExtRequest;
+    let (mut app, mut master_rx) = test_app_with_master_rx();
+    app.window_id = Some("42".into());
+    app.owner_tab_id = Some("origin".into());
+    app.tab_id = Some("origin".into());
+    app.tab_mut("origin");
+    let mut info = crate::session_registry::SessionInfo::new(
+        agent_client_protocol::schema::v1::SessionId::new("history"),
+        std::path::PathBuf::from(r"C:\repo"),
+    );
+    info.cli_source = Some(crate::agent_sessions::CliSource::Custom(
+        "custom:review".into(),
+    ));
+    let session = session_info_to_agent_session(&info);
+    app.dispatch_custom_session_activation(&session);
+    let MasterExtRequest::SessionActivate {
+        request_id: original_request_id,
+        identity: original_identity,
+        activation_id: original_activation_id,
+        status_only: false,
+        ..
+    } = master_rx.try_recv().unwrap() else {
+        panic!("expected an initial activation");
+    };
+    app.handle_event(AppEvent::TabRenamed {
+        old_tab_id: "origin".into(),
+        new_tab_id: "moved".into(),
+        new_window_id: Some("99".into()),
+    });
+    app.dispatch_custom_session_activation(&session);
+    assert_eq!(app.pending_session_activations.len(), 1);
+    let retry = master_rx.try_recv().unwrap();
+    assert!(matches!(retry,
+        MasterExtRequest::SessionActivate {
+            request_id, identity, activation_id, window_id: 42,
+            tab_id, status_only: true,
+        } if request_id == original_request_id && identity == original_identity
+            && activation_id == original_activation_id && tab_id == "origin"));
+    assert!(master_rx.try_recv().is_err());
+}
+
+#[test]
 fn session_activation_receipt_survives_disconnect_and_status_retries() {
     use crate::protocol::acp::client::MasterExtRequest;
     let (mut app, mut master_rx) = test_app_with_master_rx();
@@ -2718,7 +2766,13 @@ fn session_activation_receipt_survives_disconnect_and_status_retries() {
         status_only: true,
     };
     app.pending_session_activations
-        .insert("retained-receipt".into(), request);
+        .insert("retained-receipt".into(), request.into());
+    app.tab_mut("origin-tab");
+    app.handle_event(AppEvent::TabRenamed {
+        old_tab_id: "origin-tab".into(),
+        new_tab_id: "moved-tab".into(),
+        new_window_id: Some("99".into()),
+    });
     app.handle_event(AppEvent::MasterDisconnected);
     app.reconcile_session_activations();
     app.reconcile_session_activations();
@@ -2737,6 +2791,12 @@ fn session_activation_receipt_survives_disconnect_and_status_retries() {
     assert!(app
         .pending_session_activations
         .contains_key("retained-receipt"));
+    app.handle_event(AppEvent::SessionActivationRejected {
+        activation_id: "retained-receipt".into(),
+        message: "activation rejected".into(),
+    });
+    assert!(!app.tab_sessions.contains_key("origin-tab"));
+    assert_eq!(app.tab_sessions["moved-tab"].messages.len(), 1);
     app.handle_event(AppEvent::SessionActivationCompleted {
         activation_id: "retained-receipt".into(),
     });

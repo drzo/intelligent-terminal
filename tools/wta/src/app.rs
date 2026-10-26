@@ -1370,6 +1370,27 @@ pub struct DispatchedCommand {
 
 // --- App ---
 
+struct PendingSessionActivation {
+    request: crate::protocol::acp::client::MasterExtRequest,
+    delivery_tab_id: String,
+}
+
+#[cfg(test)]
+impl From<crate::protocol::acp::client::MasterExtRequest> for PendingSessionActivation {
+    fn from(request: crate::protocol::acp::client::MasterExtRequest) -> Self {
+        let delivery_tab_id = match &request {
+            crate::protocol::acp::client::MasterExtRequest::SessionActivate { tab_id, .. } => {
+                tab_id.clone()
+            }
+            _ => unreachable!("only activation requests have receipts"),
+        };
+        Self {
+            request,
+            delivery_tab_id,
+        }
+    }
+}
+
 pub struct App {
     pub mode: AppMode,
     pub setup: Option<SetupState>,
@@ -1489,7 +1510,7 @@ pub struct App {
     restart_tx: mpsc::UnboundedSender<AgentLifecycleRequest>,
     master_request_tx: mpsc::UnboundedSender<crate::protocol::acp::client::MasterExtRequest>,
     /// Survives ACP task cancellation/reconnect; retained requests are status-only.
-    pending_session_activations: HashMap<String, crate::protocol::acp::client::MasterExtRequest>,
+    pending_session_activations: HashMap<String, PendingSessionActivation>,
     debug_capture_enabled: Arc<AtomicBool>,
     /// Cached for creating DeferredAcpParams after auth-error recovery.
     shell_mgr: Arc<crate::shell::ShellManager>,
@@ -3981,13 +4002,13 @@ impl App {
             }
         };
         let tab_id = self.active_tab_key().to_string();
-        if let Some(request) = self.pending_session_activations.values().find(|request| {
-            matches!(request,
+        if let Some(pending) = self.pending_session_activations.values().find(|pending| {
+            pending.delivery_tab_id == tab_id && matches!(&pending.request,
                 crate::protocol::acp::client::MasterExtRequest::SessionActivate {
-                    identity: pending_identity, window_id: pending_window, tab_id: pending_tab, ..
-                } if pending_identity == &identity && *pending_window == window_id && pending_tab == &tab_id)
+                    identity: pending_identity, ..
+                } if pending_identity == &identity)
         }) {
-            let _ = self.master_request_tx.send(request.clone());
+            let _ = self.master_request_tx.send(pending.request.clone());
             return;
         }
         let request_id = self.next_agents_rpc_request_id();
@@ -3997,7 +4018,7 @@ impl App {
             identity,
             window_id,
             activation_id: activation_id.clone(),
-            tab_id,
+            tab_id: tab_id.clone(),
             status_only: false,
         };
         let mut retained = request.clone();
@@ -4007,8 +4028,13 @@ impl App {
         {
             *status_only = true;
         }
-        self.pending_session_activations
-            .insert(activation_id.clone(), retained);
+        self.pending_session_activations.insert(
+            activation_id.clone(),
+            PendingSessionActivation {
+                request: retained,
+                delivery_tab_id: tab_id,
+            },
+        );
         if self.master_request_tx.send(request).is_err() {
             self.pending_session_activations.remove(&activation_id);
             tracing::warn!(target: "agents_view", "custom session activation channel is unavailable");
@@ -4047,8 +4073,8 @@ impl App {
     }
 
     fn reconcile_session_activations(&self) {
-        for request in self.pending_session_activations.values() {
-            let _ = self.master_request_tx.send(request.clone());
+        for pending in self.pending_session_activations.values() {
+            let _ = self.master_request_tx.send(pending.request.clone());
         }
     }
 
@@ -5794,6 +5820,7 @@ impl App {
             AppEvent::SessionConfigSetFailed { .. } => "session_config_set_failed",
             AppEvent::TabError { .. } => "tab_error",
             AppEvent::PromptError { .. } => "prompt_error",
+            #[cfg(test)]
             AppEvent::TabSystemMessage { .. } => "tab_system_message",
             AppEvent::AgentPasteReady { .. } => "agent_paste_ready",
             AppEvent::AgentPasteFailed { .. } => "agent_paste_failed",
@@ -5846,6 +5873,7 @@ impl App {
             AppEvent::RegisterBornBoundSession { .. } => "register_born_bound_session",
             AppEvent::MasterMutationCompleted { .. } => "master_mutation_completed",
             AppEvent::SessionActivationCompleted { .. } => "session_activation_completed",
+            AppEvent::SessionActivationRejected { .. } => "session_activation_rejected",
             AppEvent::SessionActivationNotDispatched { .. } => "session_activation_not_dispatched",
             AppEvent::DirectTerminalActionProposal { .. } => "direct_terminal_action_proposal",
             AppEvent::DirectTerminalActionProposalCommit { .. } => {
@@ -7538,6 +7566,11 @@ impl App {
         if self.pending_yolo_session_tabs.remove(old_tab_id) {
             self.pending_yolo_session_tabs
                 .insert(new_tab_id.to_string());
+        }
+        for pending in self.pending_session_activations.values_mut() {
+            if pending.delivery_tab_id == old_tab_id {
+                pending.delivery_tab_id = new_tab_id.to_string();
+            }
         }
         let had_session = if let Some(mut entry) = self.tab_sessions.remove(old_tab_id) {
             // Preserve target slot's TabSession if one was lazily

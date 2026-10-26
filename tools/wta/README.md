@@ -432,7 +432,9 @@ Agent-pane activation requests also reconcile pending alias receipts with
 status-only queries instead of treating `accepted: false` as a rejection.
 Unresolved identities survive request cancellation and transport disconnection.
 Only completed unsuccessful receipts report rejection to the originating
-conversation's current tab after a window move. Receipt status queries still
+conversation's current tab after a window move, including after ACP reconnect.
+The App retains this delivery target with the pending activation, independently
+of transport routing state. Receipt status queries still
 keep the original session identity and target window.
 A failed initial enqueue or an initial activation discarded before transport
 dequeue releases its local receipt so reconnect can retry. Failed or discarded

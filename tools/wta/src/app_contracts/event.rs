@@ -139,6 +139,7 @@ pub enum AppEvent {
         prompt_id: u64,
         message: String,
     },
+    #[cfg(test)]
     TabSystemMessage {
         tab_id: String,
         message: String,
@@ -378,6 +379,10 @@ pub enum AppEvent {
     },
     SessionActivationCompleted {
         activation_id: String,
+    },
+    SessionActivationRejected {
+        activation_id: String,
+        message: String,
     },
     SessionActivationNotDispatched {
         identity: crate::session_registry::SessionIdentity,
