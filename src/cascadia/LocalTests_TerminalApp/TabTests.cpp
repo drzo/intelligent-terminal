@@ -661,6 +661,9 @@ namespace TerminalAppLocalTests
         TEST_METHOD(CreateTerminalMuxXamlType);
 
         TEST_METHOD(CreateTerminalPage);
+        TEST_METHOD(SidebarUpdateBatchUsesFinalPaneState);
+        TEST_METHOD(SidebarUpdateBatchRecoversAfterFailure);
+        TEST_METHOD(SidebarUpdateBatchRetainsReentrantChanges);
         TEST_METHOD(PaneContextPropagatesCaptureFailure);
         TEST_METHOD(ProtocolProfilesReflectRuntimeSettings);
         TEST_METHOD(AgentSessionRestoreRequiresPersistedBufferPath);
@@ -22828,6 +22831,152 @@ namespace TerminalAppLocalTests
                                item.ContentId() == secondTerminalPane->ContentId().value());
                 VERIFY_ARE_EQUAL(item.ContentId() == secondTerminalPane->ContentId().value(), item.IsActive());
             }
+        });
+    }
+
+    void TabTests::SidebarUpdateBatchUsesFinalPaneState()
+    {
+        using State = winrt::Microsoft::Terminal::TerminalConnection::ConnectionState;
+        const auto connection = winrt::make_self<TestConnection>(winrt::guid{ L"{13f7aa41-8837-473e-92a3-f1e682ab1201}" }, State::Connected);
+        const auto helperConnection = winrt::make_self<TestConnection>(winrt::guid{ L"{13f7aa41-8837-473e-92a3-f1e682ab1202}" }, State::Connected);
+        const auto splitConnection = winrt::make_self<TestConnection>(winrt::guid{ L"{13f7aa41-8837-473e-92a3-f1e682ab1203}" }, State::Connected);
+        const auto page = _commonSetup(*connection, nullptr, std::nullopt, true);
+
+        TestOnUIThread([&]() {
+            using Page = winrt::TerminalApp::implementation::TerminalPage;
+            const auto tab = page->_GetFocusedTabImpl();
+            const auto originalControl = tab->GetActiveTerminalControl();
+            const auto strip = winrt::get_self<winrt::TerminalApp::implementation::TabStrip>(page->_tabStrip);
+            const auto display = strip->DisplayItemForTab(tab->TabViewItem());
+            const auto originalRow = display.PaneItems().GetAt(0);
+            uint32_t projections = 0;
+            const auto changed = display.PropertyChanged(winrt::auto_revoke, [&](auto&&, const auto& args) {
+                if (args.PropertyName() == L"SearchText")
+                {
+                    ++projections;
+                }
+            });
+
+            Page::SidebarUpdateBatch outer{ *page };
+            page->_tabSearchActive = true;
+            page->_tabSearchQuery = L"intermediate";
+            page->_ApplyTabListProjection(*tab);
+
+            const auto helper = page->_WrapInAgentPaneContent(page->_MakeTerminalPane(NewTerminalArgs{}, nullptr, *helperConnection));
+            helper->IsAgentPane(true);
+            tab->SplitPaneAtRoot(SplitDirection::Down, helper, 0.5f);
+            VERIFY_IS_TRUE(tab->IsAgentTab());
+            helper->GetRootElement().UpdateLayout();
+            tab->StashAgentPane();
+            VERIFY_IS_TRUE(helper->IsHidden());
+            VERIFY_IS_TRUE(originalControl == tab->GetActiveTerminalControl());
+            VERIFY_IS_FALSE(tab->IsAgentTab());
+
+            {
+                Page::SidebarUpdateBatch inner{ *page };
+                const auto split = page->_MakeTerminalPane(NewTerminalArgs{}, nullptr, *splitConnection);
+                VERIFY_IS_TRUE(page->_SplitPane(tab, SplitDirection::Right, 0.5f, split));
+                page->_RefreshTabStripPaneItems(tab);
+                page->_UpdateSidebarHistoryCurrentSession();
+                tab->TabColorChanged.raise();
+                page->_tabSearchQuery = L"final";
+                page->_ApplyTabListProjection(*tab, false, false);
+                inner.Commit();
+            }
+
+            VERIFY_ARE_EQUAL(0u, projections);
+            VERIFY_IS_TRUE(display.SearchText().empty());
+            VERIFY_ARE_EQUAL(1u, display.PaneItems().Size());
+            VERIFY_IS_FALSE(display.IsGroup());
+            outer.Commit();
+
+            VERIFY_ARE_EQUAL(1u, projections);
+            VERIFY_ARE_EQUAL(winrt::hstring{ L"final" }, display.SearchText());
+            VERIFY_ARE_EQUAL(2u, display.PaneItems().Size());
+            VERIFY_IS_TRUE(display.IsGroup());
+            VERIFY_IS_TRUE(originalRow == display.PaneItems().GetAt(0));
+            VERIFY_IS_TRUE(helper == tab->FindAgentPane());
+            VERIFY_IS_TRUE(helper->IsHidden());
+            VERIFY_ARE_EQUAL(0u, helperConnection->CloseCount());
+            VERIFY_ARE_EQUAL(0u, page->_sidebarUpdateBatchDepth);
+            VERIFY_IS_FALSE(page->_pendingSidebarUpdates);
+
+            page->_tabSearchQuery = L"normal";
+            page->_ApplyTabListProjection(*tab, false, false);
+            VERIFY_ARE_EQUAL(2u, projections);
+            VERIFY_ARE_EQUAL(winrt::hstring{ L"normal" }, display.SearchText());
+        });
+    }
+
+    void TabTests::SidebarUpdateBatchRecoversAfterFailure()
+    {
+        const auto page = _commonSetup(nullptr, nullptr, std::nullopt, true);
+        TestOnUIThread([&]() {
+            using Page = winrt::TerminalApp::implementation::TerminalPage;
+            const auto fail = [&]() {
+                Page::SidebarUpdateBatch batch{ *page };
+                page->_tabSearchActive = true;
+                page->_tabSearchQuery = L"aborted";
+                page->_ApplyTabListProjection();
+                throw winrt::hresult_error{ E_FAIL };
+            };
+            VERIFY_THROWS_SPECIFIC(fail(), winrt::hresult_error, [](const auto& error) {
+                return error.code() == E_FAIL;
+            });
+            VERIFY_ARE_EQUAL(0u, page->_sidebarUpdateBatchDepth);
+            VERIFY_IS_TRUE(page->_pendingSidebarUpdates);
+            VERIFY_IS_TRUE(page->_sidebarUpdateFlushQueued);
+        });
+
+        _waitForContentTransferReviewUI([&]() {
+            const auto strip = winrt::get_self<winrt::TerminalApp::implementation::TabStrip>(page->_tabStrip);
+            const auto display = strip->DisplayItemForTab(page->_GetFocusedTabImpl()->TabViewItem());
+            return !page->_pendingSidebarUpdates && !page->_sidebarUpdateFlushQueued &&
+                   display.SearchText() == L"aborted";
+        });
+        TestOnUIThread([&]() {
+            page->_tabSearchQuery = L"recovered";
+            page->_ApplyTabListProjection();
+            const auto strip = winrt::get_self<winrt::TerminalApp::implementation::TabStrip>(page->_tabStrip);
+            const auto display = strip->DisplayItemForTab(page->_GetFocusedTabImpl()->TabViewItem());
+            VERIFY_ARE_EQUAL(winrt::hstring{ L"recovered" }, display.SearchText());
+        });
+    }
+
+    void TabTests::SidebarUpdateBatchRetainsReentrantChanges()
+    {
+        const auto page = _commonSetup(nullptr, nullptr, std::nullopt, true);
+        TestOnUIThread([&]() {
+            using Page = winrt::TerminalApp::implementation::TerminalPage;
+            const auto tab = page->_GetFocusedTabImpl();
+            const auto strip = winrt::get_self<winrt::TerminalApp::implementation::TabStrip>(page->_tabStrip);
+            const auto display = strip->DisplayItemForTab(tab->TabViewItem());
+            uint32_t projections = 0;
+            bool handlingChange = false;
+            const auto changed = display.PropertyChanged(winrt::auto_revoke, [&](auto&&, const auto& args) {
+                if (args.PropertyName() == L"SearchText")
+                {
+                    VERIFY_IS_FALSE(handlingChange);
+                    handlingChange = true;
+                    auto reset = wil::scope_exit([&]() noexcept { handlingChange = false; });
+                    ++projections;
+                    if (display.SearchText() == L"first")
+                    {
+                        page->_tabSearchQuery = L"second";
+                        page->_ApplyTabListProjection(*tab, false, false);
+                    }
+                }
+            });
+            Page::SidebarUpdateBatch batch{ *page };
+            page->_tabSearchActive = true;
+            page->_tabSearchQuery = L"first";
+            page->_ApplyTabListProjection(*tab);
+            batch.Commit();
+
+            VERIFY_ARE_EQUAL(2u, projections);
+            VERIFY_ARE_EQUAL(winrt::hstring{ L"second" }, display.SearchText());
+            VERIFY_IS_FALSE(page->_pendingSidebarUpdates);
+            VERIFY_IS_FALSE(page->_flushingSidebarUpdates);
         });
     }
 
