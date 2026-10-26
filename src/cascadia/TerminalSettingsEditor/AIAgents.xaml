@@ -252,13 +252,13 @@
                         <TextBox x:Uid="AIAgents_CustomResume"
                                  Text="{x:Bind ViewModel.CustomAgentResumeCommand, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
                                  Style="{StaticResource TextBoxSettingStyle}" />
-                        <TextBlock Text="{x:Bind ViewModel.CustomAgentError, Mode=OneWay}"
-                                   TextWrapping="Wrap"
-                                   AutomationProperties.LiveSetting="Polite" />
+                        <TextBlock x:Name="CustomAgentErrorText"
+                                   Text="{x:Bind ViewModel.CustomAgentError, Mode=OneWay}"
+                                   TextWrapping="Wrap" />
                         <StackPanel Orientation="Horizontal"
                                     HorizontalAlignment="Right"
                                     Spacing="8">
-                            <Button x:Name="CustomAcpAgentSaveButton" Content="Save" Click="{x:Bind ViewModel.SaveCustomAcpAgent}" Style="{StaticResource AccentButtonStyle}" />
+                            <Button x:Name="CustomAcpAgentSaveButton" Content="Save" Click="CustomAcpAgentSave_Click" Style="{StaticResource AccentButtonStyle}" />
                             <Button x:Name="CustomAcpAgentCancelButton" Content="Cancel" Click="{x:Bind ViewModel.CancelCustomAcpAgent}" />
                         </StackPanel>
                     </StackPanel>

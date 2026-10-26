@@ -261,6 +261,32 @@ namespace winrt::Microsoft::Terminal::Settings::Editor::implementation
         }
     }
 
+    void AIAgents::CustomAcpAgentSave_Click(const IInspectable&, const RoutedEventArgs&)
+    {
+        const auto viewModel = ViewModel();
+        if (viewModel.IsCustomAgentPolicyLocked())
+        {
+            return;
+        }
+
+        viewModel.SaveCustomAcpAgent();
+        const auto error = viewModel.CustomAgentError();
+        if (!error.empty())
+        {
+            const auto text = CustomAgentErrorText();
+            // Update the UIA name before announcing, even when the error is unchanged.
+            text.Text(error);
+            if (const auto peer = Automation::Peers::FrameworkElementAutomationPeer::CreatePeerForElement(text))
+            {
+                peer.RaiseNotificationEvent(
+                    Automation::Peers::AutomationNotificationKind::ActionAborted,
+                    Automation::Peers::AutomationNotificationProcessing::All,
+                    error,
+                    L"CustomAgentSaveError");
+            }
+        }
+    }
+
     void AIAgents::CustomAgentAction_Loaded(
         const IInspectable& sender,
         const RoutedEventArgs&)
