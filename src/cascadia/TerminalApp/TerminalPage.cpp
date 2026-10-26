@@ -16580,7 +16580,8 @@ namespace winrt::TerminalApp::implementation
     //   Pane for this connection.
     std::shared_ptr<Pane> TerminalPage::_MakeTerminalPane(const NewTerminalArgs& contentArgs,
                                                           const winrt::TerminalApp::Tab& sourceTab,
-                                                          TerminalConnection::ITerminalConnection existingConnection)
+                                                          TerminalConnection::ITerminalConnection existingConnection,
+                                                          bool* elevationHandedOff)
     {
         // Elevation and resume enrichment must not mutate reusable action arguments.
         const NewTerminalArgs newTerminalArgs{ contentArgs ? contentArgs.Copy().as<NewTerminalArgs>() : nullptr };
@@ -16631,7 +16632,7 @@ namespace winrt::TerminalApp::implementation
                     throw winrt::hresult_error{ E_INVALIDARG, L"The moved agent pane is no longer available." };
                 }
                 newTerminalArgs.ContentId(0);
-                return _MakeTerminalPane(newTerminalArgs, sourceTab, existingConnection);
+                return _MakeTerminalPane(newTerminalArgs, sourceTab, existingConnection, elevationHandedOff);
             }
             std::shared_ptr<Pane> createdPane;
             auto closeOnFailure = wil::scope_exit([&]() noexcept {
@@ -16813,6 +16814,10 @@ namespace winrt::TerminalApp::implementation
         // Try to handle auto-elevation
         if (_maybeElevate(newTerminalArgs, controlSettings, profile))
         {
+            if (elevationHandedOff)
+            {
+                *elevationHandedOff = true;
+            }
             return nullptr;
         }
 
@@ -16933,14 +16938,15 @@ namespace winrt::TerminalApp::implementation
     // value gracefully.
     std::shared_ptr<Pane> TerminalPage::_MakePane(const INewContentArgs& contentArgs,
                                                   const winrt::TerminalApp::Tab& sourceTab,
-                                                  TerminalConnection::ITerminalConnection existingConnection)
+                                                  TerminalConnection::ITerminalConnection existingConnection,
+                                                  bool* elevationHandedOff)
 
     {
         const auto& newTerminalArgs{ contentArgs.try_as<NewTerminalArgs>() };
         if (contentArgs == nullptr || newTerminalArgs != nullptr || contentArgs.Type().empty())
         {
             // Terminals are of course special, and have to deal with debug taps, duplicating the tab, etc.
-            return _MakeTerminalPane(newTerminalArgs, sourceTab, existingConnection);
+            return _MakeTerminalPane(newTerminalArgs, sourceTab, existingConnection, elevationHandedOff);
         }
 
         IPaneContent content{ nullptr };
@@ -18128,6 +18134,11 @@ namespace winrt::TerminalApp::implementation
     // on another thread.
     void TerminalPage::_OpenElevatedWT(NewTerminalArgs newTerminalArgs)
     {
+        if (_elevatedLaunchTestHook)
+        {
+            _elevatedLaunchTestHook(newTerminalArgs);
+            return;
+        }
         // BODGY
         //
         // We're going to construct the commandline we want, then toss it to a
@@ -18154,7 +18165,7 @@ namespace winrt::TerminalApp::implementation
         STARTUPINFOW si{};
         si.cb = sizeof(si);
 
-        LOG_IF_WIN32_BOOL_FALSE(CreateProcessW(exePath.c_str(),
+        THROW_IF_WIN32_BOOL_FALSE(CreateProcessW(exePath.c_str(),
                                                cmdline.data(),
                                                nullptr,
                                                nullptr,

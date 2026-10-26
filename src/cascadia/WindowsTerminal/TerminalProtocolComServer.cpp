@@ -12,6 +12,7 @@
 #include <til/io.h>
 #include "../inc/TerminalProtocolProxyRegistration.h"
 #include "../TerminalProtocol/ProtocolParsing.h"
+#include "../TerminalProtocol/ProtocolTabCreation.h"
 #include "../inc/AgentRegistry.h"
 
 #include <algorithm>
@@ -1055,7 +1056,22 @@ try
             newTermArgs.SuppressApplicationTitle(true);
     }
 
-    auto cr = page.CreateProtocolTab(newTermArgs, background != 0).get();
+    Protocol::TabCreationResult cr{};
+    try
+    {
+        cr = page.CreateProtocolTab(newTermArgs, background != 0).get();
+    }
+    catch (const winrt::hresult_error& error)
+    {
+        if (error.code() != ::Microsoft::Terminal::Protocol::ElevationHandoff)
+        {
+            throw;
+        }
+        Json::Value result{ Json::objectValue };
+        result["outcome"] = "elevation_handoff";
+        *json = _bstrFromJson(result);
+        return S_OK;
+    }
     RETURN_HR_IF(E_FAIL, cr.SessionId == winrt::guid{});
 
     const auto& props = targetHost->Logic().WindowProperties();

@@ -8,6 +8,7 @@
 #include <winrt/Windows.Storage.h>
 
 #include "../TerminalApp/TerminalPage.h"
+#include "../TerminalProtocol/ProtocolTabCreation.h"
 #include "../TerminalApp/TerminalWindow.h"
 #include "../TerminalApp/SettingsLoadEventArgs.h"
 #include "../TerminalApp/MinMaxCloseControl.h"
@@ -722,6 +723,7 @@ namespace TerminalAppLocalTests
         TEST_METHOD(ContentIdAttachedPaneEmitsEndStateForItsConnection);
         TEST_METHOD(GetWindowLayoutIncludesAgentRestoreMetadata);
         TEST_METHOD(ElevatedPersistedTabKeepsShellCommands);
+        TEST_METHOD(CustomHistoryElevationHandoffPreservesOutcome);
         TEST_METHOD(CustomResumeRetainsIdentityAfterDefinitionChanges);
         TEST_METHOD(CustomHistoryActivationOverridesInheritedProvider);
         TEST_METHOD(CustomResumeWithoutProfilePreservesDefaultSettings);
@@ -4156,6 +4158,54 @@ namespace TerminalAppLocalTests
             VERIFY_IS_TRUE(_getTerminalArgs(normal.at(1)).Commandline() == L"test-agent --resume fallback-session");
             VERIFY_ARE_EQUAL(original, serialize(page->_BuildPersistedTabActions(tab.get(), true)));
         });
+    }
+
+    void TabTests::CustomHistoryElevationHandoffPreservesOutcome()
+    {
+        const auto page = _commonSetup(nullptr, nullptr, std::nullopt, true);
+        for (const auto launchFails : { false, true })
+        {
+            winrt::Windows::Foundation::IAsyncOperation<winrt::Microsoft::Terminal::Protocol::TabCreationResult> operation{ nullptr };
+            uint32_t initialTabs = 0;
+            size_t launchCount = 0;
+            TestOnUIThread([&]() {
+                VERIFY_IS_FALSE(page->IsRunningElevated());
+                initialTabs = page->_tabs.Size();
+                CustomAgent agent{ L"custom:elevation-fixture", L"Elevation fixture" };
+                agent.CliCommand(L"cmd.exe");
+                agent.ResumeCommand(L"cmd.exe /k echo {sessionId}");
+                page->_settings.GlobalSettings().CustomAgents(winrt::single_threaded_vector<CustomAgent>({ agent }));
+                const auto profile = page->_settings.ActiveProfiles().GetAt(1);
+                profile.Elevate(true);
+                page->_elevatedLaunchTestHook = [launchFails, agent, &launchCount](const NewTerminalArgs& args) {
+                    ++launchCount;
+                    VERIFY_ARE_EQUAL(agent.Id(), args.NativeAgentProviderId());
+                    VERIFY_ARE_EQUAL(winrt::hstring{ L"elevation-session" }, args.CustomAgentSessionId());
+                    VERIFY_ARE_EQUAL(winrt::hstring{ L"cmd.exe /k echo elevation-session" }, args.Commandline());
+                    THROW_HR_IF(E_ACCESSDENIED, launchFails);
+                };
+                NewTerminalArgs args;
+                args.Profile(winrt::to_hstring(profile.Guid()));
+                args.NativeAgentProviderId(agent.Id());
+                args.CustomAgentSessionId(L"elevation-session");
+                operation = page->CreateProtocolTab(args, true);
+            });
+            HRESULT outcome = S_OK;
+            try
+            {
+                operation.get();
+            }
+            catch (const winrt::hresult_error& error)
+            {
+                outcome = error.code();
+            }
+            VERIFY_ARE_EQUAL(launchFails ? E_ACCESSDENIED : ::Microsoft::Terminal::Protocol::ElevationHandoff, outcome);
+            TestOnUIThread([&]() {
+                VERIFY_ARE_EQUAL(size_t{ 1 }, launchCount);
+                VERIFY_ARE_EQUAL(initialTabs, page->_tabs.Size());
+                page->_elevatedLaunchTestHook = {};
+            });
+        }
     }
 
     void TabTests::CustomHistoryActivationOverridesInheritedProvider()
@@ -15666,6 +15716,14 @@ namespace TerminalAppLocalTests
             VERIFY_ARE_EQUAL(first.arguments, retry.arguments);
             page->_ReconcileSidebarHistoryActivation(retry, { State::Pending, false, {} });
             VERIFY_ARE_EQUAL(first.id, page->_PrepareSidebarHistoryActivation(item, normalMaster).id);
+            const auto handoff = page->_ParseSidebarHistoryActivation(
+                "{\"activation_id\":\"" + winrt::to_string(first.id) +
+                    "\",\"state\":\"unknown\",\"accepted\":false,\"action\":\"resume_cli\",\"detail\":\"Elevation was handed off\"}",
+                first.id);
+            page->_ReconcileSidebarHistoryActivation(retry, handoff);
+            const auto afterHandoff = page->_PrepareSidebarHistoryActivation(item, normalMaster);
+            VERIFY_IS_TRUE(afterHandoff.statusOnly);
+            VERIFY_ARE_EQUAL(first.id, afterHandoff.id);
 
             item.AgentId(L"claude");
             const auto otherProvider = page->_PrepareSidebarHistoryActivation(item, normalMaster);

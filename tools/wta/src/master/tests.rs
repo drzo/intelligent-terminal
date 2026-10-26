@@ -13476,6 +13476,12 @@ async fn sidebar_cli_resume_reports_creation_and_focus_failures() {
         (serde_json::json!({}), Some("create_tab"), "test failure", 1),
         (serde_json::json!({}), None, "did not return a pane ID", 1),
         (
+            serde_json::json!({"outcome": "elevation_handoff"}),
+            None,
+            "Elevation was handed off",
+            1,
+        ),
+        (
             serde_json::json!({"session_id": " {} "}),
             None,
             "did not return a pane ID",
@@ -13527,6 +13533,26 @@ async fn sidebar_cli_resume_reports_creation_and_focus_failures() {
             }
         );
         assert_eq!(mock.calls().len(), call_count);
+        if response.state == crate::session_registry::SessionActivationState::Unknown {
+            let mut retry = params.clone();
+            retry.activation_id = "new-id-same-conversation".to_string();
+            let receipt = handle_session_activate(&state, &retry).await.unwrap();
+            let receipt =
+                crate::session_registry::parse_session_activate_response(&receipt.0).unwrap();
+            assert_eq!(
+                receipt.state,
+                crate::session_registry::SessionActivationState::Unknown
+            );
+            assert!(!receipt.accepted);
+            assert_eq!(mock.calls().len(), call_count);
+            assert!(handle_session_activation_status(&state, &retry)
+                .await
+                .is_ok());
+            retry.window_id += 1;
+            assert!(handle_session_activation_status(&state, &retry)
+                .await
+                .is_err());
+        }
         let events: Vec<serde_json::Value> =
             crate::wt_protocol_events::take_test_published_events()
                 .into_iter()

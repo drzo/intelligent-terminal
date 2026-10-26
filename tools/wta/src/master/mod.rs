@@ -9160,6 +9160,19 @@ async fn execute_session_activation(
             }
             match wt.request("create_tab", params).await {
                 Ok(result) => {
+                    if result.get("outcome").and_then(serde_json::Value::as_str)
+                        == Some("elevation_handoff")
+                    {
+                        return respond!(
+                            "resume_cli",
+                            false,
+                            Some(
+                                "Elevation was handed off; the pane outcome is not observable yet."
+                                    .to_string()
+                            ),
+                            Unknown
+                        );
+                    }
                     let Some(pane_session_id) = result
                         .get("session_id")
                         .or_else(|| result.get("SessionId"))
