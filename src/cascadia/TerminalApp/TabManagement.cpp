@@ -21,6 +21,7 @@
 
 #include "AgentPaneContent.h"
 #include "AgentPaneLog.h"
+#include "TabPerformanceTrace.h"
 #include "ShellIntegrationSweep.h"
 #include "SharedWta.h"
 #include "TabRowControl.h"
@@ -101,6 +102,7 @@ namespace winrt::TerminalApp::implementation
     HRESULT TerminalPage::_OpenNewTab(const INewContentArgs& newContentArgs, bool openInBackground)
     try
     {
+        TabPerformanceTrace trace{ "OpenNewTab", _WindowProperties.WindowId() };
         if (const auto& newTerminalArgs{ newContentArgs.try_as<NewTerminalArgs>() })
         {
             const auto profile{ _settings.GetProfileForArgs(newTerminalArgs) };
@@ -124,7 +126,15 @@ namespace winrt::TerminalApp::implementation
 
         // This call to _MakePane won't return nullptr, we already checked that
         // case above with the _maybeElevate call.
-        return _CreateNewTabFromPane(_MakePane(newContentArgs, nullptr), -1, openInBackground) ? S_OK : S_FALSE;
+        auto pane = _MakePane(newContentArgs, nullptr);
+        if (pane)
+        {
+            trace.SessionId(pane->GetSessionId());
+        }
+        trace.Mark("PaneCreated");
+        const auto tab = _CreateNewTabFromPane(std::move(pane), -1, openInBackground);
+        trace.Mark(tab ? "TabCreated" : "NoTabCreated");
+        return tab ? S_OK : S_FALSE;
     }
     CATCH_RETURN();
 
@@ -135,7 +145,22 @@ namespace winrt::TerminalApp::implementation
     // - insertPosition: Optional parameter to indicate the position of tab.
     void TerminalPage::_InitializeTab(winrt::com_ptr<Tab> newTabImpl, uint32_t insertPosition, bool openInBackground)
     {
+        const auto activePane = newTabImpl->GetActivePane();
+        TabPerformanceTrace trace{ "InitializeTab", _WindowProperties.WindowId(), newTabImpl->StableId(), activePane ? activePane->GetSessionId() : winrt::guid{} };
+        TraceLoggingWrite(
+            g_hTerminalAppProvider,
+            "TabCreationContext",
+            TraceLoggingLevel(WINEVENT_LEVEL_VERBOSE),
+            TraceLoggingKeyword(TIL_KEYWORD_TRACE),
+            TraceLoggingUInt64(_WindowProperties.WindowId(), "WindowId"),
+            TraceLoggingWideString(newTabImpl->StableId().c_str(), "TabId"),
+            TraceLoggingUInt32(_tabs.Size(), "ExistingTabCount"),
+            TraceLoggingBool(_isVerticalLayout, "VerticalLayout"),
+            TraceLoggingBool(openInBackground, "OpenInBackground"),
+            TraceLoggingBool(_startupActionReplayDepth > 0, "StartupReplay"));
+        trace.Mark(_isVerticalLayout ? "VerticalLayout" : "HorizontalLayout");
         newTabImpl->Initialize();
+        trace.Mark("TabInitialized");
 
         if (_pendingNewTabLoadSession)
         {
@@ -269,7 +294,9 @@ namespace winrt::TerminalApp::implementation
             winrt::get_self<implementation::TabStrip>(_tabStrip)->PrepareTabItem(tabViewItem);
         }
 
+        trace.Mark("TabRegistered");
         _tabItems().InsertAt(insertPosition, tabViewItem);
+        trace.Mark("TabItemInserted");
 
         tabViewItem.PointerPressed({ this, &TerminalPage::_OnTabPointerPressed });
 
@@ -347,6 +374,7 @@ namespace winrt::TerminalApp::implementation
             content.IsHitTestVisible(false);
             _tabContent.Children().Append(content);
         }
+        trace.Mark(openInBackground ? "BackgroundContentAttached" : "TabSelected");
 
         // Per-tab model: pre-warm a stashed agent pane on every new terminal
         // tab. The helper conpty child is spawned but the pane is immediately
@@ -364,6 +392,7 @@ namespace winrt::TerminalApp::implementation
         {
             auto weakSelf = get_weak();
             auto weakTab = make_weak(newTabImpl);
+            const auto queuedAt = TabPerformanceTrace::Now();
             // Read now, not in the callback: by the time the low-priority tick
             // runs, the replay may have finished even though this tab's own
             // agent pane is still queued behind it.
@@ -376,7 +405,7 @@ namespace winrt::TerminalApp::implementation
                 // batch, so recording there would miss them entirely.
                 _tabsAwaitingPrewarm.emplace_back(make_weak(newTabImpl));
             }
-            auto initializeDeferred = [weakSelf, weakTab, deferPrewarm]() {
+            auto initializeDeferred = [weakSelf, weakTab, deferPrewarm, queuedAt]() {
                 const auto self = weakSelf.get();
                 const auto tabImplCom = weakTab.get();
                 if (!self || !tabImplCom || !self->_GetTabIndex(*tabImplCom))
@@ -388,6 +417,7 @@ namespace winrt::TerminalApp::implementation
                 {
                     return;
                 }
+                TabPerformanceTrace trace{ "DeferredTabInitialization", self->_WindowProperties.WindowId(), tabImplCom->StableId(), {}, queuedAt };
                 const auto newTabId = tabImplCom->StableId();
                 int agentLeavesSeen = 0;
                 rootPane->WalkTree([self, &tabImplCom, &newTabId, &agentLeavesSeen](const std::shared_ptr<Pane>& p) -> void {
@@ -435,6 +465,7 @@ namespace winrt::TerminalApp::implementation
                         winrt::to_string(oldTabId) + " new=" + winrt::to_string(newTabId));
                     self->_RaiseProtocolEvent("tab_renamed", params);
                 });
+                trace.Mark("ExistingPanesWired");
 
                 // Pre-warm a stashed agent pane on this tab so the helper is
                 // running from the start (autofix needs it). A transferred
@@ -460,6 +491,7 @@ namespace winrt::TerminalApp::implementation
                 {
                     self->_UpdateBottomBarState();
                 }
+                trace.Mark("PrewarmHandled");
             };
             if (_receivingContentTransfer)
             {
@@ -469,6 +501,7 @@ namespace winrt::TerminalApp::implementation
             {
                 dispatcher.TryEnqueue(winrt::Windows::System::DispatcherQueuePriority::Low, std::move(initializeDeferred));
             }
+            trace.Mark("PrewarmQueued");
         }
     }
 
@@ -479,6 +512,7 @@ namespace winrt::TerminalApp::implementation
     // - insertPosition: Optional parameter to indicate the position of tab.
     TerminalApp::Tab TerminalPage::_CreateNewTabFromPane(std::shared_ptr<Pane> pane, uint32_t insertPosition, bool openInBackground)
     {
+        TabPerformanceTrace trace{ "CreateTabFromPane", _WindowProperties.WindowId(), {}, pane ? pane->GetSessionId() : winrt::guid{} };
         if (pane)
         {
             auto closeOnFailure = wil::scope_exit([&]() noexcept {
@@ -497,14 +531,17 @@ namespace winrt::TerminalApp::implementation
                 get_strong(),
                 _shellIntegrationDesiredEnabled,
                 _shellIntegrationReconcileMutex);
+            trace.Mark("ShellIntegrationQueued");
             auto newTabImpl = winrt::make_self<Tab>(
                 pane, _receivingContentTransfer && _receivingContentTransfer->restoringKeptTab ? _receivingContentTransfer->sourceTab->StableId() : winrt::hstring{});
+            trace.Mark("TabObjectCreated");
             if (_receivingContentTransfer)
             {
                 _receivingContentTransfer->tabs.push_back(newTabImpl);
                 _CheckpointContentTransfer(ContentTransferStage::BeforeFirstPaneInsertion, _receivingContentTransfer->firstContentId);
             }
             _InitializeTab(newTabImpl, insertPosition, openInBackground);
+            trace.Mark("TabInitialized");
             closeOnFailure.release();
             return *newTabImpl;
         }
@@ -1926,6 +1963,8 @@ namespace winrt::TerminalApp::implementation
     // - eventArgs: the event's constituent arguments
     void TerminalPage::_OnTabItemsChanged(const IInspectable& sender, const Windows::Foundation::Collections::IVectorChangedEventArgs& eventArgs)
     {
+        TabPerformanceTrace trace{ "TabItemsChanged", _WindowProperties.WindowId() };
+        trace.Count("CollectionChange", static_cast<uint64_t>(eventArgs.CollectionChange()));
         if (_changingTabLayout || !_IsActiveTabControl(sender))
         {
             return;
@@ -1954,6 +1993,7 @@ namespace winrt::TerminalApp::implementation
             p.Visibility(Visibility::Collapsed);
         }
         _UpdateTabView();
+        trace.Mark("TabViewUpdated");
         if (!_rearranging &&
             eventArgs.CollectionChange() == Windows::Foundation::Collections::CollectionChange::ItemInserted &&
             eventArgs.Index() < _tabs.Size())
@@ -1964,6 +2004,7 @@ namespace winrt::TerminalApp::implementation
         {
             _ApplyTabListProjection();
         }
+        trace.Mark("ProjectionUpdated");
     }
 
     void TerminalPage::_OnTabPointerPressed(const IInspectable& sender, const Windows::UI::Xaml::Input::PointerRoutedEventArgs& e)
@@ -2055,11 +2096,15 @@ namespace winrt::TerminalApp::implementation
 
     void TerminalPage::_UpdatedSelectedTab(const winrt::TerminalApp::Tab& tab)
     {
+        const auto tabImpl = _GetTabImpl(tab);
+        const auto activePane = tabImpl ? tabImpl->GetActivePane() : nullptr;
+        TabPerformanceTrace trace{ "SelectTab", _WindowProperties.WindowId(), tabImpl ? tabImpl->StableId() : winrt::hstring{}, activePane ? activePane->GetSessionId() : winrt::guid{} };
         // Unfocus all the tabs.
         for (const auto& tab : _tabs)
         {
             tab.Focus(FocusState::Unfocused);
         }
+        trace.Mark("TabsUnfocused");
 
         try
         {
@@ -2068,6 +2113,7 @@ namespace winrt::TerminalApp::implementation
             content.Opacity(1.0);
             content.IsHitTestVisible(true);
             _tabContent.Children().Append(content);
+            trace.Mark("ContentAttached");
 
             // GH#7409: If the tab switcher is open, then we _don't_ want to
             // automatically focus the new tab here. The tab switcher wants
@@ -2086,20 +2132,24 @@ namespace winrt::TerminalApp::implementation
                 _UpdateMRUTab(tab);
                 _updateAllTabCloseButtons();
             }
+            trace.Mark("FocusUpdated");
 
             tab.TabViewItem().StartBringIntoView();
+            trace.Mark("BringIntoViewRequested");
 
             // Raise an event that our title changed
             TitleChanged.raise(*this, nullptr);
+            trace.Mark("TitleNotified");
 
             _updateThemeColors();
+            trace.Mark("ThemeUpdated");
 
-            auto tabImpl = _GetTabImpl(tab);
             if (tabImpl)
             {
                 auto profile = tabImpl->GetFocusedProfile();
                 _UpdateBackground(profile);
             }
+            trace.Mark("BackgroundUpdated");
 
             // Refresh the bottom bar's *visibility* synchronously here
             // so it tracks the tab type immediately. Tab kind alone
@@ -2120,6 +2170,7 @@ namespace winrt::TerminalApp::implementation
             // the bar's agent UI authoritative.
             _UpdateBottomBarVisibility();
             _UpdateSidebarHistoryCurrentSession();
+            trace.Mark("SidebarUpdated");
 
             // Bottom-bar refresh is now driven by wta — fire `tab_changed`
             // so wta re-projects this tab's authoritative agent-pane state
@@ -2132,6 +2183,7 @@ namespace winrt::TerminalApp::implementation
             {
                 _NotifyAgentTabChanged(tabImplForNotify->StableId());
             }
+            trace.Mark("AgentNotified");
 
             _adjustProcessPriorityThrottled->Run();
         }
@@ -2166,6 +2218,7 @@ namespace winrt::TerminalApp::implementation
         const bool refreshPaneItems,
         const bool updateBookkeeping)
     {
+        TabPerformanceTrace trace{ "TabListProjection", _WindowProperties.WindowId() };
         if (!_tabStrip)
         {
             return;
@@ -2178,6 +2231,8 @@ namespace winrt::TerminalApp::implementation
         }
 
         const auto refreshAll = _pendingTabProjectionRefresh || !changedTab;
+        trace.Count("RefreshAll", refreshAll);
+        trace.Count("RefreshPaneItems", refreshPaneItems);
         _pendingTabProjectionRefresh = false;
         const auto criteria = _ReadTabListCriteria();
         const auto policy = ::TerminalApp::TabListViewModel{ std::span<const ::TerminalApp::TabListViewModel::OwnerEntry>{}, criteria }.Policy();
@@ -2186,6 +2241,7 @@ namespace winrt::TerminalApp::implementation
         const auto tabStrip = _isVerticalLayout ?
                                   winrt::get_self<implementation::TabStrip>(_tabStrip) :
                                   nullptr;
+        trace.Mark("CriteriaResolved");
 
         const auto prepare = [&](const TerminalApp::Tab& tab, const TerminalApp::TabStripDisplayItem& projectedDisplay) {
             const auto item = tab.TabViewItem();
@@ -2222,7 +2278,10 @@ namespace winrt::TerminalApp::implementation
                 prepare(_tabs.GetAt(index), tabStrip ? tabStrip->DisplayItemAt(index) : nullptr);
             }
         }
+        trace.Mark("PaneItemsPrepared");
         const auto owners = _BuildTabListSnapshot();
+        trace.Count("OwnerCount", owners.size());
+        trace.Mark("OwnersSnapshotted");
         const ::TerminalApp::TabListViewModel list{ owners, criteria };
         std::vector<::TerminalApp::TabListViewModel::BindingCandidate> hints;
         if (tabStrip)
@@ -2240,6 +2299,8 @@ namespace winrt::TerminalApp::implementation
                 }
             }
         }
+        trace.Count("ShortcutHintCount", hints.size());
+        trace.Mark("ShortcutHintsBuilt");
         for (const auto& owner : owners)
         {
             if (_rearranging || _mutatingTabCollections || owner.canonicalIndex >= _tabs.Size() ||
@@ -2279,6 +2340,7 @@ namespace winrt::TerminalApp::implementation
                 return;
             }
         }
+        trace.Mark("OwnerStatesApplied");
 
         if (tabStrip)
         {
@@ -2328,7 +2390,10 @@ namespace winrt::TerminalApp::implementation
                     });
                 }
             }
+            trace.Count("RepresentedSessionCount", representedSessions.size());
+            trace.Mark("RepresentedSessionsCollected");
             tabStrip->SetRepresentedHistorySessions(std::move(representedSessions));
+            trace.Mark("HistoryProjectionUpdated");
         }
 
         const auto canDragDrop = CanDragDrop() &&
@@ -2340,6 +2405,7 @@ namespace winrt::TerminalApp::implementation
         {
             _UpdateSidebarHistoryCurrentSession();
         }
+        trace.Mark("BookkeepingUpdated");
     }
 
     std::vector<::TerminalApp::TabListViewModel::OwnerEntry> TerminalPage::_BuildTabListSnapshot() const

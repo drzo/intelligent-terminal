@@ -42,6 +42,7 @@
 #include "ContentTransfer.h"
 #include "ContentManager.h"
 #include "AgentPaneLog.h"
+#include "TabPerformanceTrace.h"
 #include "AgentSessionTelemetry.h"
 #include "AgentPolicyTelemetry.h"
 #include "App.h"
@@ -3427,6 +3428,7 @@ namespace winrt::TerminalApp::implementation
         {
             return rawPane;
         }
+        TabPerformanceTrace trace{ "WrapAgentPane", _WindowProperties.WindowId(), {}, rawPane->GetSessionId() };
         const auto innerTerm = rawPane->GetContent().try_as<winrt::TerminalApp::TerminalPaneContent>();
         if (!innerTerm)
         {
@@ -3448,7 +3450,9 @@ namespace winrt::TerminalApp::implementation
                 }
             }
         }
+        trace.Mark("ControlUnparented");
         auto agentContent = winrt::make<winrt::TerminalApp::implementation::AgentPaneContent>(innerTerm);
+        trace.Mark("ChromeCreated");
         winrt::get_self<ContentManager>(_manager)->MarkAgentHelper(innerTerm.GetTermControl().ContentId());
         if (const auto agentImpl = winrt::get_self<implementation::AgentPaneContent>(agentContent))
         {
@@ -3457,6 +3461,7 @@ namespace winrt::TerminalApp::implementation
             agentImpl->AgentBarRoot().FlowDirection(flowDirection);
             agentImpl->SessionsHintRoot().FlowDirection(flowDirection);
         }
+        trace.Mark("SettingsApplied");
         // Apply the cached fallback immediately when a pane is created
         // mid-session (#348). The next theme refresh replaces it with the
         // agent pane's own background color.
@@ -3467,7 +3472,10 @@ namespace winrt::TerminalApp::implementation
                 agentImpl->ApplyThemeColors(_agentBarBackgroundBrush, _agentBarForegroundBrush);
             }
         }
-        return std::make_shared<Pane>(agentContent);
+        trace.Mark("ThemeApplied");
+        auto pane = std::make_shared<Pane>(agentContent);
+        trace.Mark("PaneCreated");
+        return pane;
     }
 
     // Tells wta to clear a tab's session (conversation history + ACP
@@ -4060,6 +4068,10 @@ namespace winrt::TerminalApp::implementation
         {
             return false;
         }
+        TabPerformanceTrace trace{ autoStash ? "PrewarmAgentPane" : "CreateVisibleAgentPane",
+                                   _WindowProperties.WindowId(),
+                                   tab->StableId(),
+                                   tab->GetActivePane()->GetSessionId() };
         if (autoStash && tab->AgentPrewarmSuppressed())
         {
             _agentPaneLog("_AutoCreateHiddenAgentPaneShared: prewarm suppressed after explicit close");
@@ -4209,6 +4221,7 @@ namespace winrt::TerminalApp::implementation
             _agentPaneLog("_AutoCreateHiddenAgentPaneShared: ABORT — all agents blocked by GPO policy");
             return false;
         }
+        trace.Mark("AgentResolved");
 
         // Build the per-process settings the master will inherit.
         // These are baked at first-spawn time only; subsequent acquires
@@ -4222,6 +4235,7 @@ namespace winrt::TerminalApp::implementation
 
         auto& shared = winrt::TerminalApp::implementation::SharedWta::Instance();
         auto lease = shared.AcquirePane(std::wstring_view{ wtaPath }, extraArgs, environment);
+        trace.Mark("MasterAcquired");
         if (!lease)
         {
             _agentPaneLog("_AutoCreateHiddenAgentPaneShared: SharedWta::AcquirePane failed");
@@ -4471,8 +4485,10 @@ namespace winrt::TerminalApp::implementation
         {
             args.StartingDirectory(winrt::hstring{ resolvedWorkingDirectories.helper });
         }
+        trace.Mark("HelperArgumentsBuilt");
 
         auto rawPane = _MakeTerminalPane(args, nullptr, nullptr);
+        trace.Mark("HelperPaneCreated");
         if (!rawPane)
         {
             _agentPaneLog("_AutoCreateHiddenAgentPaneShared: _MakeTerminalPane returned null");
@@ -4487,6 +4503,7 @@ namespace winrt::TerminalApp::implementation
             CATCH_LOG()
         });
         auto newPane = _WrapInAgentPaneContent(rawPane);
+        trace.Mark("HelperWrapped");
         createdPane = newPane;
         const auto ownedContent = newPane->GetContent().try_as<winrt::TerminalApp::AgentPaneContent>();
         THROW_HR_IF(E_UNEXPECTED, !ownedContent);
@@ -4519,6 +4536,7 @@ namespace winrt::TerminalApp::implementation
                                               _GetAgentPaneCustomCommand(tab.get()));
             }
         }
+        trace.Mark("AgentSettingsAndEventsApplied");
 
         const auto splitDirection = _AgentPanePositionToSplitDirection(panePosition);
         // Zero means the size was never recorded (a fresh pre-warm, or a
@@ -4526,6 +4544,7 @@ namespace winrt::TerminalApp::implementation
         // split rather than collapsing the pane.
         const auto splitSize = initialPaneSize > 0.0f && initialPaneSize < 1.0f ? initialPaneSize : 0.5f;
         tab->SplitPaneAtRoot(splitDirection, newPane, splitSize);
+        trace.Mark("RootSplit");
         closeOnFailure.release();
         if (!autoStash)
         {
@@ -4565,8 +4584,11 @@ namespace winrt::TerminalApp::implementation
             {
                 root.UpdateLayout();
             }
+            trace.Mark("HelperLayoutInitialized");
             tab->StashAgentPane();
+            trace.Mark("PaneStashed");
             _UpdateBottomBarState();
+            trace.Mark("BottomBarUpdated");
             _agentPaneLog("_AutoCreateHiddenAgentPaneShared: done — helper pre-warmed + stashed");
             return true;
         }
@@ -6841,8 +6863,10 @@ namespace winrt::TerminalApp::implementation
 
     void TerminalPage::_UpdateSidebarHistoryCurrentSession()
     {
+        TabPerformanceTrace trace{ "SidebarHistoryCurrentSession", _WindowProperties.WindowId() };
         if (!_AreRecentAgentSessionsVisible())
         {
+            trace.Mark("SkippedHidden");
             return;
         }
 
@@ -6857,6 +6881,7 @@ namespace winrt::TerminalApp::implementation
                 const auto paneId = _TryParsePaneSessionId(winrt::to_string(paneSessionId));
                 return paneId && manager->KeptGroupForPane(*paneId) != winrt::guid{};
             });
+        trace.Mark("KeepRunningUpdated");
 
         TerminalApp::TabStripHistoryItem current{ nullptr };
         MUX::Controls::TabViewItem tabItem{ nullptr };
@@ -6885,7 +6910,9 @@ namespace winrt::TerminalApp::implementation
                 }
             }
         }
+        trace.Mark("CurrentItemResolved");
         strip->SetCurrentHistoryItem(current, tabItem);
+        trace.Mark("CurrentItemApplied");
     }
 
     void TerminalPage::_StartSidebarHistoryRefreshTimer()
@@ -14678,6 +14705,7 @@ namespace winrt::TerminalApp::implementation
     void TerminalPage::_activePaneChanged(winrt::TerminalApp::Tab sender,
                                           Windows::Foundation::IInspectable /*args*/)
     {
+        TabPerformanceTrace trace{ "ActivePaneChanged", _WindowProperties.WindowId() };
         if (const auto tab{ _GetTabImpl(sender) })
         {
             const auto tabStrip = _isVerticalLayout && _tabStrip ?
@@ -14687,6 +14715,7 @@ namespace winrt::TerminalApp::implementation
             // Possibly update the icon of the tab.
             _UpdateTabIcon(*tab);
             _RefreshTabStripPaneItems(tab, display);
+            trace.Mark("IconAndPaneItemsUpdated");
 
             if (const auto selected = _GetFocusedTabImpl(); selected && selected.get() == tab.get())
             {
@@ -14700,15 +14729,20 @@ namespace winrt::TerminalApp::implementation
                 auto profile = tab->GetFocusedProfile();
                 _UpdateBackground(profile);
             }
+            trace.Mark("ThemeAndBackgroundUpdated");
             _RefreshRichTabForTab(*tab, true, false);
+            trace.Mark("RichTabUpdated");
             if (tabStrip)
             {
                 tabStrip->SyncTabPresentation(display);
             }
+            trace.Mark("PresentationSynced");
             _ApplyTabListProjection(*tab, false, false);
+            trace.Mark("ProjectionUpdated");
         }
 
         _UpdateSidebarHistoryCurrentSession();
+        trace.Mark("HistoryUpdated");
         _adjustProcessPriorityThrottled->Run();
     }
 
@@ -16358,13 +16392,33 @@ namespace winrt::TerminalApp::implementation
 
     TermControl TerminalPage::_CreateNewControlAndContent(const Settings::TerminalSettingsCreateResult& settings, const ITerminalConnection& connection, const winrt::hstring& nativeAgentProviderId)
     {
+        const auto started = TabPerformanceTrace::Now();
+        TabPerformanceTrace trace{ "CreateControl", _WindowProperties.WindowId(), {}, connection.SessionId() };
         // Do any initialization that needs to apply to _every_ TermControl we
         // create here.
         const auto content = winrt::get_self<ContentManager>(_manager)->CreateAgentCliCore(
             *settings.DefaultSettings(), settings.UnfocusedSettings().try_as<IControlAppearance>(), connection, nativeAgentProviderId,
             !nativeAgentProviderId.empty() && settings.DefaultSettings()->UsesManagedAgentCommand() ? "Host" : "");
+        trace.Mark("CoreCreated");
         const TermControl control{ content };
-        return _SetupControl(control);
+        trace.Mark("XamlControlCreated");
+        if (started != TabPerformanceTrace::Clock::time_point{})
+        {
+            control.Initialized([started, windowId = _WindowProperties.WindowId(), sessionId = connection.SessionId()](auto&&, auto&&) {
+                // Initialized follows layout, connection start and EnablePainting, not first Present.
+                TraceLoggingWrite(
+                    g_hTerminalAppProvider,
+                    "TerminalControlInitialized",
+                    TraceLoggingLevel(WINEVENT_LEVEL_VERBOSE),
+                    TraceLoggingKeyword(TIL_KEYWORD_TRACE),
+                    TraceLoggingUInt64(windowId, "WindowId"),
+                    TraceLoggingGuid(sessionId, "SessionId"),
+                    TraceLoggingInt64(std::chrono::duration_cast<std::chrono::microseconds>(TabPerformanceTrace::Clock::now() - started).count(), "ElapsedUs"));
+            });
+        }
+        const auto result = _SetupControl(control);
+        trace.Mark("ControlSetup");
+        return result;
     }
 
     TermControl TerminalPage::_AttachControlToContent(const uint64_t& contentId, const NewTerminalArgs& /*newTerminalArgs*/)
@@ -16472,6 +16526,7 @@ namespace winrt::TerminalApp::implementation
                                                           const winrt::TerminalApp::Tab& sourceTab,
                                                           TerminalConnection::ITerminalConnection existingConnection)
     {
+        TabPerformanceTrace trace{ "MakeTerminalPane", _WindowProperties.WindowId() };
         // Elevation and resume enrichment must not mutate reusable action arguments.
         const NewTerminalArgs newTerminalArgs{ contentArgs ? contentArgs.Copy().as<NewTerminalArgs>() : nullptr };
 
@@ -16513,6 +16568,7 @@ namespace winrt::TerminalApp::implementation
             }
             const auto& profile = _settings.GetProfileForArgs(newTerminalArgs);
             const auto control = _AttachControlToContent(contentId, newTerminalArgs);
+            trace.Mark("ExistingControlAttached");
             if (!control)
             {
                 if (transfer || _receivingContentTransfer)
@@ -16679,6 +16735,7 @@ namespace winrt::TerminalApp::implementation
         {
             return nullptr;
         }
+        trace.Mark("SettingsResolved");
 
         const auto sessionId = controlSettings.DefaultSettings()->SessionId();
         const auto hasSessionId = sessionId != winrt::guid{};
@@ -16693,6 +16750,8 @@ namespace winrt::TerminalApp::implementation
         {
             connection = _CreateConnectionFromSettings(profile, *controlSettings.DefaultSettings(), hasSessionId);
         }
+        trace.SessionId(connection.SessionId());
+        trace.Mark("ConnectionCreated");
 
         TerminalConnection::ITerminalConnection debugConnection{ nullptr };
         if (_settings.GlobalSettings().DebugFeaturesEnabled())
@@ -16715,6 +16774,7 @@ namespace winrt::TerminalApp::implementation
                                              winrt::hstring{ profileProvider } :
                                              newTerminalArgs ? newTerminalArgs.NativeAgentProviderId() : winrt::hstring{};
         const auto control = _CreateNewControlAndContent(controlSettings, connection, nativeAgentProvider);
+        trace.Mark("ControlCreated");
 
         // Two kinds of pane replay their own history and must not also be
         // seeded from the saved buffer: one running an agent resume command,
@@ -16738,6 +16798,7 @@ namespace winrt::TerminalApp::implementation
         auto paneContent{ winrt::make<TerminalPaneContent>(profile, _terminalSettingsCache, control, _manager) };
 
         auto resultPane = std::make_shared<Pane>(paneContent);
+        trace.Mark("PaneCreated");
 
         if (debugConnection) // this will only be set if global debugging is on and tap is active
         {
@@ -18216,12 +18277,15 @@ namespace winrt::TerminalApp::implementation
         {
             return;
         }
+        TabPerformanceTrace trace{ "ThemeColors", _WindowProperties.WindowId() };
+        trace.Count("TabCount", _tabs.Size());
 
         const auto theme = _settings.GlobalSettings().CurrentTheme();
         auto requestedTheme{ theme.RequestedTheme() };
 
         {
             _updatePaneResources(requestedTheme);
+            trace.Mark("PaneResourcesCreated");
 
             for (const auto& tab : _tabs)
             {
@@ -18233,6 +18297,7 @@ namespace winrt::TerminalApp::implementation
                         rootPane->UpdateResources(_paneResources);
                     }
                 }
+                trace.Mark("PaneResourcesUpdated");
             }
         }
 
@@ -18310,6 +18375,7 @@ namespace winrt::TerminalApp::implementation
             _tabRow.Background(Media::SolidColorBrush{ Windows::UI::Colors::Transparent() });
         }
 
+        trace.Mark("TitlebarUpdated");
         // Second: Update the colors of our individual TabViewItems. This
         // applies tab.background to the tabs via Tab::ThemeColor.
         //
@@ -18324,6 +18390,7 @@ namespace winrt::TerminalApp::implementation
                 tabImpl->ThemeColor(tabBackground, tabUnfocusedBackground, bgColor);
             }
         }
+        trace.Mark("TabColorsUpdated");
         // Update the new tab button to have better contrast with the new color.
         // In theory, it would be convenient to also change these for the
         // inactive tabs as well, but we're leaving that as a follow up.
@@ -18346,6 +18413,7 @@ namespace winrt::TerminalApp::implementation
             FrameBrush(nullptr);
         }
 
+        trace.Mark("WindowFrameUpdated");
         // #348: Each agent-pane title bar follows that pane's own background
         // color (its coordinator profile), not the tab's effective color. The
         // window-level bottom bar remains fixed black.
@@ -18407,6 +18475,7 @@ namespace winrt::TerminalApp::implementation
                 }
             }
         }
+        trace.Mark("AgentBarsUpdated");
     }
 
     // Function Description:
