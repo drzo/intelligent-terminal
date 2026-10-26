@@ -465,31 +465,7 @@ namespace winrt::Microsoft::Terminal::TerminalConnection::implementation
     void ConptyConnection::Start()
     try
     {
-        const auto tracing = TraceLoggingProviderEnabled(g_hTerminalConnectionProvider, WINEVENT_LEVEL_VERBOSE, TIL_KEYWORD_TRACE);
-        const auto traceStarted = tracing ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};
-        auto tracePrevious = traceStarted;
-        const auto traceMark = [&](const char* stage) {
-            if (!tracing)
-            {
-                return;
-            }
-            const auto now = std::chrono::steady_clock::now();
-            TraceLoggingWrite(
-                g_hTerminalConnectionProvider,
-                "ConptyStartup",
-                TraceLoggingLevel(WINEVENT_LEVEL_VERBOSE),
-                TraceLoggingKeyword(TIL_KEYWORD_TRACE),
-                TraceLoggingGuid(_sessionId, "SessionId"),
-                TraceLoggingString(stage, "Stage"),
-                TraceLoggingInt64(std::chrono::duration_cast<std::chrono::microseconds>(now - traceStarted).count(), "ElapsedUs"),
-                TraceLoggingInt64(std::chrono::duration_cast<std::chrono::microseconds>(now - tracePrevious).count(), "StageUs"));
-            tracePrevious = now;
-        };
-        traceMark("Begin");
-        const auto traceEnd = wil::scope_exit([&]() { traceMark("End"); });
-
         _transitionToState(ConnectionState::Connecting);
-        traceMark("StateConnecting");
 
         const til::size dimensions{ gsl::narrow<til::CoordType>(_cols), gsl::narrow<til::CoordType>(_rows) };
 
@@ -498,10 +474,8 @@ namespace winrt::Microsoft::Terminal::TerminalConnection::implementation
         if (!_pipe)
         {
             auto pipe = Utils::CreateOverlappedPipe(PIPE_ACCESS_DUPLEX, 128 * 1024);
-            traceMark("PipeCreated");
             THROW_IF_FAILED(ConptyCreatePseudoConsole(til::unwrap_coord_size(dimensions), pipe.client.get(), pipe.client.get(), _flags, &_hPC));
             _pipe = std::move(pipe.server);
-            traceMark("PseudoConsoleCreated");
 
             if (_initialParentHwnd != 0)
             {
@@ -515,7 +489,6 @@ namespace winrt::Microsoft::Terminal::TerminalConnection::implementation
             }
 
             _LaunchAttachedClient();
-            traceMark("ClientLaunched");
         }
         // But if it was an inbound handoff... attempt to synchronize the size of it with what our connection
         // window is expecting it to be on the first layout.
@@ -541,7 +514,6 @@ namespace winrt::Microsoft::Terminal::TerminalConnection::implementation
         }
 
         THROW_IF_FAILED(ConptyReleasePseudoConsole(_hPC.get()));
-        traceMark("PseudoConsoleReleased");
 
         _startTime = std::chrono::high_resolution_clock::now();
 
@@ -566,10 +538,8 @@ namespace winrt::Microsoft::Terminal::TerminalConnection::implementation
         THROW_LAST_ERROR_IF_NULL(_hOutputThread);
 
         LOG_IF_FAILED(SetThreadDescription(_hOutputThread.get(), L"ConptyConnection Output Thread"));
-        traceMark("OutputThreadCreated");
 
         _transitionToState(ConnectionState::Connected);
-        traceMark("StateConnected");
     }
     catch (...)
     {

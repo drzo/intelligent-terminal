@@ -6,7 +6,6 @@
 #include "pch.h"
 #include "TabStrip.h"
 #include "TerminalPage.h"
-#include "TabPerformanceTrace.h"
 #include "AgentIconUtils.h"
 #include "TabStripAutomationPeer.h"
 #include "..\RichTabProvider\ProviderBroker.h"
@@ -2094,9 +2093,6 @@ namespace winrt::TerminalApp::implementation
     void TabStrip::UpdateHistoryKeepRunning(const std::function<bool(const winrt::hstring&)>& isPaneKeepRunning,
                                             const std::function<bool(const winrt::hstring&)>& isPaneHeadless)
     {
-        TabPerformanceTrace trace{ "HistoryKeepRunning", 0 };
-        trace.Count("HistorySnapshotCount", _historySnapshot.size());
-        trace.Count("HistoryRowCount", _historyItems.Size());
         bool changed = false;
         const auto update = [&](const TerminalApp::TabStripHistoryItem& item) {
             item.IsKeepRunning(!item.PaneSessionId().empty() && isPaneKeepRunning(item.PaneSessionId()));
@@ -2112,7 +2108,6 @@ namespace winrt::TerminalApp::implementation
         {
             update(item);
         }
-        trace.Mark("RowsUpdated");
         if (changed)
         {
             for (size_t index = 0; index < _historySnapshot.size(); ++index)
@@ -2124,7 +2119,6 @@ namespace winrt::TerminalApp::implementation
                 _applyHistoryProjection(true);
             }
         }
-        trace.Mark("SearchAndProjectionUpdated");
     }
 
     void TabStrip::UpdateHistoryPaneOwnership(const std::function<std::optional<bool>(const winrt::hstring&)>& otherWindow)
@@ -3550,8 +3544,6 @@ namespace winrt::TerminalApp::implementation
     void TabStrip::_onItemsVectorChanged(IObservableVector<IInspectable> const& sender,
                                           IVectorChangedEventArgs const& args)
     {
-        TabPerformanceTrace trace{ "TabItemsVectorChanged", 0 };
-        trace.Count("CollectionChange", static_cast<uint64_t>(args.CollectionChange()));
         if (_syncingNativeReorder)
         {
             TabItemsChanged.raise(*this, args);
@@ -3580,12 +3572,8 @@ namespace winrt::TerminalApp::implementation
         case CollectionChange::ItemInserted:
             if (const auto item = sender.GetAt(args.Index()).try_as<MUX::Controls::TabViewItem>())
             {
-                const auto display = _makeDisplayItem(item);
-                trace.Mark("DisplayItemCreated");
-                _displayItems.InsertAt(args.Index(), display);
-                trace.Mark("DisplayItemInserted");
+                _displayItems.InsertAt(args.Index(), _makeDisplayItem(item));
                 _syncViewportItems();
-                trace.Mark("ViewportSynced");
                 _applyTabItemVisibility(item);
             }
             break;
@@ -3618,11 +3606,8 @@ namespace winrt::TerminalApp::implementation
             break;
         }
 
-        trace.Mark("CollectionSynced");
         _removeStaleCloseRequestedSubscriptions(sender);
-        trace.Mark("SubscriptionsPruned");
         TabItemsChanged.raise(*this, args);
-        trace.Mark("PageNotified");
     }
 
     TerminalApp::TabStripDisplayItem TabStrip::_displayItemAt(uint32_t index) const

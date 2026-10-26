@@ -1444,38 +1444,6 @@ namespace winrt::Microsoft::Terminal::Control::implementation
             return false;
         }
 
-        const auto tracing = TraceLoggingProviderEnabled(g_hTerminalControlProvider, WINEVENT_LEVEL_VERBOSE, TIL_KEYWORD_TRACE);
-        const auto traceStarted = tracing ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};
-        auto tracePrevious = traceStarted;
-        winrt::guid traceSessionId{};
-        if (tracing)
-        {
-            if (const auto connection = _core.Connection())
-            {
-                traceSessionId = connection.SessionId();
-            }
-        }
-        const auto traceMark = [&](const char* stage) {
-            if (!tracing)
-            {
-                return;
-            }
-            const auto now = std::chrono::steady_clock::now();
-            TraceLoggingWrite(
-                g_hTerminalControlProvider,
-                "TerminalInitialization",
-                TraceLoggingLevel(WINEVENT_LEVEL_VERBOSE),
-                TraceLoggingKeyword(TIL_KEYWORD_TRACE),
-                TraceLoggingGuid(traceSessionId, "SessionId"),
-                TraceLoggingUInt32(static_cast<uint32_t>(reason), "Reason"),
-                TraceLoggingString(stage, "Stage"),
-                TraceLoggingInt64(std::chrono::duration_cast<std::chrono::microseconds>(now - traceStarted).count(), "ElapsedUs"),
-                TraceLoggingInt64(std::chrono::duration_cast<std::chrono::microseconds>(now - tracePrevious).count(), "StageUs"));
-            tracePrevious = now;
-        };
-        traceMark("Begin");
-        const auto traceEnd = wil::scope_exit([&]() { traceMark("End"); });
-
         const auto panelWidth = static_cast<float>(SwapChainPanel().ActualWidth());
         const auto panelHeight = static_cast<float>(SwapChainPanel().ActualHeight());
         const auto panelScaleX = SwapChainPanel().CompositionScaleX();
@@ -1486,7 +1454,6 @@ namespace winrt::Microsoft::Terminal::Control::implementation
 
         if (windowWidth == 0 || windowHeight == 0)
         {
-            traceMark("SkippedZeroSize");
             return false;
         }
 
@@ -1498,37 +1465,29 @@ namespace winrt::Microsoft::Terminal::Control::implementation
                                                           panelScaleX);
             if (!coreInitialized)
             {
-                traceMark("CoreUnavailable");
                 return false;
             }
-            traceMark("CoreInitialized");
 
             _interactivity.Initialize();
-            traceMark("InteractivityInitialized");
 
             if (!_restorePath.empty())
             {
                 _restoreInBackground();
-                traceMark("RestoreQueued");
             }
             else
             {
                 _core.Connection().Start();
-                traceMark("ConnectionStarted");
             }
         }
         else
         {
             _core.SizeOrScaleChanged(panelWidth, panelHeight, panelScaleX);
-            traceMark("SizeUpdated");
         }
 
         _core.EnablePainting();
-        traceMark("PaintingEnabled");
 
         // Now that the renderer is set up, update the appearance for initialization
         _UpdateAppearanceFromUIThread(_core.FocusedAppearance());
-        traceMark("AppearanceApplied");
 
         _initializedTerminal = true;
         // Reattachment must not turn scrollbar initialization into user input
@@ -1560,9 +1519,7 @@ namespace winrt::Microsoft::Terminal::Control::implementation
 
         // Likewise, run the event handlers outside of lock (they could
         // be reentrant)
-        traceMark("ScrollAndAutomationUpdated");
         Initialized.raise(*this, nullptr);
-        traceMark("InitializedNotified");
         return true;
     }
 

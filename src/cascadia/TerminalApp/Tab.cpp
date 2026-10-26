@@ -6,7 +6,6 @@
 #include "Tab.h"
 #include "TabHeaderControl.h"
 #include "AgentPaneContent.h"
-#include "TabPerformanceTrace.h"
 #include "AgentIconUtils.h"
 #include "SettingsPaneContent.h"
 #include "Tab.g.cpp"
@@ -881,7 +880,6 @@ namespace winrt::TerminalApp::implementation
                                                                                  const float splitSize)
     {
         ASSERT_UI_THREAD();
-        TabPerformanceTrace trace{ "SplitPaneAtRoot", 0, _stableId };
 
         // Add the new event handlers to the new pane(s) and update their ids.
         pane->WalkTree([&](const auto& p) {
@@ -898,7 +896,6 @@ namespace winrt::TerminalApp::implementation
             return false;
         });
         pane->EnableBroadcast(_tabStatus.IsInputBroadcastActive());
-        trace.Mark("NewPaneWired");
 
         // Save the root's pane ID before the split clears it. If the root
         // was a leaf, we need to transfer the ID to the new wrapper pane so
@@ -910,7 +907,6 @@ namespace winrt::TerminalApp::implementation
         // is modified in-place, Content() (which points to _rootPane->GetRootElement())
         // remains valid without any re-parenting.
         auto originalTree = _rootPane->AttachPane(pane, splitType, splitSize);
-        trace.Mark("RootAttached");
 
         // The split created a new wrapper pane for the original tree. Attach
         // Tab event handlers so that focus changes are tracked correctly —
@@ -940,10 +936,8 @@ namespace winrt::TerminalApp::implementation
         }
 
         // After split, Close Pane Menu Item should be visible
-        trace.Mark("ActivePaneUpdated");
         _closePaneMenuItem.Visibility(WUX::Visibility::Visible);
         PaneProjectionChanged.raise();
-        trace.Mark("ProjectionUpdated");
 
         return { originalTree, pane };
     }
@@ -1684,7 +1678,6 @@ namespace winrt::TerminalApp::implementation
     // - <none>
     void Tab::_UpdateActivePane(std::shared_ptr<Pane> pane)
     {
-        TabPerformanceTrace trace{ "UpdateActivePane", 0, _stableId };
         // Remember previous active pane for source-of-agent tracking.
         auto previousActive = _activePane;
 
@@ -1708,13 +1701,11 @@ namespace winrt::TerminalApp::implementation
         // the target, while pane count determines whether target indicators
         // are needed at all.
         _UpdateAgentPaneIndicators();
-        trace.Mark("PaneIndicatorsUpdated");
 
         // Update our own title text to match the newly-active pane.
         UpdateTitle();
         _UpdateProgressState();
         _UpdateConnectionClosedState();
-        trace.Mark("TabStateUpdated");
 
         // We need to move the pane to the top of our mru list
         // If its already somewhere in the list, remove it first
@@ -1740,7 +1731,6 @@ namespace winrt::TerminalApp::implementation
 
         // Raise our own ActivePaneChanged event.
         ActivePaneChanged.raise(*this, nullptr);
-        trace.Mark("PageNotified");
 
         // If the new active pane is a terminal, tell other interested panes
         // what the new active pane is.
@@ -3051,7 +3041,6 @@ namespace winrt::TerminalApp::implementation
     void Tab::StashAgentPane()
     {
         ASSERT_UI_THREAD();
-        TabPerformanceTrace trace{ "StashAgentPane", 0, _stableId };
         const auto agentPane = FindAgentPane();
         if (!agentPane || agentPane->IsHidden())
         {
@@ -3066,11 +3055,8 @@ namespace winrt::TerminalApp::implementation
             return;
         }
         parent->HidePane(agentPane);
-        trace.Mark("PaneHidden");
         _UpdateConnectionClosedState();
-        trace.Mark("ConnectionStateUpdated");
         PaneProjectionChanged.raise();
-        trace.Mark("ProjectionUpdated");
         // After HidePane, XAML focus is in limbo (the previously-focused
         // element — typically the agent pane's TermControl — was just
         // removed from the visual tree). Hotkeys go through
@@ -3094,7 +3080,6 @@ namespace winrt::TerminalApp::implementation
             // for the bookkeeping.
             _rootPane->FocusPane(focusTarget);
             _UpdateActivePane(focusTarget);
-            trace.Mark("ActivePaneUpdated");
             // Defer the actual XAML Focus to a low-priority dispatcher tick
             // (see RestoreStashedAgentPane for the explanation — synchronous
             // Programmatic focus drops silently on a just-re-parented
@@ -3408,7 +3393,6 @@ namespace winrt::TerminalApp::implementation
     // - <none>
     void Tab::_RecalculateAndApplyTabColor()
     {
-        TabPerformanceTrace trace{ "RecalculateTabColor", 0, _stableId };
         // GetTabColor will return the color set by the color picker, or the
         // color specified in the profile.
         const auto currentColor = GetTabColor();
@@ -3438,9 +3422,7 @@ namespace winrt::TerminalApp::implementation
         {
             _ClearTabBackgroundColor();
         }
-        trace.Mark("TabColorApplied");
         TabColorChanged.raise();
-        trace.Mark("ColorChangedNotified");
     }
 
     // Method Description:
