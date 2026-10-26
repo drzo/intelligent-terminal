@@ -4810,6 +4810,8 @@ async fn dispatch_master_ext_session_activation_unknown_only_checks_status() {
 
 #[tokio::test]
 async fn dispatch_master_ext_session_activation_rejection_preserves_existing_session() {
+    let _locale = crate::test_support::lock_locale();
+    rust_i18n::set_locale("de-DE");
     let local = tokio::task::LocalSet::new();
     local
         .run_until(async {
@@ -4847,7 +4849,8 @@ async fn dispatch_master_ext_session_activation_rejection_preserves_existing_ses
             match event_rx.try_recv().expect("rejection must be visible") {
                 AppEvent::TabSystemMessage { tab_id, message } => {
                     assert_eq!(tab_id, "t1");
-                    assert!(message.contains("Custom agent definition was removed"));
+                    assert_eq!(message, rust_i18n::t!("agents.status.error").to_string());
+                    assert!(!message.contains("Custom agent definition was removed"));
                 }
                 _ => panic!("expected a non-destructive TabSystemMessage"),
             }

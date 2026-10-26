@@ -12879,6 +12879,42 @@ async fn sidebar_activation_custom_agent_uses_configured_resume_and_preserves_id
 }
 
 #[tokio::test]
+async fn sidebar_activation_missing_custom_definition_has_structured_rejection() {
+    use crate::agent_sessions::{CliSource, SessionLocation};
+    use crate::session_mgmt::NotResumableReason;
+    use crate::session_registry::{SessionActivateParams, SessionIdentity, SessionInfo};
+
+    let mock = Arc::new(MockWtChannel::responding(
+        serde_json::json!({"customAgents": []}),
+    ));
+    let state = make_state_with_wt(mock.clone());
+    let mut row = SessionInfo::new(SessionId::new("missing-definition"), "C:\\repo".into());
+    row.provider_id = Some("custom:removed".into());
+    row.cli_source = Some(CliSource::Custom("custom:removed".into()));
+    row.location = SessionLocation::Host;
+    let params = SessionActivateParams {
+        identity: SessionIdentity::from_info(&row),
+        window_id: 42,
+        activation_id: "missing-definition".into(),
+    };
+    state.registry.upsert(row).await;
+
+    let response = execute_session_activation(&state, &params).await;
+
+    assert!(!response.accepted);
+    assert_eq!(
+        response.rejection_reason,
+        Some(NotResumableReason::UnknownCli)
+    );
+    assert_eq!(
+        response.detail.as_deref(),
+        Some("The custom agent definition is no longer configured.")
+    );
+    assert_eq!(mock.calls().len(), 1);
+    assert_eq!(mock.calls()[0].0, "get_settings");
+}
+
+#[tokio::test]
 async fn sidebar_activation_unknown_provider_or_location_never_creates_tab() {
     use crate::agent_sessions::{AgentStatus, CliSource, SessionLocation, SessionOrigin};
     use crate::session_registry::{SessionActivateParams, SessionIdentity, SessionInfo};
@@ -12918,6 +12954,11 @@ async fn sidebar_activation_unknown_provider_or_location_never_creates_tab() {
         .await;
         assert!(!response.accepted);
         assert_eq!(response.action, action);
+        assert_eq!(
+            response.rejection_reason,
+            (action == "not_resumable")
+                .then_some(crate::session_mgmt::NotResumableReason::UnknownCli)
+        );
         assert!(mock.calls().is_empty());
         assert_eq!(
             state.registry.lookup_identity(&identity).await.unwrap(),
@@ -13386,6 +13427,7 @@ async fn sidebar_activation_reservation_preserves_unknown_retries_and_provider_i
                                 action: "resume_cli".into(),
                                 accepted: false,
                                 detail: Some("original failure".into()),
+                                rejection_reason: None,
                             },
                         },
                     );
@@ -13442,6 +13484,7 @@ async fn sidebar_activation_receipt_capacity_preserves_pending_operations() {
                         action: String::new(),
                         accepted: false,
                         detail: None,
+                        rejection_reason: None,
                     },
                     params: pending,
                 },

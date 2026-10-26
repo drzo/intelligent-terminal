@@ -8723,6 +8723,7 @@ async fn handle_session_activation_status(
             action: String::new(),
             accepted: false,
             detail: None,
+            rejection_reason: None,
         },
     ))
 }
@@ -8783,6 +8784,7 @@ async fn handle_session_activate(
                 action: String::new(),
                 accepted: false,
                 detail: None,
+                rejection_reason: None,
             },
         },
     );
@@ -8833,6 +8835,7 @@ async fn execute_session_activation(
                 action: $action.to_string(),
                 accepted: $accepted,
                 detail: $detail,
+                rejection_reason: None,
             }
         }};
     }
@@ -8882,11 +8885,13 @@ async fn execute_session_activation(
         }
     }
     let Some(cli_source) = row.cli_source.clone() else {
-        return respond!(
+        let mut response = respond!(
             "not_resumable",
             false,
             Some("The selected session has no known provider.".to_string())
         );
+        response.rejection_reason = Some(crate::session_mgmt::NotResumableReason::UnknownCli);
+        return response;
     };
     let provider_id = cli_source.canonical_provider_id();
     let custom = if let Some(id) = provider_id
@@ -8910,11 +8915,14 @@ async fn execute_session_activation(
         match crate::custom_agents::from_settings(&settings, id) {
             Ok(Some(agent)) => Some(agent),
             Ok(None) => {
-                return respond!(
+                let mut response = respond!(
                     "not_resumable",
                     false,
                     Some("The custom agent definition is no longer configured.".into())
-                )
+                );
+                response.rejection_reason =
+                    Some(crate::session_mgmt::NotResumableReason::UnknownCli);
+                return response;
             }
             Err(error) => return failed("not_resumable", error),
         }
@@ -8935,11 +8943,13 @@ async fn execute_session_activation(
     if custom.is_none()
         && profile.is_none_or(|profile| profile.id == crate::agent_registry::DEFAULT_PROFILE.id)
     {
-        return respond!(
+        let mut response = respond!(
             "not_resumable",
             false,
             Some("The selected session provider is unavailable.".to_string())
         );
+        response.rejection_reason = Some(crate::session_mgmt::NotResumableReason::UnknownCli);
+        return response;
     }
     let supports_cli_resume = custom.as_ref().is_some_and(|agent| agent.resume.is_some())
         || profile.is_some_and(|profile| !profile.resume_flag.is_empty());
@@ -9288,13 +9298,17 @@ async fn execute_session_activation(
                 Err(error) => failed("resume_cli", error),
             }
         }
-        EnterAction::NotResumable { reason } => respond!(
-            "not_resumable",
-            false,
-            Some(format!(
-                "The selected session cannot be activated: {reason:?}."
-            ))
-        ),
+        EnterAction::NotResumable { reason } => {
+            let mut response = respond!(
+                "not_resumable",
+                false,
+                Some(format!(
+                    "The selected session cannot be activated: {reason:?}."
+                ))
+            );
+            response.rejection_reason = Some(reason);
+            response
+        }
     }
 }
 

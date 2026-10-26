@@ -590,8 +590,11 @@ pub struct SessionActivateResponse {
     pub state: SessionActivationState,
     pub action: String,
     pub accepted: bool,
+    /// Diagnostic text for logs, never a localized chat message.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub detail: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rejection_reason: Option<crate::session_mgmt::NotResumableReason>,
 }
 
 #[derive(Debug, Clone, Copy, Default, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
@@ -8240,6 +8243,7 @@ mod tests {
                 action: String::new(),
                 accepted: false,
                 detail: None,
+                rejection_reason: None,
             };
             let raw = serde_json::value::to_raw_value(&response).unwrap();
             assert_eq!(parse_session_activate_response(&raw).unwrap(), response);
