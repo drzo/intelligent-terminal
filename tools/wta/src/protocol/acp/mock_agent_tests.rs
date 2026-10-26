@@ -15,11 +15,11 @@
 use super::{
     dispatch_drop_session, dispatch_drop_session_with_aliases, dispatch_load_session,
     dispatch_load_session_with_aliases, dispatch_master_ext_request,
-    dispatch_master_ext_request_with_yolo_timeout, dispatch_new_session,
-    dispatch_new_session_with_aliases, dispatch_prompt, dispatch_prompt_with_aliases,
-    dispatch_rename_session, dispatch_rename_session_with_aliases, finalize_client_transport,
-    publish_current_native_config_options, take_retired_session_result, AutofixTextKind,
-    ClientTransportGuard, DropSessionRequest, LoadSessionForTab, MasterExtRequest,
+    dispatch_master_ext_request_with_aliases, dispatch_master_ext_request_with_yolo_timeout,
+    dispatch_new_session, dispatch_new_session_with_aliases, dispatch_prompt,
+    dispatch_prompt_with_aliases, dispatch_rename_session, dispatch_rename_session_with_aliases,
+    finalize_client_transport, publish_current_native_config_options, take_retired_session_result,
+    AutofixTextKind, ClientTransportGuard, DropSessionRequest, LoadSessionForTab, MasterExtRequest,
     NewSessionForTab, PromptSubmission, RenameSessionRequest,
 };
 use super::{ClientState, PromptUsageIdentity, ProviderProbeCapture, WtaClient};
@@ -77,6 +77,7 @@ enum MockBehavior {
 /// stream replies / request permission, exactly like a real agent does.
 #[derive(Clone)]
 struct MockAgent {
+    activation_barrier: Option<(Arc<tokio::sync::Notify>, Arc<tokio::sync::Notify>)>,
     activation_requests: Arc<Mutex<Vec<(bool, crate::session_registry::SessionActivateParams)>>>,
     conn: Arc<OnceCell<conn::AgentLink>>,
     behavior: MockBehavior,
@@ -564,6 +565,7 @@ fn connect_with(
     let permission_outcome = Arc::new(Mutex::new(None));
     let conn_cell: Arc<OnceCell<conn::AgentLink>> = Arc::new(OnceCell::new());
     let mock = MockAgent {
+        activation_barrier: None,
         activation_requests: Arc::new(Mutex::new(Vec::new())),
         conn: conn_cell.clone(),
         behavior,
@@ -736,6 +738,12 @@ fn spawn_mock_pair(
                                     | crate::session_registry::WtaExtRequest::SessionActivationStatus(params) => {
                                         let status_only = request_is_activation_status;
                                         m.activation_requests.lock().unwrap().push((status_only, params.clone()));
+                                        if status_only {
+                                            if let Some((started, release)) = &m.activation_barrier {
+                                                started.notify_one();
+                                                release.notified().await;
+                                            }
+                                        }
                                         let state = match m.behavior {
                                             MockBehavior::ActivationUnknown => "unknown",
                                             MockBehavior::ActivationSuccess | MockBehavior::ActivationFailure if !status_only => "pending",
@@ -994,6 +1002,13 @@ pub(crate) struct DispatchHarness {
 /// the shared `event_tx` / `shell_mgr` / `prompt_timing` so the dispatcher can
 /// be invoked with the same handles the production loop would.
 fn connect_for_dispatch(behavior: MockBehavior) -> DispatchHarness {
+    connect_for_dispatch_with_activation_barrier(behavior, None)
+}
+
+fn connect_for_dispatch_with_activation_barrier(
+    behavior: MockBehavior,
+    activation_barrier: Option<(Arc<tokio::sync::Notify>, Arc<tokio::sync::Notify>)>,
+) -> DispatchHarness {
     let (event_tx, event_rx) = mpsc::unbounded_channel();
     let shell_mgr = Arc::new(ShellManager::new());
     let prompt_timing = Arc::new(PromptTimingState::default());
@@ -1041,6 +1056,7 @@ fn connect_for_dispatch(behavior: MockBehavior) -> DispatchHarness {
     let conn_cell: Arc<OnceCell<conn::AgentLink>> = Arc::new(OnceCell::new());
     let activation_requests = Arc::new(Mutex::new(Vec::new()));
     let mock = MockAgent {
+        activation_barrier,
         activation_requests: activation_requests.clone(),
         conn: conn_cell.clone(),
         behavior,
@@ -4770,6 +4786,130 @@ fn activation_test_request(status_only: bool) -> MasterExtRequest {
 }
 
 #[tokio::test]
+async fn session_activation_rejection_follows_pending_window_move() {
+    tokio::task::LocalSet::new()
+        .run_until(async {
+            let started = Arc::new(tokio::sync::Notify::new());
+            let release = Arc::new(tokio::sync::Notify::new());
+            let mut h = connect_for_dispatch_with_activation_barrier(
+                MockBehavior::ActivationFailure,
+                Some((Arc::clone(&started), Arc::clone(&release))),
+            );
+            let mut app = crate::app::App::new(
+                mpsc::unbounded_channel().0,
+                mpsc::unbounded_channel().0,
+                mpsc::unbounded_channel().0,
+                mpsc::unbounded_channel().0,
+                mpsc::unbounded_channel().0,
+                mpsc::unbounded_channel().0,
+                mpsc::unbounded_channel().0,
+                mpsc::unbounded_channel().0,
+                mpsc::unbounded_channel().0,
+                Arc::new(AtomicBool::new(false)),
+                true,
+                false,
+                Arc::clone(&h.shell_mgr),
+                Arc::clone(&h.client.state.yolo_state),
+            );
+            app.owner_tab_id = Some("origin-tab".into());
+            app.window_id = Some("42".into());
+            app.handle_test_event(AppEvent::TabSystemMessage {
+                tab_id: "origin-tab".into(),
+                message: "existing conversation".into(),
+            });
+            let sid = acp::schema::v1::SessionId::new("existing-conversation");
+            let sessions = Arc::new(tokio::sync::Mutex::new(HashMap::from([(
+                "origin-tab".to_string(),
+                sid.clone(),
+            )])));
+            let aliases = Arc::new(Mutex::new(HashMap::new()));
+            let generations = Arc::new(Mutex::new(HashMap::new()));
+            let in_flight = Arc::new(Mutex::new(HashMap::from([(
+                "origin-tab".to_string(),
+                7,
+            )])));
+            let task = dispatch_master_ext_request_with_aliases(
+                activation_test_request(false),
+                &h.conn,
+                &h.event_tx,
+                &sessions,
+                Arc::clone(&h.client.state),
+                &aliases,
+            );
+            tokio::time::timeout(std::time::Duration::from_secs(2), started.notified())
+                .await
+                .unwrap();
+            for (old, new) in [("origin-tab", "middle-tab"), ("middle-tab", "moved-tab")] {
+                app.handle_test_event(AppEvent::TabRenamed {
+                    old_tab_id: old.into(),
+                    new_tab_id: new.into(),
+                    new_window_id: Some("99".into()),
+                });
+                dispatch_rename_session_with_aliases(
+                    RenameSessionRequest {
+                        old_tab_id: old.into(),
+                        new_tab_id: new.into(),
+                    },
+                    &sessions,
+                    &in_flight,
+                    &aliases,
+                    &generations,
+                )
+                .await;
+            }
+            release.notify_one();
+            task.await.unwrap();
+            let rejection = h.event_rx.try_recv().unwrap();
+            assert!(matches!(&rejection,
+                AppEvent::TabSystemMessage { tab_id, .. } if tab_id == "moved-tab"));
+            app.handle_test_event(rejection);
+            assert!(!app.tab_sessions.contains_key("origin-tab"));
+            assert!(!app.tab_sessions.contains_key("middle-tab"));
+            assert_eq!(app.tab_sessions["moved-tab"].messages.len(), 2);
+            assert_eq!(app.owner_tab_id.as_deref(), Some("moved-tab"));
+            assert_eq!(app.window_id.as_deref(), Some("99"));
+            assert!(matches!(h.event_rx.try_recv(),
+                Ok(AppEvent::SessionActivationCompleted { activation_id }) if activation_id == "alias-receipt"));
+            assert!(matches!(h.event_rx.try_recv(),
+                Ok(AppEvent::MasterMutationCompleted { request_id: 11 })));
+            assert!(
+                h.event_rx.try_recv().is_err(),
+                "old owner must not receive an orphan message"
+            );
+            assert_eq!(
+                *sessions.lock().await,
+                HashMap::from([("moved-tab".to_string(), sid)])
+            );
+            assert_eq!(
+                *in_flight.lock().unwrap(),
+                HashMap::from([("moved-tab".to_string(), 7)])
+            );
+
+            // A retained receipt retries status only, with the original session/window.
+            let retry = dispatch_master_ext_request_with_aliases(
+                activation_test_request(true),
+                &h.conn,
+                &h.event_tx,
+                &sessions,
+                Arc::clone(&h.client.state),
+                &aliases,
+            );
+            tokio::time::timeout(std::time::Duration::from_secs(2), started.notified())
+                .await
+                .unwrap();
+            release.notify_one();
+            retry.await.unwrap();
+            let requests = h.activation_requests.lock().unwrap();
+            assert_eq!(requests.len(), 3);
+            assert!(!requests[0].0);
+            assert!(requests[1].0 && requests[2].0);
+            assert!(requests.iter().all(|(_, params)| params == &requests[0].1));
+            assert_eq!(requests[0].1.window_id, 42);
+        })
+        .await;
+}
+
+#[tokio::test]
 async fn dispatch_master_ext_session_activation_unknown_only_checks_status() {
     tokio::task::LocalSet::new()
         .run_until(async {
@@ -5326,6 +5466,7 @@ async fn native_disable_config_timeout_requests_restart() {
                 &tab_to_session,
                 Arc::clone(&h.client.state),
                 std::time::Duration::from_millis(20),
+                &Arc::new(Mutex::new(HashMap::new())),
             );
 
             tokio::time::timeout(
@@ -5784,6 +5925,7 @@ async fn fail_closed_yolo_reconcile_has_one_deadline_across_sessions() {
                 &tab_to_session,
                 Arc::clone(&h.client.state),
                 std::time::Duration::from_millis(50),
+                &Arc::new(Mutex::new(HashMap::new())),
             );
 
             tokio::time::timeout(
@@ -5854,6 +5996,7 @@ async fn fail_closed_yolo_reconcile_stops_after_first_error() {
                 &tab_to_session,
                 Arc::clone(&h.client.state),
                 std::time::Duration::from_millis(250),
+                &Arc::new(Mutex::new(HashMap::new())),
             );
 
             let (_, fail_closed, restart_required, result) =
@@ -5913,6 +6056,7 @@ async fn timed_out_mode_yolo_change_requests_restart() {
                 &tab_to_session,
                 Arc::clone(&h.client.state),
                 std::time::Duration::from_millis(20),
+                &Arc::new(Mutex::new(HashMap::new())),
             );
 
             tokio::time::timeout(
@@ -5992,6 +6136,7 @@ async fn non_fail_closed_yolo_reconcile_continues_after_known_error() {
                 &tab_to_session,
                 Arc::clone(&h.client.state),
                 std::time::Duration::from_millis(250),
+                &Arc::new(Mutex::new(HashMap::new())),
             );
 
             let (_, fail_closed, restart_required, result) =

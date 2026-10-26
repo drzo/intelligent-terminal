@@ -495,6 +495,11 @@ impl App {
         self.capture_pending_autofix_snapshots().await;
     }
 
+    #[cfg(test)]
+    pub(crate) fn handle_test_event(&mut self, event: AppEvent) {
+        self.handle_event(event);
+    }
+
     pub(super) fn handle_event(&mut self, event: AppEvent) {
         self.sync_agent_markdown_selection();
         // Async cards can take and release draft ownership without a key/focus event.

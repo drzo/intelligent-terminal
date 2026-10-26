@@ -430,8 +430,10 @@ share the pending operation even when their activation IDs or target windows
 differ. Unknown outcomes retain the reservation; definitive failures allow retry.
 Agent-pane activation requests also reconcile pending alias receipts with
 status-only queries instead of treating `accepted: false` as a rejection.
-Unresolved identities survive request cancellation and transport disconnection;
-only completed unsuccessful receipts report rejection to the originating tab.
+Unresolved identities survive request cancellation and transport disconnection.
+Only completed unsuccessful receipts report rejection to the originating
+conversation's current tab after a window move. Receipt status queries still
+keep the original session identity and target window.
 A failed initial enqueue or an initial activation discarded before transport
 dequeue releases its local receipt so reconnect can retry. Failed or discarded
 status checks retain receipts for operations that may already have run, as do

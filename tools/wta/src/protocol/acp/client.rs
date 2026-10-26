@@ -3972,12 +3972,13 @@ pub async fn run_acp_client_over_pipe(
             }
             Some(req) = master_ext_rx.receiver.recv() => {
                 lifecycle_tasks.retain(|task| !task.is_finished());
-                lifecycle_tasks.push(dispatch_master_ext_request(
+                lifecycle_tasks.push(dispatch_master_ext_request_with_aliases(
                     req,
                     &conn,
                     &event_tx,
                     &tab_to_session,
                     Arc::clone(&state),
+                    &tab_aliases,
                 ));
             }
             Some(req) = restart_rx.recv() => {
@@ -4199,12 +4200,31 @@ fn session_activation_rejection_message(
 /// cleans up state on completion. Extracted from the old inline body in
 /// the prompt while-loop so the new select-based loop body stays terse.
 #[allow(clippy::too_many_arguments)]
+#[cfg(test)]
 fn dispatch_master_ext_request(
     req: MasterExtRequest,
     conn: &conn::ClientLink,
     event_tx: &mpsc::UnboundedSender<AppEvent>,
     tab_to_session: &Arc<tokio::sync::Mutex<HashMap<String, acp::schema::v1::SessionId>>>,
     client_state: Arc<ClientState>,
+) -> LifecycleTask {
+    dispatch_master_ext_request_with_aliases(
+        req,
+        conn,
+        event_tx,
+        tab_to_session,
+        client_state,
+        &Arc::new(std::sync::Mutex::new(HashMap::new())),
+    )
+}
+
+fn dispatch_master_ext_request_with_aliases(
+    req: MasterExtRequest,
+    conn: &conn::ClientLink,
+    event_tx: &mpsc::UnboundedSender<AppEvent>,
+    tab_to_session: &Arc<tokio::sync::Mutex<HashMap<String, acp::schema::v1::SessionId>>>,
+    client_state: Arc<ClientState>,
+    tab_aliases: &SharedTabAliases,
 ) -> LifecycleTask {
     dispatch_master_ext_request_with_yolo_timeout(
         req,
@@ -4213,6 +4233,7 @@ fn dispatch_master_ext_request(
         tab_to_session,
         client_state,
         super::native_yolo::NATIVE_YOLO_RPC_TIMEOUT,
+        tab_aliases,
     )
 }
 
@@ -4223,6 +4244,7 @@ fn dispatch_master_ext_request_with_yolo_timeout(
     tab_to_session: &Arc<tokio::sync::Mutex<HashMap<String, acp::schema::v1::SessionId>>>,
     client_state: Arc<ClientState>,
     yolo_reconcile_timeout: std::time::Duration,
+    tab_aliases: &SharedTabAliases,
 ) -> LifecycleTask {
     let reserved_yolo_operations = match &req {
         MasterExtRequest::ReconcileSessionYolo { sessions, .. } => sessions
@@ -4251,6 +4273,7 @@ fn dispatch_master_ext_request_with_yolo_timeout(
     let conn = conn.clone();
     let event_tx = event_tx.clone();
     let tab_to_session = Arc::clone(tab_to_session);
+    let tab_aliases = Arc::clone(tab_aliases);
     tokio::task::spawn_local(async move {
         match req {
             MasterExtRequest::SessionsList { request_id, rescan } => {
@@ -4402,7 +4425,8 @@ fn dispatch_master_ext_request_with_yolo_timeout(
                         SessionActivationState::Complete => {
                             if !response.accepted {
                                 let _ = event_tx.send(AppEvent::TabSystemMessage {
-                                    tab_id,
+                                    // Receipt identity/window stay fixed; only UI delivery follows moves.
+                                    tab_id: resolve_tab_alias(&tab_aliases, &tab_id),
                                     message: session_activation_rejection_message(
                                         &response,
                                         identity.session_id.0.as_ref(),
