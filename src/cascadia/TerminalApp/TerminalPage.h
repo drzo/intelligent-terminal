@@ -181,6 +181,7 @@ namespace winrt::TerminalApp::implementation
 
         void TitlebarClicked();
         void WindowVisibilityChanged(const bool showOrHide);
+        void WindowMoved();
 
         float CalcSnappedDimension(const bool widthOrHeight, const float dimension) const;
 
@@ -447,13 +448,16 @@ namespace winrt::TerminalApp::implementation
         uint64_t _sidebarIntroductionClaim{ 0 };
         uint32_t _sidebarIntroductionPresentationAttempts{ 0 };
         Windows::UI::Xaml::FrameworkElement::LayoutUpdated_revoker _sidebarIntroductionLayoutRevoker;
+        Windows::UI::Xaml::Controls::Primitives::Popup _sidebarIntroductionPopup{ nullptr };
         void _TryShowSidebarIntroduction();
         Microsoft::UI::Xaml::Controls::TeachingTip _PrepareSidebarIntroduction();
         void _OnSidebarIntroductionPresented();
         void _OnSidebarIntroductionClosed(const Microsoft::UI::Xaml::Controls::TeachingTip& sender, const Windows::Foundation::IInspectable& args);
+        void _OnSidebarIntroductionCloseButtonClick(const Microsoft::UI::Xaml::Controls::TeachingTip& sender, const Windows::Foundation::IInspectable& args);
         bool _ReleaseSidebarIntroduction(bool shown);
         void _NotifySidebarPersistenceFailure();
         bool _sidebarIntroductionPresented{ false };
+        bool _sidebarIntroductionDismissed{ false };
         bool _sidebarIntroductionWarningShown{ false };
         bool _sidebarIntroductionShuttingDown{ false };
         uint64_t _startupTransferId{ 0 };
