@@ -1862,7 +1862,12 @@ pub trait SessionRegistry: Send + Sync {
     async fn apply_event(&self, ev: SessionEvent) -> bool;
     /// Record lifecycle evidence only from master's ordered WT event stream.
     async fn record_pane_connected(&self, pane_session_id: &str);
-    async fn record_pane_connection_failure(&self, pane_session_id: &str, reason: &str);
+    async fn record_pane_connection_failure(
+        &self,
+        pane_session_id: &str,
+        reason: &str,
+        process_started: Option<bool>,
+    );
     async fn apply_born_bound_event(
         &self,
         ev: SessionEvent,
@@ -1972,7 +1977,11 @@ pub trait SessionRegistry: Send + Sync {
 
 enum PaneConnectionState {
     Connected,
-    Failed { was_connected: bool, reason: String },
+    Failed {
+        // COM broadcasts are not replayed; absence of Connected is unknown.
+        process_started: Option<bool>,
+        reason: String,
+    },
 }
 
 /// Production implementation. Uses `tokio::sync::Mutex` for parity with the
@@ -1985,6 +1994,8 @@ struct RegistryState {
     active_by_pane: HashMap<String, SessionIdentity>,
     // Startup failures can arrive before create_tab returns the pane to bind.
     pane_connections: HashMap<String, PaneConnectionState>,
+    // A consumed callback must not roll back the next, still-unbound retry.
+    failed_resume_assignments: HashSet<(SessionIdentity, String)>,
     // Full observations are active OFF panes only. Retired GUIDs retain only
     // their epoch fence; forgetting it would admit delayed reset replays.
     native_panes: HashMap<String, NativePaneState>,
@@ -2572,23 +2583,32 @@ impl SessionRegistry for InMemoryRegistry {
             .insert(pane_key(pane_session_id), PaneConnectionState::Connected);
     }
 
-    async fn record_pane_connection_failure(&self, pane_session_id: &str, reason: &str) {
+    async fn record_pane_connection_failure(
+        &self,
+        pane_session_id: &str,
+        reason: &str,
+        process_started: Option<bool>,
+    ) {
         let mut state = self.inner.lock().await;
         let pane = pane_key(pane_session_id);
-        let was_connected = matches!(
-            state.pane_connections.get(&pane),
+        let process_started = match state.pane_connections.get(&pane) {
             Some(
                 PaneConnectionState::Connected
-                    | PaneConnectionState::Failed {
-                        was_connected: true,
-                        ..
-                    }
-            )
-        );
+                | PaneConnectionState::Failed {
+                    process_started: Some(true),
+                    ..
+                },
+            ) => Some(true),
+            Some(PaneConnectionState::Failed {
+                process_started: previous,
+                ..
+            }) => process_started.or(*previous),
+            None => process_started,
+        };
         state.pane_connections.insert(
             pane,
             PaneConnectionState::Failed {
-                was_connected,
+                process_started,
                 reason: reason.to_string(),
             },
         );
@@ -3282,19 +3302,28 @@ fn apply_native_observation_locked(
                 let candidate = candidates.next().map(|(identity, _)| identity.clone());
                 if candidates.next().is_none() {
                     if let Some(identity) = candidate {
-                        mark_resume_dispatched_identity_locked(state, &identity);
+                        if !state
+                            .failed_resume_assignments
+                            .contains(&(identity.clone(), pane.clone()))
+                        {
+                            mark_resume_dispatched_identity_locked(state, &identity);
+                        }
                         assign_resume_pane_identity_locked(
                             state,
                             &identity,
                             pane.clone(),
                             observation.last_activity_at_ms,
                         );
-                        bound_identity = Some(identity);
+                        bound_identity = native_bound_identity(state, &observation);
                     }
                 }
             }
         }
     }
+    let connection_failed = matches!(
+        state.pane_connections.get(&pane),
+        Some(PaneConnectionState::Failed { .. })
+    );
     if let Some(identity) = bound_identity.as_ref() {
         observation.inferred_agent_session_id = None;
         observation.inferred_history_key = None;
@@ -3303,7 +3332,7 @@ fn apply_native_observation_locked(
         } else if let Some(row) = state
             .sessions
             .get_mut(identity)
-            .filter(|_| active && !continuation)
+            .filter(|_| active && !continuation && !connection_failed)
         {
             // Generic terminal progress does not prove that a canonical
             // request for input was answered. Native-only BEL has no such context.
@@ -3488,8 +3517,14 @@ fn assign_resume_pane_identity_locked(
     now: u64,
 ) -> bool {
     let pane_session_id = pane_key(&pane_session_id);
+    if state
+        .failed_resume_assignments
+        .contains(&(identity.clone(), pane_session_id.clone()))
+    {
+        return false;
+    }
     if let Some(PaneConnectionState::Failed {
-        was_connected: false,
+        process_started: Some(false),
         reason,
     }) = state.pane_connections.get(&pane_session_id)
     {
@@ -3515,7 +3550,11 @@ fn assign_resume_pane_identity_locked(
             return false;
         }
         let reason = reason.clone();
-        return restore_failed_resume_identity_locked(state, identity, reason, now);
+        let restored = restore_failed_resume_identity_locked(state, identity, reason, now);
+        state
+            .failed_resume_assignments
+            .insert((identity.clone(), pane_session_id));
+        return restored;
     }
     if let Some(previous) = state.active_by_pane.get(&pane_session_id).cloned() {
         if &previous != identity {
@@ -4354,11 +4393,15 @@ fn apply_event_qualified_at_ms(
             }) && matches!(
                 state.pane_connections.get(&pane_session_id),
                 Some(PaneConnectionState::Failed {
-                    was_connected: false,
+                    process_started: Some(false),
                     ..
                 })
             ) {
-                return restore_failed_resume_identity_locked(state, &sid, reason, now);
+                let restored = restore_failed_resume_identity_locked(state, &sid, reason, now);
+                state
+                    .failed_resume_assignments
+                    .insert((sid, pane_session_id));
+                return restored;
             }
             let Some(entry) = state.sessions.get_mut(&sid) else {
                 return false;
@@ -8833,6 +8876,7 @@ mod tests {
                 reg.record_pane_connection_failure(
                     "RESUME-PANE",
                     "The system cannot find the path specified.",
+                    Some(false),
                 )
                 .await;
                 assert!(!reg.apply_event(failure.clone()).await);
@@ -8855,6 +8899,7 @@ mod tests {
                 reg.record_pane_connection_failure(
                     "RESUME-PANE",
                     "The system cannot find the path specified.",
+                    Some(false),
                 )
                 .await;
                 assert!(reg.apply_event(failure.clone()).await);
@@ -8886,6 +8931,15 @@ mod tests {
             assert_eq!(reg.lookup(&sid).await.unwrap(), row);
 
             reg.mark_resume_dispatched(&sid).await.unwrap();
+            let pending_retry = reg.lookup(&sid).await.unwrap();
+            assert!(
+                !reg.apply_event(SessionEvent::ResumePaneAssigned {
+                    key: "resumed".into(),
+                    pane_session_id: "resume-pane".into(),
+                })
+                .await
+            );
+            assert_eq!(reg.lookup(&sid).await.unwrap(), pending_retry);
             assert!(
                 reg.apply_event(SessionEvent::ResumePaneAssigned {
                     key: "resumed".into(),
@@ -8896,6 +8950,7 @@ mod tests {
             let retried = reg.lookup(&sid).await.unwrap();
             assert_eq!(retried.status, Some(AgentStatus::Idle));
             assert_eq!(retried.pane_session_id.as_deref(), Some("retry-pane"));
+            assert!(reg.lookup_active_by_pane("retry-pane").await.is_some());
             assert!(
                 !reg.apply_event(SessionEvent::ResumePaneAssigned {
                     key: "resumed".into(),
@@ -8926,6 +8981,86 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn retry_resume_startup_failure_is_not_suppressed_by_consumed_assignment() {
+        let reg = InMemoryRegistry::new();
+        let history = listed_native("resumed", 1);
+        let sid = history.session_id.clone();
+        reg.upsert(history).await;
+        for pane in ["first-pane", "retry-pane"] {
+            reg.mark_resume_dispatched(&sid).await.unwrap();
+            reg.record_pane_connection_failure(pane, "launch failed", Some(false))
+                .await;
+            let assignment = SessionEvent::ResumePaneAssigned {
+                key: "resumed".into(),
+                pane_session_id: pane.into(),
+            };
+            assert!(reg.apply_event(assignment.clone()).await);
+            let row = reg.lookup(&sid).await.unwrap();
+            assert_eq!(row.status, Some(AgentStatus::Historical));
+            assert!(row.pane_session_id.is_none());
+            assert!(!reg.apply_event(assignment).await);
+            assert_eq!(reg.lookup(&sid).await.unwrap(), row);
+        }
+    }
+
+    #[tokio::test]
+    async fn native_off_reset_respects_connection_failure_before_binding() {
+        for process_started in [Some(false), Some(true), None] {
+            let reg = InMemoryRegistry::new();
+            let history = listed_native("resumed", 1);
+            let identity = SessionIdentity::from_info(&history);
+            reg.upsert(history).await;
+            reg.record_pane_connection_failure(NATIVE_PANE, "connection failed", process_started)
+                .await;
+            let mut reset = native_event(
+                serde_json::json!({
+                    "kind":"reset", "tracking_enabled":false,
+                    "agent_session_id":"resumed", "location":"Host"
+                }),
+                1,
+            );
+            assert!(reg.apply_native_observation(reset.clone()).await);
+            let row = reg.lookup_identity(&identity).await.unwrap();
+            let startup_failed = process_started == Some(false);
+            assert_eq!(
+                row.status,
+                Some(if startup_failed {
+                    AgentStatus::Historical
+                } else {
+                    AgentStatus::Error
+                })
+            );
+            assert_eq!(
+                row.pane_session_id.as_deref(),
+                (!startup_failed).then_some(NATIVE_PANE)
+            );
+            assert_eq!(
+                reg.inner.lock().await.native_panes[NATIVE_PANE].bound_identity,
+                (!startup_failed).then_some(identity.clone())
+            );
+            assert!(!reg.apply_native_observation(reset.clone()).await);
+            reset.mode_epoch = 2;
+            assert!(reg.apply_native_observation(reset.clone()).await);
+            assert_eq!(reg.lookup_identity(&identity).await.unwrap(), row);
+            reset.event = NativeObservationKind::Removed;
+            assert!(reg.apply_native_observation(reset.clone()).await);
+            let removed = reg.lookup_identity(&identity).await.unwrap();
+            if startup_failed {
+                assert_eq!(removed, row);
+                reset.event = NativeObservationKind::Reset {
+                    tracking_enabled: false,
+                };
+                reset.mode_epoch = 3;
+                assert!(reg.apply_native_observation(reset).await);
+                assert_eq!(reg.lookup_identity(&identity).await.unwrap(), row);
+            } else {
+                assert_eq!(removed.status, Some(AgentStatus::Ended));
+                assert!(removed.pane_session_id.is_none());
+            }
+        }
+    }
+
+    #[tokio::test]
     async fn connected_resume_failure_remains_error_before_or_after_pane_assignment() {
         for failure_first in [false, true] {
             let reg = InMemoryRegistry::new();
@@ -8935,14 +9070,22 @@ mod tests {
                 reason: "process exited with code 1".into(),
             };
             if failure_first {
-                reg.record_pane_connection_failure("resume-pane", "process exited with code 1")
-                    .await;
+                reg.record_pane_connection_failure(
+                    "resume-pane",
+                    "process exited with code 1",
+                    None,
+                )
+                .await;
                 assert!(!reg.apply_event(failure.clone()).await);
             }
             seed_resumed_pane(&reg, "resumed", "resume-pane").await;
             if !failure_first {
-                reg.record_pane_connection_failure("resume-pane", "process exited with code 1")
-                    .await;
+                reg.record_pane_connection_failure(
+                    "resume-pane",
+                    "process exited with code 1",
+                    None,
+                )
+                .await;
                 assert!(reg.apply_event(failure).await);
             }
             let sid = acp::schema::v1::SessionId::new("resumed");
@@ -8963,6 +9106,59 @@ mod tests {
                 reg.lookup(&sid).await.unwrap().status,
                 Some(AgentStatus::Ended)
             );
+        }
+    }
+
+    #[tokio::test]
+    async fn missed_connected_resume_failure_retains_binding_without_startup_evidence() {
+        for process_started in [None, Some(true)] {
+            for failure_first in [false, true] {
+                let reg = InMemoryRegistry::new();
+                let failure = SessionEvent::ConnectionFailed {
+                    pane_session_id: "resume-pane".into(),
+                    reason: "process exited with code 1".into(),
+                };
+                if failure_first {
+                    reg.record_pane_connection_failure(
+                        "resume-pane",
+                        "process exited with code 1",
+                        process_started,
+                    )
+                    .await;
+                    assert!(!reg.apply_event(failure.clone()).await);
+                }
+                seed_resumed_pane(&reg, "resumed", "resume-pane").await;
+                if !failure_first {
+                    reg.record_pane_connection_failure(
+                        "resume-pane",
+                        "process exited with code 1",
+                        process_started,
+                    )
+                    .await;
+                    assert!(reg.apply_event(failure.clone()).await);
+                }
+                let sid = acp::schema::v1::SessionId::new("resumed");
+                let row = reg.lookup(&sid).await.unwrap();
+                assert_eq!(row.status, Some(AgentStatus::Error));
+                assert_eq!(row.pane_session_id.as_deref(), Some("resume-pane"));
+                assert!(reg.lookup_active_by_pane("resume-pane").await.is_some());
+                reg.record_pane_connection_failure(
+                    "resume-pane",
+                    "process exited with code 1",
+                    None,
+                )
+                .await;
+                assert!(!reg.apply_event(failure.clone()).await);
+                reg.record_pane_connected("resume-pane").await;
+                reg.record_pane_connection_failure(
+                    "resume-pane",
+                    "process exited with code 1",
+                    Some(false),
+                )
+                .await;
+                assert!(!reg.apply_event(failure).await);
+                assert_eq!(reg.lookup(&sid).await.unwrap(), row);
+            }
         }
     }
 

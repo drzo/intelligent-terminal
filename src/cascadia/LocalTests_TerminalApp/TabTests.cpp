@@ -323,6 +323,7 @@ namespace TerminalAppLocalTests
     {
         std::string paneId;
         std::string state;
+        std::optional<bool> processStarted;
     };
 
     static void _recordConnectionStateEvent(const winrt::hstring& eventJson,
@@ -336,7 +337,10 @@ namespace TerminalAppLocalTests
             evt["method"].asString() == "connection_state")
         {
             connectionStates.push_back({ evt["params"]["pane_id"].asString(),
-                                         evt["params"]["state"].asString() });
+                                         evt["params"]["state"].asString(),
+                                         evt["params"]["process_started"].isBool() ?
+                                             std::optional<bool>{ evt["params"]["process_started"].asBool() } :
+                                             std::nullopt });
         }
     }
 
@@ -725,6 +729,8 @@ namespace TerminalAppLocalTests
         TEST_METHOD(PersistStateIncludesAgentRestoreMetadata);
         TEST_METHOD(NaturalClosedEventThenNotifyPanesClosingEmitsOnce);
         TEST_METHOD(NaturalFailedEventThenNotifyPanesClosingEmitsOnce);
+        TEST_METHOD(ConptyLaunchEvidenceSurvivesProcessExitAndNewConnection);
+        TEST_METHOD(ConnectionFailureEventPreservesOptionalLaunchEvidence);
         TEST_METHOD(ReusedSessionIdAcrossControlLifetimesEmitsEndStatePerLifetime);
         TEST_METHOD(SyntheticFailedEventSuppressesDelayedNormalCallback);
         TEST_METHOD(CloseNonLastPaneEmitsOneEndStateWithoutKeepingTheTab);
@@ -4698,6 +4704,63 @@ namespace TerminalAppLocalTests
             const auto paneStates = _statesForPane(connectionStates, expectedPaneId);
             VERIFY_ARE_EQUAL(1u, static_cast<unsigned int>(paneStates.size()));
             VERIFY_ARE_EQUAL(std::string{ "closed" }, paneStates.at(0));
+        });
+    }
+
+    void TabTests::ConptyLaunchEvidenceSurvivesProcessExitAndNewConnection()
+    {
+        using namespace winrt::Microsoft::Terminal::TerminalConnection;
+        const auto systemDirectory = wil::GetSystemDirectoryW<std::wstring>();
+        const auto run = [&](const winrt::hstring& command, const bool expectedStarted) {
+            ConptyConnection connection;
+            connection.Initialize(ConptyConnection::CreateSettings(
+                command, systemDirectory, L"", false, L"", nullptr, 24, 80, {}, {}));
+            VERIFY_IS_FALSE(connection.ProcessStarted());
+            wil::unique_event failed;
+            failed.create();
+            const auto token = connection.StateChanged([&](auto&&, auto&&) {
+                if (connection.State() == ConnectionState::Failed)
+                {
+                    failed.SetEvent();
+                }
+            });
+            const auto cleanup = wil::scope_exit([&]() noexcept {
+                connection.StateChanged(token);
+                connection.Close();
+            });
+            connection.Start();
+            VERIFY_IS_TRUE(failed.wait(10'000));
+            VERIFY_ARE_EQUAL(expectedStarted, connection.ProcessStarted());
+            if (expectedStarted)
+            {
+                VERIFY_ARE_EQUAL(uint64_t{ 0 }, connection.RootProcessHandle());
+            }
+            connection.Close();
+            VERIFY_ARE_EQUAL(expectedStarted, connection.ProcessStarted());
+        };
+        run(winrt::hstring{ L"\"" + systemDirectory + L"\\cmd.exe\" /d /c exit 1" }, true);
+        run(L"?:\\pr1213-missing.exe", false);
+    }
+
+    void TabTests::ConnectionFailureEventPreservesOptionalLaunchEvidence()
+    {
+        const auto page = _commonSetup();
+        std::vector<ConnectionStateEventRecord> events;
+        TestOnUIThread([&]() {
+            const auto token = page->ProtocolVtSequenceReceived([&](auto&&, const auto& json) {
+                _recordConnectionStateEvent(json, events);
+            });
+            const auto cleanup = wil::scope_exit([&]() noexcept {
+                page->ProtocolVtSequenceReceived(token);
+            });
+            VERIFY_IS_TRUE(page->_TryRaiseTerminalEndStateEvent("failed-start", "failed", {}, false));
+            VERIFY_IS_FALSE(page->_TryRaiseTerminalEndStateEvent("failed-start", "failed", {}, true));
+            VERIFY_IS_TRUE(page->_TryRaiseTerminalEndStateEvent("failed-runtime", "failed", {}, true));
+            VERIFY_IS_TRUE(page->_TryRaiseTerminalEndStateEvent("unknown", "failed"));
+            VERIFY_ARE_EQUAL(size_t{ 3 }, events.size());
+            VERIFY_IS_TRUE(events.at(0).processStarted == std::optional<bool>{ false });
+            VERIFY_IS_TRUE(events.at(1).processStarted == std::optional<bool>{ true });
+            VERIFY_IS_FALSE(events.at(2).processStarted.has_value());
         });
     }
 

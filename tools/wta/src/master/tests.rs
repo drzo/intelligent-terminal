@@ -12961,6 +12961,7 @@ async fn sidebar_cli_resume_startup_failure_before_create_returns_stays_historic
                         "params": {
                             "pane_id": "{AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE}",
                             "state": "failed",
+                            "process_started": false,
                             "reason": "The system cannot find the path specified."
                         }
                     }),
@@ -13032,7 +13033,13 @@ async fn sidebar_cli_resume_failure_after_binding_distinguishes_started_connecti
     use crate::agent_sessions::{AgentStatus, CliSource, SessionEvent};
     use crate::session_registry::{SessionIdentity, SessionInfo};
 
-    for connected in [false, true] {
+    for (connected, process_started) in [
+        (false, Some(false)),
+        (false, Some(true)),
+        (false, None),
+        (true, None),
+        (true, Some(false)),
+    ] {
         let state = make_state();
         let mut row = SessionInfo::new(SessionId::new("resumed"), "C:\\repo".into());
         row.provider_id = Some("copilot".into());
@@ -13065,26 +13072,32 @@ async fn sidebar_cli_resume_failure_after_binding_distinguishes_started_connecti
             )
             .await;
         }
+        let mut failure_params = serde_json::json!({
+            "pane_id": "resume-pane", "state": "failed"
+        });
+        if let Some(started) = process_started {
+            failure_params["process_started"] = serde_json::json!(started);
+        }
         handle_master_wt_event(
             &state,
             serde_json::json!({
                 "method": "connection_state",
-                "params": {"pane_id": "resume-pane", "state": "failed"}
+                "params": failure_params
             }),
         )
         .await;
         let row = state.registry.lookup_identity(&identity).await.unwrap();
         assert_eq!(
             row.status,
-            Some(if connected {
-                AgentStatus::Error
-            } else {
+            Some(if !connected && process_started == Some(false) {
                 AgentStatus::Historical
+            } else {
+                AgentStatus::Error
             })
         );
         assert_eq!(
             row.pane_session_id.as_deref(),
-            connected.then_some("resume-pane")
+            (connected || process_started != Some(false)).then_some("resume-pane")
         );
     }
 }

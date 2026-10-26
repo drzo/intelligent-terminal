@@ -11667,7 +11667,13 @@ async fn handle_master_wt_event(state: &Arc<MasterStateInner>, event_json: serde
                 .to_string();
             state
                 .registry
-                .record_pane_connection_failure(&pane_id, &reason)
+                .record_pane_connection_failure(
+                    &pane_id,
+                    &reason,
+                    params
+                        .get("process_started")
+                        .and_then(|value| value.as_bool()),
+                )
                 .await;
             crate::agent_sessions::SessionEvent::ConnectionFailed {
                 pane_session_id: pane_id.clone(),
