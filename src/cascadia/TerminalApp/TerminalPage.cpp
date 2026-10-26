@@ -83,6 +83,9 @@ using namespace winrt::Windows::UI::Xaml;
 using namespace winrt::Windows::UI::Xaml::Media;
 namespace AgentPolicy = ::Microsoft::Terminal::Settings::Model::AgentPolicy;
 namespace AgentYoloPolicy = ::Microsoft::Terminal::Settings::Model::AgentYoloPolicy;
+
+// Keep direct pane dismissal disabled until split-pane chrome exposes the same affordance.
+static constexpr bool PaneDismissActionsEnabled = false;
 using namespace ::TerminalApp;
 using namespace ::Microsoft::Console;
 using namespace ::Microsoft::Terminal::Core;
@@ -4525,7 +4528,8 @@ namespace winrt::TerminalApp::implementation
         // session saved before sizes were persisted), so fall back to an even
         // split rather than collapsing the pane.
         const auto splitSize = initialPaneSize > 0.0f && initialPaneSize < 1.0f ? initialPaneSize : 0.5f;
-        tab->SplitPaneAtRoot(splitDirection, newPane, splitSize);
+        // A hidden prewarm must not leave a size animation running on the visible sibling.
+        tab->SplitPaneAtRoot(splitDirection, newPane, splitSize, !autoStash);
         closeOnFailure.release();
         if (!autoStash)
         {
@@ -8235,14 +8239,16 @@ namespace winrt::TerminalApp::implementation
     bool TerminalPage::_ReleaseSidebarIntroduction(const bool shown)
     {
         _sidebarIntroductionLayoutRevoker.revoke();
-        _sidebarIntroductionPresented |= shown;
+        _sidebarIntroductionPopup = nullptr;
+        _sidebarIntroductionDismissed |= shown;
         if (_sidebarIntroductionClaim)
         {
             try
             {
-                ApplicationState::SharedInstance().EndSidebarIntroduction(_sidebarIntroductionClaim, _sidebarIntroductionPresented);
+                ApplicationState::SharedInstance().EndSidebarIntroduction(_sidebarIntroductionClaim, _sidebarIntroductionDismissed);
                 _sidebarIntroductionClaim = 0;
                 _sidebarIntroductionPresented = false;
+                _sidebarIntroductionDismissed = false;
                 return true;
             }
             catch (...)
@@ -8270,7 +8276,15 @@ namespace winrt::TerminalApp::implementation
     void TerminalPage::_TryShowSidebarIntroduction()
     try
     {
-        if (_sidebarIntroductionClaim && _sidebarIntroductionPresented)
+        // The Win32 host closes Popup directly on WM_MOVE without closing TeachingTip.
+        if (_sidebarIntroductionClaim && SidebarIntroductionTip().IsOpen() &&
+            _sidebarIntroductionPopup && !_sidebarIntroductionPopup.IsOpen())
+        {
+            SidebarIntroductionTip().IsOpen(false);
+            _ReleaseSidebarIntroduction(false);
+            return;
+        }
+        if (_sidebarIntroductionClaim && _sidebarIntroductionDismissed)
         {
             if (_ReleaseSidebarIntroduction(true))
             {
@@ -8278,7 +8292,7 @@ namespace winrt::TerminalApp::implementation
             }
             return;
         }
-        if (_windowPanesShutdown || ApplicationState::SharedInstance().SidebarIntroductionShown())
+        if (_sidebarIntroductionShuttingDown || _windowPanesShutdown || ApplicationState::SharedInstance().SidebarIntroductionShown())
         {
             _sidebarIntroductionTimer.Stop();
             _ReleaseSidebarIntroduction(false);
@@ -8295,7 +8309,7 @@ namespace winrt::TerminalApp::implementation
             else
             {
                 _OnSidebarIntroductionPresented();
-                if (_sidebarIntroductionClaim && ++_sidebarIntroductionPresentationAttempts >= 3)
+                if (_sidebarIntroductionClaim && !_sidebarIntroductionPresented && ++_sidebarIntroductionPresentationAttempts >= 3)
                 {
                     SidebarIntroductionTip().IsOpen(false);
                     _ReleaseSidebarIntroduction(false);
@@ -8391,11 +8405,26 @@ namespace winrt::TerminalApp::implementation
         }
         const auto target = _isVerticalLayout ?
                                 winrt::get_self<implementation::TabStrip>(_tabStrip)->SidebarIntroductionTarget() :
-                                _tabView.SelectedItem().try_as<FrameworkElement>();
+                                winrt::get_self<implementation::TabRowControl>(_tabRow)->HorizontalTabsIntroductionTarget();
         if (!target || target.Visibility() != Visibility::Visible ||
             target.ActualWidth() <= 0 || target.ActualHeight() <= 0)
         {
             return nullptr;
+        }
+        if (!_isVerticalLayout)
+        {
+            const auto items = _tabView.TabItems();
+            const auto firstTab = items.Size() ? items.GetAt(0).try_as<FrameworkElement>() : nullptr;
+            if (!firstTab || firstTab.Visibility() != Visibility::Visible ||
+                firstTab.ActualWidth() <= 0 || firstTab.ActualHeight() <= 0)
+            {
+                return nullptr;
+            }
+            const auto firstTabBounds = firstTab.TransformToVisual(target.Parent().as<UIElement>()).TransformBounds(Windows::Foundation::Rect{ 0, 0, static_cast<float>(firstTab.ActualWidth()), static_cast<float>(firstTab.ActualHeight()) });
+            Media::TranslateTransform position;
+            position.X(_isRightToLeft ? firstTabBounds.X + firstTabBounds.Width - target.ActualWidth() : firstTabBounds.X);
+            position.Y(firstTabBounds.Y + firstTabBounds.Height - target.ActualHeight());
+            target.RenderTransform(position);
         }
         const auto titleKey = _isVerticalLayout ? L"SidebarIntroductionTitle" : L"HorizontalTabsIntroductionTitle";
         const auto descriptionKey = _isVerticalLayout ? L"SidebarIntroductionDescription" : L"HorizontalTabsIntroductionDescription";
@@ -8468,10 +8497,9 @@ namespace winrt::TerminalApp::implementation
             }
             if (titleVisible && subtitleVisible)
             {
-                if (_ReleaseSidebarIntroduction(true))
-                {
-                    _sidebarIntroductionTimer.Stop();
-                }
+                _sidebarIntroductionPopup = popup;
+                _sidebarIntroductionPresented = true;
+                _sidebarIntroductionLayoutRevoker.revoke();
                 return;
             }
         }
@@ -8482,9 +8510,38 @@ namespace winrt::TerminalApp::implementation
         _ReleaseSidebarIntroduction(false);
     }
 
-    void TerminalPage::_OnSidebarIntroductionClosed(const MUX::Controls::TeachingTip&, const IInspectable&)
+    void TerminalPage::_OnSidebarIntroductionClosed(const MUX::Controls::TeachingTip&, const IInspectable& args)
     {
-        _ReleaseSidebarIntroduction(false);
+        if (!_sidebarIntroductionClaim)
+        {
+            return;
+        }
+        const auto closed = args.try_as<MUX::Controls::TeachingTipClosedEventArgs>();
+        const bool dismissed = closed && closed.Reason() != MUX::Controls::TeachingTipCloseReason::Programmatic;
+        if (_ReleaseSidebarIntroduction(dismissed) && dismissed && _sidebarIntroductionTimer)
+        {
+            _sidebarIntroductionTimer.Stop();
+        }
+    }
+
+    void TerminalPage::_OnSidebarIntroductionCloseButtonClick(const MUX::Controls::TeachingTip&, const IInspectable&)
+    {
+        if (_sidebarIntroductionClaim)
+        {
+            _sidebarIntroductionDismissed = true;
+        }
+    }
+
+    void TerminalPage::WindowMoved()
+    {
+        if (_sidebarIntroductionClaim)
+        {
+            if (const auto tip = SidebarIntroductionTip(); tip && tip.IsOpen())
+            {
+                tip.IsOpen(false);
+            }
+            _ReleaseSidebarIntroduction(false);
+        }
     }
 
     winrt::hstring TerminalPage::ApplicationDisplayName()
@@ -18833,7 +18890,7 @@ namespace winrt::TerminalApp::implementation
 
         makeMenuItem(RS_(L"SplitPaneText"), L"\xF246", splitPaneMenu, menu);
 
-        // Only wire up "Close Pane" if there's multiple panes.
+        // Only add pane-specific commands if there are multiple panes.
         if (_GetFocusedTabImpl()->GetLeafPaneCount() > 1)
         {
             MUX::Controls::CommandBarFlyout swapPaneMenu{};
@@ -18874,7 +18931,10 @@ namespace winrt::TerminalApp::implementation
 
             makeItem(RS_(L"TogglePaneZoomText"), L"\xE8A3", ActionAndArgs{ ShortcutAction::TogglePaneZoom, nullptr }, menu);
             makeItem(RS_(L"CloseOtherPanesText"), L"\xE89F", ActionAndArgs{ ShortcutAction::CloseOtherPanes, nullptr }, menu);
-            makeItem(RS_(L"PaneClose"), L"\xE89F", ActionAndArgs{ ShortcutAction::ClosePane, nullptr }, menu);
+            if constexpr (PaneDismissActionsEnabled)
+            {
+                makeItem(RS_(L"PaneClose"), L"\xE89F", ActionAndArgs{ ShortcutAction::ClosePane, nullptr }, menu);
+            }
         }
 
         if (control.ConnectionState() >= ConnectionState::Closed)

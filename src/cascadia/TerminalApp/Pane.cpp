@@ -1410,7 +1410,7 @@ void Pane::UpdateSettings(const CascadiaSettings& settings)
 // - splitSize: the fraction of the split the *attached* pane should occupy
 // Return Value:
 // - the new reference to the child created from the current pane.
-std::shared_ptr<Pane> Pane::AttachPane(std::shared_ptr<Pane> pane, SplitDirection splitType, const float splitSize)
+std::shared_ptr<Pane> Pane::AttachPane(std::shared_ptr<Pane> pane, SplitDirection splitType, const float splitSize, const bool animate)
 {
     // `_Split` sizes the *first* child, which is the attached pane only when
     // it lands on the leading edge. Invert for the other two directions so
@@ -1419,7 +1419,7 @@ std::shared_ptr<Pane> Pane::AttachPane(std::shared_ptr<Pane> pane, SplitDirectio
                                    1.0f - splitSize :
                                    splitSize;
     // Splice the new pane into the tree
-    const auto [first, _] = _Split(splitType, requestedSize, pane);
+    const auto [first, _] = _Split(splitType, requestedSize, pane, animate);
 
     // If the new pane has a child that was the focus, re-focus it
     // to steal focus from the currently focused pane.
@@ -1860,11 +1860,14 @@ void Pane::_CloseChildRoutine(const bool closeFirst)
     // agent bar anyway, so dropping it for all agent-pane closes (not
     // just the rebuild path) is an acceptable trade.
     const auto closingChildIsAgent = (closeFirst ? _firstChild : _secondChild)->_isAgentPane;
+    const auto remainingChild = closeFirst ? _secondChild : _firstChild;
+    // _CloseChild retires an agent-only subtree instead of expanding the agent pane.
+    const auto remainingChildIsAgent = remainingChild->_IsLeaf() && remainingChild->_isAgentPane;
     // If animations are disabled, just skip this and go straight to
     // _CloseChild. Curiously, the pane opening animation doesn't need this,
     // and will skip straight to Completed when animations are disabled, but
     // this one doesn't seem to.
-    if (!animationsEnabledInOS || !animationsEnabledInApp || eitherChildZoomed || closingChildIsAgent)
+    if (!animationsEnabledInOS || !animationsEnabledInApp || eitherChildZoomed || closingChildIsAgent || remainingChildIsAgent)
     {
         _CloseChild(closeFirst);
         return;
@@ -1873,7 +1876,6 @@ void Pane::_CloseChildRoutine(const bool closeFirst)
     // Set up the animation
 
     auto removedChild = closeFirst ? _firstChild : _secondChild;
-    auto remainingChild = closeFirst ? _secondChild : _firstChild;
     const auto splitWidth = _splitState == SplitState::Vertical;
 
     Size removedOriginalSize{
@@ -2559,7 +2561,8 @@ SplitState Pane::_convertAutomaticOrDirectionalSplitState(const SplitDirection& 
 // - The two newly created Panes, with the original pane as the first pane.
 std::pair<std::shared_ptr<Pane>, std::shared_ptr<Pane>> Pane::_Split(SplitDirection splitType,
                                                                      const float splitSize,
-                                                                     std::shared_ptr<Pane> newPane)
+                                                                     std::shared_ptr<Pane> newPane,
+                                                                     const bool animate)
 {
     auto actualSplitType = _convertAutomaticOrDirectionalSplitState(splitType);
 
@@ -2628,7 +2631,10 @@ std::pair<std::shared_ptr<Pane>, std::shared_ptr<Pane>> Pane::_Split(SplitDirect
 
     _lastActive = false;
 
-    _SetupEntranceAnimation();
+    if (animate)
+    {
+        _SetupEntranceAnimation();
+    }
 
     // Clear out our ID, only leaves should have IDs
     _id = {};
