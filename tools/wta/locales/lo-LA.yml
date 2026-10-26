@@ -311,7 +311,7 @@ system.model_unknown: "ບໍ່ຮູ້ຈັກແບບຈຳລອງ %{mod
 
 setup.subtitle.wsl_agent_missing: "ພວກເຮົາບໍ່ພົບ \"%{agent}\" ໃນສະພາບແວດລ້ອມການເຂົ້າສູ່ລະບົບຂອງ %{distro}. ກວດສອບການຕິດຕັ້ງ, PATH ແລະ ໂປຣໄຟລ໌ shell ຂອງຜູ້ໃຊ້ Linux ຄົນນີ້, ແລ້ວລອງອີກຄັ້ງ."  # WSL login-shell detection; %{agent} is the agent display name, %{distro} is the Linux distribution name. {Locked="PATH"}
 commands.delegate.summary: "ມອບໝາຍວຽກໂດຍໃຊ້ໂປຣໄຟລ໌ຕົວແທນ"
-delegate.usage: "ປ້ອນວຽກຫຼັງຈາກ /delegate. ທາງເລືອກ: --profile <profile> ແລະ --target tab|pane."  # {Locked="/delegate","--profile","<profile>","--target","tab|pane"} Literal command syntax.
+delegate.usage: "ປ້ອນວຽກຫຼັງຈາກ /new-agent. ທາງເລືອກ: --profile <profile> ແລະ --target tab|pane."  # {Locked="/new-agent","--profile","<profile>","--target","tab|pane"} Literal command syntax.
 delegate.started: "ວຽກທີ່ມອບໝາຍໄດ້ເລີ່ມແລ້ວ."
 delegate.profile_picker: "ມອບໝາຍໃຫ້ (ພິມເພື່ອຄົ້ນຫາ: %{query})"  # Profile picker title; %{query} is the user's search text, not the task.
 delegate.placement_picker: "ເປີດວຽກທີ່ມອບໝາຍ"

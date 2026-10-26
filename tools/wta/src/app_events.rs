@@ -2170,6 +2170,29 @@ impl App {
                     }
                 }
             }
+            AppEvent::DelegateAccepted {
+                window_id,
+                tab_id,
+                request_id,
+            } => {
+                let Some(tab) = self.delegate_owner_mut(&window_id, &tab_id, request_id) else {
+                    return;
+                };
+                let Some(mut pending) = tab.delegate.pending.take() else {
+                    return;
+                };
+                if tab.composer_revision == pending.submitted_revision
+                    && tab.input == pending.input
+                    && tab.delegate.draft == pending.draft
+                    && !tab.paste_pending
+                    && tab.attachments.is_empty()
+                {
+                    tab.delegate.draft = None;
+                    tab.discard_input();
+                    pending.released_revision = Some(tab.composer_revision);
+                }
+                tab.delegate.pending = Some(pending);
+            }
             AppEvent::DelegateCompleted {
                 window_id,
                 tab_id,
@@ -2177,37 +2200,67 @@ impl App {
                 result,
             } => {
                 // A tab drag rekeys live state, not the launch's original identity.
-                let Some(tab) = self.tab_sessions.values_mut().find(|tab| {
-                    tab.delegate.pending.as_ref().is_some_and(|pending| {
-                        pending.id == request_id
-                            && pending.origin_window_id == window_id
-                            && pending.origin_tab_id == tab_id
-                    })
-                }) else {
+                let Some(tab) = self.delegate_owner_mut(&window_id, &tab_id, request_id) else {
                     return;
                 };
                 let Some(pending) = tab.delegate.pending.take() else {
                     return;
                 };
+                let mut registration = None;
                 let message = match result {
-                    Ok(()) => {
-                        tab.record_input_history(&pending.history);
-                        tab.messages.push(ChatMessage::User(pending.history));
-                        if tab.input == pending.input && tab.delegate.draft == pending.draft {
-                            tab.delegate.draft = None;
-                            tab.discard_input();
+                    Ok(created) => {
+                        if let (Some(session), Some(pane), Some(provider)) = (
+                            created["agent_session_id"].as_str(),
+                            created["session_id"].as_str(),
+                            created["agent_id"].as_str(),
+                        ) {
+                            registration =
+                                Some(crate::agent_sessions::SessionEvent::SessionStarted {
+                                    key: session.to_owned(),
+                                    cli_source: crate::agent_sessions::CliSource::from(
+                                        crate::session_registry::SessionHookCliSource::Known(
+                                            provider.to_owned(),
+                                        ),
+                                    ),
+                                    pane_session_id: pane.to_owned(),
+                                    cwd: created["cwd"]
+                                        .as_str()
+                                        .map(std::path::PathBuf::from)
+                                        .unwrap_or_default(),
+                                    title: String::new(),
+                                });
                         }
                         ChatMessage::success(t!("delegate.started").into_owned())
                     }
-                    Err(error) => {
-                        tracing::error!(target: "delegate", %error, "delegation failed");
-                        ChatMessage::Error(
-                            t!("delegate.failed", error = error.as_str()).into_owned(),
-                        )
+                    Err(failure) => {
+                        let error = failure.error;
+                        tracing::error!(target: "delegate", %error,
+                            outcome_unknown = failure.outcome_unknown, "delegation failed");
+                        if !failure.outcome_unknown
+                            && pending.released_revision == Some(tab.composer_revision)
+                            && tab.input.is_empty()
+                            && tab.delegate.draft.is_none()
+                            && tab.delegate.picker.is_none()
+                            && !tab.paste_pending
+                            && tab.attachments.is_empty()
+                        {
+                            tab.delegate.draft = pending.draft;
+                            tab.replace_input(pending.input);
+                        }
+                        if failure.outcome_unknown {
+                            ChatMessage::warning(error)
+                        } else {
+                            ChatMessage::Error(
+                                t!("delegate.failed", error = error.as_str()).into_owned(),
+                            )
+                        }
                     }
                 };
                 tab.messages.push(message);
                 tab.scroll_to_bottom();
+                if let Some(event) = registration {
+                    self.register_born_bound_session(event, None);
+                }
             }
             AppEvent::AgentThoughtChunk { session_id, text } => {
                 if let Some(tab) = self.session_tab_mut_if_current(&session_id) {

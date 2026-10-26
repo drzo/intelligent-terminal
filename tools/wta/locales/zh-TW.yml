@@ -306,7 +306,7 @@ system.model_unknown: "未知模型 %{model} — 輸入 /model 查看可用清�
 
 setup.subtitle.wsl_agent_missing: "無法在 %{distro} 的登入環境中找到 \"%{agent}\"。請檢查此 Linux 使用者的安裝狀態、PATH 和 shell 設定檔，然後重試。"  # WSL login-shell detection; %{agent} is the agent display name, %{distro} is the Linux distribution name. {Locked="PATH"}
 commands.delegate.summary: "使用智能體設定檔委派工作"
-delegate.usage: "在 /delegate 後輸入工作。選用參數：--profile <profile> 和 --target tab|pane。"  # {Locked="/delegate","--profile","<profile>","--target","tab|pane"} Literal command syntax.
+delegate.usage: "在 /new-agent 後輸入工作。選用參數：--profile <profile> 和 --target tab|pane。"  # {Locked="/new-agent","--profile","<profile>","--target","tab|pane"} Literal command syntax.
 delegate.started: "已啟動委派的工作。"
 delegate.profile_picker: "委派給（輸入以搜尋：%{query}）"  # Profile picker title; %{query} is the user's search text, not the task.
 delegate.placement_picker: "開啟委派的工作"

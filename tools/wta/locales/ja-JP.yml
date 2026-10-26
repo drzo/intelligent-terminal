@@ -306,7 +306,7 @@ system.model_unknown: "不明なモデル %{model} — 利用可能な一覧を�
 
 setup.subtitle.wsl_agent_missing: "%{distro} のログイン環境で \"%{agent}\" が見つかりませんでした。この Linux ユーザーのインストール状態、PATH、シェルプロファイルを確認してから、もう一度お試しください。"  # WSL login-shell detection; %{agent} is the agent display name, %{distro} is the Linux distribution name. {Locked="PATH"}
 commands.delegate.summary: "エージェントのプロファイルを使用してタスクを委任"
-delegate.usage: "/delegate の後にタスクを入力してください。省略可能: --profile <profile> と --target tab|pane。"  # {Locked="/delegate","--profile","<profile>","--target","tab|pane"} Literal command syntax.
+delegate.usage: "/new-agent の後にタスクを入力してください。省略可能: --profile <profile> と --target tab|pane。"  # {Locked="/new-agent","--profile","<profile>","--target","tab|pane"} Literal command syntax.
 delegate.started: "委任されたタスクを開始しました。"
 delegate.profile_picker: "委任先 (入力して検索: %{query})"  # Profile picker title; %{query} is the user's search text, not the task.
 delegate.placement_picker: "委任したタスクを開く"

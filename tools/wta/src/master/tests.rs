@@ -14516,6 +14516,20 @@ async fn sidebar_history_control_initialize_skips_agent_and_restricts_surface() 
     );
     assert!(state.session_activation_receipts.lock().await.is_empty());
 
+    let error = handler
+        .ext_method(crate::session_registry::build_born_bound_request(
+            &crate::agent_sessions::SessionEvent::SessionStarted {
+                key: "sidebar-must-not-register".into(),
+                cli_source: crate::agent_sessions::CliSource::Claude,
+                pane_session_id: "unrelated-pane".into(),
+                cwd: PathBuf::from(r"C:\repo"),
+                title: String::new(),
+            },
+        ))
+        .await
+        .expect_err("sidebar control must not inherit the registration role");
+    assert_eq!(error.code, acp::ErrorCode::InvalidRequest);
+
     let raw = serde_json::value::RawValue::from_string("{}".to_string()).unwrap();
     let error = handler
         .ext_method(acp::schema::v1::ExtRequest::new(
@@ -14533,6 +14547,91 @@ async fn sidebar_history_control_initialize_skips_agent_and_restricts_surface() 
         .await
         .expect_err("control client role must not be upgraded");
     assert_eq!(error.code, acp::ErrorCode::InvalidRequest);
+    assert!(state.agents.lock().await.is_empty());
+}
+
+#[tokio::test]
+async fn session_registration_control_never_initializes_an_agent_and_only_accepts_born_bound() {
+    let state = make_state();
+    let (notif_tx, _notif_rx) = mpsc::channel(NOTIF_CHANNEL_CAPACITY);
+    let handler = HelperHandler {
+        helper_id: HelperId(7003),
+        agent: empty_agent_cell(),
+        state: Arc::clone(&state),
+        replacement_gate: Arc::new(Mutex::new(())),
+        notif_tx,
+        agent_side_slot: Arc::new(OnceLock::new()),
+    };
+    handler
+        .initialize(crate::cli::sessions::registration_initialize_request())
+        .await
+        .unwrap();
+    assert!(handler.agent.get().is_none());
+    assert!(state.agents.lock().await.is_empty());
+
+    let event = crate::agent_sessions::SessionEvent::SessionStarted {
+        key: "registration-control-session".into(),
+        cli_source: crate::agent_sessions::CliSource::Claude,
+        pane_session_id: "registered-native-pane".into(),
+        cwd: PathBuf::from(r"C:\repo"),
+        title: String::new(),
+    };
+    handler
+        .ext_method(crate::session_registry::build_born_bound_request(&event))
+        .await
+        .unwrap();
+    let sid = SessionId::new("registration-control-session");
+    assert!(state.born_bound.lock().await.contains(&sid));
+    assert!(!state.hook_owned.lock().await.contains(&sid));
+    for request in [
+        crate::session_registry::build_sessions_list_request(false),
+        crate::session_registry::build_session_hook_request(&event),
+        acp::schema::v1::ExtRequest::new(
+            "foreign.agent/method",
+            Arc::from(serde_json::value::RawValue::from_string("{}".into()).unwrap()),
+        ),
+    ] {
+        assert_eq!(
+            handler.ext_method(request).await.unwrap_err().code,
+            acp::ErrorCode::InvalidRequest
+        );
+    }
+    assert_eq!(
+        handler
+            .initialize(acp::schema::v1::InitializeRequest::new(
+                acp::schema::ProtocolVersion::V1,
+            ))
+            .await
+            .unwrap_err()
+            .code,
+        acp::ErrorCode::InvalidRequest
+    );
+    let mut sidebar_request = crate::cli::sessions::registration_initialize_request();
+    crate::session_registry::inject_wta_meta(
+        &mut sidebar_request.meta,
+        &crate::session_registry::WtaMeta {
+            control_client: Some("sidebar-history-v1".into()),
+            ..Default::default()
+        },
+    );
+    assert_eq!(
+        handler.initialize(sidebar_request).await.unwrap_err().code,
+        acp::ErrorCode::InvalidRequest
+    );
+    let mut request = crate::cli::sessions::registration_initialize_request();
+    crate::session_registry::inject_wta_meta(
+        &mut request.meta,
+        &crate::session_registry::WtaMeta {
+            control_client: Some("session-registration-v1".into()),
+            startup_intent: Some("retry".into()),
+            ..Default::default()
+        },
+    );
+    assert_eq!(
+        handler.initialize(request).await.unwrap_err().code,
+        acp::ErrorCode::InvalidRequest
+    );
+    assert!(handler.agent.get().is_none());
     assert!(state.agents.lock().await.is_empty());
 }
 

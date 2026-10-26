@@ -101,7 +101,7 @@ pub const REGISTRY: &[CommandSpec] = &[
         completion_behavior: CompletionBehavior::OptionalFreeText,
     },
     CommandSpec {
-        name: "delegate",
+        name: "new-agent",
         summary_key: "commands.delegate.summary",
         kind: CommandKind::Delegate,
         completion_behavior: CompletionBehavior::OpenPicker,
@@ -406,6 +406,19 @@ mod tests {
     }
 
     #[test]
+    fn new_agent_parses_with_optional_task_without_replacing_new_session() {
+        let bare = parse("/new-agent").unwrap();
+        assert_eq!(bare.kind, CommandKind::Delegate);
+        assert_eq!(bare.rest, "");
+        let task = parse("/new-agent fix the build").unwrap();
+        assert_eq!(task.kind, CommandKind::Delegate);
+        assert_eq!(task.rest, "fix the build");
+        assert_eq!(parse("/new").unwrap().kind, CommandKind::New);
+        assert_eq!(matches("new-a")[0].name, "new-agent");
+        assert!(parse("/delegate fix the build").is_none());
+    }
+
+    #[test]
     fn move_parses_and_resolves_positions() {
         let direct = parse("/move l").unwrap();
         assert_eq!(direct.kind, CommandKind::Move);
@@ -525,7 +538,7 @@ mod tests {
                 ("clear", ExecuteImmediately),
                 ("new", ExecuteImmediately),
                 ("fix", OptionalFreeText),
-                ("delegate", OpenPicker),
+                ("new-agent", OpenPicker),
                 ("restart", ExecuteImmediately),
                 ("stop", ExecuteImmediately),
                 ("sessions", ExecuteImmediately),

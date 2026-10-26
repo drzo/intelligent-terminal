@@ -790,18 +790,19 @@ profile's command. Configure those arguments in the agent profile instead.
 Profile-owned resume, continue, and session-ID arguments are preserved; a new
 session ID is pinned only when the profile has not already selected a session.
 
-In the assistant input, choose `/delegate` and press Enter to open a searchable
+In the assistant input, choose `/new-agent` and press Enter to open a searchable
 agent-profile picker. The configured default agent is highlighted. Enter on a
 profile only selects it: the same input box then contains just the task, with
 the chosen profile and placement shown as clickable controls above it.
-Write the task and press Enter to start it. The default placement is a new tab;
-selecting a pane is optional and does not add another mandatory picker step.
+Write the task and press Enter to start it. By default, delegation splits the
+source work pane on the right. Opening a new tab remains an optional placement
+and does not add another mandatory picker step.
 
-Tab in the slash-command menu only completes `/delegate `, so you can instead
+Tab in the slash-command menu only completes `/new-agent `, so you can instead
 continue typing and send a task directly with the configured default profile:
 
 ```text
-/delegate Investigate this failure
+/new-agent Investigate this failure
 ```
 
 While composing a selected-profile task, Tab reopens the profile picker and
@@ -810,20 +811,43 @@ Reopening either picker preserves the task. Type to search profiles, use the
 arrow keys to navigate, and Enter to confirm without launching. Esc closes a
 picker without changing the task or previous selection; Esc in the task input
 cancels its one-time delegation selection and retains the text for ordinary
-chat. No cancellation submits a prompt. A successful launch clears the
-one-time selection and submitted input, while a failure keeps the draft for
-correction or retry. Edits made while a launch is pending are not discarded.
+chat. No cancellation submits a prompt. Submission first captures the source
+terminal snapshot, then releases the submitted input and one-time selection
+while the pane starts in the background. Ordinary chat remains usable; each
+tab allows one delegate launch at a time and shows a loading hint until pane
+creation completes. This does not clear the helper's event queue.
+An unambiguous launch failure restores the draft only if the released composer
+has not since been edited or reused. Otherwise, the exact profile, placement,
+and task remain available in input history without overwriting newer input.
+A timed-out or malformed pane-creation response is an unknown outcome, not
+proof of failure: check the destination before explicitly retrying. Such a
+request is not restored into the input or automatically retried.
 Enter on a selected historical turn only expands or collapses that turn; it
 does not submit the delegation task. Pending launches follow their owning tab
 when it moves to another window.
 The current assistant provider, ACP session, and history are not replaced.
+Pane creation confirms launch success; agent readiness, first output, hooks,
+and session registration are not prerequisites. The helper sends binding-only
+session registration over its existing master connection without starting
+another ACP agent. Standalone CLI registration uses a bounded, master-local
+`session-registration-v1` control connection that may only register born-bound
+sessions; the sidebar control role retains its existing operation restrictions.
+Post-creation focus or source-publication failures are logged separately and
+do not turn an already-created pane into a failed launch.
+
+Delegate logs record context capture, profile catalog/resolution, pane creation,
+and source-publication durations. Helper launch spans include the request UUID.
+Native `protocol_launch_timing` entries in `terminal-agent-pane.log` separate
+dispatcher wait, pane preparation, attachment, layout/initialization, and final
+selection/result work. These measurements do not move XAML or ConPTY work to
+another thread.
 
 Advanced inline options remain supported:
 
 ```text
-/delegate --profile "Claude Project" Investigate this failure
-/delegate --target pane Investigate this failure
-/delegate --profile <profile-guid> --target tab Investigate this failure
+/new-agent --profile "Claude Project" Investigate this failure
+/new-agent --target pane Investigate this failure
+/new-agent --profile <profile-guid> --target tab Investigate this failure
 ```
 
 Both options are optional and may appear in either order. `--agent` is an alias
@@ -838,7 +862,9 @@ pane.
 The source terminal is resolved from the owning helper, not a later global
 active-window query. Its cwd and bounded recent output (up to 30 lines and
 4,000 characters) are captured together and attached to the task. Chat history
-is not copied. Host profiles reject a Linux cwd rather than silently launching
+is not copied. PowerShell launch wrappers preserve ASCII and typographic
+apostrophes in the task, context, and Windows paths.
+Host profiles reject a Linux cwd rather than silently launching
 in another directory. Profile commands must invoke the interactive agent
 directly; arbitrary shell wrappers are not rewritten to guess prompt delivery.
 Batch profiles need their adjacent PowerShell shim to accept a startup task;
@@ -847,7 +873,7 @@ Explicit WSL delegation retains its existing source-specific CLI path and is
 not offered by the host-profile picker.
 
 `wta delegate --profile <guid-or-name>` uses the same host launch service as
-`/delegate`, command-palette `?` delegation, and confirmed Session MCP
+`/new-agent`, command-palette `?` delegation, and confirmed Session MCP
 delegation. Without a prompt it opens the profile interactively in a fresh tab.
 The Agents sidebar's default `+` button uses this same delegation
 path, including profile, policy, and explicit host/WSL source selection;

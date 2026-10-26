@@ -310,7 +310,7 @@ system.model_unknown: "Tauira kāore e mōhiotia %{model} — patohia /model kia
 
 setup.subtitle.wsl_agent_missing: "Kāore i kitea \"%{agent}\" i te taiao takiuru o %{distro}. Tirohia te tāutanga, PATH me te kōtaha anga o tēnei kaiwhakamahi Linux, kātahi ka whakamātau anō."  # WSL login-shell detection; %{agent} is the agent display name, %{distro} is the Linux distribution name. {Locked="PATH"}
 commands.delegate.summary: "Tautapahia he tūmahi mā tētahi kōtaha māngai"
-delegate.usage: "Tāurua he tūmahi i muri i /delegate. He kōwhiringa: --profile <profile> me --target tab|pane."  # {Locked="/delegate","--profile","<profile>","--target","tab|pane"} Literal command syntax.
+delegate.usage: "Tāurua he tūmahi i muri i /new-agent. He kōwhiringa: --profile <profile> me --target tab|pane."  # {Locked="/new-agent","--profile","<profile>","--target","tab|pane"} Literal command syntax.
 delegate.started: "Kua tīmata te tūmahi i tautapahia."
 delegate.profile_picker: "Tautapa ki (patohia hei rapu: %{query})"  # Profile picker title; %{query} is the user's search text, not the task.
 delegate.placement_picker: "Whakatuwheratia te tūmahi i tautapahia"

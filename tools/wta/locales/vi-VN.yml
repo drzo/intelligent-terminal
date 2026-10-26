@@ -311,7 +311,7 @@ system.model_unknown: "Mô hình không xác định %{model} — nhập /model 
 
 setup.subtitle.wsl_agent_missing: "Chúng tôi không tìm thấy \"%{agent}\" trong môi trường đăng nhập của %{distro}. Kiểm tra bản cài đặt, PATH và hồ sơ shell của người dùng Linux này, rồi thử lại."  # WSL login-shell detection; %{agent} is the agent display name, %{distro} is the Linux distribution name. {Locked="PATH"}
 commands.delegate.summary: "Ủy quyền một tác vụ bằng hồ sơ agent"
-delegate.usage: "Nhập tác vụ sau /delegate. Tùy chọn: --profile <profile> và --target tab|pane."  # {Locked="/delegate","--profile","<profile>","--target","tab|pane"} Literal command syntax.
+delegate.usage: "Nhập tác vụ sau /new-agent. Tùy chọn: --profile <profile> và --target tab|pane."  # {Locked="/new-agent","--profile","<profile>","--target","tab|pane"} Literal command syntax.
 delegate.started: "Đã bắt đầu tác vụ được ủy quyền."
 delegate.profile_picker: "Ủy quyền cho (nhập để tìm kiếm: %{query})"  # Profile picker title; %{query} is the user's search text, not the task.
 delegate.placement_picker: "Mở tác vụ được ủy quyền"

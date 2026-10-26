@@ -310,7 +310,7 @@ system.model_unknown: "Mudell mhux magħruf %{model} — ittajpja /model biex ta
 
 setup.subtitle.wsl_agent_missing: "Ma stajniex insibu \"%{agent}\" fl-ambjent tad-dħul ta' %{distro}. Iċċekkja l-installazzjoni, PATH u l-profil tax-shell ta' dan l-utent ta' Linux, imbagħad erġa' pprova."  # WSL login-shell detection; %{agent} is the agent display name, %{distro} is the Linux distribution name. {Locked="PATH"}
 commands.delegate.summary: "Iddelega kompitu billi tuża profil ta’ aġent"
-delegate.usage: "Daħħal kompitu wara /delegate. Mhux obbligatorju: --profile <profile> u --target tab|pane."  # {Locked="/delegate","--profile","<profile>","--target","tab|pane"} Literal command syntax.
+delegate.usage: "Daħħal kompitu wara /new-agent. Mhux obbligatorju: --profile <profile> u --target tab|pane."  # {Locked="/new-agent","--profile","<profile>","--target","tab|pane"} Literal command syntax.
 delegate.started: "Il-kompitu ddelegat beda."
 delegate.profile_picker: "Iddelega lil (ittajpja biex tfittex: %{query})"  # Profile picker title; %{query} is the user's search text, not the task.
 delegate.placement_picker: "Iftaħ il-kompitu ddelegat"

@@ -311,7 +311,7 @@ system.model_unknown: "Onbekend model %{model} — typ /model om de beschikbare 
 
 setup.subtitle.wsl_agent_missing: "We konden \"%{agent}\" niet vinden in de aanmeldomgeving van %{distro}. Controleer de installatie, PATH en het shellprofiel van deze Linux-gebruiker en probeer het opnieuw."  # WSL login-shell detection; %{agent} is the agent display name, %{distro} is the Linux distribution name. {Locked="PATH"}
 commands.delegate.summary: "Een taak delegeren met een agentprofiel"
-delegate.usage: "Voer een taak in na /delegate. Optioneel: --profile <profile> en --target tab|pane."  # {Locked="/delegate","--profile","<profile>","--target","tab|pane"} Literal command syntax.
+delegate.usage: "Voer een taak in na /new-agent. Optioneel: --profile <profile> en --target tab|pane."  # {Locked="/new-agent","--profile","<profile>","--target","tab|pane"} Literal command syntax.
 delegate.started: "Gedelegeerde taak gestart."
 delegate.profile_picker: "Delegeren aan (typ om te zoeken: %{query})"  # Profile picker title; %{query} is the user's search text, not the task.
 delegate.placement_picker: "Gedelegeerde taak openen"

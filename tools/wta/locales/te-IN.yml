@@ -312,7 +312,7 @@ system.model_unknown: "తెలియని మోడల్ %{model} — అం
 
 setup.subtitle.wsl_agent_missing: "%{distro} లాగిన్ వాతావరణంలో \"%{agent}\" కనుగొనబడలేదు. ఈ Linux వినియోగదారు ఇన్‌స్టాలేషన్, PATH మరియు షెల్ ప్రొఫైల్‌ను తనిఖీ చేసి, మళ్లీ ప్రయత్నించండి."  # WSL login-shell detection; %{agent} is the agent display name, %{distro} is the Linux distribution name. {Locked="PATH"}
 commands.delegate.summary: "ఏజెంట్ ప్రొఫైల్ ఉపయోగించి పనిని అప్పగించండి"
-delegate.usage: "/delegate తర్వాత పనిని నమోదు చేయండి. ఐచ్ఛికం: --profile <profile> మరియు --target tab|pane."  # {Locked="/delegate","--profile","<profile>","--target","tab|pane"} Literal command syntax.
+delegate.usage: "/new-agent తర్వాత పనిని నమోదు చేయండి. ఐచ్ఛికం: --profile <profile> మరియు --target tab|pane."  # {Locked="/new-agent","--profile","<profile>","--target","tab|pane"} Literal command syntax.
 delegate.started: "అప్పగించిన పని ప్రారంభమైంది."
 delegate.profile_picker: "అప్పగించండి (వెతకడానికి టైప్ చేయండి: %{query})"  # Profile picker title; %{query} is the user's search text, not the task.
 delegate.placement_picker: "అప్పగించిన పనిని తెరవండి"

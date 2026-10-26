@@ -15,7 +15,12 @@ pub enum AppEvent {
         window_id: Option<String>,
         tab_id: String,
         request_id: uuid::Uuid,
-        result: Result<(), String>,
+        result: Result<serde_json::Value, crate::app::delegate::DelegateFailure>,
+    },
+    DelegateAccepted {
+        window_id: Option<String>,
+        tab_id: String,
+        request_id: uuid::Uuid,
     },
     Key(KeyEvent),
     Mouse(MouseEvent),

@@ -312,7 +312,7 @@ system.model_unknown: "Onbekende model %{model} — tik /model om die beskikbare
 
 setup.subtitle.wsl_agent_missing: "Ons kon \"%{agent}\" nie in die %{distro}-aanmeldomgewing vind nie. Gaan hierdie Linux-gebruiker se installasie, PATH en dopprofiel na en probeer dan weer."  # WSL login-shell detection; %{agent} is the agent display name, %{distro} is the Linux distribution name. {Locked="PATH"}
 commands.delegate.summary: "Delegeer 'n taak met 'n agentprofiel"
-delegate.usage: "Voer 'n taak ná /delegate in. Opsioneel: --profile <profile> en --target tab|pane."  # {Locked="/delegate","--profile","<profile>","--target","tab|pane"} Literal command syntax.
+delegate.usage: "Voer 'n taak ná /new-agent in. Opsioneel: --profile <profile> en --target tab|pane."  # {Locked="/new-agent","--profile","<profile>","--target","tab|pane"} Literal command syntax.
 delegate.started: "Gedelegeerde taak het begin."
 delegate.profile_picker: "Delegeer aan (tik om te soek: %{query})"  # Profile picker title; %{query} is the user's search text, not the task.
 delegate.placement_picker: "Maak gedelegeerde taak oop"

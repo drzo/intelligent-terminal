@@ -311,7 +311,7 @@ system.model_unknown: "Model tidak diketahui %{model} — taip /model untuk meli
 
 setup.subtitle.wsl_agent_missing: "Kami tidak dapat menemui \"%{agent}\" dalam persekitaran log masuk %{distro}. Semak pemasangan, PATH dan profil shell pengguna Linux ini, kemudian cuba lagi."  # WSL login-shell detection; %{agent} is the agent display name, %{distro} is the Linux distribution name. {Locked="PATH"}
 commands.delegate.summary: "Wakilkan tugas menggunakan profil ejen"
-delegate.usage: "Masukkan tugas selepas /delegate. Pilihan: --profile <profile> dan --target tab|pane."  # {Locked="/delegate","--profile","<profile>","--target","tab|pane"} Literal command syntax.
+delegate.usage: "Masukkan tugas selepas /new-agent. Pilihan: --profile <profile> dan --target tab|pane."  # {Locked="/new-agent","--profile","<profile>","--target","tab|pane"} Literal command syntax.
 delegate.started: "Tugas yang diwakilkan telah dimulakan."
 delegate.profile_picker: "Wakilkan kepada (taip untuk mencari: %{query})"  # Profile picker title; %{query} is the user's search text, not the task.
 delegate.placement_picker: "Buka tugas yang diwakilkan"

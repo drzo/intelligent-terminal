@@ -311,7 +311,7 @@ system.model_unknown: "უცნობი მოდელი %{model} — აკ
 
 setup.subtitle.wsl_agent_missing: "%{distro}-ის შესვლის გარემოში \"%{agent}\" ვერ ვიპოვეთ. შეამოწმეთ Linux-ის ამ მომხმარებლის ინსტალაცია, PATH და გარსის პროფილი, შემდეგ ხელახლა სცადეთ."  # WSL login-shell detection; %{agent} is the agent display name, %{distro} is the Linux distribution name. {Locked="PATH"}
 commands.delegate.summary: "გადააბარეთ დავალება აგენტის პროფილის გამოყენებით"
-delegate.usage: "/delegate-ის შემდეგ შეიყვანეთ დავალება. არასავალდებულო: --profile <profile> და --target tab|pane."  # {Locked="/delegate","--profile","<profile>","--target","tab|pane"} Literal command syntax.
+delegate.usage: "/new-agent-ის შემდეგ შეიყვანეთ დავალება. არასავალდებულო: --profile <profile> და --target tab|pane."  # {Locked="/new-agent","--profile","<profile>","--target","tab|pane"} Literal command syntax.
 delegate.started: "გადაბარებული დავალება დაიწყო."
 delegate.profile_picker: "გადაბარება (საძიებლად აკრიფეთ: %{query})"  # Profile picker title; %{query} is the user's search text, not the task.
 delegate.placement_picker: "გადაბარებული დავალების გახსნა"

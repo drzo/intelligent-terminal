@@ -310,7 +310,7 @@ system.model_unknown: "Model necunoscut %{model} — tastați /model pentru a ve
 
 setup.subtitle.wsl_agent_missing: "Nu am putut găsi \"%{agent}\" în mediul de conectare al distribuției %{distro}. Verificați instalarea, PATH și profilul shell al acestui utilizator Linux, apoi încercați din nou."  # WSL login-shell detection; %{agent} is the agent display name, %{distro} is the Linux distribution name. {Locked="PATH"}
 commands.delegate.summary: "Delegați o sarcină folosind un profil de agent"
-delegate.usage: "Introduceți o sarcină după /delegate. Opțional: --profile <profile> și --target tab|pane."  # {Locked="/delegate","--profile","<profile>","--target","tab|pane"} Literal command syntax.
+delegate.usage: "Introduceți o sarcină după /new-agent. Opțional: --profile <profile> și --target tab|pane."  # {Locked="/new-agent","--profile","<profile>","--target","tab|pane"} Literal command syntax.
 delegate.started: "Sarcina delegată a pornit."
 delegate.profile_picker: "Delegați către (tastați pentru a căuta: %{query})"  # Profile picker title; %{query} is the user's search text, not the task.
 delegate.placement_picker: "Deschideți sarcina delegată"

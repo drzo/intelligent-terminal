@@ -312,7 +312,7 @@ system.model_unknown: "அறியப்படாத மாதிரி %{model
 
 setup.subtitle.wsl_agent_missing: "%{distro} உள்நுழைவு சூழலில் \"%{agent}\" கிடைக்கவில்லை. இந்த Linux பயனரின் நிறுவல், PATH மற்றும் ஷெல் சுயவிவரத்தைச் சரிபார்த்து, மீண்டும் முயற்சிக்கவும்."  # WSL login-shell detection; %{agent} is the agent display name, %{distro} is the Linux distribution name. {Locked="PATH"}
 commands.delegate.summary: "ஏஜென்ட் சுயவிவரத்தைப் பயன்படுத்தி ஒரு பணியை ஒப்படைக்கவும்"
-delegate.usage: "/delegate-க்குப் பிறகு ஒரு பணியை உள்ளிடவும். விருப்பத்தேர்வு: --profile <profile> மற்றும் --target tab|pane."  # {Locked="/delegate","--profile","<profile>","--target","tab|pane"} Literal command syntax.
+delegate.usage: "/new-agent-க்குப் பிறகு ஒரு பணியை உள்ளிடவும். விருப்பத்தேர்வு: --profile <profile> மற்றும் --target tab|pane."  # {Locked="/new-agent","--profile","<profile>","--target","tab|pane"} Literal command syntax.
 delegate.started: "ஒப்படைக்கப்பட்ட பணி தொடங்கியது."
 delegate.profile_picker: "ஒப்படைக்க (தேட தட்டச்சு செய்யவும்: %{query})"  # Profile picker title; %{query} is the user's search text, not the task.
 delegate.placement_picker: "ஒப்படைக்கப்பட்ட பணியைத் திறக்கவும்"

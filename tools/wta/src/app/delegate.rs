@@ -27,7 +27,13 @@ pub(crate) struct PendingDelegate {
     pub origin_tab_id: String,
     pub input: String,
     pub draft: Option<DelegateDraft>,
-    pub history: String,
+    pub submitted_revision: u64,
+    pub released_revision: Option<u64>,
+}
+
+pub(crate) struct DelegateFailure {
+    pub error: String,
+    pub outcome_unknown: bool,
 }
 
 #[derive(Default)]
@@ -38,6 +44,21 @@ pub(crate) struct DelegateState {
 }
 
 impl App {
+    pub(super) fn delegate_owner_mut(
+        &mut self,
+        window_id: &Option<String>,
+        tab_id: &str,
+        request_id: uuid::Uuid,
+    ) -> Option<&mut TabSession> {
+        self.tab_sessions.values_mut().find(|tab| {
+            tab.delegate.pending.as_ref().is_some_and(|pending| {
+                pending.id == request_id
+                    && &pending.origin_window_id == window_id
+                    && pending.origin_tab_id == tab_id
+            })
+        })
+    }
+
     pub(super) fn request_delegate_profiles(&mut self) {
         if self.delegate_profiles_requested {
             return;
@@ -86,6 +107,9 @@ impl App {
 
     pub(super) fn open_delegate_picker(&mut self, control: DelegateControl) {
         if self.current_tab().delegate.pending.is_some() {
+            self.current_tab_mut()
+                .messages
+                .push(ChatMessage::warning(t!("agents.loading").into_owned()));
             return;
         }
         self.delegate_control_hits.clear();
@@ -168,6 +192,7 @@ impl App {
             }
             DelegateControl::Pick(_) => return,
         }
+        self.current_tab_mut().mark_composer_changed();
         self.current_tab_mut().delegate.picker = None;
     }
 
@@ -209,8 +234,13 @@ impl App {
             }
             return true;
         }
-        if self.current_tab().delegate.pending.is_some()
-            && key.code == KeyCode::Enter
+        let tab = self.current_tab();
+        if tab.delegate.pending.as_ref().is_some_and(|pending| {
+            pending.released_revision.is_none()
+                && pending.submitted_revision == tab.composer_revision
+                && pending.input == tab.input
+                && pending.draft == tab.delegate.draft
+        }) && key.code == KeyCode::Enter
             && !key.modifiers.contains(KeyModifiers::SHIFT)
         {
             return true;
@@ -226,7 +256,7 @@ impl App {
                         if spec.kind == CommandKind::Delegate)
                     })
             {
-                self.current_tab_mut().replace_input("/delegate ".into());
+                self.current_tab_mut().replace_input("/new-agent ".into());
                 return true;
             }
             return false;
@@ -246,6 +276,7 @@ impl App {
             KeyCode::Tab => self.open_delegate_picker(DelegateControl::Profile),
             KeyCode::BackTab => self.open_delegate_picker(DelegateControl::Placement),
             KeyCode::Esc => {
+                self.current_tab_mut().mark_composer_changed();
                 self.current_tab_mut().delegate.draft = None;
                 self.current_tab_mut().refresh_command_popup();
             }
@@ -354,6 +385,9 @@ impl App {
 
     fn launch_delegate(&mut self, parsed: DelegateInput) {
         if self.current_tab().delegate.pending.is_some() {
+            self.current_tab_mut()
+                .messages
+                .push(ChatMessage::warning(t!("agents.loading").into_owned()));
             return;
         }
         if !self.current_tab().attachments.is_empty() {
@@ -379,31 +413,48 @@ impl App {
         }
         let window_id = self.window_id.clone();
         let window = window_id.as_deref().and_then(|id| id.parse().ok());
-        let master = self
-            .deferred_acp
-            .as_ref()
-            .and_then(|params| params.master_pipe_name.clone());
         let id = uuid::Uuid::new_v4();
         let tab = self.current_tab_mut();
+        let retry_input = if let Some(draft) = &tab.delegate.draft {
+            format!(
+                "/new-agent --profile {} --target {} -- {}",
+                draft.profile_id,
+                if parsed.placement == Placement::Pane {
+                    "pane"
+                } else {
+                    "tab"
+                },
+                parsed.task,
+            )
+        } else {
+            tab.input.clone()
+        };
+        tab.reset_input_history_navigation();
+        tab.remember_input_history(&retry_input);
+        let history = if tab.delegate.draft.is_none() {
+            tab.input.clone()
+        } else if parsed.task.trim_start().starts_with("--") {
+            format!("/new-agent -- {}", parsed.task)
+        } else {
+            format!("/new-agent {}", parsed.task)
+        };
+        tab.messages.push(ChatMessage::User(history));
+        tab.scroll_to_bottom();
         tab.delegate.pending = Some(PendingDelegate {
             id,
             origin_window_id: window_id.clone(),
             origin_tab_id: tab_id.clone(),
             input: tab.input.clone(),
             draft: tab.delegate.draft.clone(),
-            history: if tab.delegate.draft.is_none() {
-                tab.input.clone()
-            } else if parsed.task.trim_start().starts_with("--") {
-                format!("/delegate -- {}", parsed.task)
-            } else {
-                format!("/delegate {}", parsed.task)
-            },
+            submitted_revision: tab.composer_revision,
+            released_revision: None,
         });
-        tokio::task::spawn_local(async move {
-            let result = async {
-                let created = crate::native_profile::launch(
-                    &shell,
-                    LaunchRequest {
+        let span = tracing::info_span!(target: "delegate", "delegate_launch", request_id = %id);
+        tokio::task::spawn_local(tracing::Instrument::instrument(
+            async move {
+                let started = std::time::Instant::now();
+                let result = async {
+                    let request = LaunchRequest {
                         profile: parsed.profile.as_deref(),
                         provider: None,
                         source_pane: source.as_deref(),
@@ -412,38 +463,46 @@ impl App {
                         task: Some(&parsed.task),
                         include_context: true,
                         placement: parsed.placement,
-                        direction: "auto",
+                        direction: "right",
                         size: 0.5,
                         background: false,
                         title: None,
-                    },
-                )
-                .await?;
-                if let (Some(session), Some(pane), Some(provider)) = (
-                    created["agent_session_id"].as_str(),
-                    created["session_id"].as_str(),
-                    created["agent_id"].as_str(),
-                ) {
-                    crate::cli::sessions::register_launched(
-                        master.as_deref(),
-                        session,
-                        pane,
-                        provider,
-                        created["cwd"].as_str(),
-                        None,
-                    )
-                    .await;
+                    };
+                    let snapshot =
+                        crate::native_profile::capture_source_context(&shell, &request).await?;
+                    tx.send(AppEvent::DelegateAccepted {
+                        window_id: window_id.clone(),
+                        tab_id: tab_id.clone(),
+                        request_id: id,
+                    })
+                    .map_err(|_| anyhow::anyhow!("delegation owner is no longer available"))?;
+                    crate::native_profile::launch_with_snapshot(&shell, request, snapshot).await
                 }
-                anyhow::Ok(())
-            }
-            .await
-            .map_err(|error| format!("{error:#}"));
-            let _ = tx.send(AppEvent::DelegateCompleted {
-                window_id,
-                tab_id,
-                request_id: id,
-                result,
-            });
-        });
+                .await
+                .map_err(|error| DelegateFailure {
+                    outcome_unknown: error
+                        .is::<crate::native_profile::PaneCreationOutcomeUnknown>(),
+                    error: format!("{error:#}"),
+                });
+                tracing::info!(target: "delegate", stage = "launch_completed",
+                elapsed_ms = started.elapsed().as_millis() as u64, success = result.is_ok());
+                let created = result.as_ref().ok().cloned();
+                if tx
+                    .send(AppEvent::DelegateCompleted {
+                        window_id,
+                        tab_id,
+                        request_id: id,
+                        result,
+                    })
+                    .is_err()
+                {
+                    tracing::warn!(target: "delegate", "delegation completion owner is no longer available");
+                }
+                if let Some(created) = created {
+                    crate::native_profile::finish_launch(&shell, &created, false).await;
+                }
+            },
+            span,
+        ));
     }
 }

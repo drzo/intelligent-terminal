@@ -311,7 +311,7 @@ system.model_unknown: "Nežinomas modelis %{model} — įveskite /model, kad pam
 
 setup.subtitle.wsl_agent_missing: "Nepavyko rasti \"%{agent}\" distribucijos %{distro} prisijungimo aplinkoje. Patikrinkite šio Linux naudotojo diegimą, PATH ir komandų interpretatoriaus profilį, tada bandykite dar kartą."  # WSL login-shell detection; %{agent} is the agent display name, %{distro} is the Linux distribution name. {Locked="PATH"}
 commands.delegate.summary: "Deleguokite užduotį naudodami agento profilį"
-delegate.usage: "Po /delegate įveskite užduotį. Pasirinktinai: --profile <profile> ir --target tab|pane."  # {Locked="/delegate","--profile","<profile>","--target","tab|pane"} Literal command syntax.
+delegate.usage: "Po /new-agent įveskite užduotį. Pasirinktinai: --profile <profile> ir --target tab|pane."  # {Locked="/new-agent","--profile","<profile>","--target","tab|pane"} Literal command syntax.
 delegate.started: "Deleguota užduotis pradėta."
 delegate.profile_picker: "Deleguoti (įveskite paieškai: %{query})"  # Profile picker title; %{query} is the user's search text, not the task.
 delegate.placement_picker: "Atidaryti deleguotą užduotį"

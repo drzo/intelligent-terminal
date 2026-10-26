@@ -312,7 +312,7 @@ system.model_unknown: "[Ûñķñöŵñ ḿöďéĺ %{model} — ţÿṗé /model
 
 setup.subtitle.wsl_agent_missing: "[Ŵé çöûĺď ñöţ ƒïñď \"%{agent}\" ïñ ţĥé %{distro} ĺöğïñ éñṽïŕöñḿéñţ. Çĥéçķ ţĥïś Linux ûśéŕ'ś ïñśţåĺĺåţïöñ, PATH, åñď śĥéĺĺ ṗŕöƒïĺé, ţĥéñ ţŕÿ åğåïñ.!!!! !!!! !!!! !!!! !!!!]"  # WSL login-shell detection; %{agent} is the agent display name, %{distro} is the Linux distribution name. {Locked="PATH"}
 commands.delegate.summary: "[Ďéĺéğåţé å ţåśķ üśïñğ åñ åğéñţ ṕŕöƒïĺé!!!! !!!!]"
-delegate.usage: "[Éñţéŕ å ţåśķ åƒţéŕ /delegate. Öṕţïöñåĺ: --profile <profile> åñď --target tab|pane.!!!! !!!! !!!!]"  # {Locked="/delegate","--profile","<profile>","--target","tab|pane"} Literal command syntax.
+delegate.usage: "[Éñţéŕ å ţåśķ åƒţéŕ /new-agent. Öṕţïöñåĺ: --profile <profile> åñď --target tab|pane.!!!! !!!! !!!!]"  # {Locked="/new-agent","--profile","<profile>","--target","tab|pane"} Literal command syntax.
 delegate.started: "[Ďéĺéğåţéď ţåśķ śţåŕţéď.!!!! !!!!]"
 delegate.profile_picker: "[Ďéĺéğåţé ţö (ţýṕé ţö śéåŕçĥ: %{query})!!!! !!!!]"  # Profile picker title; %{query} is the user's search text, not the task.
 delegate.placement_picker: "[Öṕéñ ďéĺéğåţéď ţåśķ!!!! !!!!]"

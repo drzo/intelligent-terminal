@@ -311,7 +311,7 @@ system.model_unknown: "Nomaʼlum model %{model} — mavjud roʻyxatni koʻrish u
 
 setup.subtitle.wsl_agent_missing: "%{distro} kirish muhitida \"%{agent}\" topilmadi. Bu Linux foydalanuvchisining o'rnatilishini, PATH va qobiq profilini tekshiring, so'ng qayta urinib ko'ring."  # WSL login-shell detection; %{agent} is the agent display name, %{distro} is the Linux distribution name. {Locked="PATH"}
 commands.delegate.summary: "Agent profilidan foydalanib vazifani topshiring"
-delegate.usage: "/delegate dan keyin vazifani kiriting. Ixtiyoriy: --profile <profile> va --target tab|pane."  # {Locked="/delegate","--profile","<profile>","--target","tab|pane"} Literal command syntax.
+delegate.usage: "/new-agent dan keyin vazifani kiriting. Ixtiyoriy: --profile <profile> va --target tab|pane."  # {Locked="/new-agent","--profile","<profile>","--target","tab|pane"} Literal command syntax.
 delegate.started: "Topshirilgan vazifa boshlandi."
 delegate.profile_picker: "Topshirish (qidirish uchun yozing: %{query})"  # Profile picker title; %{query} is the user's search text, not the task.
 delegate.placement_picker: "Topshirilgan vazifani ochish"

@@ -314,7 +314,7 @@ system.model_unknown: "অজ্ঞাত মডেল %{model} — উপলব
 
 setup.subtitle.wsl_agent_missing: "%{distro}-ৰ লগইন পৰিৱেশত \"%{agent}\" বিচাৰি পোৱা নগ'ল। এই Linux ব্যৱহাৰকাৰীৰ ইনষ্টলেশ্বন, PATH আৰু শ্বেল প্ৰ'ফাইল পৰীক্ষা কৰক, তাৰ পিছত পুনৰ চেষ্টা কৰক।"  # WSL login-shell detection; %{agent} is the agent display name, %{distro} is the Linux distribution name. {Locked="PATH"}
 commands.delegate.summary: "এজেণ্ট প্ৰফাইল ব্যৱহাৰ কৰি এটা কাম অৰ্পণ কৰক"
-delegate.usage: "/delegate ৰ পিছত এটা কাম লিখক। ঐচ্ছিক: --profile <profile> আৰু --target tab|pane।"  # {Locked="/delegate","--profile","<profile>","--target","tab|pane"} Literal command syntax.
+delegate.usage: "/new-agent ৰ পিছত এটা কাম লিখক। ঐচ্ছিক: --profile <profile> আৰু --target tab|pane।"  # {Locked="/new-agent","--profile","<profile>","--target","tab|pane"} Literal command syntax.
 delegate.started: "অৰ্পণ কৰা কাম আৰম্ভ হৈছে।"
 delegate.profile_picker: "কাম অৰ্পণ কৰক (সন্ধান কৰিবলৈ লিখক: %{query})"  # Profile picker title; %{query} is the user's search text, not the task.
 delegate.placement_picker: "অৰ্পণ কৰা কাম খোলক"

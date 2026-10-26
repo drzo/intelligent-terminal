@@ -32,15 +32,33 @@ fn seed_delegate_profiles(app: &mut App) {
     .unwrap();
 }
 
+async fn next_delegate_completion(
+    app: &mut App,
+    rx: &mut tokio::sync::mpsc::UnboundedReceiver<AppEvent>,
+) -> AppEvent {
+    loop {
+        let event = tokio::time::timeout(Duration::from_secs(5), rx.recv())
+            .await
+            .unwrap()
+            .unwrap();
+        if matches!(event, AppEvent::DelegateAccepted { .. }) {
+            app.handle_event(event);
+        } else {
+            assert!(matches!(event, AppEvent::DelegateCompleted { .. }));
+            return event;
+        }
+    }
+}
+
 #[test]
 fn delegate_tab_completes_while_enter_opens_profile_picker_without_launching() {
     let _locale = crate::test_support::lock_locale();
     let mut app = test_app();
     seed_delegate_profiles(&mut app);
     app.delegate_profiles.swap(0, 1);
-    app.current_tab_mut().replace_input("/dele".into());
+    app.current_tab_mut().replace_input("/new-a".into());
     app.handle_key(KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE));
-    assert_eq!(app.current_tab().input, "/delegate ");
+    assert_eq!(app.current_tab().input, "/new-agent ");
     assert!(app.current_tab().delegate.picker.is_none());
     app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
     let picker = app.current_tab().delegate.picker.as_ref().unwrap();
@@ -53,7 +71,7 @@ fn delegate_tab_completes_while_enter_opens_profile_picker_without_launching() {
     app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
     let draft = app.current_tab().delegate.draft.as_ref().unwrap();
     assert_eq!(draft.profile_id, "{claude-project}");
-    assert_eq!(draft.placement, crate::native_profile::Placement::Tab);
+    assert_eq!(draft.placement, crate::native_profile::Placement::Pane);
     assert!(app.current_tab().input.is_empty());
     app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
     assert!(app.current_tab().messages.is_empty());
@@ -65,7 +83,7 @@ fn delegate_reselecting_profile_and_placement_preserves_task_and_exact_identity(
     let _locale = crate::test_support::lock_locale();
     let mut app = test_app();
     seed_delegate_profiles(&mut app);
-    app.current_tab_mut().replace_input("/delegate".into());
+    app.current_tab_mut().replace_input("/new-agent".into());
     app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
     app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
     app.current_tab_mut()
@@ -89,11 +107,11 @@ fn delegate_reselecting_profile_and_placement_preserves_task_and_exact_identity(
         "{claude-review}"
     );
     app.handle_key(KeyEvent::new(KeyCode::BackTab, KeyModifiers::SHIFT));
-    app.handle_key(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE));
+    app.handle_key(KeyEvent::new(KeyCode::Up, KeyModifiers::NONE));
     app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
     assert_eq!(
         app.current_tab().delegate.draft.as_ref().unwrap().placement,
-        crate::native_profile::Placement::Pane
+        crate::native_profile::Placement::Tab
     );
     assert_eq!(
         app.current_tab().input,
@@ -109,10 +127,10 @@ fn delegate_escape_preserves_input_at_each_picker_level_and_never_sends_it() {
     let _locale = crate::test_support::lock_locale();
     let mut app = test_app();
     seed_delegate_profiles(&mut app);
-    app.current_tab_mut().replace_input("/delegate ".into());
+    app.current_tab_mut().replace_input("/new-agent ".into());
     app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
     app.handle_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
-    assert_eq!(app.current_tab().input, "/delegate ");
+    assert_eq!(app.current_tab().input, "/new-agent ");
     assert!(app.current_tab().delegate.picker.is_none());
     app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
     app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
@@ -132,11 +150,11 @@ fn delegate_missing_task_retains_draft_and_never_submits_to_current_agent() {
     let _locale = crate::test_support::lock_locale();
     let mut app = test_app();
     app.current_tab_mut()
-        .replace_input("/delegate --target pane --profile {chosen} ".into());
+        .replace_input("/new-agent --target pane --profile {chosen} ".into());
     app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
     assert_eq!(
         app.current_tab().input,
-        "/delegate --target pane --profile {chosen} "
+        "/new-agent --target pane --profile {chosen} "
     );
     assert!(app.test_prompt_rx.as_mut().unwrap().try_recv().is_err());
     assert_eq!(last_notice(&app).0, NoticeKind::Warning);
@@ -150,7 +168,7 @@ fn delegate_enter_on_a_completed_turn_never_submits_or_executes_the_task() {
     for task in ["fix the build", "/clear"] {
         let mut app = test_app();
         seed_delegate_profiles(&mut app);
-        run_slash(&mut app, "delegate");
+        run_slash(&mut app, "new-agent");
         app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
         app.state = ConnectionState::Connected;
         app.current_tab_mut().session_id = Some("current-session".into());
@@ -212,15 +230,20 @@ fn delegate_completion_does_not_recreate_a_closed_tab() {
         window_id: app.window_id.clone(),
         tab_id: "closed-tab".into(),
         request_id: uuid::Uuid::new_v4(),
-        result: Ok(()),
+        result: Ok(serde_json::Value::Null),
     });
     assert_eq!(app.tab_sessions.len(), count);
     assert!(!app.tab_sessions.contains_key("closed-tab"));
 }
 
+#[derive(Default)]
 struct DelegateChannel {
     requests: Mutex<Vec<(String, serde_json::Value)>>,
     fail: AtomicBool,
+    create_gate: Option<Arc<tokio::sync::Notify>>,
+    publish_gate: Option<Arc<tokio::sync::Notify>>,
+    fail_publish: bool,
+    unknown_outcome: bool,
 }
 
 #[async_trait::async_trait]
@@ -254,10 +277,24 @@ impl crate::shell::wt_channel::WtChannel for DelegateChannel {
                 }
             }
             "create_tab" | "split_pane" => {
+                if let Some(gate) = &self.create_gate {
+                    gate.notified().await;
+                }
+                if self.unknown_outcome {
+                    return Err(serde_json::from_str::<serde_json::Value>("{")
+                        .unwrap_err()
+                        .into());
+                }
                 anyhow::ensure!(!self.fail.load(Ordering::Relaxed), "fixture launch failed");
                 json!({"session_id":"created"})
             }
-            "publish" => json!({}),
+            "publish" => {
+                if let Some(gate) = &self.publish_gate {
+                    gate.notified().await;
+                }
+                anyhow::ensure!(!self.fail_publish, "fixture publication failed");
+                json!({})
+            }
             _ => anyhow::bail!("unexpected delegate fixture request: {method}"),
         })
     }
@@ -265,6 +302,258 @@ impl crate::shell::wt_channel::WtChannel for DelegateChannel {
     fn is_available(&self) -> bool {
         true
     }
+}
+
+#[tokio::test]
+async fn delegate_releases_composer_before_creation_and_uses_existing_registration_queue() {
+    let _locale = crate::test_support::lock_locale();
+    tokio::task::LocalSet::new()
+        .run_until(async {
+            let (mut app, mut master_rx) = test_app_with_master_rx();
+            seed_delegate_profiles(&mut app);
+            app.pane_id = Some("owning-helper".into());
+            app.window_id = Some("7".into());
+            run_slash(&mut app, "new-agent");
+            app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+            app.current_tab_mut().replace_input("fix the build".into());
+            let create_gate = Arc::new(tokio::sync::Notify::new());
+            let publish_gate = Arc::new(tokio::sync::Notify::new());
+            let channel = Arc::new(DelegateChannel {
+                create_gate: Some(Arc::clone(&create_gate)),
+                publish_gate: Some(Arc::clone(&publish_gate)),
+                ..Default::default()
+            });
+            app.shell_mgr =
+                Arc::new(crate::shell::ShellManager::new().with_wt_channel(channel.clone()));
+            let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+            app.event_tx = Some(tx);
+            app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+            let accepted = tokio::time::timeout(Duration::from_secs(5), rx.recv())
+                .await
+                .unwrap()
+                .unwrap();
+            assert!(matches!(accepted, AppEvent::DelegateAccepted { .. }));
+            app.handle_event(accepted);
+            assert!(app.current_tab().input.is_empty());
+            assert!(app.current_tab().delegate.draft.is_none());
+            assert!(app.current_tab().delegate.pending.is_some());
+            assert!(rx.try_recv().is_err(), "creation is still blocked");
+            assert!(
+                matches!(app.current_tab().messages.first(), Some(ChatMessage::User(task))
+                if task == "/new-agent fix the build"),
+                "record submission before later chat, not at delayed completion"
+            );
+
+            app.current_tab_mut().replace_input("/help".into());
+            app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+            assert!(
+                app.help_overlay_visible,
+                "pending launch must not swallow ordinary Enter"
+            );
+            app.help_overlay_visible = false;
+            app.current_tab_mut()
+                .replace_input("new input while launching".into());
+            create_gate.notify_one();
+            let completed = next_delegate_completion(&mut app, &mut rx).await;
+            assert!(matches!(
+                &completed,
+                AppEvent::DelegateCompleted { result: Ok(_), .. }
+            ));
+            app.handle_event(completed);
+            assert!(app.current_tab().delegate.pending.is_none());
+            assert_eq!(app.current_tab().input, "new input while launching");
+            let MasterExtRequest::SessionBornBound { event, wsl_distro } =
+                master_rx.try_recv().unwrap()
+            else {
+                panic!("registration must use the existing master queue");
+            };
+            assert!(
+                matches!(event, crate::agent_sessions::SessionEvent::SessionStarted {
+            pane_session_id, cli_source: crate::agent_sessions::CliSource::Claude, ..
+        } if pane_session_id == "created")
+            );
+            assert!(wsl_distro.is_none());
+            {
+                let requests = channel.requests.lock().unwrap();
+                let (_, params) = requests
+                    .iter()
+                    .find(|(method, _)| method == "split_pane")
+                    .expect("default picker placement splits the source pane");
+                assert_eq!(params["direction"], "right");
+                assert_eq!(params["session_id"], "source");
+                assert_eq!(params["size"], 0.5);
+                assert!(!requests.iter().any(|(method, _)| method == "create_tab"));
+            }
+            assert!(
+                channel
+                    .requests
+                    .lock()
+                    .unwrap()
+                    .iter()
+                    .any(|(method, _)| method == "publish"),
+                "publication is pending but launch completion has already been delivered"
+            );
+            publish_gate.notify_one();
+            app.current_tab_mut().undo_input();
+            assert!(
+                app.current_tab().input.is_empty(),
+                "completion must preserve the new editor's undo history"
+            );
+        })
+        .await;
+}
+
+#[tokio::test]
+async fn delegate_failure_preserves_new_edits_and_keeps_exact_retry_in_history() {
+    let _locale = crate::test_support::lock_locale();
+    tokio::task::LocalSet::new()
+        .run_until(async {
+            for (edit_before_accepted, clear_new_input) in
+                [(false, false), (false, true), (true, false), (true, true)]
+            {
+                let mut app = test_app();
+                seed_delegate_profiles(&mut app);
+                app.pane_id = Some("owning-helper".into());
+                run_slash(&mut app, "new-agent");
+                app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+                app.handle_key(KeyEvent::new(KeyCode::BackTab, KeyModifiers::SHIFT));
+                app.handle_key(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE));
+                app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+                app.current_tab_mut().replace_input("--literal task".into());
+                let gate = Arc::new(tokio::sync::Notify::new());
+                let channel = Arc::new(DelegateChannel {
+                    fail: AtomicBool::new(true),
+                    create_gate: Some(Arc::clone(&gate)),
+                    ..Default::default()
+                });
+                app.shell_mgr =
+                    Arc::new(crate::shell::ShellManager::new().with_wt_channel(channel));
+                let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+                app.event_tx = Some(tx);
+                app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+                let mut accepted = Some(
+                    tokio::time::timeout(Duration::from_secs(5), rx.recv())
+                        .await
+                        .unwrap()
+                        .unwrap(),
+                );
+                if !edit_before_accepted {
+                    app.handle_event(accepted.take().unwrap());
+                }
+                app.current_tab_mut().replace_input("new task".into());
+                if clear_new_input {
+                    app.current_tab_mut().discard_input();
+                }
+                if edit_before_accepted {
+                    app.handle_event(accepted.take().unwrap());
+                }
+                gate.notify_one();
+                let completed = next_delegate_completion(&mut app, &mut rx).await;
+                app.handle_event(completed);
+                assert_eq!(
+                    app.current_tab().input,
+                    if clear_new_input { "" } else { "new task" }
+                );
+                assert_eq!(
+                    app.current_tab().delegate.draft.is_some(),
+                    edit_before_accepted
+                );
+                let retry = app.current_tab().input_history.entries.front().unwrap();
+                let parsed =
+                    crate::native_profile::parse(retry.strip_prefix("/new-agent ").unwrap())
+                        .unwrap();
+                assert_eq!(parsed.profile.as_deref(), Some("{claude-project}"));
+                assert_eq!(parsed.placement, crate::native_profile::Placement::Pane);
+                assert_eq!(parsed.task, "--literal task");
+            }
+        })
+        .await;
+}
+
+#[tokio::test]
+async fn delegate_unknown_outcome_is_not_restored_or_automatically_retried() {
+    let _locale = crate::test_support::lock_locale();
+    tokio::task::LocalSet::new()
+        .run_until(async {
+            let mut app = test_app();
+            app.pane_id = Some("owning-helper".into());
+            app.current_tab_mut()
+                .replace_input("/new-agent do the task".into());
+            let channel = Arc::new(DelegateChannel {
+                unknown_outcome: true,
+                ..Default::default()
+            });
+            app.shell_mgr =
+                Arc::new(crate::shell::ShellManager::new().with_wt_channel(channel.clone()));
+            let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+            app.event_tx = Some(tx);
+            app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+            let completed = next_delegate_completion(&mut app, &mut rx).await;
+            assert!(matches!(
+                &completed,
+                AppEvent::DelegateCompleted {
+                    result: Err(delegate::DelegateFailure {
+                        outcome_unknown: true,
+                        ..
+                    }),
+                    ..
+                }
+            ));
+            app.handle_event(completed);
+            assert!(app.current_tab().input.is_empty());
+            assert!(app.current_tab().delegate.pending.is_none());
+            app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+            assert_eq!(
+                channel
+                    .requests
+                    .lock()
+                    .unwrap()
+                    .iter()
+                    .filter(|(method, _)| method == "split_pane")
+                    .count(),
+                1
+            );
+            let (kind, text) = last_notice(&app);
+            assert_eq!(kind, NoticeKind::Warning);
+            assert!(text.contains("outcome is unknown"));
+        })
+        .await;
+}
+
+#[tokio::test]
+async fn delegate_publication_failure_does_not_turn_a_created_pane_into_launch_failure() {
+    let _locale = crate::test_support::lock_locale();
+    tokio::task::LocalSet::new()
+        .run_until(async {
+            let mut app = test_app();
+            app.pane_id = Some("owning-helper".into());
+            let channel = Arc::new(DelegateChannel {
+                fail_publish: true,
+                ..Default::default()
+            });
+            app.shell_mgr = Arc::new(crate::shell::ShellManager::new().with_wt_channel(channel));
+            let created = crate::native_profile::launch(
+                &app.shell_mgr,
+                crate::native_profile::LaunchRequest {
+                    profile: None,
+                    provider: None,
+                    source_pane: Some("owning-helper"),
+                    window_id: None,
+                    cwd: None,
+                    task: Some("do the task"),
+                    include_context: true,
+                    placement: crate::native_profile::Placement::Tab,
+                    direction: "auto",
+                    size: 0.5,
+                    background: false,
+                    title: None,
+                },
+            )
+            .await
+            .unwrap();
+            assert_eq!(created["session_id"], "created");
+        })
+        .await;
 }
 
 #[tokio::test]
@@ -278,12 +567,12 @@ async fn delegate_submission_is_one_shot_restores_failures_and_keeps_source_cont
                 app.pane_id = Some("owning-helper".into());
                 app.window_id = Some("7".into());
                 if with_picker {
-                    app.current_tab_mut().replace_input("/delegate".into());
+                    app.current_tab_mut().replace_input("/new-agent".into());
                     app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
                     app.handle_key(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE));
                     app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
                     app.handle_key(KeyEvent::new(KeyCode::BackTab, KeyModifiers::SHIFT));
-                    app.handle_key(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE));
+                    app.handle_key(KeyEvent::new(KeyCode::Up, KeyModifiers::NONE));
                     app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
                 }
                 let task = if with_picker {
@@ -294,12 +583,13 @@ async fn delegate_submission_is_one_shot_restores_failures_and_keeps_source_cont
                 let input = if with_picker {
                     task.to_string()
                 } else {
-                    format!("/delegate {task}")
+                    format!("/new-agent {task}")
                 };
                 app.current_tab_mut().replace_input(input.clone());
                 let channel = Arc::new(DelegateChannel {
                     requests: Mutex::new(Vec::new()),
                     fail: AtomicBool::new(true),
+                    ..Default::default()
                 });
                 app.shell_mgr =
                     Arc::new(crate::shell::ShellManager::new().with_wt_channel(channel.clone()));
@@ -308,10 +598,7 @@ async fn delegate_submission_is_one_shot_restores_failures_and_keeps_source_cont
                 let session = app.current_tab().session_id.clone();
                 app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
                 app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
-                let event = tokio::time::timeout(Duration::from_secs(5), rx.recv())
-                    .await
-                    .unwrap()
-                    .unwrap();
+                let event = next_delegate_completion(&mut app, &mut rx).await;
                 app.handle_event(event);
                 assert_eq!(app.current_tab().input, input);
                 assert_eq!(app.current_tab().delegate.draft.is_some(), with_picker);
@@ -325,10 +612,7 @@ async fn delegate_submission_is_one_shot_restores_failures_and_keeps_source_cont
                 let origin = app.active_tab_key().to_string();
                 app.tab_mut("other").replace_input("other tab draft".into());
                 app.tab_id = Some("other".into());
-                let event = tokio::time::timeout(Duration::from_secs(5), rx.recv())
-                    .await
-                    .unwrap()
-                    .unwrap();
+                let event = next_delegate_completion(&mut app, &mut rx).await;
                 app.handle_event(event);
                 assert_eq!(app.current_tab().input, "other tab draft");
                 let original = &app.tab_sessions[&origin];
@@ -342,7 +626,7 @@ async fn delegate_submission_is_one_shot_restores_failures_and_keeps_source_cont
                         .iter()
                         .filter(|message| matches!(message, ChatMessage::User(_)))
                         .count(),
-                    1
+                    2
                 );
                 assert!(app.test_prompt_rx.as_mut().unwrap().try_recv().is_err());
                 let requests = channel.requests.lock().unwrap();
@@ -366,9 +650,9 @@ async fn delegate_submission_is_one_shot_restores_failures_and_keeps_source_cont
                     assert_eq!(
                         method,
                         if with_picker {
-                            "split_pane"
-                        } else {
                             "create_tab"
+                        } else {
+                            "split_pane"
                         }
                     );
                     assert_eq!(
@@ -382,9 +666,14 @@ async fn delegate_submission_is_one_shot_restores_failures_and_keeps_source_cont
                     assert_eq!(params["window_id"], 42);
                     assert_eq!(params["cwd"], r"C:\Source Project");
                     let command = params["commandline"].as_str().unwrap();
-                    if !with_picker {
+                    if with_picker {
                         assert!(command.contains(task));
                         assert!(command.contains("recent work pane output"));
+                    } else {
+                        assert_eq!(params["direction"], "right");
+                        assert_eq!(params["session_id"], "source");
+                        assert!(command
+                            .starts_with("powershell.exe -NoLogo -NoProfile -EncodedCommand "));
                     }
                 }
             }
@@ -405,13 +694,14 @@ async fn delegate_completion_follows_owner_transfer_and_allows_retry() {
                     app.window_id = Some("7".into());
                     app.pane_id = Some("owning-helper".into());
                     seed_delegate_profiles(&mut app);
-                    run_slash(&mut app, "delegate");
+                    run_slash(&mut app, "new-agent");
                     app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
                     app.current_tab_mut().replace_input("fix the build".into());
                     let draft = app.current_tab().delegate.draft.clone();
                     let channel = Arc::new(DelegateChannel {
                         requests: Mutex::new(Vec::new()),
                         fail: AtomicBool::new(fail),
+                        ..Default::default()
                     });
                     app.shell_mgr = Arc::new(
                         crate::shell::ShellManager::new().with_wt_channel(channel.clone()),
@@ -436,14 +726,11 @@ async fn delegate_completion_follows_owner_transfer_and_allows_retry() {
                         window_id: Some("8".into()),
                         tab_id: new_tab.into(),
                         request_id,
-                        result: Ok(()),
+                        result: Ok(serde_json::Value::Null),
                     });
                     assert!(app.current_tab().delegate.pending.is_some());
 
-                    let event = tokio::time::timeout(Duration::from_secs(5), rx.recv())
-                        .await
-                        .unwrap()
-                        .unwrap();
+                    let event = next_delegate_completion(&mut app, &mut rx).await;
                     assert!(matches!(&event, AppEvent::DelegateCompleted {
                         window_id: Some(window), tab_id, request_id: id, ..
                     } if window == "7" && tab_id == "source-tab" && *id == request_id));
@@ -460,10 +747,7 @@ async fn delegate_completion_follows_owner_transfer_and_allows_retry() {
                         channel.fail.store(false, Ordering::Relaxed);
                         app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
                         assert!(app.current_tab().delegate.pending.is_some());
-                        let event = tokio::time::timeout(Duration::from_secs(5), rx.recv())
-                            .await
-                            .unwrap()
-                            .unwrap();
+                        let event = next_delegate_completion(&mut app, &mut rx).await;
                         app.handle_event(event);
                     }
                     assert!(app.current_tab().delegate.pending.is_none());
@@ -491,7 +775,8 @@ fn delegate_completion_does_not_discard_a_newer_draft_or_accept_another_window()
         origin_tab_id: origin_tab_id.clone(),
         input: "old task".into(),
         draft: None,
-        history: "/delegate old task".into(),
+        submitted_revision: 0,
+        released_revision: None,
     });
     for (window_id, tab_id, request_id) in [
         (Some("other".into()), origin_tab_id.clone(), id),
@@ -506,7 +791,7 @@ fn delegate_completion_does_not_discard_a_newer_draft_or_accept_another_window()
             window_id,
             tab_id,
             request_id,
-            result: Ok(()),
+            result: Ok(serde_json::Value::Null),
         });
         assert!(app.current_tab().delegate.pending.is_some());
         assert!(app.current_tab().messages.is_empty());
@@ -515,7 +800,7 @@ fn delegate_completion_does_not_discard_a_newer_draft_or_accept_another_window()
         window_id: app.window_id.clone(),
         tab_id: app.active_tab_key().into(),
         request_id: id,
-        result: Ok(()),
+        result: Ok(serde_json::Value::Null),
     });
     assert_eq!(app.current_tab().input, "newer draft");
     assert!(app.current_tab().delegate.pending.is_none());
@@ -527,7 +812,7 @@ fn delegate_controls_and_picker_support_mouse_without_leaking_to_chat() {
     let _locale = crate::test_support::lock_locale();
     let mut app = test_app();
     seed_delegate_profiles(&mut app);
-    app.current_tab_mut().replace_input("/delegate".into());
+    app.current_tab_mut().replace_input("/new-agent".into());
     app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
     app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
     app.current_tab_mut().replace_input("keep this task".into());

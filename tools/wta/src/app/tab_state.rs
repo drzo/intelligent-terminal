@@ -683,6 +683,7 @@ pub struct TabSession {
     // Input editor state — per-tab so each tab keeps its own draft text,
     // cursor, and slash-command popup across switches.
     pub input: String,
+    pub(super) composer_revision: u64,
     pub cursor_pos: usize,
     pub(super) input_history: InputHistory,
     pub(super) input_edits: InputEditHistory,

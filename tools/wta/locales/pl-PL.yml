@@ -311,7 +311,7 @@ system.model_unknown: "Nieznany model %{model} — wpisz /model, aby zobaczyć d
 
 setup.subtitle.wsl_agent_missing: "Nie znaleźliśmy \"%{agent}\" w środowisku logowania dystrybucji %{distro}. Sprawdź instalację, PATH i profil powłoki tego użytkownika systemu Linux, a następnie spróbuj ponownie."  # WSL login-shell detection; %{agent} is the agent display name, %{distro} is the Linux distribution name. {Locked="PATH"}
 commands.delegate.summary: "Deleguj zadanie przy użyciu profilu agenta"
-delegate.usage: "Wpisz zadanie po /delegate. Opcjonalnie: --profile <profile> i --target tab|pane."  # {Locked="/delegate","--profile","<profile>","--target","tab|pane"} Literal command syntax.
+delegate.usage: "Wpisz zadanie po /new-agent. Opcjonalnie: --profile <profile> i --target tab|pane."  # {Locked="/new-agent","--profile","<profile>","--target","tab|pane"} Literal command syntax.
 delegate.started: "Uruchomiono delegowane zadanie."
 delegate.profile_picker: "Deleguj do (wpisz, aby wyszukać: %{query})"  # Profile picker title; %{query} is the user's search text, not the task.
 delegate.placement_picker: "Otwórz delegowane zadanie"

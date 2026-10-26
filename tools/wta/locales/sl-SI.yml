@@ -311,7 +311,7 @@ system.model_unknown: "Neznan model %{model} — vnesite /model za prikaz razpol
 
 setup.subtitle.wsl_agent_missing: "V prijavnem okolju distribucije %{distro} ni bilo mogoče najti \"%{agent}\". Preverite namestitev, PATH in profil lupine tega uporabnika Linuxa, nato poskusite znova."  # WSL login-shell detection; %{agent} is the agent display name, %{distro} is the Linux distribution name. {Locked="PATH"}
 commands.delegate.summary: "Dodelite opravilo s profilom agenta"
-delegate.usage: "Vnesite opravilo za /delegate. Izbirno: --profile <profile> in --target tab|pane."  # {Locked="/delegate","--profile","<profile>","--target","tab|pane"} Literal command syntax.
+delegate.usage: "Vnesite opravilo za /new-agent. Izbirno: --profile <profile> in --target tab|pane."  # {Locked="/new-agent","--profile","<profile>","--target","tab|pane"} Literal command syntax.
 delegate.started: "Dodeljeno opravilo se je začelo."
 delegate.profile_picker: "Dodeli za (vnesite za iskanje: %{query})"  # Profile picker title; %{query} is the user's search text, not the task.
 delegate.placement_picker: "Odpri dodeljeno opravilo"

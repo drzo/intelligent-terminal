@@ -311,7 +311,7 @@ system.model_unknown: "Ukjend modell %{model} — skriv /model for å sjå lista
 
 setup.subtitle.wsl_agent_missing: "Vi fann ikkje \"%{agent}\" i påloggingsmiljøet til %{distro}. Kontroller installasjonen, PATH og skalprofilen til denne Linux-brukaren, og prøv deretter igjen."  # WSL login-shell detection; %{agent} is the agent display name, %{distro} is the Linux distribution name. {Locked="PATH"}
 commands.delegate.summary: "Deleger ei oppgåve med ein agentprofil"
-delegate.usage: "Skriv inn ei oppgåve etter /delegate. Valfritt: --profile <profile> og --target tab|pane."  # {Locked="/delegate","--profile","<profile>","--target","tab|pane"} Literal command syntax.
+delegate.usage: "Skriv inn ei oppgåve etter /new-agent. Valfritt: --profile <profile> og --target tab|pane."  # {Locked="/new-agent","--profile","<profile>","--target","tab|pane"} Literal command syntax.
 delegate.started: "Den delegerte oppgåva er starta."
 delegate.profile_picker: "Deleger til (skriv for å søkje: %{query})"  # Profile picker title; %{query} is the user's search text, not the task.
 delegate.placement_picker: "Opne delegert oppgåve"

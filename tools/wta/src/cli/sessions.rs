@@ -19,6 +19,7 @@ impl std::error::Error for MasterUnavailable {}
 fn control_initialize_request(
     name: &'static str,
     title: &'static str,
+    control_client: &'static str,
 ) -> acp::schema::v1::InitializeRequest {
     let mut request = acp::schema::v1::InitializeRequest::new(acp::schema::ProtocolVersion::V1)
         .client_capabilities(acp::schema::v1::ClientCapabilities::new())
@@ -28,11 +29,19 @@ fn control_initialize_request(
     crate::session_registry::inject_wta_meta(
         &mut request.meta,
         &crate::session_registry::WtaMeta {
-            control_client: Some(SIDEBAR_HISTORY_CONTROL_CLIENT.to_string()),
+            control_client: Some(control_client.to_string()),
             ..Default::default()
         },
     );
     request
+}
+
+pub(crate) fn registration_initialize_request() -> acp::schema::v1::InitializeRequest {
+    control_initialize_request(
+        "wta-delegate",
+        "Windows Terminal Agent delegate registration",
+        "session-registration-v1",
+    )
 }
 
 pub(crate) async fn run_list(
@@ -111,6 +120,7 @@ pub(crate) async fn fetch_from_master(
             .initialize(control_initialize_request(
                 "wta-sessions",
                 "Windows Terminal Agent sessions CLI",
+                SIDEBAR_HISTORY_CONTROL_CLIENT,
             ))
             .await;
         crate::telemetry::log_acp_initialize_complete(
@@ -190,6 +200,7 @@ pub(crate) async fn run_activate(
                 conn.initialize(control_initialize_request(
                     "wta-sidebar-history",
                     "Windows Terminal Sidebar History",
+                    SIDEBAR_HISTORY_CONTROL_CLIENT,
                 ))
                 .await
                 .context("initialize wta-master activation client")?;
@@ -246,6 +257,7 @@ pub(crate) async fn register_launched(
     cwd: Option<&str>,
     wsl_distro: Option<&str>,
 ) {
+    let started = std::time::Instant::now();
     let Some(master) = master else {
         tracing::warn!(
             target: "delegate",
@@ -275,8 +287,9 @@ pub(crate) async fn register_launched(
     // Own LocalSet so the `spawn_local` transport works regardless of how the
     // delegate's runtime was set up (mirrors `run_list`).
     let local = tokio::task::LocalSet::new();
-    let result: Result<()> = local
-        .run_until(async move {
+    let result: Result<()> = tokio::time::timeout(
+        std::time::Duration::from_secs(8),
+        local.run_until(async move {
             let pipe = connect_master_pipe(master).await?;
             let (read_half, write_half) = tokio::io::split(pipe);
             let outgoing = write_half.compat_write();
@@ -289,27 +302,22 @@ pub(crate) async fn register_launched(
                 let _ = handle_io.await;
             });
 
-            conn.initialize(
-                acp::schema::v1::InitializeRequest::new(acp::schema::ProtocolVersion::V1)
-                    .client_capabilities(acp::schema::v1::ClientCapabilities::new())
-                    .client_info(
-                        acp::schema::v1::Implementation::new(
-                            "wta-delegate",
-                            env!("CARGO_PKG_VERSION"),
-                        )
-                        .title("Windows Terminal Agent delegate"),
-                    ),
-            )
-            .await
-            .map_err(|_| anyhow::anyhow!(MASTER_NOT_RUNNING))?;
+            conn.initialize(registration_initialize_request())
+                .await
+                .context("initialize master-local session registration")?;
 
             conn.ext_method(req)
                 .await
-                .map_err(|_| anyhow::anyhow!(MASTER_NOT_RUNNING))?;
+                .context("register launched session with owning master")?;
             Ok(())
-        })
-        .await;
+        }),
+    )
+    .await
+    .context("master-local session registration timed out")
+    .and_then(|result| result);
 
+    tracing::info!(target: "delegate", stage = "session_registration_completed",
+        session_id, elapsed_ms = started.elapsed().as_millis() as u64, success = result.is_ok());
     if let Err(e) = result {
         tracing::warn!(
             target: "delegate",
@@ -541,6 +549,21 @@ mod tests {
             register_launched(master, "session", "pane", "copilot", None, None).await;
             assert_eq!(started.elapsed(), elapsed);
         }
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn born_bound_registration_does_not_wait_indefinitely_for_a_live_owner() {
+        let pipe = format!(
+            r"\\.\pipe\wta-registration-unresponsive-{}",
+            uuid::Uuid::new_v4()
+        );
+        let _server = tokio::net::windows::named_pipe::ServerOptions::new()
+            .first_pipe_instance(true)
+            .create(&pipe)
+            .unwrap();
+        let started = tokio::time::Instant::now();
+        register_launched(Some(&pipe), "session", "pane", "copilot", None, None).await;
+        assert_eq!(started.elapsed(), Duration::from_secs(8));
     }
 
     #[tokio::test(start_paused = true)]

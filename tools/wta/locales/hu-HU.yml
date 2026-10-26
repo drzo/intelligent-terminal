@@ -310,7 +310,7 @@ system.model_unknown: "Ismeretlen modell: %{model} — írja be a /model parancs
 
 setup.subtitle.wsl_agent_missing: "Nem találtuk a(z) \"%{agent}\" ügynököt a(z) %{distro} bejelentkezési környezetében. Ellenőrizze ennek a Linux-felhasználónak a telepítését, PATH változóját és rendszerhéjprofilját, majd próbálja újra."  # WSL login-shell detection; %{agent} is the agent display name, %{distro} is the Linux distribution name. {Locked="PATH"}
 commands.delegate.summary: "Feladat delegálása ügynökprofil használatával"
-delegate.usage: "Adjon meg egy feladatot a /delegate után. Nem kötelező: --profile <profile> és --target tab|pane."  # {Locked="/delegate","--profile","<profile>","--target","tab|pane"} Literal command syntax.
+delegate.usage: "Adjon meg egy feladatot a /new-agent után. Nem kötelező: --profile <profile> és --target tab|pane."  # {Locked="/new-agent","--profile","<profile>","--target","tab|pane"} Literal command syntax.
 delegate.started: "A delegált feladat elindult."
 delegate.profile_picker: "Delegálás ide (gépeljen a kereséshez: %{query})"  # Profile picker title; %{query} is the user's search text, not the task.
 delegate.placement_picker: "Delegált feladat megnyitása"

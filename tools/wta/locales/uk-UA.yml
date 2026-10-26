@@ -311,7 +311,7 @@ system.model_unknown: "Невідома модель %{model} — введіть
 
 setup.subtitle.wsl_agent_missing: "Не вдалося знайти \"%{agent}\" у середовищі входу %{distro}. Перевірте встановлення, PATH і профіль оболонки цього користувача Linux, а потім спробуйте ще раз."  # WSL login-shell detection; %{agent} is the agent display name, %{distro} is the Linux distribution name. {Locked="PATH"}
 commands.delegate.summary: "Делегувати завдання за допомогою профілю агента"
-delegate.usage: "Введіть завдання після /delegate. Необов’язково: --profile <profile> і --target tab|pane."  # {Locked="/delegate","--profile","<profile>","--target","tab|pane"} Literal command syntax.
+delegate.usage: "Введіть завдання після /new-agent. Необов’язково: --profile <profile> і --target tab|pane."  # {Locked="/new-agent","--profile","<profile>","--target","tab|pane"} Literal command syntax.
 delegate.started: "Делеговане завдання запущено."
 delegate.profile_picker: "Делегувати (введіть для пошуку: %{query})"  # Profile picker title; %{query} is the user's search text, not the task.
 delegate.placement_picker: "Відкрити делеговане завдання"

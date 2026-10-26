@@ -311,7 +311,7 @@ system.model_unknown: "Непознат модел %{model} — внесете /
 
 setup.subtitle.wsl_agent_missing: "Не можевме да го најдеме \"%{agent}\" во околината за најавување на %{distro}. Проверете ги инсталацијата, PATH и профилот на школката на овој корисник на Linux, па обидете се повторно."  # WSL login-shell detection; %{agent} is the agent display name, %{distro} is the Linux distribution name. {Locked="PATH"}
 commands.delegate.summary: "Делегирајте задача со профил на агент"
-delegate.usage: "Внесете задача по /delegate. Изборно: --profile <profile> и --target tab|pane."  # {Locked="/delegate","--profile","<profile>","--target","tab|pane"} Literal command syntax.
+delegate.usage: "Внесете задача по /new-agent. Изборно: --profile <profile> и --target tab|pane."  # {Locked="/new-agent","--profile","<profile>","--target","tab|pane"} Literal command syntax.
 delegate.started: "Делегираната задача е започната."
 delegate.profile_picker: "Делегирај на (пишувајте за пребарување: %{query})"  # Profile picker title; %{query} is the user's search text, not the task.
 delegate.placement_picker: "Отвори ја делегираната задача"

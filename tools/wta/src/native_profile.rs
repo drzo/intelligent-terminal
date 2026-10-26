@@ -19,8 +19,8 @@ pub(crate) struct NativeProfile {
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub(crate) enum Placement {
-    #[default]
     Tab,
+    #[default]
     Pane,
 }
 
@@ -167,6 +167,18 @@ pub(crate) async fn launch(
     shell: &ShellManager,
     request: LaunchRequest<'_>,
 ) -> Result<serde_json::Value> {
+    let background = request.background;
+    let snapshot = capture_source_context(shell, &request).await?;
+    let created = launch_with_snapshot(shell, request, snapshot).await?;
+    finish_launch(shell, &created, background).await;
+    Ok(created)
+}
+
+pub(crate) async fn capture_source_context(
+    shell: &ShellManager,
+    request: &LaunchRequest<'_>,
+) -> Result<serde_json::Value> {
+    let started = std::time::Instant::now();
     let lines = if request.include_context { 30 } else { 0 };
     let chars = if request.include_context { 4000 } else { 0 };
     let snapshot = match request.source_pane {
@@ -184,6 +196,29 @@ pub(crate) async fn launch(
         None => shell.wt_get_pane_context(None, lines, chars).await,
     }
     .context("could not capture the source terminal")?;
+    tracing::info!(target: "delegate", stage = "context_captured",
+        elapsed_ms = started.elapsed().as_millis() as u64);
+    Ok(snapshot)
+}
+
+#[derive(Debug)]
+pub(crate) struct PaneCreationOutcomeUnknown;
+
+impl std::fmt::Display for PaneCreationOutcomeUnknown {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(
+            "Terminal pane creation outcome is unknown; check the destination before retrying",
+        )
+    }
+}
+
+impl std::error::Error for PaneCreationOutcomeUnknown {}
+
+pub(crate) async fn launch_with_snapshot(
+    shell: &ShellManager,
+    request: LaunchRequest<'_>,
+    snapshot: serde_json::Value,
+) -> Result<serde_json::Value> {
     let pane = &snapshot["pane"];
     let source_id = pane["session_id"]
         .as_str()
@@ -195,7 +230,10 @@ pub(crate) async fn launch(
         .or(request.window_id)
         .filter(|id| *id != 0)
         .ok_or_else(|| anyhow!("source terminal has no window identity"))?;
+    let started = std::time::Instant::now();
     let profiles = list(shell, Some(window)).await?;
+    tracing::info!(target: "delegate", stage = "profiles_listed",
+        elapsed_ms = started.elapsed().as_millis() as u64);
     let selected = select(&profiles, request.profile, request.provider)?;
     anyhow::ensure!(
         request.provider.map_or(true, |provider| selected
@@ -203,6 +241,7 @@ pub(crate) async fn launch(
             .eq_ignore_ascii_case(provider)),
         "selected profile belongs to a different delegate agent"
     );
+    let started = std::time::Instant::now();
     let resolved: Vec<NativeProfile> = serde_json::from_value(
         shell
             .wt_agent_profiles(Some(window), Some(&selected.guid))
@@ -213,6 +252,9 @@ pub(crate) async fn launch(
         .filter(|profile| profile.guid == selected.guid && profile.agent_id == selected.agent_id)
         .ok_or_else(|| anyhow!("selected agent profile changed before launch"))?;
     let runtime = runtime(profile)?;
+    tracing::info!(target: "delegate", stage = "profile_resolved",
+        elapsed_ms = started.elapsed().as_millis() as u64,
+        profile_id = %profile.guid, provider = %profile.agent_id);
     let cwd = request
         .cwd
         .filter(|cwd| !cwd.trim().is_empty())
@@ -269,28 +311,21 @@ pub(crate) async fn launch(
             "split_pane"
         }
     };
-    let mut created = shell.wt()?.request(method, params).await?;
+    let started = std::time::Instant::now();
+    tracing::info!(target: "delegate", stage = "pane_create_begin", method);
+    let mut created = shell.wt()?.request(method, params).await.map_err(|error| {
+        if crate::shell::wt_channel::request_outcome_unknown(&error) {
+            error.context(PaneCreationOutcomeUnknown)
+        } else {
+            error
+        }
+    })?;
     let created_id = created["session_id"]
         .as_str()
         .filter(|id| !id.is_empty())
-        .ok_or_else(|| anyhow!("Terminal created no agent pane"))?;
-    if request.background {
-        shell
-            .wt_focus_pane(created_id)
-            .await
-            .context("agent pane was created but could not be focused")?;
-    }
-    shell
-        .wt_publish_event(serde_json::json!({
-            "type": "event", "method": "agent_event",
-            "params": {
-                "event": "agent.pane.launch.source", "pane_id": created_id,
-                "agent": profile.agent_id,
-                "location": crate::agent_source::AgentSource::Host.session_location(),
-            }
-        }))
-        .await
-        .context("agent pane was created but source publication failed")?;
+        .ok_or_else(|| anyhow!(PaneCreationOutcomeUnknown))?;
+    tracing::info!(target: "delegate", stage = "pane_created",
+        elapsed_ms = started.elapsed().as_millis() as u64, pane_id = created_id);
     created["agent_id"] = profile.agent_id.clone().into();
     if let Some(session_id) = session_id {
         created["agent_session_id"] = session_id.into();
@@ -299,6 +334,40 @@ pub(crate) async fn launch(
         created["cwd"] = cwd.into();
     }
     Ok(created)
+}
+
+pub(crate) async fn finish_launch(
+    shell: &ShellManager,
+    created: &serde_json::Value,
+    background: bool,
+) {
+    let Some(created_id) = created["session_id"].as_str() else {
+        tracing::error!(target: "delegate", "created agent pane has no identity for post-launch metadata");
+        return;
+    };
+    if background {
+        if let Err(error) = shell.wt_focus_pane(created_id).await {
+            tracing::warn!(target: "delegate", pane_id = created_id, %error,
+                "agent pane was created but could not be focused");
+        }
+    }
+    let started = std::time::Instant::now();
+    let result = shell
+        .wt_publish_event(serde_json::json!({
+            "type": "event", "method": "agent_event",
+            "params": {
+                "event": "agent.pane.launch.source", "pane_id": created_id,
+                "agent": created["agent_id"],
+                "location": crate::agent_source::AgentSource::Host.session_location(),
+            }
+        }))
+        .await;
+    tracing::info!(target: "delegate", stage = "source_published",
+        elapsed_ms = started.elapsed().as_millis() as u64, success = result.is_ok());
+    if let Err(error) = result {
+        tracing::warn!(target: "delegate", pane_id = created_id, %error,
+            "agent pane was created but source publication failed");
+    }
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -327,7 +396,7 @@ fn token(input: &str) -> Result<(&str, &str)> {
 
 pub(crate) fn parse(mut input: &str) -> Result<DelegateInput> {
     let mut profile = None;
-    let mut placement = Placement::Tab;
+    let mut placement = Placement::default();
     let mut target_set = false;
     loop {
         input = input.trim_start();
@@ -407,7 +476,11 @@ mod tests {
             "\"unfinished task"
         );
         assert_eq!(parse("-- --literal task").unwrap().task, "--literal task");
-        assert_eq!(parse("fix it").unwrap().placement, Placement::Tab);
+        assert_eq!(parse("fix it").unwrap().placement, Placement::Pane);
+        assert_eq!(
+            parse("--target tab fix it").unwrap().placement,
+            Placement::Tab
+        );
     }
 
     #[test]

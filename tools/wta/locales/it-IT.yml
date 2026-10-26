@@ -311,7 +311,7 @@ system.model_unknown: "Modello sconosciuto %{model} — digita /model per visual
 
 setup.subtitle.wsl_agent_missing: "Non abbiamo trovato \"%{agent}\" nell'ambiente di accesso di %{distro}. Controlla l'installazione, PATH e il profilo della shell di questo utente Linux, quindi riprova."  # WSL login-shell detection; %{agent} is the agent display name, %{distro} is the Linux distribution name. {Locked="PATH"}
 commands.delegate.summary: "Delega un'attività usando un profilo agente"
-delegate.usage: "Inserisci un'attività dopo /delegate. Facoltativo: --profile <profile> e --target tab|pane."  # {Locked="/delegate","--profile","<profile>","--target","tab|pane"} Literal command syntax.
+delegate.usage: "Inserisci un'attività dopo /new-agent. Facoltativo: --profile <profile> e --target tab|pane."  # {Locked="/new-agent","--profile","<profile>","--target","tab|pane"} Literal command syntax.
 delegate.started: "Attività delegata avviata."
 delegate.profile_picker: "Delega a (digita per cercare: %{query})"  # Profile picker title; %{query} is the user's search text, not the task.
 delegate.placement_picker: "Apri attività delegata"

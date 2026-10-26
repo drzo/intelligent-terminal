@@ -22,6 +22,7 @@
 #include "../inc/AgentProfileUtils.h"
 
 #include <wil/resource.h>
+#include <array>
 #include <json/json.h>
 #include "../TerminalProtocol/ProtocolParsing.h"
 
@@ -38,6 +39,34 @@ namespace Protocol = winrt::Microsoft::Terminal::Protocol;
 
 namespace winrt::TerminalApp::implementation
 {
+    namespace
+    {
+        using ProtocolLaunchClock = std::chrono::steady_clock;
+
+        winrt::fire_and_forget logProtocolLaunchTiming(const char* operation, uint64_t windowId, winrt::guid paneId, std::array<ProtocolLaunchClock::time_point, 6> stages)
+        {
+            try
+            {
+                co_await winrt::resume_background();
+                const auto milliseconds = [&](size_t from, size_t to) {
+                    return std::chrono::duration<double, std::milli>(stages[to] - stages[from]).count();
+                };
+                _agentPaneLog(fmt::format("protocol_launch_timing operation={} server_pid={} window_id={} pane_id={} dispatcher_ms={:.3f} prepare_ms={:.3f} attach_ms={:.3f} layout_ms={:.3f} finish_ms={:.3f} total_ms={:.3f}",
+                                          operation,
+                                          GetCurrentProcessId(),
+                                          windowId,
+                                          winrt::to_string(winrt::to_hstring(paneId)),
+                                          milliseconds(0, 1),
+                                          milliseconds(1, 2),
+                                          milliseconds(2, 3),
+                                          milliseconds(3, 4),
+                                          milliseconds(4, 5),
+                                          milliseconds(0, 5)));
+            }
+            CATCH_LOG();
+        }
+    }
+
     static winrt::guid _getSessionIdFromPane(const std::shared_ptr<Pane>& pane);
     static std::shared_ptr<Pane> _getProtocolSourcePane(const winrt::com_ptr<Tab>& tab);
 
@@ -816,8 +845,10 @@ namespace winrt::TerminalApp::implementation
     // in TerminalPage.cpp explains the ordering.
     IAsyncOperation<Protocol::TabCreationResult> TerminalPage::CreateProtocolTab(NewTerminalArgs args, bool background)
     {
+        const auto requestedAt = ProtocolLaunchClock::now();
         auto strong = get_strong();
         co_await wil::resume_foreground(Dispatcher());
+        const auto uiReadyAt = ProtocolLaunchClock::now();
 
         Protocol::TabCreationResult result{};
 
@@ -858,12 +889,15 @@ namespace winrt::TerminalApp::implementation
         auto pane = _MakePane(args, nullptr);
         if (!pane)
             co_return result;
+        const auto paneReadyAt = ProtocolLaunchClock::now();
 
         const auto newTab = _CreateNewTabFromPane(pane, -1, /*openInBackground=*/background);
         if (!newTab)
             co_return result;
+        const auto attachedAt = ProtocolLaunchClock::now();
 
         _tabContent.UpdateLayout(); // Force synchronous terminal initialization
+        const auto layoutReadyAt = ProtocolLaunchClock::now();
 
         // UpdateLayout can realize the vertical ListView and restore its
         // previous row selection. Reassert the
@@ -891,14 +925,17 @@ namespace winrt::TerminalApp::implementation
             }
         }
 
+        logProtocolLaunchTiming("new_tab", _WindowProperties.WindowId(), result.SessionId, { requestedAt, uiReadyAt, paneReadyAt, attachedAt, layoutReadyAt, ProtocolLaunchClock::now() });
         co_return result;
     }
 
     IAsyncOperation<Protocol::TabCreationResult> TerminalPage::SplitProtocolPane(winrt::guid sessionId, SplitDirection direction, float size, NewTerminalArgs args, bool background)
     {
+        const auto requestedAt = ProtocolLaunchClock::now();
         auto strong = get_strong();
 
         co_await wil::resume_foreground(Dispatcher());
+        const auto uiReadyAt = ProtocolLaunchClock::now();
 
         Protocol::TabCreationResult result{};
 
@@ -926,16 +963,20 @@ namespace winrt::TerminalApp::implementation
             auto newPane = _MakePane(contentArgs, nullptr);
             if (!newPane)
                 co_return result;
+            const auto paneReadyAt = ProtocolLaunchClock::now();
 
             const auto newPanePid = _getPidFromPane(newPane);
             auto newPaneRef = newPane; // copy shared_ptr before move
 
             _SplitPane(tabImpl, direction, size, std::move(newPane), /*focusNewPane=*/!background);
+            const auto attachedAt = ProtocolLaunchClock::now();
             _tabContent.UpdateLayout(); // Force synchronous terminal initialization
+            const auto layoutReadyAt = ProtocolLaunchClock::now();
 
             result.TabId = tabIdx;
             result.SessionId = _getSessionIdFromPane(newPaneRef);
             result.Pid = newPanePid;
+            logProtocolLaunchTiming("split_pane", _WindowProperties.WindowId(), result.SessionId, { requestedAt, uiReadyAt, paneReadyAt, attachedAt, layoutReadyAt, ProtocolLaunchClock::now() });
             co_return result;
         }
 

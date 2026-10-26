@@ -311,7 +311,7 @@ system.model_unknown: "Hindi kilalang modelo %{model} — i-type ang /model para
 
 setup.subtitle.wsl_agent_missing: "Hindi namin makita ang \"%{agent}\" sa kapaligiran ng pag-login ng %{distro}. Suriin ang pagkaka-install, PATH, at profile ng shell ng Linux user na ito, pagkatapos ay subukang muli."  # WSL login-shell detection; %{agent} is the agent display name, %{distro} is the Linux distribution name. {Locked="PATH"}
 commands.delegate.summary: "Magdelegado ng gawain gamit ang profile ng agent"
-delegate.usage: "Maglagay ng gawain pagkatapos ng /delegate. Opsyonal: --profile <profile> at --target tab|pane."  # {Locked="/delegate","--profile","<profile>","--target","tab|pane"} Literal command syntax.
+delegate.usage: "Maglagay ng gawain pagkatapos ng /new-agent. Opsyonal: --profile <profile> at --target tab|pane."  # {Locked="/new-agent","--profile","<profile>","--target","tab|pane"} Literal command syntax.
 delegate.started: "Nagsimula na ang itinalagang gawain."
 delegate.profile_picker: "Magdelegado sa (mag-type para maghanap: %{query})"  # Profile picker title; %{query} is the user's search text, not the task.
 delegate.placement_picker: "Buksan ang itinalagang gawain"

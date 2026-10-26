@@ -52,6 +52,8 @@ pub fn render(frame: &mut Frame, app: &App, area: Rect) {
         .padding(Padding::new(INPUT_LEFT_PAD, 0, 0, 0));
     if tab.delegate.draft.is_some() {
         block = block.title_bottom(t!("delegate.draft_hint").into_owned());
+    } else if tab.delegate.pending.is_some() {
+        block = block.title_bottom(t!("agents.loading").into_owned());
     }
     let text_width = input_text_width(area.width);
     let viewport = input_viewport_with_max_rows(

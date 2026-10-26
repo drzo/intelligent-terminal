@@ -4250,6 +4250,7 @@ fn dispatch_master_ext_request_with_yolo_timeout(
             }
             MasterExtRequest::SessionBornBound { event, wsl_distro } => {
                 const BORN_BOUND_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(8);
+                let started = std::time::Instant::now();
                 let wire = match wsl_distro.as_deref() {
                     Some(distro) => {
                         crate::session_registry::build_born_bound_request_wsl(&event, distro)
@@ -4260,18 +4261,21 @@ fn dispatch_master_ext_request_with_yolo_timeout(
                     Ok(Ok(response)) => tracing::debug!(
                         target: "session_hook",
                         event = ?event,
+                        elapsed_ms = started.elapsed().as_millis() as u64,
                         response = %response.0.get(),
                         "born-bound registration sent to master"
                     ),
                     Ok(Err(err)) => tracing::warn!(
                         target: "session_hook",
                         event = ?event,
+                        elapsed_ms = started.elapsed().as_millis() as u64,
                         error = ?err,
                         "born-bound registration ext-request failed"
                     ),
                     Err(_) => tracing::warn!(
                         target: "session_hook",
                         event = ?event,
+                        elapsed_ms = started.elapsed().as_millis() as u64,
                         timeout_secs = BORN_BOUND_TIMEOUT.as_secs(),
                         "born-bound registration timed out"
                     ),

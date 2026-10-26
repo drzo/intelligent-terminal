@@ -119,23 +119,24 @@ security boundary.
 
 ### Delegating a task to a profile
 
-The built-in assistant's `/delegate` command can select one of these profiles
-and open it in a new tab or a new pane. Choose `/delegate` and press Enter to
+The built-in assistant's `/new-agent` command can select one of these profiles
+and open it in a new tab or a new pane. Choose `/new-agent` and press Enter to
 search native agent profiles; the configured default is highlighted. Selecting
 a profile returns to the same input box with a one-task delegation label.
 Write the task and press Enter to launch. No GUIDs or flags are inserted into
 the task.
 
 ```text
-/delegate Fix the current build error
+/new-agent Fix the current build error
 ```
 
 The direct form above skips the picker and uses the first eligible profile for
-the configured delegation provider in a new tab. Tab in the slash-command menu
-only completes `/delegate `; Enter opens the picker. For a selected-profile
+the configured delegation provider in a pane to the right of the source work
+pane. Tab in the slash-command menu only completes `/new-agent `; Enter opens
+the picker. For a selected-profile
 draft, click the profile/placement controls or use Tab/Shift+Tab to change them
-without losing the task. Placement defaults to a new tab and is not a mandatory
-selection step. Esc closes a picker; Esc in the task input removes the
+without losing the task. Placement defaults to a right split and is not a
+mandatory selection step. Esc closes a picker; Esc in the task input removes the
 one-time delegation selection while retaining the text. Launch errors also
 retain the draft; success returns the input to ordinary chat.
 Advanced `--profile`/`--agent` and `--target tab|pane` inline options remain

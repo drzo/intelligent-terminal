@@ -312,7 +312,7 @@ system.model_unknown: "अज्ञात मॉडेल %{model} — उपल
 
 setup.subtitle.wsl_agent_missing: "%{distro} च्या लॉगिन वातावरणांत \"%{agent}\" मेळ्ळो ना. ह्या Linux वापरप्याचें इन्स्टॉलेशन, PATH आनी शेल प्रोफायल तपासात, मागीर परत यत्न करात."  # WSL login-shell detection; %{agent} is the agent display name, %{distro} is the Linux distribution name. {Locked="PATH"}
 commands.delegate.summary: "एजंट प्रोफायल वापरून कार्य सोपयात"
-delegate.usage: "/delegate उपरांत कार्य घालात. पर्यायी: --profile <profile> आनी --target tab|pane."  # {Locked="/delegate","--profile","<profile>","--target","tab|pane"} Literal command syntax.
+delegate.usage: "/new-agent उपरांत कार्य घालात. पर्यायी: --profile <profile> आनी --target tab|pane."  # {Locked="/new-agent","--profile","<profile>","--target","tab|pane"} Literal command syntax.
 delegate.started: "सोपयल्लें कार्य सुरू जालें."
 delegate.profile_picker: "हाका सोपयात (सोदपाक टायप करात: %{query})"  # Profile picker title; %{query} is the user's search text, not the task.
 delegate.placement_picker: "सोपयल्लें कार्य उगडात"

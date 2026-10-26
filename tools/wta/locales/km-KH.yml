@@ -326,7 +326,7 @@ system.model_unknown: "មិនស្គាល់ម៉ូដែល %{model} �
 
 setup.subtitle.wsl_agent_missing: "យើងរកមិនឃើញ \"%{agent}\" ក្នុងបរិស្ថានចូលរបស់ %{distro} ទេ។ សូមពិនិត្យការដំឡើង PATH និងទម្រង់សែលរបស់អ្នកប្រើ Linux នេះ រួចព្យាយាមម្តងទៀត។"  # WSL login-shell detection; %{agent} is the agent display name, %{distro} is the Linux distribution name. {Locked="PATH"}
 commands.delegate.summary: "ប្រគល់ភារកិច្ចដោយប្រើកម្រងព័ត៌មានភ្នាក់ងារ"
-delegate.usage: "បញ្ចូលភារកិច្ចបន្ទាប់ពី /delegate។ ជាជម្រើស៖ --profile <profile> និង --target tab|pane។"  # {Locked="/delegate","--profile","<profile>","--target","tab|pane"} Literal command syntax.
+delegate.usage: "បញ្ចូលភារកិច្ចបន្ទាប់ពី /new-agent។ ជាជម្រើស៖ --profile <profile> និង --target tab|pane។"  # {Locked="/new-agent","--profile","<profile>","--target","tab|pane"} Literal command syntax.
 delegate.started: "ភារកិច្ចដែលបានប្រគល់បានចាប់ផ្តើមហើយ។"
 delegate.profile_picker: "ប្រគល់ឱ្យ (វាយបញ្ចូលដើម្បីស្វែងរក៖ %{query})"  # Profile picker title; %{query} is the user's search text, not the task.
 delegate.placement_picker: "បើកភារកិច្ចដែលបានប្រគល់"

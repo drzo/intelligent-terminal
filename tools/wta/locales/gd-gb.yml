@@ -310,7 +310,7 @@ system.model_unknown: "Modail neo-aithnichte %{model} — sgrìobh /model gus an
 
 setup.subtitle.wsl_agent_missing: "Cha b' urrainn dhuinn \"%{agent}\" a lorg ann an àrainneachd clàraidh a-steach %{distro}. Thoir sùil air stàladh, PATH agus pròifil na slige aig a' chleachdaiche Linux seo, agus feuch ris a-rithist."  # WSL login-shell detection; %{agent} is the agent display name, %{distro} is the Linux distribution name. {Locked="PATH"}
 commands.delegate.summary: "Tiomnadh gnìomh le pròifil àidhent"
-delegate.usage: "Cuir a-steach gnìomh às dèidh /delegate. Roghainneil: --profile <profile> agus --target tab|pane."  # {Locked="/delegate","--profile","<profile>","--target","tab|pane"} Literal command syntax.
+delegate.usage: "Cuir a-steach gnìomh às dèidh /new-agent. Roghainneil: --profile <profile> agus --target tab|pane."  # {Locked="/new-agent","--profile","<profile>","--target","tab|pane"} Literal command syntax.
 delegate.started: "Thòisich an gnìomh a chaidh a thiomnadh."
 delegate.profile_picker: "Tiomnaich gu (sgrìobh gus lorg: %{query})"  # Profile picker title; %{query} is the user's search text, not the task.
 delegate.placement_picker: "Fosgail an gnìomh a chaidh a thiomnadh"

@@ -311,7 +311,7 @@ system.model_unknown: "ไม่รู้จักโมเดล %{model} — �
 
 setup.subtitle.wsl_agent_missing: "เราไม่พบ \"%{agent}\" ในสภาพแวดล้อมการเข้าสู่ระบบของ %{distro} ตรวจสอบการติดตั้ง PATH และโปรไฟล์เชลล์ของผู้ใช้ Linux รายนี้ แล้วลองอีกครั้ง"  # WSL login-shell detection; %{agent} is the agent display name, %{distro} is the Linux distribution name. {Locked="PATH"}
 commands.delegate.summary: "มอบหมายงานโดยใช้โปรไฟล์ตัวแทน"
-delegate.usage: "ป้อนงานหลัง /delegate ตัวเลือกเพิ่มเติม: --profile <profile> และ --target tab|pane"  # {Locked="/delegate","--profile","<profile>","--target","tab|pane"} Literal command syntax.
+delegate.usage: "ป้อนงานหลัง /new-agent ตัวเลือกเพิ่มเติม: --profile <profile> และ --target tab|pane"  # {Locked="/new-agent","--profile","<profile>","--target","tab|pane"} Literal command syntax.
 delegate.started: "เริ่มงานที่มอบหมายแล้ว"
 delegate.profile_picker: "มอบหมายให้ (พิมพ์เพื่อค้นหา: %{query})"  # Profile picker title; %{query} is the user's search text, not the task.
 delegate.placement_picker: "เปิดงานที่มอบหมาย"

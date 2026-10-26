@@ -311,7 +311,7 @@ system.model_unknown: "Bilinmeyen model %{model} — kullanılabilir listeyi gö
 
 setup.subtitle.wsl_agent_missing: "%{distro} oturum açma ortamında \"%{agent}\" bulunamadı. Bu Linux kullanıcısının kurulumunu, PATH değişkenini ve kabuk profilini kontrol edip yeniden deneyin."  # WSL login-shell detection; %{agent} is the agent display name, %{distro} is the Linux distribution name. {Locked="PATH"}
 commands.delegate.summary: "Aracı profili kullanarak bir görev devredin"
-delegate.usage: "/delegate komutundan sonra bir görev girin. İsteğe bağlı: --profile <profile> ve --target tab|pane."  # {Locked="/delegate","--profile","<profile>","--target","tab|pane"} Literal command syntax.
+delegate.usage: "/new-agent komutundan sonra bir görev girin. İsteğe bağlı: --profile <profile> ve --target tab|pane."  # {Locked="/new-agent","--profile","<profile>","--target","tab|pane"} Literal command syntax.
 delegate.started: "Devredilen görev başlatıldı."
 delegate.profile_picker: "Şuna devret (aramak için yazın: %{query})"  # Profile picker title; %{query} is the user's search text, not the task.
 delegate.placement_picker: "Devredilen görevi aç"

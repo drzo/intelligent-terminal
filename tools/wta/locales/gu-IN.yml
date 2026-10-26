@@ -312,7 +312,7 @@ system.model_unknown: "અજ્ઞાત મોડેલ %{model} — ઉપલ
 
 setup.subtitle.wsl_agent_missing: "%{distro} ના લૉગિન વાતાવરણમાં \"%{agent}\" મળ્યું નથી. આ Linux વપરાશકર્તાનું ઇન્સ્ટોલેશન, PATH અને શેલ પ્રોફાઇલ તપાસો, પછી ફરી પ્રયાસ કરો."  # WSL login-shell detection; %{agent} is the agent display name, %{distro} is the Linux distribution name. {Locked="PATH"}
 commands.delegate.summary: "એજન્ટ પ્રોફાઇલનો ઉપયોગ કરીને કાર્ય સોંપો"
-delegate.usage: "/delegate પછી કાર્ય દાખલ કરો. વૈકલ્પિક: --profile <profile> અને --target tab|pane."  # {Locked="/delegate","--profile","<profile>","--target","tab|pane"} Literal command syntax.
+delegate.usage: "/new-agent પછી કાર્ય દાખલ કરો. વૈકલ્પિક: --profile <profile> અને --target tab|pane."  # {Locked="/new-agent","--profile","<profile>","--target","tab|pane"} Literal command syntax.
 delegate.started: "સોંપાયેલ કાર્ય શરૂ થયું."
 delegate.profile_picker: "કાર્ય સોંપો (શોધવા માટે ટાઇપ કરો: %{query})"  # Profile picker title; %{query} is the user's search text, not the task.
 delegate.placement_picker: "સોંપાયેલ કાર્ય ખોલો"

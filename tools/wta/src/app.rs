@@ -5748,6 +5748,7 @@ impl App {
             AppEvent::AgentSourcesDiscovered { .. } => "agent_sources_discovered",
             AppEvent::DelegateProfilesLoaded { .. } => "delegate_profiles_loaded",
             AppEvent::DelegateCompleted { .. } => "delegate_completed",
+            AppEvent::DelegateAccepted { .. } => "delegate_accepted",
             AppEvent::PreflightComplete(_) => "preflight_complete",
             AppEvent::AgentReconnectPreflightComplete { .. } => {
                 "agent_reconnect_preflight_complete"

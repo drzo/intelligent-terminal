@@ -1217,10 +1217,19 @@ fn build_windows_powershell_base64_launch(
     )
 }
 
-/// Quote a string as a PowerShell single-quoted literal (only `'` is special,
-/// doubled).
+/// PowerShell recognizes ASCII and smart single quotes as delimiters.
+/// Double each delimiter without changing the literal's Unicode contents.
 fn ps_single_quote(s: &str) -> String {
-    format!("'{}'", s.replace('\'', "''"))
+    let mut quoted = String::with_capacity(s.len() + 2);
+    quoted.push('\'');
+    for ch in s.chars() {
+        if matches!(ch, '\'' | '\u{2018}' | '\u{2019}' | '\u{201a}' | '\u{201b}') {
+            quoted.push(ch);
+        }
+        quoted.push(ch);
+    }
+    quoted.push('\'');
+    quoted
 }
 
 /// Whether PowerShell 7 (`pwsh.exe`) is available on `PATH`. The host base64
@@ -4130,11 +4139,12 @@ mod tests {
                 let _ = std::fs::remove_dir(&self.0);
             }
         }
+        let smart_quotes = "\u{2018}\u{2019}\u{201a}\u{201b}";
         let root = Fixture(
             std::env::current_dir()
                 .expect("working directory")
                 .join(format!(
-                    "wta split cwd ' & ; %WTA_TEST_UNUSED% ! [x] {}",
+                    "wta split cwd ' {smart_quotes} & ; %WTA_TEST_UNUSED% ! [x] {}",
                     uuid::Uuid::new_v4()
                 )),
         );
@@ -4144,11 +4154,12 @@ mod tests {
             std::path::PathBuf::from(std::env::var_os("SystemRoot").expect("Windows system root"));
         let powershell = system_root.join(r"System32\WindowsPowerShell\v1.0\powershell.exe");
         let cmd = system_root.join(r"System32\cmd.exe");
-        // cmd's built-in `cd` reports the native process cwd without PowerShell's
-        // provider/startup-directory behavior or requiring any agent CLI on PATH.
+        // cmd reports the native child's literal arguments and cwd without
+        // PowerShell's provider/startup-directory behavior or an agent on PATH.
+        let task = "There\u{2019}s no application-specific functionality yet.";
         let launch = super::with_windows_delegate_cwd(
             &format!(
-                "{} /d /c \"cd & exit /b 7\"",
+                "{} /d /u /c \"echo {task}& cd & exit /b 7\"",
                 super::quote_windows_commandline_arg(cmd.to_str().expect("UTF-8 cmd path"))
             ),
             cwd,
@@ -4218,7 +4229,15 @@ mod tests {
             "{}",
             String::from_utf8_lossy(&output.stderr)
         );
-        assert_eq!(String::from_utf8_lossy(&output.stdout).trim(), cwd);
+        let stdout = String::from_utf16(
+            &output
+                .stdout
+                .chunks_exact(2)
+                .map(|bytes| u16::from_le_bytes([bytes[0], bytes[1]]))
+                .collect::<Vec<_>>(),
+        )
+        .expect("cmd Unicode output");
+        assert_eq!(stdout.lines().collect::<Vec<_>>(), [task, cwd]);
     }
 
     #[test]
@@ -4227,8 +4246,10 @@ mod tests {
             eprintln!("skipping pwsh exit-code test: pwsh.exe is not on PATH");
             return;
         }
-        let root =
-            std::env::temp_dir().join(format!("wta-pwsh-exit-code-{}", uuid::Uuid::new_v4()));
+        let root = std::env::temp_dir().join(format!(
+            "wta-pwsh-exit-code-\u{2018}\u{2019}\u{201a}\u{201b}-{}",
+            uuid::Uuid::new_v4()
+        ));
         std::fs::create_dir_all(&root).expect("create test directory");
         let shim = root.join("agent.ps1");
         std::fs::write(&shim, "exit 7\r\n").expect("write PowerShell shim");
@@ -4297,8 +4318,10 @@ mod tests {
     }
 
     fn capture_windows_powershell_fallback(prompt: &str) -> String {
-        let root =
-            std::env::temp_dir().join(format!("wta-powershell-black-box-{}", uuid::Uuid::new_v4()));
+        let root = std::env::temp_dir().join(format!(
+            "wta-powershell-black-box-\u{2018}\u{2019}\u{201a}\u{201b}-{}",
+            uuid::Uuid::new_v4()
+        ));
         std::fs::create_dir_all(&root).expect("create test directory");
         let capture = root.join("capture.js");
         let shim = root.join("agent.ps1");

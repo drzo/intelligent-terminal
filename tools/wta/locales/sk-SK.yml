@@ -311,7 +311,7 @@ system.model_unknown: "Neznámy model %{model} — zadaním /model zobrazíte do
 
 setup.subtitle.wsl_agent_missing: "V prihlasovacom prostredí distribúcie %{distro} sa nepodarilo nájsť \"%{agent}\". Skontrolujte inštaláciu, PATH a profil shellu tohto používateľa Linuxu a skúste to znova."  # WSL login-shell detection; %{agent} is the agent display name, %{distro} is the Linux distribution name. {Locked="PATH"}
 commands.delegate.summary: "Delegujte úlohu pomocou profilu agenta"
-delegate.usage: "Za /delegate zadajte úlohu. Voliteľné: --profile <profile> a --target tab|pane."  # {Locked="/delegate","--profile","<profile>","--target","tab|pane"} Literal command syntax.
+delegate.usage: "Za /new-agent zadajte úlohu. Voliteľné: --profile <profile> a --target tab|pane."  # {Locked="/new-agent","--profile","<profile>","--target","tab|pane"} Literal command syntax.
 delegate.started: "Delegovaná úloha bola spustená."
 delegate.profile_picker: "Delegovať na (vyhľadajte písaním: %{query})"  # Profile picker title; %{query} is the user's search text, not the task.
 delegate.placement_picker: "Otvoriť delegovanú úlohu"

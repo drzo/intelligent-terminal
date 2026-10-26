@@ -795,6 +795,7 @@ struct MasterStateInner {
 enum HelperRole {
     Agent,
     SidebarHistoryControl,
+    SessionRegistrationControl,
 }
 
 #[cfg(test)]
@@ -3373,19 +3374,20 @@ impl HelperHandler {
         // otherwise falls back to the trusted `--agent` default. See
         // `resolve_agent_selection` for the full policy.
         let wta_meta = crate::session_registry::extract_wta_meta(&mut args.meta);
-        let requested_control = match wta_meta.control_client.as_deref() {
-            Some("sidebar-history-v1") => true,
+        let requested_role = match wta_meta.control_client.as_deref() {
+            Some("sidebar-history-v1") => HelperRole::SidebarHistoryControl,
+            Some("session-registration-v1") => HelperRole::SessionRegistrationControl,
             Some(_) => {
                 return Err(acp::Error::invalid_params().data(serde_json::json!({
                     "message": "unsupported WTA control client"
                 })));
             }
-            None => false,
+            None => HelperRole::Agent,
         };
-        if requested_control && wta_meta.startup_intent.is_some() {
-            return Err(acp::Error::invalid_request().data(
-                "history control clients cannot request agent startup",
-            ));
+        if requested_role != HelperRole::Agent && wta_meta.startup_intent.is_some() {
+            return Err(
+                acp::Error::invalid_request().data("control clients cannot request agent startup")
+            );
         }
         if wta_meta
             .startup_intent
@@ -3396,28 +3398,23 @@ impl HelperHandler {
         }
         {
             let mut roles = self.state.helper_roles.lock().await;
-            match (roles.get(&self.helper_id).copied(), requested_control) {
-                (Some(HelperRole::SidebarHistoryControl), true) => {}
-                (Some(HelperRole::SidebarHistoryControl), false)
-                | (Some(HelperRole::Agent), true) => {
+            match roles.get(&self.helper_id).copied() {
+                Some(role) if role != requested_role => {
                     return Err(acp::Error::invalid_request().data(serde_json::json!({
                         "message": "helper role cannot change after initialize"
                     })));
                 }
-                (Some(HelperRole::Agent), false) => {}
-                (None, true) => {
-                    roles.insert(self.helper_id, HelperRole::SidebarHistoryControl);
-                }
-                (None, false) => {
-                    roles.insert(self.helper_id, HelperRole::Agent);
+                Some(_) => {}
+                None => {
+                    roles.insert(self.helper_id, requested_role);
                 }
             }
         }
-        if requested_control {
+        if requested_role != HelperRole::Agent {
             tracing::debug!(
                 target: "master",
                 helper_id = ?self.helper_id,
-                control_client = "sidebar-history-v1",
+                control_client = ?requested_role,
                 "initialized master-local control client without binding an agent"
             );
             return Ok(
@@ -4684,30 +4681,34 @@ impl HelperHandler {
             "routing ext_method"
         );
         let request = crate::session_registry::parse_ext_request(args);
-        let is_control = self
+        let role = self
             .state
             .helper_roles
             .lock()
             .await
             .get(&self.helper_id)
-            .copied()
-            == Some(HelperRole::SidebarHistoryControl);
-        if is_control
-            && !matches!(
+            .copied();
+        let allowed = match role {
+            Some(HelperRole::SidebarHistoryControl) => matches!(
                 &request,
                 Req::SessionsList(_)
                     | Req::SessionActivate(_)
                     | Req::SessionActivationStatus(_)
                     | Req::Malformed { .. }
-            )
-        {
+            ),
+            Some(HelperRole::SessionRegistrationControl) => {
+                matches!(&request, Req::SessionBornBound(..) | Req::Malformed { .. })
+            }
+            _ => true,
+        };
+        if !allowed {
             tracing::warn!(
                 target: "master",
                 helper_id = ?self.helper_id,
                 "rejected non-control extension request from unbound client"
             );
             return Err(acp::Error::invalid_request().data(serde_json::json!({
-                "message": "control client may only list, activate, or query session activations"
+                "message": "operation is not allowed for this control client"
             })));
         }
         match request {

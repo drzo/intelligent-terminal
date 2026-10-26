@@ -311,7 +311,7 @@ system.model_unknown: "Tuntematon malli %{model} — kirjoita /model nähdäkses
 
 setup.subtitle.wsl_agent_missing: "Emme löytäneet agenttia \"%{agent}\" jakelun %{distro} kirjautumisympäristöstä. Tarkista tämän Linux-käyttäjän asennus, PATH ja komentotulkin profiili ja yritä sitten uudelleen."  # WSL login-shell detection; %{agent} is the agent display name, %{distro} is the Linux distribution name. {Locked="PATH"}
 commands.delegate.summary: "Delegoi tehtävä agenttiprofiilin avulla"
-delegate.usage: "Kirjoita tehtävä komennon /delegate jälkeen. Valinnaiset: --profile <profile> ja --target tab|pane."  # {Locked="/delegate","--profile","<profile>","--target","tab|pane"} Literal command syntax.
+delegate.usage: "Kirjoita tehtävä komennon /new-agent jälkeen. Valinnaiset: --profile <profile> ja --target tab|pane."  # {Locked="/new-agent","--profile","<profile>","--target","tab|pane"} Literal command syntax.
 delegate.started: "Delegoitu tehtävä käynnistettiin."
 delegate.profile_picker: "Delegoi profiilille (hae kirjoittamalla: %{query})"  # Profile picker title; %{query} is the user's search text, not the task.
 delegate.placement_picker: "Avaa delegoitu tehtävä"

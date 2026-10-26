@@ -311,7 +311,7 @@ system.model_unknown: "Tundmatu mudel %{model} — tippige /model saadaolevate m
 
 setup.subtitle.wsl_agent_missing: "Me ei leidnud agenti \"%{agent}\" distributsiooni %{distro} sisselogimiskeskkonnast. Kontrollige selle Linuxi kasutaja installi, PATH-i ja kesta profiili ning proovige uuesti."  # WSL login-shell detection; %{agent} is the agent display name, %{distro} is the Linux distribution name. {Locked="PATH"}
 commands.delegate.summary: "Delegeerige ülesanne agendi profiili abil"
-delegate.usage: "Sisestage ülesanne pärast käsku /delegate. Valikuline: --profile <profile> ja --target tab|pane."  # {Locked="/delegate","--profile","<profile>","--target","tab|pane"} Literal command syntax.
+delegate.usage: "Sisestage ülesanne pärast käsku /new-agent. Valikuline: --profile <profile> ja --target tab|pane."  # {Locked="/new-agent","--profile","<profile>","--target","tab|pane"} Literal command syntax.
 delegate.started: "Delegeeritud ülesanne käivitati."
 delegate.profile_picker: "Delegeerige profiilile (otsimiseks tippige: %{query})"  # Profile picker title; %{query} is the user's search text, not the task.
 delegate.placement_picker: "Avage delegeeritud ülesanne"

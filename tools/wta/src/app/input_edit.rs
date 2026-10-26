@@ -150,6 +150,10 @@ pub(super) struct InputHistory {
 }
 
 impl TabSession {
+    pub(super) fn mark_composer_changed(&mut self) {
+        self.composer_revision = self.composer_revision.wrapping_add(1);
+    }
+
     pub(super) fn input_undo_group_is_open(&self) -> bool {
         self.input_edits.typing_open
     }
@@ -183,6 +187,7 @@ impl TabSession {
         if range.is_empty() && text.is_empty() {
             return;
         }
+        self.mark_composer_changed();
         let before = self.input_edit_state();
         let removed = self.input[range.clone()].to_owned();
         self.reset_input_history_navigation();
@@ -223,6 +228,7 @@ impl TabSession {
             tracing::error!(target: "input_undo", "discarding stale input edit history");
             return false;
         }
+        self.mark_composer_changed();
         self.input.replace_range(range, replacement);
         self.reset_input_history_navigation();
         self.cursor_pos = clamp_cursor_to_boundary(&self.input, state.cursor_pos);
@@ -274,6 +280,7 @@ impl TabSession {
     pub fn clear_input(&mut self) {
         self.break_input_undo_group();
         if self.input.is_empty() {
+            self.mark_composer_changed();
             self.reset_input_history_navigation();
             self.cursor_pos = 0;
             self.attachments.clear();
@@ -316,6 +323,7 @@ impl TabSession {
     }
 
     pub fn insert_image_attachment(&mut self, image: crate::clipboard_image::PastedImage) {
+        self.mark_composer_changed();
         let range = self.input_replacement_range();
         let before = self.input_edit_state();
         let removed = self.input[range.clone()].to_owned();
@@ -494,6 +502,10 @@ impl TabSession {
     pub(super) fn record_input_history(&mut self, input: &str) {
         self.reset_input_undo_history();
         self.reset_input_history_navigation();
+        self.remember_input_history(input);
+    }
+
+    pub(super) fn remember_input_history(&mut self, input: &str) {
         if input.is_empty() {
             return;
         }
@@ -526,6 +538,7 @@ impl TabSession {
         if self.input_history.entries.is_empty() {
             return;
         }
+        self.mark_composer_changed();
         let index = match self.input_history.selected {
             Some(index) => (index + 1).min(self.input_history.entries.len() - 1),
             None => {
@@ -554,6 +567,7 @@ impl TabSession {
         let Some(index) = self.input_history.selected else {
             return;
         };
+        self.mark_composer_changed();
         if index == 0 {
             let draft = self.input_history.draft.take().unwrap_or_default();
             self.input = draft.input;
