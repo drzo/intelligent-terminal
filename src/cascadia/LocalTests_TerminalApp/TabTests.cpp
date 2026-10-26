@@ -51,6 +51,7 @@
 #include <winrt/Windows.UI.Xaml.Automation.Provider.h>
 #include <winrt/Windows.UI.Xaml.Media.Imaging.h>
 #include <winrt/Windows.UI.Xaml.Shapes.h>
+#include <winrt/Windows.UI.ViewManagement.h>
 
 using namespace Microsoft::Console;
 using namespace TerminalApp;
@@ -793,6 +794,10 @@ namespace TerminalAppLocalTests
         TEST_METHOD(DetachLastTerminalPaneClosesAgentOnlyTab);
         TEST_METHOD(DetachTerminalPanePreservesRemainingFocus);
         TEST_METHOD(ClosingAgentPaneSuppressesPrewarm);
+        TEST_METHOD(HiddenAgentPrewarmPreservesFullSize);
+        TEST_METHOD(VisibleRootSplitKeepsEntranceAnimation);
+        TEST_METHOD(ClosingLastNormalPaneWithAgentSkipsAnimation);
+        TEST_METHOD(ClosingNormalPanePreservesSurvivingPaneAnimation);
         TEST_METHOD(AgentPaneTeardownAllowsSynchronousRecreation);
         TEST_METHOD(AgentPaneLifetimeMovesAndDestroysRealCoresOnce);
         TEST_METHOD(AgentPaneLifetimeReceiveClosesRealCoreOnce);
@@ -23090,6 +23095,172 @@ namespace TerminalAppLocalTests
             if (hasNativeIndicator)
             {
                 VERIFY_IS_FALSE(nativePresenter.SelectionIndicatorVisualEnabled());
+            }
+        });
+    }
+
+    void TabTests::HiddenAgentPrewarmPreservesFullSize()
+    {
+        TestOnUIThread([]() {
+            const auto animations = Media::Animation::Timeline::AllowDependentAnimations();
+            const auto restoreAnimations = wil::scope_exit([&]() {
+                Media::Animation::Timeline::AllowDependentAnimations(animations);
+            });
+            Media::Animation::Timeline::AllowDependentAnimations(true);
+
+            for (const auto direction : { SplitDirection::Down, SplitDirection::Right, SplitDirection::Up, SplitDirection::Left })
+            {
+                const auto sourceContent = winrt::make<TestSettingsPaneContent>();
+                const auto sourceRoot = sourceContent.GetRoot();
+                const auto pane = std::make_shared<Pane>(sourceContent, true);
+                const auto tab = winrt::make_self<winrt::TerminalApp::implementation::Tab>(pane);
+                tab->Initialize();
+                const auto root = tab->GetRootPane()->GetRootElement();
+                root.Measure({ 800, 600 });
+                root.Arrange({ 0, 0, 800, 600 });
+                VERIFY_ARE_EQUAL(800.0, root.ActualWidth());
+                VERIFY_ARE_EQUAL(600.0, root.ActualHeight());
+
+                const auto agent = std::make_shared<Pane>(winrt::make<TestSettingsPaneContent>());
+                agent->IsAgentPane(true);
+                const auto [visible, added] = tab->SplitPaneAtRoot(direction, agent, 0.5f, false);
+                VERIFY_IS_TRUE(added == agent);
+                root.UpdateLayout();
+                tab->StashAgentPane();
+                root.Measure({ 800, 600 });
+                root.Arrange({ 0, 0, 800, 600 });
+                root.UpdateLayout();
+
+                VERIFY_IS_TRUE(tab->HasStashedAgentPane());
+                VERIFY_IS_TRUE(std::isnan(sourceRoot.Width()));
+                VERIFY_IS_TRUE(std::isnan(sourceRoot.Height()));
+                VERIFY_IS_TRUE(std::isnan(visible->GetRootElement().Width()));
+                VERIFY_IS_TRUE(std::isnan(visible->GetRootElement().Height()));
+                VERIFY_ARE_EQUAL(HorizontalAlignment::Stretch, sourceRoot.HorizontalAlignment());
+                VERIFY_ARE_EQUAL(VerticalAlignment::Stretch, sourceRoot.VerticalAlignment());
+                VERIFY_ARE_EQUAL(root.ActualWidth(), sourceRoot.ActualWidth());
+                VERIFY_ARE_EQUAL(root.ActualHeight(), sourceRoot.ActualHeight());
+                VERIFY_IS_NULL(root.Background());
+            }
+        });
+    }
+
+    void TabTests::VisibleRootSplitKeepsEntranceAnimation()
+    {
+        TestOnUIThread([]() {
+            if (!winrt::Windows::UI::ViewManagement::UISettings{}.AnimationsEnabled())
+            {
+                Log::Comment(L"OS animations are disabled; the visible split also skips its animation.");
+                return;
+            }
+            const auto animations = Media::Animation::Timeline::AllowDependentAnimations();
+            const auto restoreAnimations = wil::scope_exit([&]() {
+                Media::Animation::Timeline::AllowDependentAnimations(animations);
+            });
+            Media::Animation::Timeline::AllowDependentAnimations(true);
+
+            const auto sourceContent = winrt::make<TestSettingsPaneContent>();
+            const auto sourceRoot = sourceContent.GetRoot();
+            const auto tab = winrt::make_self<winrt::TerminalApp::implementation::Tab>(
+                std::make_shared<Pane>(sourceContent, true));
+            tab->Initialize();
+            const auto root = tab->GetRootPane()->GetRootElement();
+            root.Measure({ 800, 600 });
+            root.Arrange({ 0, 0, 800, 600 });
+            const auto added = tab->SplitPaneAtRoot(
+                                      SplitDirection::Down, std::make_shared<Pane>(winrt::make<TestSettingsPaneContent>()))
+                                   .second;
+            VERIFY_IS_FALSE(std::isnan(sourceRoot.Height()));
+            VERIFY_ARE_EQUAL(VerticalAlignment::Top, sourceRoot.VerticalAlignment());
+            VERIFY_ARE_EQUAL(VerticalAlignment::Bottom, added->GetRootElement().VerticalAlignment());
+        });
+    }
+
+    void TabTests::ClosingLastNormalPaneWithAgentSkipsAnimation()
+    {
+        TestOnUIThread([]() {
+            const auto animations = Media::Animation::Timeline::AllowDependentAnimations();
+            const auto restoreAnimations = wil::scope_exit([&]() {
+                Media::Animation::Timeline::AllowDependentAnimations(animations);
+            });
+            Media::Animation::Timeline::AllowDependentAnimations(true);
+
+            for (const auto direction : { SplitDirection::Down, SplitDirection::Right, SplitDirection::Up, SplitDirection::Left })
+            {
+                for (const bool hidden : { false, true })
+                {
+                    const auto tab = winrt::make_self<winrt::TerminalApp::implementation::Tab>(
+                        std::make_shared<Pane>(winrt::make<TestSettingsPaneContent>(), true));
+                    tab->Initialize();
+                    const auto root = tab->GetRootPane()->GetRootElement();
+                    root.Measure({ 800, 600 });
+                    root.Arrange({ 0, 0, 800, 600 });
+
+                    const auto agent = std::make_shared<Pane>(winrt::make<TestSettingsPaneContent>());
+                    agent->IsAgentPane(true);
+                    const auto normal = tab->SplitPaneAtRoot(direction, agent, 0.5f, false).first;
+                    if (hidden)
+                    {
+                        tab->StashAgentPane();
+                    }
+                    root.Measure({ 800, 600 });
+                    root.Arrange({ 0, 0, 800, 600 });
+                    root.UpdateLayout();
+                    VERIFY_IS_TRUE(tab->GetActivePane() == normal);
+
+                    unsigned int closed = 0;
+                    const auto token = tab->Closed([&](auto&&, auto&&) { ++closed; });
+                    const auto revoke = wil::scope_exit([&]() { tab->Closed(token); });
+                    tab->ClosePane();
+
+                    VERIFY_ARE_EQUAL(1u, closed);
+                    VERIFY_IS_NULL(normal->GetContent());
+                    VERIFY_IS_NULL(agent->GetContent());
+                    VERIFY_IS_TRUE(tab->FindAgentPane() == nullptr);
+                    VERIFY_IS_TRUE(tab->GetRootPane()->_IsLeaf());
+                }
+            }
+        });
+    }
+
+    void TabTests::ClosingNormalPanePreservesSurvivingPaneAnimation()
+    {
+        TestOnUIThread([]() {
+            if (!winrt::Windows::UI::ViewManagement::UISettings{}.AnimationsEnabled())
+            {
+                Log::Comment(L"OS animations are disabled; the visible close also skips its animation.");
+                return;
+            }
+            const auto animations = Media::Animation::Timeline::AllowDependentAnimations();
+            const auto restoreAnimations = wil::scope_exit([&]() {
+                Media::Animation::Timeline::AllowDependentAnimations(animations);
+            });
+            Media::Animation::Timeline::AllowDependentAnimations(true);
+
+            for (const bool withAgent : { false, true })
+            {
+                const auto tab = winrt::make_self<winrt::TerminalApp::implementation::Tab>(
+                    std::make_shared<Pane>(winrt::make<TestSettingsPaneContent>(), true));
+                tab->Initialize();
+                const auto root = tab->GetRootPane()->GetRootElement();
+                root.Measure({ 800, 600 });
+                root.Arrange({ 0, 0, 800, 600 });
+                const auto remaining = std::make_shared<Pane>(winrt::make<TestSettingsPaneContent>());
+                if (withAgent)
+                {
+                    const auto agent = std::make_shared<Pane>(winrt::make<TestSettingsPaneContent>());
+                    agent->IsAgentPane(true);
+                    remaining->AttachPane(agent, SplitDirection::Down, 0.5f, false);
+                }
+                tab->SplitPaneAtRoot(SplitDirection::Down, remaining, 0.5f, false);
+                root.Measure({ 800, 600 });
+                root.Arrange({ 0, 0, 800, 600 });
+                root.UpdateLayout();
+
+                tab->ClosePane();
+
+                VERIFY_IS_FALSE(tab->GetRootPane()->_IsLeaf());
+                VERIFY_IS_TRUE(tab->GetRootPane()->_secondChild == remaining);
             }
         });
     }
