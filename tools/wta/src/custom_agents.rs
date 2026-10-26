@@ -153,7 +153,7 @@ impl Invocation {
             let script = format!("$ErrorActionPreference='Stop'; & {tokens}; exit $LASTEXITCODE");
             let utf16: Vec<u8> = script.encode_utf16().flat_map(u16::to_le_bytes).collect();
             return Ok(format!(
-                "powershell.exe -NoLogo -NoProfile -EncodedCommand {}",
+                "powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -EncodedCommand {}",
                 crate::osc52::base64_encode(&utf16)
             ));
         }
@@ -514,6 +514,33 @@ mod tests {
 
     #[test]
     fn batch_resume_uses_exact_companion_and_preserves_literal_arguments() {
+        use std::os::windows::process::CommandExt;
+
+        const ISOLATED_TEST: &str = "WTA_TEST_RESTRICTED_RESUME_ARGV";
+        let test_name = concat!(
+            module_path!(),
+            "::batch_resume_uses_exact_companion_and_preserves_literal_arguments"
+        )
+        .split_once("::")
+        .unwrap()
+        .1;
+        if std::env::var(ISOLATED_TEST).as_deref() != Ok(test_name) {
+            let output = std::process::Command::new(std::env::current_exe().unwrap())
+                .args(["--exact", test_name, "--nocapture", "--test-threads=1"])
+                .env(ISOLATED_TEST, test_name)
+                .env("PSExecutionPolicyPreference", "Restricted")
+                // Probe Windows PowerShell's policy module, not an inherited PS7 module.
+                .env_remove("PSModulePath")
+                .output()
+                .unwrap();
+            assert!(output.status.success(), "{output:?}");
+            assert!(
+                String::from_utf8_lossy(&output.stdout).contains("1 passed;"),
+                "the isolated subprocess must run the selected test: {output:?}"
+            );
+            return;
+        }
+
         let directory = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
             .parent()
             .unwrap()
@@ -539,6 +566,39 @@ mod tests {
         ).unwrap();
         let commandline = invocation.resume_commandline("abc-123").unwrap();
         let tokens = crate::coordinator::split_windows_commandline(&commandline);
+        let policy = std::process::Command::new(&tokens[0])
+            .args([
+                "-NoLogo",
+                "-NoProfile",
+                "-NonInteractive",
+                "-Command",
+                "Get-ExecutionPolicy; Get-ExecutionPolicy -Scope Process",
+            ])
+            .output()
+            .unwrap();
+        assert!(policy.status.success(), "{policy:?}");
+        assert_eq!(
+            String::from_utf8(policy.stdout)
+                .unwrap()
+                .lines()
+                .map(str::trim)
+                .collect::<Vec<_>>(),
+            ["Restricted", "Restricted"]
+        );
+        let old_launcher = std::process::Command::new(&tokens[0])
+            .args(
+                tokens[1..]
+                    .iter()
+                    .filter(|arg| arg.as_str() != "-ExecutionPolicy" && arg.as_str() != "Bypass"),
+            )
+            .output()
+            .unwrap();
+        assert!(!old_launcher.status.success(), "{old_launcher:?}");
+        assert!(
+            String::from_utf8_lossy(&old_launcher.stderr).contains("UnauthorizedAccess"),
+            "{old_launcher:?}"
+        );
+        assert!(!directory.join("args.json").exists());
         let status = std::process::Command::new(&tokens[0])
             .args(&tokens[1..])
             .status()
@@ -547,6 +607,85 @@ mod tests {
         let args: Vec<String> =
             serde_json::from_slice(&std::fs::read(directory.join("args.json")).unwrap()).unwrap();
         assert_eq!(args, vec!["resume", "abc-123", "quote \" and ' & | ! ^"]);
+
+        let source = directory.join("argv.cs");
+        let executable = directory.join("native argv.exe");
+        std::fs::write(
+            &source,
+            r#"using System; using System.Text;
+class Probe { static void Main(string[] args) {
+foreach (string arg in args) Console.WriteLine(Convert.ToBase64String(Encoding.UTF8.GetBytes(arg)));
+} }"#,
+        )
+        .unwrap();
+        let compiler = std::path::PathBuf::from(std::env::var_os("SystemRoot").unwrap())
+            .join(r"Microsoft.NET\Framework64\v4.0.30319\csc.exe");
+        let compiled = std::process::Command::new(compiler)
+            .arg("/nologo")
+            .arg(format!("/out:{}", executable.display()))
+            .arg(&source)
+            .output()
+            .unwrap();
+        assert!(compiled.status.success(), "{compiled:?}");
+        std::fs::write(
+            shim.with_extension("ps1"),
+            "& \"$PSScriptRoot\\native argv.exe\" @args\r\nexit $LASTEXITCODE\r\n",
+        )
+        .unwrap();
+        let bat = shim.with_extension("bat");
+        std::fs::write(&bat, "@exit /b 88\r\n").unwrap();
+        for program in [&shim, &bat, &executable] {
+            let mut invocation = Invocation {
+                command: program.to_string_lossy().into_owned(),
+                args: vec![
+                    "resume".into(),
+                    "{sessionId}".into(),
+                    "literal ' & | ! ^".into(),
+                ],
+                can_resume_acp_sessions: false,
+            };
+            if program == &executable {
+                invocation.args.extend([
+                    String::new(),
+                    "embedded \"quotes\"".into(),
+                    r"C:\space here\".into(),
+                ]);
+            }
+            let commandline = invocation.resume_commandline("abc-123").unwrap();
+            let tokens = crate::coordinator::split_windows_commandline(&commandline);
+            let mut command = std::process::Command::new(&tokens[0]);
+            if program == &executable {
+                let executable_token =
+                    crate::coordinator::quote_windows_commandline_arg(&invocation.command);
+                command.raw_arg(
+                    commandline
+                        .strip_prefix(&executable_token)
+                        .unwrap()
+                        .trim_start(),
+                );
+            } else {
+                command.args(&tokens[1..]);
+            }
+            let output = command.output().unwrap();
+            assert!(output.status.success(), "{program:?}: {output:?}");
+            let expected: Vec<_> = invocation
+                .args
+                .iter()
+                .map(|arg| {
+                    crate::osc52::base64_encode(
+                        if arg == "{sessionId}" { "abc-123" } else { arg }.as_bytes(),
+                    )
+                })
+                .collect();
+            assert_eq!(
+                String::from_utf8(output.stdout)
+                    .unwrap()
+                    .lines()
+                    .collect::<Vec<_>>(),
+                expected,
+                "{program:?}"
+            );
+        }
         std::fs::remove_dir_all(directory).unwrap();
     }
 }
