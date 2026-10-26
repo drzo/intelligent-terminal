@@ -139,6 +139,7 @@ namespace winrt::Microsoft::Terminal::Control::implementation
         winrt::Windows::Foundation::Size GetFontSize() const;
 
         void SendInput(const winrt::hstring& input);
+        Windows::Foundation::IAsyncOperation<Control::CommandObservation> SendCommandAndObserve(winrt::hstring command);
         void ClearBuffer(Control::ClearBufferType clearType);
 
         void ToggleShaderEffects();

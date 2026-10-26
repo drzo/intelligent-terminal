@@ -639,6 +639,42 @@ int wmain(int argc, wchar_t** argv)
             FormatActivePaneHuman(info);
     });
 
+    std::string observeCommandTarget;
+    std::string observeCommandText;
+    auto* observeCommand = app.add_subcommand("send-command-and-observe", "Send one command and observe its result for up to three seconds");
+    observeCommand->add_option("-t,--target", observeCommandTarget, "Pane connection session ID")->required();
+    observeCommand->add_option("-c,--command", observeCommandText, "Command to execute")->required();
+    observeCommand->callback([&]() {
+        const auto sessionId = GuidFromString(observeCommandTarget, true);
+        if (InlineIsEqualGUID(sessionId, GUID{}) || observeCommandText.empty())
+        {
+            fprintf(stderr, "[wtcli] an explicit pane session ID and a nonempty command are required\n");
+            exitCode = 1;
+            return;
+        }
+        auto server = connect();
+        if (!server)
+            return;
+        winrt::com_ptr<ITerminalProtocolCommand> observer;
+        auto hr = server->QueryInterface(__uuidof(ITerminalProtocolCommand), observer.put_void());
+        if (FAILED(hr))
+        {
+            fprintf(stderr, "[wtcli] WT_PROTOCOL_UNSUPPORTED_COMMAND_OBSERVATION: 0x%08X\n", static_cast<uint32_t>(hr));
+            exitCode = 1;
+            return;
+        }
+        wil::unique_bstr command{ Bstr(observeCommandText) };
+        Json::Value result;
+        hr = CallJson([&](BSTR* json) { return observer->SendCommandAndObserve(sessionId, command.get(), json); }, result);
+        if (FAILED(hr))
+        {
+            fprintf(stderr, "SendCommandAndObserve failed: 0x%08X\n", static_cast<uint32_t>(hr));
+            exitCode = 1;
+            return;
+        }
+        PrintJson(result);
+    });
+
     // ── capture-pane ──
     std::string capturePaneTarget;
     int captureMaxLines = 200;

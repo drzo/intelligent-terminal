@@ -4278,6 +4278,11 @@ namespace winrt::Microsoft::Terminal::Control::implementation
         VtSequenceReceived.raise(*this, seq);
     }
 
+    Windows::Foundation::IAsyncOperation<Control::CommandObservation> TermControl::SendCommandAndObserve(winrt::hstring command)
+    {
+        return _core.SendCommandAndObserve(std::move(command));
+    }
+
     winrt::fire_and_forget TermControl::_bubbleWindowSizeChanged(const IInspectable& /*sender*/, Control::WindowSizeChangedEventArgs args)
     {
         auto weakThis{ get_weak() };

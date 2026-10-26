@@ -1,3 +1,4 @@
+use anyhow::Context;
 use std::collections::HashMap;
 use std::path::Path;
 use std::sync::{Arc, Mutex};
@@ -611,6 +612,22 @@ impl ShellManager {
                 serde_json::json!({ "session_id": pane_id, "text": input }),
             )
             .await
+    }
+
+    /// Send a command and return only its bounded, immediate observation.
+    pub async fn wt_send_command_and_observe(
+        &self,
+        pane_id: &str,
+        command: &str,
+    ) -> anyhow::Result<crate::agent_tools::session_mcp::CommandExecutionResult> {
+        let value = self
+            .wt()?
+            .request(
+                "send_command_and_observe",
+                serde_json::json!({ "session_id": pane_id, "command": command }),
+            )
+            .await?;
+        serde_json::from_value(value).context("decode terminal command observation")
     }
 
     /// Read recent output from a pane.

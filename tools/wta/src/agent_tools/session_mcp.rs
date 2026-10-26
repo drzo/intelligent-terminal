@@ -16,7 +16,72 @@ pub const SERVER_ID_HEX_LEN: usize = 16;
 pub const HELPER_REQUEST_METHOD: &str = "_intellterm.wta/request_terminal_actions";
 pub const USER_INPUT_HELPER_REQUEST_METHOD: &str = "_intellterm.wta/request_user_input";
 pub const CANCEL_USER_INPUT_HELPER_REQUEST_METHOD: &str = "_intellterm.wta/cancel_user_input";
+pub const CANCEL_TERMINAL_ACTION_HELPER_REQUEST_METHOD: &str =
+    "_intellterm.wta/cancel_terminal_action";
 const SERVER_IDENTITY_META_KEY: &str = "_intellterm/session_mcp_server";
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CommandExecutionState {
+    Submitted,
+    Running,
+    Completed,
+    Inserted,
+    Cancelled,
+    DispatchFailed,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CommandOutputKind {
+    CommandBuffer,
+    TerminalSnapshot,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CommandExecutionResult {
+    pub state: CommandExecutionState,
+    #[serde(default)]
+    pub content: String,
+    #[serde(default)]
+    pub reason: String,
+    #[serde(default)]
+    pub exit_code: Option<u32>,
+    #[serde(default)]
+    pub truncated: bool,
+    #[serde(default)]
+    pub output_kind: Option<CommandOutputKind>,
+}
+
+impl CommandExecutionResult {
+    pub fn without_output(state: CommandExecutionState, reason: impl Into<String>) -> Self {
+        Self {
+            state,
+            content: String::new(),
+            reason: reason.into(),
+            exit_code: None,
+            truncated: false,
+            output_kind: None,
+        }
+    }
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct TerminalActionResponse {
+    #[serde(flatten)]
+    pub validation: ProposalValidationResponse,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub execution: Option<CommandExecutionResult>,
+}
+
+impl From<ProposalValidationResponse> for TerminalActionResponse {
+    fn from(validation: ProposalValidationResponse) -> Self {
+        Self {
+            validation,
+            execution: None,
+        }
+    }
+}
 
 /// Written by master after removing any provider-supplied value.
 pub(crate) fn stamp_server_identity(
@@ -96,6 +161,8 @@ impl SessionMcpTool {
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct HelperRequest {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub request_id: Option<String>,
     pub session_id: String,
     /// Which action tool the agent selected. Carries the action shape
     /// alongside the payload, so it never has to be re-encoded as a
@@ -122,6 +189,13 @@ pub struct CancelUserInputHelperRequest {
     pub session_id: String,
 }
 
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CancelTerminalActionHelperRequest {
+    pub request_id: String,
+    pub session_id: String,
+}
+
 pub fn helper_method_matches(method: &str) -> bool {
     method.trim_start_matches('_') == HELPER_REQUEST_METHOD.trim_start_matches('_')
 }
@@ -142,7 +216,7 @@ pub async fn dispatch<A, ActionFuture, U, UserInputFuture>(
 ) -> Option<Value>
 where
     A: FnOnce(super::action_proposal::schema::McpActionTool, Value) -> ActionFuture,
-    ActionFuture: Future<Output = anyhow::Result<ProposalValidationResponse>>,
+    ActionFuture: Future<Output = anyhow::Result<TerminalActionResponse>>,
     U: FnOnce(Value) -> UserInputFuture,
     UserInputFuture: Future<Output = anyhow::Result<UserInputResponse>>,
 {
@@ -241,10 +315,10 @@ where
     Some(json!({ "jsonrpc": "2.0", "id": id, "result": result }))
 }
 
-fn terminal_action_result(response: anyhow::Result<ProposalValidationResponse>) -> Value {
+fn terminal_action_result(response: anyhow::Result<TerminalActionResponse>) -> Value {
     match response {
         Ok(response) => {
-            let status = response.status;
+            let status = response.validation.status;
             let status_text = match status {
                 ProposalValidationStatus::Accepted => "accepted",
                 ProposalValidationStatus::AlreadyConsumed => "duplicate",
@@ -257,12 +331,23 @@ fn terminal_action_result(response: anyhow::Result<ProposalValidationResponse>) 
                 }
                 ProposalValidationStatus::Unavailable => "unavailable",
             };
-            let structured = json!({
+            let mut structured = json!({
                 "status": status_text,
-                "reason": response.reason,
-                "retryable": response.retryable
+                "reason": response.validation.reason,
+                "retryable": response.validation.retryable
             });
-            let text = if status == ProposalValidationStatus::Accepted {
+            let text = if let Some(execution) = response.execution {
+                let instructions = match execution.state {
+                    CommandExecutionState::Completed => "The command completed. Use this output to answer the user. Do not submit another terminal action.",
+                    CommandExecutionState::Running => "The command started, but completion was not observed during the short wait. The terminal snapshot is context, not a final result. Do not repeat the command or poll automatically.",
+                    CommandExecutionState::Submitted => "Input was delivered, but command execution could not be confirmed. The terminal snapshot is context, not an attributed result. Do not repeat the command or poll automatically.",
+                    CommandExecutionState::Inserted => "The user chose Insert. The text was inserted without Enter; the command was not executed. End the turn.",
+                    CommandExecutionState::Cancelled => "The action was cancelled without running the command. End the turn.",
+                    CommandExecutionState::DispatchFailed => "Command delivery or observation failed. Do not assume the command ran or retry it automatically.",
+                };
+                structured["execution"] = json!(execution);
+                format!("{instructions}\n{}", structured["execution"])
+            } else if status == ProposalValidationStatus::Accepted {
                 "Terminal actions accepted. End the turn without additional text.".to_string()
             } else {
                 format!(
@@ -275,7 +360,8 @@ fn terminal_action_result(response: anyhow::Result<ProposalValidationResponse>) 
             json!({
                 "content": [{ "type": "text", "text": text }],
                 "structuredContent": structured,
-                "isError": status != ProposalValidationStatus::Accepted
+                "isError": status != ProposalValidationStatus::Accepted ||
+                    structured.pointer("/execution/state").and_then(Value::as_str) == Some("dispatch_failed")
             })
         }
         Err(error) => json!({
@@ -453,7 +539,8 @@ mod tests {
                         proposal_id: Some("proposal".to_string()),
                         reason: None,
                         retryable: false,
-                    })
+                    }
+                    .into())
                 }
             },
             |_| async { unreachable!() },
@@ -473,6 +560,45 @@ mod tests {
             super::super::action_proposal::schema::McpActionTool::DelegateTaskInNewWorkspace
         );
         assert_eq!(captured.1, expected);
+    }
+
+    #[test]
+    fn command_result_distinguishes_completion_context_and_dispatch_failure() {
+        for (state, exit_code, is_error) in [
+            (CommandExecutionState::Completed, Some(7), false),
+            (CommandExecutionState::Running, None, false),
+            (CommandExecutionState::Submitted, None, false),
+            (CommandExecutionState::Inserted, None, false),
+            (CommandExecutionState::Cancelled, None, false),
+            (CommandExecutionState::DispatchFailed, None, true),
+        ] {
+            let mut execution = CommandExecutionResult::without_output(state, "");
+            execution.content = "observed output".into();
+            execution.exit_code = exit_code;
+            let value = terminal_action_result(Ok(TerminalActionResponse {
+                validation: ProposalValidationResponse {
+                    phase: super::super::action_proposal::pipe::ValidationPhase::Validation,
+                    status: ProposalValidationStatus::Accepted,
+                    proposal_id: None,
+                    reason: None,
+                    retryable: false,
+                },
+                execution: Some(execution),
+            }));
+            assert_eq!(value["isError"], is_error);
+            assert_eq!(
+                value["structuredContent"]["execution"]["exit_code"],
+                json!(exit_code)
+            );
+            assert!(value["content"][0]["text"]
+                .as_str()
+                .unwrap()
+                .contains("observed output"));
+            assert!(!value["content"][0]["text"]
+                .as_str()
+                .unwrap()
+                .contains("End the turn without additional text"));
+        }
     }
 
     /// Prints the serialized `tools/list` size so the cost of the tool surface

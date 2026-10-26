@@ -103,7 +103,7 @@ pub enum RecommendedAction {
 }
 
 /// Wraps a chosen recommendation with execution options (e.g. insert-only mode).
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct ChoiceExecution {
     pub run: Option<crate::telemetry::FixRunIdentity>,
     pub choice: RecommendationChoice,
@@ -113,6 +113,9 @@ pub struct ChoiceExecution {
     pub context: TurnContext,
     /// Owning tab and prompt identity for the helper's action handoff barrier.
     pub completion: Option<(String, u64)>,
+    pub execution_responder: Option<
+        tokio::sync::oneshot::Sender<crate::agent_tools::session_mcp::CommandExecutionResult>,
+    >,
 }
 
 pub fn default_supported_delegate_agents() -> Vec<SupportedDelegateAgent> {
@@ -328,53 +331,91 @@ pub async fn run_recommendation_executor(
     // (one entry) and the lock is never held across an await.
     delegate_agents: Arc<std::sync::Mutex<Vec<DelegateAgentRuntime>>>,
 ) {
-    while let Some(mut exec) = rx.recv().await {
+    while let Some(exec) = rx.recv().await {
         let delegate_agents = delegate_agents.lock().unwrap().clone();
-        if let Some(run) = exec.run {
-            // Emit both on the consumer: a successful send can wake this task
-            // before the UI finishes finalizing the confirmation.
-            crate::telemetry::log_error_fix_accepted(run.offer_id, run.source);
-            crate::telemetry::log_error_fix_run_started(run);
+        let observe = exec.execution_responder.is_some();
+        let work = execute_recommendation(
+            exec,
+            event_tx.clone(),
+            Arc::clone(&shell_mgr),
+            delegate_agents,
+        );
+        if observe {
+            // A short observation must not hold up actions for other panes.
+            tokio::spawn(work);
+        } else {
+            work.await;
         }
-        let result =
-            match bind_choice_target(&mut exec.choice, exec.context.target_pane_id.as_deref()) {
-                Ok(()) => {
-                    execute_choice(
-                        &exec.choice,
-                        exec.insert_only,
-                        &shell_mgr,
-                        &delegate_agents,
-                        &event_tx,
-                    )
-                    .await
-                }
-                Err(err) => Err(err),
-            };
-        let success = result.is_ok();
-        if let Some(run) = exec.run {
-            crate::telemetry::log_error_fix_run_result(run.offer_id, run.run_id, result.is_ok());
+    }
+}
+
+async fn execute_recommendation(
+    mut exec: ChoiceExecution,
+    event_tx: mpsc::UnboundedSender<AppEvent>,
+    shell_mgr: Arc<ShellManager>,
+    delegate_agents: Vec<DelegateAgentRuntime>,
+) {
+    use crate::agent_tools::session_mcp::{CommandExecutionResult, CommandExecutionState};
+    let observe = exec.execution_responder.is_some();
+    if let Some(run) = exec.run {
+        // Emit both on the consumer: a successful send can wake this task
+        // before the UI finishes finalizing the confirmation.
+        crate::telemetry::log_error_fix_accepted(run.offer_id, run.source);
+        crate::telemetry::log_error_fix_run_started(run);
+    }
+    let result = match bind_choice_target(&mut exec.choice, exec.context.target_pane_id.as_deref())
+    {
+        Ok(()) => {
+            execute_choice_with_observation(
+                &exec.choice,
+                exec.insert_only,
+                &shell_mgr,
+                &delegate_agents,
+                &event_tx,
+                observe,
+            )
+            .await
         }
-        match result {
-            Ok(()) => {}
-            Err(err) => {
-                let err_str = format!("{:#}", err);
-                let _ = event_tx.send(AppEvent::SystemMessage(
-                    t!(
-                        "system.choice_execution_failed",
-                        choice = exec.choice.choice,
-                        error = err_str.as_str()
-                    )
-                    .into_owned(),
-                ));
-            }
+        Err(err) => Err(err),
+    };
+    let success = result.is_ok();
+    if let Some(responder) = exec.execution_responder.take() {
+        let execution = match &result {
+            Ok(Some(execution)) => execution.clone(),
+            Ok(None) => CommandExecutionResult::without_output(
+                CommandExecutionState::Inserted,
+                "Text inserted without executing the command.",
+            ),
+            Err(error) => CommandExecutionResult::without_output(
+                CommandExecutionState::DispatchFailed,
+                format!("{error:#}"),
+            ),
+        };
+        let _ = responder.send(execution);
+    }
+    if let Some(run) = exec.run {
+        crate::telemetry::log_error_fix_run_result(run.offer_id, run.run_id, result.is_ok());
+    }
+    match result {
+        Ok(_) => {}
+        Err(err) => {
+            let err_str = format!("{:#}", err);
+            let _ = event_tx.send(AppEvent::SystemMessage(
+                t!(
+                    "system.choice_execution_failed",
+                    choice = exec.choice.choice,
+                    error = err_str.as_str()
+                )
+                .into_owned(),
+            ));
         }
-        if let Some((tab_id, prompt_id)) = exec.completion {
-            let _ = event_tx.send(AppEvent::RecommendationExecutionSettled {
-                tab_id,
-                prompt_id,
-                success,
-            });
-        }
+    }
+    if let Some((tab_id, prompt_id)) = exec.completion {
+        let _ = event_tx.send(AppEvent::RecommendationExecutionSettled {
+            tab_id,
+            prompt_id,
+            success,
+        });
     }
 }
 
@@ -415,6 +456,7 @@ fn bind_choice_target(
     Ok(())
 }
 
+#[cfg(test)]
 async fn execute_choice(
     choice: &RecommendationChoice,
     insert_only: bool,
@@ -422,6 +464,27 @@ async fn execute_choice(
     delegate_agents: &[DelegateAgentRuntime],
     event_tx: &mpsc::UnboundedSender<AppEvent>,
 ) -> Result<()> {
+    execute_choice_with_observation(
+        choice,
+        insert_only,
+        shell_mgr,
+        delegate_agents,
+        event_tx,
+        false,
+    )
+    .await
+    .map(|_| ())
+}
+
+async fn execute_choice_with_observation(
+    choice: &RecommendationChoice,
+    insert_only: bool,
+    shell_mgr: &ShellManager,
+    delegate_agents: &[DelegateAgentRuntime],
+    event_tx: &mpsc::UnboundedSender<AppEvent>,
+    observe: bool,
+) -> Result<Option<crate::agent_tools::session_mcp::CommandExecutionResult>> {
+    let mut execution = None;
     for action in &choice.actions {
         match action {
             RecommendedAction::Send { parent, input } => {
@@ -446,10 +509,16 @@ async fn execute_choice(
                 } else {
                     format!("{input}\r")
                 };
-                let result = shell_mgr
-                    .wt_send_input(parent, &payload)
-                    .await
-                    .with_context(|| format!("failed to send input to pane {}", parent))?;
+                let result = if observe && !insert_only {
+                    let result = shell_mgr.wt_send_command_and_observe(parent, input).await?;
+                    execution = Some(result.clone());
+                    serde_json::json!({ "state": result.state })
+                } else {
+                    shell_mgr
+                        .wt_send_input(parent, &payload)
+                        .await
+                        .with_context(|| format!("failed to send input to pane {}", parent))?
+                };
                 let done_label = if insert_only { "Inserted" } else { "Sent" };
                 coordinator_log(&format!(
                     "send success parent={} response={}",
@@ -699,7 +768,7 @@ async fn execute_choice(
         }
     }
 
-    Ok(())
+    Ok(execution)
 }
 
 pub(crate) fn validate_recommendation_set(set: &RecommendationSet) -> Result<()> {
@@ -2030,6 +2099,7 @@ mod tests {
     struct RecordingWtChannel {
         requests: Mutex<Vec<(String, serde_json::Value)>>,
         fail_send: bool,
+        command_result: Option<serde_json::Value>,
     }
 
     #[async_trait::async_trait]
@@ -2043,17 +2113,136 @@ mod tests {
                 .lock()
                 .unwrap()
                 .push((method.to_string(), params));
-            if self.fail_send && method == "send_input" {
+            if self.fail_send && matches!(method, "send_input" | "send_command_and_observe") {
                 anyhow::bail!("test dispatch failure");
             }
             Ok(match method {
                 "create_tab" | "split_pane" => json!({"session_id": "created-pane"}),
+                "send_command_and_observe" => self.command_result.clone().unwrap(),
                 _ => json!({}),
             })
         }
 
         fn is_available(&self) -> bool {
             true
+        }
+    }
+
+    #[tokio::test]
+    async fn tracked_command_returns_original_pane_observation_without_rereading_last_prompt() {
+        use crate::agent_tools::session_mcp::CommandExecutionState;
+        for state in ["completed", "running", "submitted"] {
+            let channel = Arc::new(RecordingWtChannel {
+                command_result: Some(json!({
+                    "state": state, "content": "first command output",
+                    "reason": "", "exit_code": if state == "completed" { Some(7) } else { None },
+                    "truncated": false, "output_kind": if state == "completed" { "command_buffer" } else { "terminal_snapshot" }
+                })),
+                ..Default::default()
+            });
+            let shell = Arc::new(
+                ShellManager::new().with_wt_channel(channel.clone() as Arc<dyn WtChannel>),
+            );
+            let (events, _rx) = mpsc::unbounded_channel();
+            let (reply, response) = tokio::sync::oneshot::channel();
+            super::execute_recommendation(
+                super::ChoiceExecution {
+                    run: None,
+                    choice: RecommendationChoice {
+                        choice: 1,
+                        title: "Run".into(),
+                        rationale: String::new(),
+                        actions: vec![RecommendedAction::Send {
+                            parent: "different-pane".into(),
+                            input: "git status".into(),
+                        }],
+                    },
+                    insert_only: false,
+                    context: crate::turn_context::TurnContext::with_target_pane("original-pane"),
+                    completion: None,
+                    execution_responder: Some(reply),
+                },
+                events,
+                shell,
+                Vec::new(),
+            )
+            .await;
+            let result = response.await.unwrap();
+            assert_eq!(result.content, "first command output");
+            assert_eq!(
+                result.state == CommandExecutionState::Completed,
+                state == "completed"
+            );
+            let requests = channel.requests.lock().unwrap();
+            assert_eq!(requests.len(), 2);
+            assert_eq!(
+                requests[0],
+                (
+                    "send_command_and_observe".into(),
+                    json!({"session_id":"original-pane","command":"git status"})
+                )
+            );
+            assert_eq!(requests[1].0, "focus_pane");
+        }
+    }
+
+    #[tokio::test]
+    async fn tracked_insert_does_not_execute_and_dispatch_error_is_not_success() {
+        use crate::agent_tools::session_mcp::CommandExecutionState;
+        for insert_only in [true, false] {
+            let channel = Arc::new(RecordingWtChannel {
+                fail_send: !insert_only,
+                ..Default::default()
+            });
+            let shell = Arc::new(
+                ShellManager::new().with_wt_channel(channel.clone() as Arc<dyn WtChannel>),
+            );
+            let (events, _rx) = mpsc::unbounded_channel();
+            let (reply, response) = tokio::sync::oneshot::channel();
+            super::execute_recommendation(
+                super::ChoiceExecution {
+                    run: None,
+                    choice: RecommendationChoice {
+                        choice: 1,
+                        title: "Run".into(),
+                        rationale: String::new(),
+                        actions: vec![RecommendedAction::Send {
+                            parent: String::new(),
+                            input: "echo test\r\n".into(),
+                        }],
+                    },
+                    insert_only,
+                    context: crate::turn_context::TurnContext::with_target_pane("pane"),
+                    completion: None,
+                    execution_responder: Some(reply),
+                },
+                events,
+                shell,
+                Vec::new(),
+            )
+            .await;
+            let result = response.await.unwrap();
+            assert_eq!(
+                result.state,
+                if insert_only {
+                    CommandExecutionState::Inserted
+                } else {
+                    CommandExecutionState::DispatchFailed
+                }
+            );
+            let requests = channel.requests.lock().unwrap();
+            if insert_only {
+                assert_eq!(
+                    requests[0],
+                    (
+                        "send_input".into(),
+                        json!({"session_id":"pane","text":"echo test"})
+                    )
+                );
+            } else {
+                assert!(result.reason.contains("test dispatch failure"));
+                assert_eq!(requests.len(), 1);
+            }
         }
     }
 
@@ -2118,6 +2307,7 @@ mod tests {
                 insert_only: true,
                 context: crate::turn_context::TurnContext::with_target_pane("pane"),
                 completion: Some(("tab".into(), 42)),
+                execution_responder: None,
             })
             .unwrap();
             drop(tx);
@@ -2219,6 +2409,7 @@ mod tests {
                     insert_only: false,
                     context: crate::turn_context::TurnContext::with_target_pane("host-pane"),
                     completion: None,
+                    execution_responder: None,
                 })
                 .unwrap();
                 drop(tx);
@@ -2298,6 +2489,7 @@ mod tests {
                 insert_only: false,
                 context: crate::turn_context::TurnContext::with_target_pane("host-pane"),
                 completion: None,
+                execution_responder: None,
             })
             .unwrap();
             drop(tx);
@@ -2495,6 +2687,7 @@ mod tests {
                 insert_only,
                 context: TurnContext::with_target_pane("target-pane"),
                 completion: None,
+                execution_responder: None,
             })
             .unwrap();
             drop(tx);

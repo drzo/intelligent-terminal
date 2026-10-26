@@ -13,10 +13,9 @@ use uuid::Uuid;
 
 use super::{AgentInstanceId, HelperId, MasterStateInner};
 use crate::agent_source::AgentSource;
-use crate::agent_tools::action_proposal::pipe::ProposalValidationResponse;
 use crate::agent_tools::session_mcp::{
-    CancelUserInputHelperRequest, HelperRequest, UserInputHelperRequest, SERVER_ID_HEX_LEN,
-    SERVER_NAME_PREFIX,
+    CancelUserInputHelperRequest, HelperRequest, TerminalActionResponse, UserInputHelperRequest,
+    SERVER_ID_HEX_LEN, SERVER_NAME_PREFIX,
 };
 use crate::agent_tools::user_input::{UserInputRequest, UserInputResponse};
 use crate::protocol::acp::{conn, spawn::AgentStderrLog};
@@ -490,12 +489,12 @@ enum CapabilityResolution {
     Unknown,
 }
 
-struct UserInputForwardGuard {
+struct HelperRequestForwardGuard {
     forwarder: conn::AgentLink,
     cancel_request: Option<acp::schema::v1::ExtRequest>,
 }
 
-impl UserInputForwardGuard {
+impl HelperRequestForwardGuard {
     fn new(
         forwarder: conn::AgentLink,
         request_id: &str,
@@ -518,9 +517,30 @@ impl UserInputForwardGuard {
     fn disarm(&mut self) {
         self.cancel_request = None;
     }
+
+    fn terminal_action(
+        forwarder: conn::AgentLink,
+        request_id: &str,
+        session_id: &acp::schema::v1::SessionId,
+    ) -> Result<Self> {
+        let params = serde_json::value::to_raw_value(
+            &crate::agent_tools::session_mcp::CancelTerminalActionHelperRequest {
+                request_id: request_id.to_string(),
+                session_id: session_id.to_string(),
+            },
+        )
+        .context("encode Helper terminal action cancellation")?;
+        Ok(Self {
+            forwarder,
+            cancel_request: Some(acp::schema::v1::ExtRequest::new(
+                crate::agent_tools::session_mcp::CANCEL_TERMINAL_ACTION_HELPER_REQUEST_METHOD,
+                params.into(),
+            )),
+        })
+    }
 }
 
-impl Drop for UserInputForwardGuard {
+impl Drop for HelperRequestForwardGuard {
     fn drop(&mut self) {
         let Some(request) = self.cancel_request.take() else {
             return;
@@ -1006,7 +1026,11 @@ async fn serve_connection(
                 }
             };
             let is_user_input = is_user_input_call(&message);
-            let _user_input_permit = if is_user_input {
+            let waits_for_command = message.get("method").and_then(Value::as_str)
+                == Some("tools/call")
+                && message.pointer("/params/name").and_then(Value::as_str)
+                    == Some("run_command_in_current_shell");
+            let _user_input_permit = if is_user_input || waits_for_command {
                 connection_permit.take();
                 let Ok(permit) = user_input_connections.try_acquire_owned() else {
                     write_response(
@@ -1051,7 +1075,7 @@ async fn serve_connection(
                 |tool, arguments| submit_to_helper(&state, action_capability, tool, arguments),
                 |arguments| submit_user_input_to_helper(&state, capability, arguments),
             );
-            let response = if is_user_input {
+            let response = if is_user_input || waits_for_command {
                 tokio::pin!(response);
                 let mut unexpected = [0u8; 1];
                 tokio::select! {
@@ -1107,7 +1131,7 @@ async fn submit_to_helper(
     capability: CapabilityResolution,
     tool: crate::agent_tools::action_proposal::schema::McpActionTool,
     arguments: Value,
-) -> Result<ProposalValidationResponse> {
+) -> Result<TerminalActionResponse> {
     let started = std::time::Instant::now();
     let (session_id, response) = forward_to_helper(
         state,
@@ -1116,10 +1140,16 @@ async fn submit_to_helper(
         tool.tool_name(),
         "request_terminal_actions",
         crate::agent_tools::session_mcp::HELPER_REQUEST_METHOD,
-        HELPER_TIMEOUT,
+        if tool
+            == crate::agent_tools::action_proposal::schema::McpActionTool::RunCommandInCurrentShell
+        {
+            USER_INPUT_TIMEOUT + Duration::from_secs(45)
+        } else {
+            HELPER_TIMEOUT
+        },
     )
     .await?;
-    let response: ProposalValidationResponse =
+    let response: TerminalActionResponse =
         serde_json::from_str(&response).context("decode Helper proposal response")?;
     tracing::info!(
         target: "session_mcp",
@@ -1127,8 +1157,8 @@ async fn submit_to_helper(
         op = "request_terminal_actions",
         tool = tool.tool_name(),
         session_id = %session_id,
-        status = ?response.status,
-        retryable = response.retryable,
+        status = ?response.validation.status,
+        retryable = response.validation.retryable,
         elapsed_ms = started.elapsed().as_millis() as u64,
         "terminal action MCP call completed"
     );
@@ -1161,7 +1191,8 @@ async fn submit_user_input_to_helper(
         crate::agent_tools::session_mcp::USER_INPUT_HELPER_REQUEST_METHOD,
         params.into(),
     );
-    let mut cancel_guard = UserInputForwardGuard::new(forwarder.clone(), &request_id, &session_id)?;
+    let mut cancel_guard =
+        HelperRequestForwardGuard::new(forwarder.clone(), &request_id, &session_id)?;
     tracing::info!(
         target: "session_mcp",
         step = "master→helper",
@@ -1298,7 +1329,14 @@ async fn forward_to_helper(
     let started = std::time::Instant::now();
     let (route_key, helper_id, forwarder) = resolve_helper(state, capability, op).await?;
     let session_id = route_key.session_id;
+    let request_id =
+        (tool == "run_command_in_current_shell").then(|| Uuid::new_v4().simple().to_string());
+    let mut cancel_guard = request_id
+        .as_deref()
+        .map(|id| HelperRequestForwardGuard::terminal_action(forwarder.clone(), id, &session_id))
+        .transpose()?;
     let params = serde_json::value::to_raw_value(&HelperRequest {
+        request_id,
         session_id: session_id.to_string(),
         tool: tool.to_string(),
         arguments,
@@ -1344,6 +1382,9 @@ async fn forward_to_helper(
             anyhow::bail!("timed out waiting for owning Helper");
         }
     };
+    if let Some(guard) = cancel_guard.as_mut() {
+        guard.disarm();
+    }
     Ok((session_id, response.0.get().to_string()))
 }
 

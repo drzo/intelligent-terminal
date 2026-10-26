@@ -143,6 +143,9 @@ struct ActiveChannel {
     validation_retries: u8,
     proposal_id: Option<String>,
     final_responder: Option<oneshot::Sender<ProposalFinalStatus>>,
+    execution_responder:
+        Option<oneshot::Sender<crate::agent_tools::session_mcp::CommandExecutionResult>>,
+    request_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -155,6 +158,8 @@ struct Tombstone {
 pub struct ConfirmationClaim {
     channel_hash: [u8; 32],
     final_responder: Option<oneshot::Sender<ProposalFinalStatus>>,
+    pub execution_responder:
+        Option<oneshot::Sender<crate::agent_tools::session_mcp::CommandExecutionResult>>,
 }
 
 struct ChannelState {
@@ -216,6 +221,8 @@ impl ProposalChannelManager {
             validation_retries: 0,
             proposal_id: None,
             final_responder: None,
+            execution_responder: None,
+            request_id: None,
         });
         Ok(channel)
     }
@@ -372,6 +379,50 @@ impl ProposalChannelManager {
         self.accept_validation_inner(proposal_id, None)
     }
 
+    pub fn accept_validation_for_execution(
+        &self,
+        proposal_id: &str,
+        final_responder: oneshot::Sender<ProposalFinalStatus>,
+        execution_responder: oneshot::Sender<
+            crate::agent_tools::session_mcp::CommandExecutionResult,
+        >,
+    ) -> bool {
+        let mut state = self.lock_state();
+        let Some(active) = state.active.as_mut() else {
+            return false;
+        };
+        if active.state != ProposalChannelState::Validating
+            || active.proposal_id.as_deref() != Some(proposal_id)
+        {
+            return false;
+        }
+
+        active.state = ProposalChannelState::AwaitingUser;
+        active.final_responder = Some(final_responder);
+        active.execution_responder = Some(execution_responder);
+        true
+    }
+
+    pub fn bind_mcp_request(&self, proposal_id: &str, request_id: Option<String>) {
+        let mut state = self.lock_state();
+        if let Some(active) = state
+            .active
+            .as_mut()
+            .filter(|active| active.proposal_id.as_deref() == Some(proposal_id))
+        {
+            active.request_id = request_id;
+        }
+    }
+
+    pub fn mcp_request_proposal_id(&self, session_id: &str, request_id: &str) -> Option<String> {
+        let state = self.lock_state();
+        let active = state.active.as_ref()?;
+        (active.binding.session_id == session_id
+            && active.request_id.as_deref() == Some(request_id))
+        .then(|| active.proposal_id.clone())
+        .flatten()
+    }
+
     fn accept_validation_inner(
         &self,
         proposal_id: &str,
@@ -432,6 +483,7 @@ impl ProposalChannelManager {
         Some(ConfirmationClaim {
             channel_hash,
             final_responder,
+            execution_responder: active.execution_responder.take(),
         })
     }
 

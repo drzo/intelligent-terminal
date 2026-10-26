@@ -141,6 +141,7 @@ namespace winrt::Microsoft::Terminal::Control::implementation
         _terminal->SetSearchMissingCommandCallback(pfnSearchMissingCommand);
 
         _terminal->SetVtSequenceCallback([this](std::wstring_view seq) {
+            _observeCommandSequence(seq);
             VtSequenceReceived.raise(*this, winrt::hstring{ seq });
         });
 
@@ -330,6 +331,12 @@ namespace winrt::Microsoft::Terminal::Control::implementation
 
         {
             const auto lock = _terminal->LockForWriting();
+            _shellAtPrompt = false;
+            if (_commandObservation && !_commandObservation->finished)
+            {
+                _commandObservation->result.State = L"submitted";
+                _commandObservation->result.Reason = L"pane_connection_changed";
+            }
             _terminal->ResetShellIntegrationState();
             if (_terminal->GetTaskbarState() != 0)
             {
@@ -2328,6 +2335,206 @@ namespace winrt::Microsoft::Terminal::Control::implementation
         auto noticeArgs = winrt::make<NoticeEventArgs>(NoticeLevel::Info, RS_(L"TermControlReadOnly"));
         RaiseNotice.raise(*this, std::move(noticeArgs));
     }
+    hstring ControlCore::_readCommandRegion(const til::point start, const til::point end, bool& truncated) const
+    {
+        const auto& buffer = _terminal->GetTextBuffer();
+        std::wstring text;
+        size_t characters = 0;
+        int lines = 1;
+        for (auto y = start.y; y <= end.y; ++y)
+        {
+            const auto& row = buffer.GetRowByOffset(y);
+            const auto begin = row.AdjustToGlyphStart(y == start.y ? start.x : 0);
+            const auto finish = row.AdjustToGlyphEnd(y == end.y ? end.x : row.GetReadableColumnCount());
+            const auto part = row.GetText(begin, finish);
+            for (size_t offset = 0; offset < part.size();)
+            {
+                if (characters == 16384)
+                {
+                    truncated = true;
+                    return hstring{ text };
+                }
+                const auto next = til::utf16_iterate_next(part, offset);
+                text.append(part.substr(offset, next - offset));
+                offset = next;
+                ++characters;
+            }
+            if (y < end.y && !row.WasWrapForced())
+            {
+                if (lines == 200 || characters == 16384)
+                {
+                    truncated = true;
+                    return hstring{ text };
+                }
+                text.push_back(L'\n');
+                ++lines;
+                ++characters;
+            }
+        }
+        return hstring{ text };
+    }
+
+    void ControlCore::_observeCommandSequence(const std::wstring_view sequence)
+    {
+        if (!sequence.starts_with(L"osc:133;"))
+        {
+            return;
+        }
+        // This callback runs before the OSC is applied, with the terminal lock held.
+        // Snapshot at D, not after the output batch (which may contain another command).
+        const auto action = sequence.substr(8);
+        if (const auto observation = _commandObservation; observation && !observation->finished && observation->result.Reason.empty())
+        {
+            auto& result = observation->result;
+            if (action == L"C" && !observation->started)
+            {
+                const auto marks = _terminal->GetMarkExtents();
+                bool truncated = false;
+                const auto command = marks.empty() ? hstring{} :
+                                                     _readCommandRegion(marks.back().end, _terminal->GetTextBuffer().GetCursor().GetPosition(), truncated);
+                std::wstring_view actual{ command };
+                while (!actual.empty() && (actual.back() == L'\n' || actual.back() == L'\r'))
+                {
+                    actual.remove_suffix(1);
+                }
+                if (!truncated && actual == observation->command)
+                {
+                    observation->started = true;
+                    result.State = L"running";
+                }
+                else
+                {
+                    result.Reason = L"command_boundary_mismatch";
+                }
+            }
+            else if (action == L"D" || action.starts_with(L"D;"))
+            {
+                const auto marks = _terminal->GetMarkExtents();
+                bool truncated = false;
+                const auto content = marks.empty() ? hstring{} :
+                                                     _readCommandRegion(marks.back().end, _terminal->GetTextBuffer().GetCursor().GetPosition(), truncated);
+                std::wstring_view firstLine{ content };
+                firstLine = firstLine.substr(0, firstLine.find(L'\n'));
+                if (!firstLine.empty() && firstLine.back() == L'\r')
+                {
+                    firstLine.remove_suffix(1);
+                }
+                // Our PowerShell/Bash scripts emit A/B/D without C. A matching
+                // echoed line at D can establish completion, but not earlier liveness.
+                const auto matchesCommand = firstLine.starts_with(observation->command) &&
+                                            std::all_of(firstLine.begin() + observation->command.size(), firstLine.end(), [](const auto ch) {
+                                                return ch == L' ';
+                                            });
+                if (!marks.empty() && (observation->started || matchesCommand))
+                {
+                    result.Content = content;
+                    result.Truncated = truncated;
+                    result.State = L"completed";
+                    unsigned int code = 0;
+                    result.HasExitCode = action.starts_with(L"D;") &&
+                                         Utils::StringToUint(action.substr(2), code);
+                    result.ExitCode = code;
+                    observation->finished = true;
+                }
+                else
+                {
+                    result.State = L"submitted";
+                    result.Reason = L"command_marks_unavailable";
+                }
+            }
+            else if (action == L"A" || (observation->started && action == L"C"))
+            {
+                result.State = L"submitted";
+                result.Reason = L"command_boundary_lost";
+            }
+        }
+        if (action == L"B")
+        {
+            _shellAtPrompt = true;
+        }
+        else if (action == L"A" || action == L"C" || action == L"D" || action.starts_with(L"D;"))
+        {
+            _shellAtPrompt = false;
+        }
+    }
+
+    Windows::Foundation::IAsyncOperation<Control::CommandObservation> ControlCore::SendCommandAndObserve(hstring command)
+    {
+        auto strong = get_strong();
+        THROW_HR_IF(E_INVALIDARG, command.empty());
+        THROW_HR_IF(E_ACCESSDENIED, _isReadOnly);
+        const auto connection = _connection;
+        THROW_HR_IF(HRESULT_FROM_WIN32(ERROR_BROKEN_PIPE), _closing.load() || !connection || connection.State() != TerminalConnection::ConnectionState::Connected);
+        auto observation = std::make_shared<PendingCommandObservation>();
+        observation->command = command;
+        while (!observation->command.empty() && (observation->command.back() == L'\r' || observation->command.back() == L'\n'))
+        {
+            observation->command.pop_back();
+        }
+        THROW_HR_IF(E_INVALIDARG, observation->command.empty());
+        observation->result.State = L"submitted";
+        {
+            const auto lock = _terminal->LockForWriting();
+            THROW_HR_IF(HRESULT_FROM_WIN32(ERROR_BUSY), _commandObservation != nullptr);
+            const auto marks = _terminal->GetMarkExtents();
+            bool truncated = false;
+            const auto pendingInput = marks.empty() ? hstring{} :
+                                                      _readCommandRegion(marks.back().end, _terminal->GetTextBuffer().GetCursor().GetPosition(), truncated);
+            if (!_shellAtPrompt || marks.empty() || !pendingInput.empty() || observation->command.find_first_of(L"\r\n") != std::wstring::npos)
+            {
+                observation->result.Reason = L"shell_not_at_empty_prompt";
+            }
+            _commandObservation = observation;
+        }
+        const auto cleanup = wil::scope_exit([&] {
+            const auto lock = _terminal->LockForWriting();
+            _commandObservation.reset();
+        });
+        co_await winrt::resume_background();
+        auto input = observation->command;
+        std::replace(input.begin(), input.end(), L'\n', L'\r');
+        input.push_back(L'\r');
+        connection.WriteInput(winrt_wstring_to_array_view(input));
+        const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds{ 3 };
+        for (;;)
+        {
+            {
+                const auto lock = _terminal->LockForReading();
+                if (observation->finished || !observation->result.Reason.empty() ||
+                    _closing.load() || connection.State() != TerminalConnection::ConnectionState::Connected ||
+                    std::chrono::steady_clock::now() >= deadline)
+                {
+                    break;
+                }
+            }
+            co_await winrt::resume_after(std::chrono::milliseconds{ 25 });
+        }
+        bool finished;
+        {
+            const auto lock = _terminal->LockForReading();
+            finished = observation->finished;
+        }
+        if (!finished)
+        {
+            // This is current terminal context, not an attributed command result.
+            const auto snapshot = ReadBufferTail(200, 16384);
+            const auto lock = _terminal->LockForWriting();
+            if (!observation->finished)
+            {
+                observation->result.Content = snapshot;
+                // A context snapshot is bounded but may omit earlier output.
+                observation->result.Truncated = true;
+                if (_closing.load() || connection.State() != TerminalConnection::ConnectionState::Connected)
+                {
+                    observation->result.State = L"submitted";
+                    observation->result.Reason = L"pane_exited";
+                }
+            }
+        }
+        const auto lock = _terminal->LockForReading();
+        co_return observation->result;
+    }
+
     void ControlCore::_connectionOutputHandler(const winrt::array_view<const char16_t> str)
     {
         try
@@ -2336,14 +2543,17 @@ namespace winrt::Microsoft::Terminal::Control::implementation
             std::vector<winrt::hstring> vtSequences;
             {
                 const auto lock = _terminal->LockForWriting();
-                _terminal->SetVtSequenceCallback([&vtSequences](std::wstring_view seq) {
+                _terminal->SetVtSequenceCallback([this, &vtSequences](std::wstring_view seq) {
+                    _observeCommandSequence(seq);
                     vtSequences.emplace_back(seq);
                 });
-                _terminal->Write(winrt_array_to_wstring_view(str));
-                _terminal->SetVtSequenceCallback([this](std::wstring_view seq) {
-                    // Restore the original callback for non-output-handler callers.
-                    VtSequenceReceived.raise(*this, winrt::hstring{ seq });
+                const auto restoreCallback = wil::scope_exit([&] {
+                    _terminal->SetVtSequenceCallback([this](std::wstring_view seq) {
+                        _observeCommandSequence(seq);
+                        VtSequenceReceived.raise(*this, winrt::hstring{ seq });
+                    });
                 });
+                _terminal->Write(winrt_array_to_wstring_view(str));
             }
 
             // Now outside the lock — safe to raise events that may block on pipe I/O.

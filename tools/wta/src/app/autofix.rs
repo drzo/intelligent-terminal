@@ -501,6 +501,7 @@ impl App {
                     insert_only: false,
                     context: TurnContext::with_target_pane(armed_pane),
                     completion: Some((active_tab.clone(), prompt_id)),
+                    execution_responder: None,
                 })
                 .is_err()
             {

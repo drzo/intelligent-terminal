@@ -1195,6 +1195,20 @@ impl WtChannel for CliChannel {
                     .unwrap_or_default();
                 self.run_wtcli(&["focus-pane", "-t", &pane_id]).await
             }
+            "send_command_and_observe" => {
+                let pane = params
+                    .get("session_id")
+                    .and_then(serde_json::Value::as_str)
+                    .filter(|pane| !pane.trim().is_empty())
+                    .context("send_command_and_observe: explicit session_id is required")?;
+                let command = params
+                    .get("command")
+                    .and_then(serde_json::Value::as_str)
+                    .filter(|command| !command.trim().is_empty())
+                    .context("send_command_and_observe: nonempty command is required")?;
+                self.run_wtcli(&["send-command-and-observe", "-t", pane, "-c", command])
+                    .await
+            }
             "send_input" => {
                 let pane_id = params
                     .get("session_id")

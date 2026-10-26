@@ -759,6 +759,26 @@ struct WtaClient {
     state: Arc<ClientState>,
 }
 
+struct TerminalActionUiGuard {
+    event_tx: mpsc::UnboundedSender<AppEvent>,
+    proposal_id: String,
+    session_id: String,
+    armed: bool,
+}
+
+impl Drop for TerminalActionUiGuard {
+    fn drop(&mut self) {
+        if self.armed {
+            let _ = self
+                .event_tx
+                .send(AppEvent::DirectTerminalActionProposalInvalidate {
+                    proposal_id: self.proposal_id.clone(),
+                    session_id: self.session_id.clone(),
+                });
+        }
+    }
+}
+
 struct UserInputUiGuard {
     event_tx: mpsc::UnboundedSender<AppEvent>,
     request_id: String,
@@ -2294,6 +2314,15 @@ impl WtaClient {
             }
         };
         let proposal_id = context.proposal_id.clone();
+        self.state
+            .proposal_channels
+            .bind_mcp_request(&proposal_id, request.request_id);
+        let mut cleanup = TerminalActionUiGuard {
+            event_tx: self.state.event_tx.clone(),
+            proposal_id: proposal_id.clone(),
+            session_id: request.session_id.clone(),
+            armed: true,
+        };
         let (validation_tx, validation_rx) = tokio::sync::oneshot::channel();
         if self
             .state
@@ -2342,11 +2371,20 @@ impl WtaClient {
             })?;
             return Ok(acp::schema::v1::ExtResponse::new(raw.into()));
         }
-        if !self
-            .state
-            .proposal_channels
-            .accept_validation_detached(&proposal_id)
-        {
+        let observes_execution = action_tool
+            == crate::agent_tools::action_proposal::schema::McpActionTool::RunCommandInCurrentShell;
+        let (final_tx, final_rx) = tokio::sync::oneshot::channel();
+        let (execution_tx, execution_rx) = tokio::sync::oneshot::channel();
+        let accepted = if observes_execution {
+            self.state
+                .proposal_channels
+                .accept_validation_for_execution(&proposal_id, final_tx, execution_tx)
+        } else {
+            self.state
+                .proposal_channels
+                .accept_validation_detached(&proposal_id)
+        };
+        if !accepted {
             return Err(acp::Error::internal_error()
                 .data("terminal action request became stale after validation"));
         }
@@ -2381,14 +2419,75 @@ impl WtaClient {
         let response = ProposalValidationResponse {
             phase: ValidationPhase::Validation,
             status: ProposalValidationStatus::Accepted,
-            proposal_id: Some(proposal_id),
+            proposal_id: Some(proposal_id.clone()),
             reason: None,
             retryable: false,
         };
+        let mut response = crate::agent_tools::session_mcp::TerminalActionResponse::from(response);
+        if observes_execution {
+            use crate::agent_tools::session_mcp::{CommandExecutionResult, CommandExecutionState};
+            let decision =
+                tokio::time::timeout(std::time::Duration::from_secs(10 * 60), final_rx).await;
+            response.execution = Some(match decision {
+                Ok(Ok(ProposalFinalStatus::Confirmed)) => {
+                    match tokio::time::timeout(std::time::Duration::from_secs(25), execution_rx).await {
+                        Ok(Ok(result)) => result,
+                        _ => CommandExecutionResult::without_output(
+                            CommandExecutionState::DispatchFailed,
+                            "Command delivery or observation did not return a result. Do not retry automatically.",
+                        ),
+                    }
+                }
+                Ok(Ok(ProposalFinalStatus::Cancelled)) => CommandExecutionResult::without_output(
+                    CommandExecutionState::Cancelled,
+                    "The user cancelled the action.",
+                ),
+                other => {
+                    let final_status = if other.is_err() {
+                        ProposalFinalStatus::TimedOut
+                    } else {
+                        ProposalFinalStatus::Unavailable
+                    };
+                    self.state
+                        .proposal_channels
+                        .resolve_final(&proposal_id, final_status);
+                    return Err(acp::Error::internal_error()
+                        .data("terminal action confirmation ended without execution"));
+                }
+            });
+        }
         let raw = serde_json::value::to_raw_value(&response).map_err(|error| {
             acp::Error::internal_error().data(format!("encode proposal response: {error}"))
         })?;
+        cleanup.armed = false;
         Ok(acp::schema::v1::ExtResponse::new(raw.into()))
+    }
+
+    async fn cancel_terminal_action(
+        &self,
+        args: acp::schema::v1::ExtRequest,
+    ) -> acp::Result<acp::schema::v1::ExtResponse> {
+        let request: crate::agent_tools::session_mcp::CancelTerminalActionHelperRequest =
+            serde_json::from_str(args.params.get())
+                .map_err(|error| acp::Error::invalid_params().data(error.to_string()))?;
+        if let Some(proposal_id) = self
+            .state
+            .proposal_channels
+            .mcp_request_proposal_id(&request.session_id, &request.request_id)
+        {
+            self.state
+                .event_tx
+                .send(AppEvent::DirectTerminalActionProposalInvalidate {
+                    proposal_id,
+                    session_id: request.session_id,
+                })
+                .map_err(|_| acp::Error::internal_error().data("Helper UI is unavailable"))?;
+        }
+        Ok(acp::schema::v1::ExtResponse::new(
+            serde_json::value::to_raw_value(&serde_json::json!({}))
+                .map_err(|error| acp::Error::internal_error().data(error.to_string()))?
+                .into(),
+        ))
     }
 
     async fn request_user_input(
@@ -3238,6 +3337,11 @@ pub async fn run_acp_client_over_pipe(
                                         .map(R::ExtMethodResponse),
                                 )
                             }
+                            Q::ExtMethodRequest(a)
+                                if a.method.trim_start_matches('_') == crate::agent_tools::session_mcp::CANCEL_TERMINAL_ACTION_HELPER_REQUEST_METHOD.trim_start_matches('_') =>
+                            {
+                                conn::respond_enum(responder, c.cancel_terminal_action(a).await.map(R::ExtMethodResponse))
+                            }
                 _ => responder.respond_with_error(acp::Error::method_not_found()),
             }
                     }
@@ -3380,10 +3484,8 @@ pub async fn run_acp_client_over_pipe(
         req
     };
     let init_future = conn.initialize(init_request);
-    let init_result = tokio::time::timeout(
-        crate::agent_lifecycle::HELPER_STARTUP_TIMEOUT,
-        init_future,
-    ).await;
+    let init_result =
+        tokio::time::timeout(crate::agent_lifecycle::HELPER_STARTUP_TIMEOUT, init_future).await;
     log_acp_initialize_timeout_result("HelperPipe", init_started, &init_result);
     let mut init_resp = init_result
         .map_err(|_| {
@@ -3408,7 +3510,7 @@ pub async fn run_acp_client_over_pipe(
                 "ACP initialize over master pipe failed"
             );
             anyhow::Error::new(AgentFailure::from_initialize_error(&e))
-            .context("initialize over master pipe failed")
+                .context("initialize over master pipe failed")
         })?;
     let wta_meta = crate::session_registry::extract_wta_meta(&mut init_resp.meta);
     if let Some(scope) = wta_meta
@@ -7352,6 +7454,169 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn proposal_mcp_command_waits_for_confirmation_and_execution() {
+        use crate::agent_tools::action_proposal::channel::ProposalFinalStatus;
+        use crate::agent_tools::session_mcp::{
+            CommandExecutionResult, CommandExecutionState, TerminalActionResponse,
+        };
+        for state in [
+            CommandExecutionState::Completed,
+            CommandExecutionState::Running,
+            CommandExecutionState::Submitted,
+            CommandExecutionState::Inserted,
+            CommandExecutionState::Cancelled,
+        ] {
+            let manager = Arc::new(
+                crate::agent_tools::action_proposal::channel::ProposalChannelManager::new(),
+            );
+            manager
+                .issue(
+                    "command-session".into(),
+                    9,
+                    Some("original-pane".into()),
+                    false,
+                )
+                .unwrap();
+            let (client, mut events) = proposal_test_client(Arc::clone(&manager));
+            let params =
+                serde_json::value::to_raw_value(&crate::agent_tools::session_mcp::HelperRequest {
+                    request_id: Some("request".into()),
+                    session_id: "command-session".into(),
+                    tool: "run_command_in_current_shell".into(),
+                    arguments: serde_json::json!({"summary":"Run", "command":"git status"}),
+                })
+                .unwrap();
+            let mut call = Box::pin(client.request_terminal_actions(
+                acp::schema::v1::ExtRequest::new(
+                    crate::agent_tools::session_mcp::HELPER_REQUEST_METHOD,
+                    params.into(),
+                ),
+            ));
+            let event = tokio::select! {
+                result = &mut call => panic!("returned before validation: {result:?}"),
+                event = events.recv() => event.unwrap(),
+            };
+            let proposal_id = match event {
+                AppEvent::DirectTerminalActionProposal {
+                    context, responder, ..
+                } => {
+                    assert_eq!(
+                        context.binding.active_target.as_deref(),
+                        Some("original-pane")
+                    );
+                    responder.send(crate::agent_tools::action_proposal::pipe::ProposalValidationDecision::accepted()).unwrap();
+                    context.proposal_id
+                }
+                _ => panic!("expected validation"),
+            };
+            let event = tokio::select! {
+                result = &mut call => panic!("returned before commit: {result:?}"),
+                event = events.recv() => event.unwrap(),
+            };
+            match event {
+                AppEvent::DirectTerminalActionProposalCommit { responder, .. } => {
+                    responder.send(true).unwrap();
+                }
+                _ => panic!("expected commit"),
+            }
+            tokio::select! {
+                result = &mut call => panic!("returned before user decision: {result:?}"),
+                () = tokio::task::yield_now() => {}
+            }
+            if state == CommandExecutionState::Cancelled {
+                assert!(manager.resolve_final(&proposal_id, ProposalFinalStatus::Cancelled));
+            } else {
+                let mut claim = manager.claim_confirmation(&proposal_id).unwrap();
+                let responder = claim.execution_responder.take().unwrap();
+                manager.finalize_confirmation(claim, ProposalFinalStatus::Confirmed);
+                tokio::select! {
+                    result = &mut call => panic!("returned before executor result: {result:?}"),
+                    () = tokio::task::yield_now() => {}
+                }
+                responder
+                    .send(CommandExecutionResult::without_output(state, ""))
+                    .unwrap();
+            }
+            let result: TerminalActionResponse =
+                serde_json::from_str(call.await.unwrap().0.get()).unwrap();
+            assert_eq!(result.execution.unwrap().state, state);
+            assert!(
+                events.try_recv().is_err(),
+                "successful return must not invalidate the action"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn proposal_mcp_command_dropped_call_invalidates_only_its_pending_card() {
+        let manager =
+            Arc::new(crate::agent_tools::action_proposal::channel::ProposalChannelManager::new());
+        manager
+            .issue("command-session".into(), 9, Some("pane".into()), false)
+            .unwrap();
+        let (client, mut events) = proposal_test_client(Arc::clone(&manager));
+        let params =
+            serde_json::value::to_raw_value(&crate::agent_tools::session_mcp::HelperRequest {
+                request_id: Some("request".into()),
+                session_id: "command-session".into(),
+                tool: "run_command_in_current_shell".into(),
+                arguments: serde_json::json!({"summary":"Run", "command":"git status"}),
+            })
+            .unwrap();
+        let mut call = Box::pin(
+            client.request_terminal_actions(acp::schema::v1::ExtRequest::new(
+                crate::agent_tools::session_mcp::HELPER_REQUEST_METHOD,
+                params.into(),
+            )),
+        );
+        let validation = tokio::select! {
+            result = &mut call => panic!("premature result: {result:?}"),
+            event = events.recv() => event.unwrap(),
+        };
+        let proposal_id = match validation {
+            AppEvent::DirectTerminalActionProposal {
+                context, responder, ..
+            } => {
+                responder.send(crate::agent_tools::action_proposal::pipe::ProposalValidationDecision::accepted()).unwrap();
+                context.proposal_id
+            }
+            _ => panic!("expected validation"),
+        };
+        let commit = tokio::select! {
+            result = &mut call => panic!("premature result: {result:?}"),
+            event = events.recv() => event.unwrap(),
+        };
+        match commit {
+            AppEvent::DirectTerminalActionProposalCommit { responder, .. } => {
+                responder.send(true).unwrap();
+            }
+            _ => panic!("expected commit"),
+        }
+        tokio::select! {
+            result = &mut call => panic!("premature result: {result:?}"),
+            () = tokio::task::yield_now() => {}
+        }
+        assert_eq!(
+            manager.mcp_request_proposal_id("command-session", "request"),
+            Some(proposal_id.clone())
+        );
+        assert!(manager
+            .mcp_request_proposal_id("another-session", "request")
+            .is_none());
+        drop(call);
+        match events.recv().await.unwrap() {
+            AppEvent::DirectTerminalActionProposalInvalidate {
+                proposal_id: id,
+                session_id,
+            } => {
+                assert_eq!(id, proposal_id);
+                assert_eq!(session_id, "command-session");
+            }
+            _ => panic!("expected scoped invalidation"),
+        }
+    }
+
+    #[tokio::test]
     async fn proposal_mcp_extension_validates_and_commits_on_the_owning_helper() {
         let manager =
             Arc::new(crate::agent_tools::action_proposal::channel::ProposalChannelManager::new());
@@ -7361,8 +7626,9 @@ mod tests {
         let (client, mut event_rx) = proposal_test_client(Arc::clone(&manager));
         let params =
             serde_json::value::to_raw_value(&crate::agent_tools::session_mcp::HelperRequest {
+                request_id: None,
                 session_id: "proposal-session".to_string(),
-                tool: "run_command_in_current_shell".to_string(),
+                tool: "create_workspace".to_string(),
                 arguments: serde_json::json!({
                     "summary": "Run test",
                     "command": "cargo test"
@@ -7387,7 +7653,7 @@ mod tests {
                     assert_eq!(
                         source,
                         crate::agent_tools::action_proposal::pipe::ProposalPayloadSource::Mcp(
-                            crate::agent_tools::action_proposal::schema::McpActionTool::RunCommandInCurrentShell
+                            crate::agent_tools::action_proposal::schema::McpActionTool::CreateWorkspace
                         )
                     );
                     assert_eq!(

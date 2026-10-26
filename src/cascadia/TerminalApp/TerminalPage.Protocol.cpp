@@ -902,6 +902,35 @@ namespace winrt::TerminalApp::implementation
         co_return false;
     }
 
+    IAsyncOperation<hstring> TerminalPage::SendProtocolCommandAndObserve(winrt::guid paneSessionId, hstring command)
+    {
+        auto strong = get_strong();
+        co_await wil::resume_foreground(Dispatcher());
+        for (const auto& tab : _RuntimeTabs())
+        {
+            const auto tabImpl = _GetTabImpl(tab);
+            const auto root = tabImpl ? tabImpl->GetRootPane() : nullptr;
+            const auto pane = root ? root->FindPaneBySessionId(paneSessionId) : nullptr;
+            if (!pane)
+            {
+                continue;
+            }
+            THROW_HR_IF(E_ACCESSDENIED, pane->IsAgentPane());
+            const auto control = pane->GetTerminalControl();
+            THROW_HR_IF(E_FAIL, !control);
+            const auto result = co_await control.SendCommandAndObserve(std::move(command));
+            Json::Value value;
+            value["state"] = winrt::to_string(result.State);
+            value["content"] = winrt::to_string(result.Content);
+            value["reason"] = winrt::to_string(result.Reason);
+            value["truncated"] = result.Truncated;
+            value["exit_code"] = result.HasExitCode ? Json::Value{ result.ExitCode } : Json::Value{};
+            value["output_kind"] = result.State == L"completed" ? "command_buffer" : "terminal_snapshot";
+            co_return winrt::to_hstring(Json::writeString(Json::StreamWriterBuilder{}, value));
+        }
+        co_return hstring{};
+    }
+
     IAsyncOperation<bool> TerminalPage::SendProtocolInput(winrt::guid sessionId, hstring text)
     {
         auto strong = get_strong();

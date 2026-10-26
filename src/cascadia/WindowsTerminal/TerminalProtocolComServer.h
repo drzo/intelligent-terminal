@@ -35,7 +35,7 @@ class WindowEmperor;
 // failures. Complex results cross the wire as JSON (BSTR); the per-method logic
 // and the UI-thread-marshaled page queries are unchanged from the WinRT server.
 struct __declspec(uuid(__CLSID_TerminalProtocolServer))
-TerminalProtocolComServer : public Microsoft::WRL::RuntimeClass<Microsoft::WRL::RuntimeClassFlags<Microsoft::WRL::RuntimeClassType::ClassicCom>, ITerminalProtocol, ITerminalProtocolNativeAgent>
+TerminalProtocolComServer : public Microsoft::WRL::RuntimeClass<Microsoft::WRL::RuntimeClassFlags<Microsoft::WRL::RuntimeClassType::ClassicCom>, ITerminalProtocol, ITerminalProtocolNativeAgent, ITerminalProtocolCommand>
 {
     ~TerminalProtocolComServer();
 
@@ -54,6 +54,7 @@ TerminalProtocolComServer : public Microsoft::WRL::RuntimeClass<Microsoft::WRL::
     STDMETHODIMP SplitPane(GUID sessionId, BSTR direction, float size, BSTR profile, BSTR commandline, boolean background, BSTR* json) override;
     STDMETHODIMP ClosePane(GUID sessionId) override;
     STDMETHODIMP SendInput(GUID sessionId, BSTR text) override;
+    STDMETHODIMP SendCommandAndObserve(GUID sessionId, BSTR command, BSTR* json) override;
     STDMETHODIMP FocusPane(GUID sessionId) override;
     STDMETHODIMP SetSessionVariable(GUID sessionId, BSTR name, BSTR value) override;
     STDMETHODIMP Subscribe(ITerminalProtocolEventSink* sink) override;

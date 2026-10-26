@@ -2,6 +2,7 @@
 // Licensed under the MIT license.
 
 #include "pch.h"
+#include <future>
 #include "../TerminalControl/EventArgs.h"
 #include "../TerminalControl/ControlCore.h"
 #include "MockControlSettings.h"
@@ -43,6 +44,13 @@ namespace ControlUnitTests
         TEST_METHOD(TestReadLastPromptBoundedWrapAndLimits);
         TEST_METHOD(TestReadLastPromptBoundedUnicode);
         TEST_METHOD(TestReadLastPromptBoundedInvalidLimits);
+        TEST_METHOD(TestCommandObservationSnapshotsMatchingCommand);
+        TEST_METHOD(TestCommandObservationRejectsUnrelatedCommand);
+        TEST_METHOD(TestCommandObservationRequiresExecutionMark);
+        TEST_METHOD(TestCommandObservationCompletesWithoutExecutionMark);
+        TEST_METHOD(TestCommandObservationReleasesTrackingOnTimeoutOrClose);
+        TEST_METHOD(TestCommandObservationBoundsUnicodeOutput);
+        TEST_METHOD(TestCommandObservationRejectsReplacementConnection);
 
         TEST_METHOD(TestSelectCommandSimple);
         TEST_METHOD(TestSelectOutputSimple);
@@ -431,6 +439,178 @@ namespace ControlUnitTests
         conn->WriteInput(winrt_wstring_to_array_view(L"\x1b]133;B\x7"));
     }
 
+    void ControlCoreTests::TestCommandObservationSnapshotsMatchingCommand()
+    {
+        auto [settings, conn] = _createSettingsAndConnection();
+        auto core = createCore(*settings, *conn);
+        _standardInit(core);
+        _writePrompt(conn, L"");
+        auto observation = std::make_shared<Control::implementation::ControlCore::PendingCommandObservation>();
+        observation->command = L"git status";
+        observation->result.State = L"submitted";
+        core->_commandObservation = observation;
+        // Both commands arrive in one output batch. Only the first belongs to this request.
+        conn->WriteInput(winrt_wstring_to_array_view(
+            L"git status\x1b]133;C\x7\r\nfailed\r\n\x1b]133;D;7\x7"
+            L"\x1b]133;A\x7next> \x1b]133;B\x7other\x1b]133;C\x7unrelated\x1b]133;D;0\x7"));
+        VERIFY_IS_TRUE(observation->finished);
+        VERIFY_ARE_EQUAL(L"completed", observation->result.State);
+        VERIFY_IS_TRUE(observation->result.HasExitCode);
+        VERIFY_ARE_EQUAL(uint32_t{ 7 }, observation->result.ExitCode);
+        VERIFY_IS_TRUE(std::wstring_view{ observation->result.Content }.find(L"failed") != std::wstring_view::npos);
+        VERIFY_IS_TRUE(std::wstring_view{ observation->result.Content }.find(L"unrelated") == std::wstring_view::npos);
+        core->_commandObservation.reset();
+    }
+
+    void ControlCoreTests::TestCommandObservationRejectsUnrelatedCommand()
+    {
+        auto [settings, conn] = _createSettingsAndConnection();
+        auto core = createCore(*settings, *conn);
+        _standardInit(core);
+        _writePrompt(conn, L"");
+        auto observation = std::make_shared<Control::implementation::ControlCore::PendingCommandObservation>();
+        observation->command = L"wanted";
+        observation->result.State = L"submitted";
+        core->_commandObservation = observation;
+        conn->WriteInput(winrt_wstring_to_array_view(L"other\x1b]133;C\x7output\x1b]133;D;0\x7"));
+        VERIFY_IS_FALSE(observation->started);
+        VERIFY_IS_FALSE(observation->finished);
+        VERIFY_ARE_EQUAL(L"submitted", observation->result.State);
+        VERIFY_ARE_EQUAL(L"command_boundary_mismatch", observation->result.Reason);
+        VERIFY_IS_TRUE(observation->result.Content.empty());
+        core->_commandObservation.reset();
+    }
+
+    void ControlCoreTests::TestCommandObservationCompletesWithoutExecutionMark()
+    {
+        auto [settings, conn] = _createSettingsAndConnection();
+        auto core = createCore(*settings, *conn);
+        _standardInit(core);
+        _writePrompt(conn, L"");
+        auto observation = std::make_shared<Control::implementation::ControlCore::PendingCommandObservation>();
+        observation->command = L"git status";
+        observation->result.State = L"submitted";
+        core->_commandObservation = observation;
+        conn->WriteInput(winrt_wstring_to_array_view(L"git status\r\nclean\r\n\x1b]133;D;0\x7"));
+        VERIFY_IS_FALSE(observation->started);
+        VERIFY_IS_TRUE(observation->finished);
+        VERIFY_ARE_EQUAL(L"completed", observation->result.State);
+        VERIFY_IS_TRUE(observation->result.HasExitCode);
+        VERIFY_ARE_EQUAL(uint32_t{ 0 }, observation->result.ExitCode);
+        VERIFY_IS_TRUE(std::wstring_view{ observation->result.Content }.find(L"clean") != std::wstring_view::npos);
+        core->_commandObservation.reset();
+    }
+
+    void ControlCoreTests::TestCommandObservationRequiresExecutionMark()
+    {
+        auto [settings, conn] = _createSettingsAndConnection();
+        auto core = createCore(*settings, *conn);
+        _standardInit(core);
+        _writePrompt(conn, L"");
+        auto observation = std::make_shared<Control::implementation::ControlCore::PendingCommandObservation>();
+        observation->command = L"copilot";
+        observation->result.State = L"submitted";
+        core->_commandObservation = observation;
+        conn->WriteInput(winrt_wstring_to_array_view(L"copilot"));
+        VERIFY_IS_FALSE(observation->started);
+        conn->WriteInput(winrt_wstring_to_array_view(L"\x1b]133;C\x7starting"));
+        VERIFY_IS_TRUE(observation->started);
+        VERIFY_IS_FALSE(observation->finished);
+        VERIFY_ARE_EQUAL(L"running", observation->result.State);
+        VERIFY_IS_FALSE(observation->result.HasExitCode);
+        core->_commandObservation.reset();
+    }
+
+    void ControlCoreTests::TestCommandObservationReleasesTrackingOnTimeoutOrClose()
+    {
+        for (const auto closePane : { false, true })
+        {
+            auto [settings, conn] = _createSettingsAndConnection();
+            auto core = createCore(*settings, *conn);
+            _standardInit(core);
+            _writePrompt(conn, L"");
+            std::wstring input;
+            std::promise<void> submitted;
+            const auto token = conn->TerminalOutput([&](auto data) {
+                input.append(reinterpret_cast<const wchar_t*>(data.data()), data.size());
+                submitted.set_value();
+            });
+            const auto removeHandler = wil::scope_exit([&] {
+                conn->TerminalOutput(token);
+            });
+            auto pending = std::async(std::launch::async, [core] {
+                winrt::init_apartment(winrt::apartment_type::multi_threaded);
+                const auto uninitialize = wil::scope_exit([] {
+                    winrt::uninit_apartment();
+                });
+                return core->SendCommandAndObserve(L"sleep").get();
+            });
+            if (closePane)
+            {
+                submitted.get_future().get();
+                core->Close();
+            }
+            const auto result = pending.get();
+            VERIFY_ARE_EQUAL(L"submitted", result.State);
+            VERIFY_IS_FALSE(result.HasExitCode);
+            VERIFY_ARE_EQUAL(L"sleep\r", input);
+            VERIFY_IS_NULL(core->_commandObservation.get());
+            if (closePane)
+            {
+                VERIFY_ARE_EQUAL(L"pane_exited", result.Reason);
+            }
+        }
+    }
+
+    void ControlCoreTests::TestCommandObservationBoundsUnicodeOutput()
+    {
+        auto [settings, conn] = _createSettingsAndConnection();
+        auto core = createCore(*settings, *conn);
+        _standardInit(core);
+        core->SizeChanged(900, 380);
+        _writePrompt(conn, L"");
+        auto observation = std::make_shared<Control::implementation::ControlCore::PendingCommandObservation>();
+        observation->command = L"unicode";
+        observation->result.State = L"submitted";
+        core->_commandObservation = observation;
+        std::wstring output = L"unicode\r\n";
+        for (size_t i = 0; i < 17000; ++i)
+        {
+            output.append(L"\U0001F600");
+        }
+        output.append(L"\x1b]133;D;0\x7");
+        conn->WriteInput(winrt_wstring_to_array_view(output));
+        VERIFY_IS_TRUE(observation->finished);
+        VERIFY_IS_TRUE(observation->result.Truncated);
+        const std::wstring_view content{ observation->result.Content };
+        VERIFY_IS_TRUE(content.size() <= 32768);
+        VERIFY_IS_FALSE(content.empty());
+        VERIFY_IS_FALSE(content.back() >= 0xD800 && content.back() <= 0xDBFF);
+        core->_commandObservation.reset();
+    }
+
+    void ControlCoreTests::TestCommandObservationRejectsReplacementConnection()
+    {
+        auto [settings, conn] = _createSettingsAndConnection();
+        auto core = createCore(*settings, *conn);
+        _standardInit(core);
+        _writePrompt(conn, L"");
+        auto observation = std::make_shared<Control::implementation::ControlCore::PendingCommandObservation>();
+        observation->command = L"wanted";
+        observation->result.State = L"submitted";
+        core->_commandObservation = observation;
+        conn->WriteInput(winrt_wstring_to_array_view(L"wanted\x1b]133;C\x7"));
+        auto replacement = winrt::make_self<MockConnection>();
+        core->Connection(*replacement);
+        _writePrompt(replacement, L"");
+        replacement->WriteInput(winrt_wstring_to_array_view(L"wanted\x1b]133;C\x7new connection\x1b]133;D;0\x7"));
+        VERIFY_IS_FALSE(observation->finished);
+        VERIFY_ARE_EQUAL(L"submitted", observation->result.State);
+        VERIFY_ARE_EQUAL(L"pane_connection_changed", observation->result.Reason);
+        VERIFY_IS_TRUE(observation->result.Content.empty());
+        core->_commandObservation.reset();
+    }
+
     void ControlCoreTests::TestReadLastPromptBoundedNoOutput()
     {
         auto [settings, conn] = _createSettingsAndConnection();
@@ -498,7 +678,9 @@ namespace ControlUnitTests
         const auto secondLine = L"out" + std::wstring(27, L' ');
         VERIFY_ARE_EQUAL(hstring{ firstLine }, core->ReadLastPromptBounded(1, 1000));
         VERIFY_ARE_EQUAL(hstring{ firstLine + L"\n" + secondLine }, core->ReadLastPromptBounded(2, 1000));
-        VERIFY_ARE_EQUAL(hstring{ firstLine + L"\n" + secondLine + L"\n" L"end" }, core->ReadLastPromptBounded(3, 1000));
+        VERIFY_ARE_EQUAL(hstring{ firstLine + L"\n" + secondLine + L"\n"
+                                                                   L"end" },
+                         core->ReadLastPromptBounded(3, 1000));
 
         VERIFY_ARE_EQUAL(hstring{ std::wstring(23, L'C') }, core->ReadLastPromptBounded(3, 23));
         VERIFY_ARE_EQUAL(hstring{ std::wstring(24, L'C') }, core->ReadLastPromptBounded(3, 24));

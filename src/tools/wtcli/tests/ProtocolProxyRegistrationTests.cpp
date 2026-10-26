@@ -190,12 +190,23 @@ static bool EqualBstr(BSTR value, const wchar_t* expected) noexcept
     return value && SysStringLen(value) == wcslen(expected) && wcscmp(value, expected) == 0;
 }
 
-class TestSink final : public Microsoft::WRL::RuntimeClass<Microsoft::WRL::RuntimeClassFlags<Microsoft::WRL::ClassicCom>, ITerminalProtocolEventSink, ITerminalProtocolNativeAgent>
+class TestSink final : public Microsoft::WRL::RuntimeClass<Microsoft::WRL::RuntimeClassFlags<Microsoft::WRL::ClassicCom>, ITerminalProtocolEventSink, ITerminalProtocolNativeAgent, ITerminalProtocolCommand>
 {
 public:
     std::atomic<bool> received{ false };
     std::atomic<bool> tabReceived{ false };
     std::atomic<bool> splitReceived{ false };
+    std::atomic<bool> commandReceived{ false };
+
+    HRESULT STDMETHODCALLTYPE SendCommandAndObserve(GUID sessionId, BSTR command, BSTR* json) noexcept override
+    {
+        RETURN_HR_IF_NULL(E_POINTER, json);
+        *json = nullptr;
+        commandReceived = sessionId == TestSession && EqualBstr(command, L"synthetic --argument \"two words\"");
+        RETURN_HR_IF(E_INVALIDARG, !commandReceived);
+        *json = SysAllocString(L"{\"state\":\"completed\",\"exit_code\":7}");
+        return *json ? S_OK : E_OUTOFMEMORY;
+    }
 
     HRESULT STDMETHODCALLTYPE OnEvent(BSTR text) noexcept override
     {
@@ -203,8 +214,7 @@ public:
         return received ? S_OK : E_INVALIDARG;
     }
 
-    HRESULT STDMETHODCALLTYPE CreateAgentCliTab(MIDL_uhyper windowId, BSTR profile, BSTR commandline, BSTR title, BSTR startingDirectory,
-                                               boolean suppressAppTitle, boolean background, BSTR providerId, BSTR* json) noexcept override
+    HRESULT STDMETHODCALLTYPE CreateAgentCliTab(MIDL_uhyper windowId, BSTR profile, BSTR commandline, BSTR title, BSTR startingDirectory, boolean suppressAppTitle, boolean background, BSTR providerId, BSTR* json) noexcept override
     {
         RETURN_HR_IF_NULL(E_POINTER, json);
         *json = nullptr;
@@ -217,8 +227,7 @@ public:
         return *json ? S_OK : E_OUTOFMEMORY;
     }
 
-    HRESULT STDMETHODCALLTYPE SplitAgentCliPane(GUID sessionId, BSTR direction, float size, BSTR profile, BSTR commandline,
-                                               boolean background, BSTR providerId, BSTR* json) noexcept override
+    HRESULT STDMETHODCALLTYPE SplitAgentCliPane(GUID sessionId, BSTR direction, float size, BSTR profile, BSTR commandline, boolean background, BSTR providerId, BSTR* json) noexcept override
     {
         RETURN_HR_IF_NULL(E_POINTER, json);
         *json = nullptr;
@@ -300,8 +309,7 @@ try
             TokenFixture::enabled = false;
             TokenFixture::openError = TokenFixture::queryError = ERROR_SUCCESS;
         });
-        auto verifyPolicy = [&](LONG identity, DWORD elevation, DWORD openError, DWORD queryError,
-                                HRESULT expected, unsigned opens, unsigned queries) {
+        auto verifyPolicy = [&](LONG identity, DWORD elevation, DWORD openError, DWORD queryError, HRESULT expected, unsigned opens, unsigned queries) {
             PackageFixture::identityError = identity;
             TokenFixture::elevated = elevation;
             TokenFixture::openError = openError;
@@ -339,8 +347,8 @@ try
         using namespace RegistrationFixture;
         enabled = true;
         const auto resetRegistration = wil::scope_exit([]() noexcept { enabled = false; });
-        Check(Protocol::details::ProxyInterfaces.size() == 8, "Eight protocol and handoff mappings");
-        for (const size_t failure : { size_t{ 0 }, size_t{ 1 }, size_t{ 4 }, size_t{ 8 } })
+        Check(Protocol::details::ProxyInterfaces.size() == 9, "Nine protocol and handoff mappings");
+        for (const size_t failure : { size_t{ 0 }, size_t{ 1 }, size_t{ 4 }, size_t{ 9 } })
         {
             Protocol::details::ProxyRegistration attempt;
             classCalls = revokeCalls = 0;
@@ -358,10 +366,10 @@ try
             failMapping = 0;
             mappings.clear();
             THROW_IF_FAILED(attempt.Register(module.get()));
-            Check(classCalls == 2 && mappings.size() == 8, "Retry registers factory and all eight mappings");
+            Check(classCalls == 2 && mappings.size() == 9, "Retry registers factory and all nine mappings");
             Check(std::equal(mappings.begin(), mappings.end(), Protocol::details::ProxyInterfaces.begin()), "Retry maps every production IID");
             THROW_IF_FAILED(attempt.Register(module.get()));
-            Check(classCalls == 2 && mappings.size() == 8, "Successful registration is idempotent");
+            Check(classCalls == 2 && mappings.size() == 9, "Successful registration is idempotent");
             THROW_IF_FAILED(attempt.Unregister());
             Check(revokeCalls == previousRevokes + 1, "Successful retry owns its cookie");
         }
@@ -374,7 +382,7 @@ try
             failMapping = 0;
             mappings.clear();
             THROW_IF_FAILED(scoped.InitializeFromExecutableDirectory());
-            Check(classCalls == 2 && mappings.size() == 8, "Failed scoped initialization remains retryable");
+            Check(classCalls == 2 && mappings.size() == 9, "Failed scoped initialization remains retryable");
             THROW_IF_FAILED(scoped.InitializeFromExecutableDirectory());
             Check(classCalls == 2, "Successful scoped initialization is cached");
         }
@@ -474,13 +482,16 @@ try
             auto provider = allocate(L"copilot");
             auto direction = allocate(L"right");
             wil::unique_bstr tabJson;
-            THROW_IF_FAILED(nativeAgent->CreateAgentCliTab(0x123456789abcdef0ULL, profile.get(), commandline.get(), title.get(),
-                                                         directory.get(), 1, 0, provider.get(), tabJson.put()));
+            THROW_IF_FAILED(nativeAgent->CreateAgentCliTab(0x123456789abcdef0ULL, profile.get(), commandline.get(), title.get(), directory.get(), 1, 0, provider.get(), tabJson.put()));
             Check(EqualBstr(tabJson.get(), L"{\"synthetic\":\"tab\",\"id\":42}"), "Native agent tab JSON crossed apartments");
             wil::unique_bstr splitJson;
-            THROW_IF_FAILED(nativeAgent->SplitAgentCliPane(TestSession, direction.get(), 0.375f, profile.get(), commandline.get(),
-                                                         1, provider.get(), splitJson.put()));
+            THROW_IF_FAILED(nativeAgent->SplitAgentCliPane(TestSession, direction.get(), 0.375f, profile.get(), commandline.get(), 1, provider.get(), splitJson.put()));
             Check(EqualBstr(splitJson.get(), L"{\"synthetic\":\"pane\",\"id\":73}"), "Native agent pane JSON crossed apartments");
+            Microsoft::WRL::ComPtr<ITerminalProtocolCommand> commandObserver;
+            THROW_IF_FAILED(proxy.As(&commandObserver));
+            wil::unique_bstr commandJson;
+            THROW_IF_FAILED(commandObserver->SendCommandAndObserve(TestSession, commandline.get(), commandJson.put()));
+            Check(EqualBstr(commandJson.get(), L"{\"state\":\"completed\",\"exit_code\":7}"), "Command observation JSON crossed apartments");
             callbackResult = S_OK;
         }
         catch (...)
@@ -492,6 +503,7 @@ try
     THROW_IF_FAILED(callbackResult);
     Check(sink->received, "Callback crossed apartments through the local proxy");
     Check(sink->tabReceived && sink->splitReceived, "Both native agent calls crossed apartments with intact arguments");
+    Check(sink->commandReceived, "Command observation crossed apartments with intact arguments");
     THROW_IF_FAILED(registration.Unregister());
     THROW_IF_FAILED(registration.Unregister());
     std::puts("PASS: package and injected token policy, registration failure/retry ledger, scoped retry, local factory, exact metadata IID set, sentinel overrides, callback and native agent marshaling");

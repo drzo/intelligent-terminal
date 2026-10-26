@@ -606,6 +606,7 @@ try
         "unsubscribe",
         "send_event",
         "get_pane_context",
+        "send_command_and_observe",
     };
 
     Json::Value methods(Json::arrayValue);
@@ -735,6 +736,30 @@ try
 
     *json = _bstrFromJson(arr);
     return S_OK;
+}
+CATCH_RETURN()
+
+STDMETHODIMP TerminalProtocolComServer::SendCommandAndObserve(GUID sessionId, BSTR command, BSTR* json)
+try
+{
+    RETURN_HR_IF_NULL(E_POINTER, json);
+    *json = nullptr;
+    RETURN_HR_IF(E_NOT_VALID_STATE, !s_emperor);
+    RETURN_HR_IF(E_INVALIDARG, InlineIsEqualGUID(sessionId, GUID{}) || !command || SysStringLen(command) == 0 || SysStringLen(command) > 16000);
+    for (const auto& page : s_emperor->GetProtocolPages())
+    {
+        if (page)
+        {
+            const auto result = page.SendProtocolCommandAndObserve(winrt::guid{ sessionId }, _hstr(command)).get();
+            if (!result.empty())
+            {
+                *json = SysAllocStringLen(result.data(), static_cast<UINT>(result.size()));
+                RETURN_HR_IF_NULL(E_OUTOFMEMORY, *json);
+                return S_OK;
+            }
+        }
+    }
+    return HRESULT_FROM_WIN32(ERROR_NOT_FOUND);
 }
 CATCH_RETURN()
 

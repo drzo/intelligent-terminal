@@ -143,6 +143,7 @@ namespace winrt::Microsoft::Terminal::Control::implementation
         til::color BackgroundColor() const;
 
         void SendInput(std::wstring_view wstr);
+        Windows::Foundation::IAsyncOperation<Control::CommandObservation> SendCommandAndObserve(winrt::hstring command);
         void PasteText(const winrt::hstring& hstr);
         bool CopySelectionToClipboard(bool singleLine, bool withControlSequences, const CopyFormat formats);
         void SelectAll();
@@ -332,6 +333,19 @@ namespace winrt::Microsoft::Terminal::Control::implementation
         // clang-format on
 
     private:
+        struct PendingCommandObservation
+        {
+            std::wstring command;
+            Control::CommandObservation result{};
+            bool started{ false };
+            bool finished{ false };
+        };
+        // Accessed only under the terminal lock; owned for one bounded request.
+        std::shared_ptr<PendingCommandObservation> _commandObservation;
+        bool _shellAtPrompt{ false };
+        void _observeCommandSequence(std::wstring_view sequence);
+        winrt::hstring _readCommandRegion(const til::point start, const til::point end, bool& truncated) const;
+
         struct SharedState
         {
             std::unique_ptr<til::throttled_func<>> outputIdle;

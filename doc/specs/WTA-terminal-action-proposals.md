@@ -22,11 +22,15 @@ ACP session
 ```
 
 The endpoint presents typed terminal actions for review and blocking
-clarification questions. It cannot read or mutate Windows Terminal. The
+clarification questions. It does not read or mutate Windows Terminal itself. The
 existing card confirmation is the sole mutation boundary.
 
-The three action tools return as soon as the Helper commits its card;
-confirmation or cancellation then happens independently. `request_user_input`
+`create_workspace` and `delegate_task_in_new_workspace` return as soon as the
+Helper commits the card; confirmation or cancellation then happens independently.
+`run_command_in_current_shell` waits for the user's decision (up to ten minutes).
+Run returns a bounded execution observation after at most three seconds of
+observation following input delivery. Insert returns without executing the command.
+`request_user_input`
 deliberately keeps the MCP call open until the user answers, cancels, the
 caller disconnects, or the ten-minute timeout expires.
 
@@ -82,6 +86,11 @@ The model never receives or supplies a Helper, session, prompt, tab, window,
 pane, channel, capability, origin, schema version, or choice ID. The Helper
 injects these trusted values.
 
+Autofix binds the failing pane on the host while its model-visible Shell Context
+omits `activeTarget`. Prompt instructions must not require this field before an
+action call; the host validates target availability and never takes a pane ID
+from the model.
+
 ## MCP contract
 
 Server name:
@@ -106,7 +115,7 @@ proposal.
 The server supports MCP `initialize`, `ping`, `tools/list`, and `tools/call`
 over stateless Streamable HTTP JSON-RPC. POST responses use JSON or HTTP 202
 for notifications; GET and DELETE return 405 because server-initiated streams
-are unnecessary. It exposes no terminal read or execution tools.
+are unnecessary. It exposes no standalone terminal-read or unconfirmed execution tools.
 
 Input, for `run_command_in_current_shell`:
 
@@ -177,8 +186,38 @@ Tool result statuses:
 | `rejected` | Schema or policy validation failed. |
 | `unavailable` | The owning Helper or proposal transport was unavailable. |
 
-`accepted` means the handoff completed. The agent ends its turn after
-this result.
+For workspace and delegation actions, `accepted` means the handoff completed.
+The agent ends its turn after this result.
+
+For `run_command_in_current_shell`, the same response envelope additionally carries
+`execution` in `structuredContent` and the text content. Its `state` distinguishes
+`completed`, `running`, `submitted`, `inserted`, `cancelled`, and `dispatch_failed`.
+Completion includes an exit code when shell integration supplies a parseable one.
+A nonzero command exit code is a completed command, not an MCP transport failure.
+`running` requires an observed execution-start boundary; input delivery alone is
+only `submitted`. Content is labeled `command_buffer` for an attributed completed
+command or `terminal_snapshot` for current context. Both are bounded, and context
+snapshots may omit earlier output.
+
+The native one-shot operation arms observation before delivering input to the
+original connection SessionId. It matches the echoed command at OSC 133;C and
+captures its bounded buffer region at OSC 133;D before a later command can replace
+it. Existing PowerShell/Bash integration can omit C; in that case a matching
+echoed command line at D establishes completion, but unfinished execution remains
+`submitted`, not `running`. An unavailable, busy, nonempty, multiline, or ambiguous shell boundary cannot
+be reported as a verified command result. Observation is independent of Autofix
+event forwarding. No shell wrapper or tracking token is injected into the command.
+OSC marks and terminal text are observational evidence, not an execution or
+security boundary.
+
+The agent may use a completed result to answer. For unfinished or unverified
+execution it reports only the observed state, without automatically repeating,
+polling, or starting another action. Caller disconnect cancels an unconfirmed
+card or abandons the result after dispatch; an in-flight native observation
+expires within its short window. Neither observation timeout nor disconnect
+stops the shell process. There is no persistent run record,
+result cache, public run ID, query tool, or additional MCP input parameter.
+Workspace/delegation and direct CLI fallback semantics are unchanged.
 
 `request_user_input` accepts one question, up to eight single-line choices,
 and an optional freeform answer. Master routes the request through the same
@@ -222,9 +261,10 @@ An accepted MCP proposal transitions synchronously:
 Issued -> Validating -> AwaitingUser
 ```
 
-The private master-to-Helper ACP extension responds immediately after `Commit`
-is queued. Confirmation later claims the proposal and drives the existing card
-execution path.
+The private master-to-Helper ACP extension responds after `Commit` for workspace
+and delegation actions. Current-shell execution instead waits for confirmation
+and the short execution observation. Confirmation claims the proposal and drives
+the existing card execution path in either case.
 
 ## Permission and tool-call UI
 

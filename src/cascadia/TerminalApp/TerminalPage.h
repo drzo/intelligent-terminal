@@ -274,6 +274,7 @@ namespace winrt::TerminalApp::implementation
         Windows::Foundation::IAsyncOperation<Microsoft::Terminal::Protocol::TabCreationResult> SplitProtocolPane(winrt::guid sessionId, Microsoft::Terminal::Settings::Model::SplitDirection direction, float size, Microsoft::Terminal::Settings::Model::NewTerminalArgs args, bool background);
         Windows::Foundation::IAsyncOperation<bool> CloseProtocolPane(winrt::guid sessionId);
         Windows::Foundation::IAsyncOperation<bool> SendProtocolInput(winrt::guid sessionId, hstring text);
+        Windows::Foundation::IAsyncOperation<hstring> SendProtocolCommandAndObserve(winrt::guid paneSessionId, hstring command);
         Windows::Foundation::IAsyncOperation<bool> FocusProtocolPane(winrt::guid sessionId);
         void OnAutofixStateChanged(hstring eventJson);
         void OnAgentStatusChanged(hstring eventJson);

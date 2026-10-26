@@ -794,7 +794,7 @@ impl App {
             .prompt()
             .map(|prompt| prompt.context.clone())
             .unwrap_or_default();
-        let confirmation_claim = if let Some(proposal_id) = direct_proposal_id.as_deref() {
+        let mut confirmation_claim = if let Some(proposal_id) = direct_proposal_id.as_deref() {
             let Some(claim) = self.proposal_channels.claim_confirmation(proposal_id) else {
                 self.turn_cancel(session_id);
                 return;
@@ -817,6 +817,9 @@ impl App {
                 insert_only,
                 context,
                 completion: Some((target_tab.clone(), prompt_id)),
+                execution_responder: confirmation_claim
+                    .as_mut()
+                    .and_then(|claim| claim.execution_responder.take()),
             })
             .is_ok();
         if !dispatched {

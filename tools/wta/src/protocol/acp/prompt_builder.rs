@@ -603,13 +603,15 @@ mod tests {
             source_pane_id: Some("newly-focused-pane".to_string()),
             ..Default::default()
         };
-        for wt_connected in [true, false] {
+        for (wt_connected, include_base_prompt) in
+            [(true, true), (true, false), (false, true), (false, false)]
+        {
             let (built_prompt, _, _, target) = build_prompt_text(
                 20,
                 0.0,
                 "failure summary",
                 Some(AutofixTextKind::FailureSummary),
-                false,
+                include_base_prompt,
                 &mgr,
                 wt_connected,
                 Some(&moved_context),
@@ -622,6 +624,15 @@ mod tests {
             assert!(built_prompt.contains(channel.output));
             assert!(built_prompt.contains("### Command Resolver Invocation"));
             assert_eq!(target.as_deref(), Some("failed-pane"));
+            assert!(!built_prompt.contains("\"activeTarget\":"));
+            assert!(
+                !built_prompt.contains("If `activeTarget` is absent"),
+                "a hidden target ID must not prohibit the host-bound Autofix action"
+            );
+            assert!(
+                built_prompt.contains("do not require `activeTarget` before calling the tool"),
+                "every Autofix turn must allow handoff to its already-bound failing pane"
+            );
             assert!(!built_prompt.contains("newly-focused-pane"));
         }
         let live_mgr = shell_mgr_with_pane(serde_json::json!({

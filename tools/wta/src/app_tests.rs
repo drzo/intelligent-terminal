@@ -26706,7 +26706,8 @@ fn recommendation_history_preserves_queue_barrier_for_both_end_timings() {
                     session_id: DEFAULT_TAB_ID.into(),
                 });
             }
-            app.turn_execute_card(DEFAULT_TAB_ID);
+            app.current_tab_mut().recommendation_focus = RecommendationFocus::Button;
+            app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
             assert_eq!(
                 action_rx.try_recv().unwrap().completion,
                 Some((DEFAULT_TAB_ID.into(), prompt_id))

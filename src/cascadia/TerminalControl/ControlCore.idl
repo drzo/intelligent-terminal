@@ -7,6 +7,15 @@ import "EventArgs.idl";
 
 namespace Microsoft.Terminal.Control
 {
+    struct CommandObservation
+    {
+        String State;
+        String Content;
+        String Reason;
+        Boolean Truncated;
+        Boolean HasExitCode;
+        UInt32 ExitCode;
+    };
 
     // This is a mirror of
     // ::Microsoft::Console::VirtualTerminal::TerminalInput::MouseButtonState,
@@ -225,5 +234,6 @@ namespace Microsoft.Terminal.Control
 
         event Windows.Foundation.TypedEventHandler<Object, CompletionsChangedEventArgs> CompletionsChanged;
 
+        Windows.Foundation.IAsyncOperation<CommandObservation> SendCommandAndObserve(String command);
     };
 }
