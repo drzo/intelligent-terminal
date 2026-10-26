@@ -38,6 +38,8 @@ using namespace winrt::Windows::UI::Xaml::Controls;
 
 static constexpr double SearchPanelExpandedHeight = 40.0;
 static constexpr auto SearchPanelAnimationDuration = std::chrono::milliseconds{ 200 };
+// Keep the pane dismiss implementation intact so it can be restored when split-pane chrome exposes the same affordance.
+static constexpr bool PaneDismissActionsEnabled = false;
 
 namespace winrt
 {
@@ -280,7 +282,7 @@ namespace winrt::TerminalApp::implementation
 
     void TabStripPaneItem::UpdateCloseVisibility(bool railCollapsed)
     {
-        CloseVisibility(!railCollapsed && (ActiveIndicatorVisibility() == Visibility::Visible || _pointerOver || _keyboardFocused) ?
+        CloseVisibility(PaneDismissActionsEnabled && !railCollapsed && (ActiveIndicatorVisibility() == Visibility::Visible || _pointerOver || _keyboardFocused) ?
                             Visibility::Visible :
                             Visibility::Collapsed);
     }
@@ -1082,6 +1084,33 @@ namespace winrt::TerminalApp::implementation
         return nullptr;
     }
 
+    void TabStrip::BringTabHeaderIntoView(IInspectable const& item)
+    {
+        if (_isRailCollapsed || !_isVerticalPresentation)
+        {
+            return;
+        }
+        auto header = HeaderForTab(item).try_as<FrameworkElement>();
+        if (!header)
+        {
+            header = HeaderForTab(item, true).try_as<FrameworkElement>();
+        }
+        if (header)
+        {
+            // The parent grid is the full header, without the group's pane rows.
+            if (const auto row = header.Parent().try_as<FrameworkElement>())
+            {
+                const auto list = ItemsList();
+                const auto bounds = row.TransformToVisual(list).TransformBounds(
+                    Rect{ 0, 0, static_cast<float>(row.ActualWidth()), static_cast<float>(row.ActualHeight()) });
+                if (bounds.Y < -0.5f || bounds.Y + bounds.Height > list.ActualHeight() + 0.5)
+                {
+                    row.StartBringIntoView();
+                }
+            }
+        }
+    }
+
     TerminalApp::TabStripDisplayItem TabStrip::DisplayItemForTab(IInspectable const& item) const
     {
         if (const auto tab = item.try_as<MUX::Controls::TabViewItem>())
@@ -1344,8 +1373,7 @@ namespace winrt::TerminalApp::implementation
                     }
                 }
             }
-            const auto groupIndicatorVisible = isGroup && display.ChildrenVisibility() == Visibility::Visible &&
-                                               display.SelectionVisibility() == Visibility::Visible;
+            const auto groupIndicatorVisible = isGroup && display.ChildrenVisibility() == Visibility::Visible;
             const auto selected = display.SelectionVisibility() == Visibility::Visible && !selectedPaneVisible;
             const auto pointerOver = winrt::get_self<TabStripDisplayItem>(display)->IsPointerOver();
             if (const auto hoverBackground = grid.FindName(L"TabHoverBackground").try_as<WUX::Controls::Border>())
@@ -2799,6 +2827,8 @@ namespace winrt::TerminalApp::implementation
         _applyHistoryRowForeground(container.ContentTemplateRoot().try_as<FrameworkElement>(), history);
         if (display)
         {
+            // Keep scrolling placeholders at the same minimum height as their tab headers.
+            container.MinHeight(display.HeaderMinHeight());
             // XAML's dynamic binding subscriber is not agile and attempts to marshal
             // PropertyChangedEventHandler during realization. Keep these UI-thread
             // automation updates on our own native delegates instead.
@@ -2830,6 +2860,7 @@ namespace winrt::TerminalApp::implementation
                     if (const auto item = weakDisplay.get();
                         item && row.Content() == item)
                     {
+                        row.MinHeight(item.HeaderMinHeight());
                         WUX::Automation::AutomationProperties::SetAcceleratorKey(row, item.AcceleratorKey());
                         WUX::Automation::AutomationProperties::SetHelpText(row, item.ToolTipText());
                     }
@@ -2841,6 +2872,7 @@ namespace winrt::TerminalApp::implementation
         else
         {
             _rowAutomationSubscriptions.erase(winrt::get_abi(container));
+            container.ClearValue(FrameworkElement::MinHeightProperty());
             container.ClearValue(WUX::Automation::AutomationProperties::AcceleratorKeyProperty());
         }
 
