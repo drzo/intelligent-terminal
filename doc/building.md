@@ -62,6 +62,9 @@ AuditMode is an experimental mode that enables some additional static analysis f
 
 ### Opt-in C++ performance analysis
 
+For staged new-tab latency diagnostics and ETW collection commands, see
+[New-tab performance traces](new-tab-performance.md).
+
 After initializing the normal MSBuild environment, run from the repository root:
 
 ```cmd
