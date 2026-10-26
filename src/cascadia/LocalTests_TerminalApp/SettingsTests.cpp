@@ -11,6 +11,7 @@
 #include "../inc/AgentYoloPolicy.h"
 #include "../TerminalApp/TerminalPage.h"
 #include "../inc/AgentAvailability.h"
+#include "../inc/CustomAgentUtils.h"
 #include "../UnitTests_SettingsModel/TestUtils.h"
 #include "../TerminalSettingsAppAdapterLib/TerminalSettings.h"
 #include <winrt/Microsoft.Terminal.Settings.Editor.h>
@@ -85,6 +86,7 @@ namespace TerminalAppLocalTests
         TEST_METHOD(TestStructuredCustomAgentEditorIdentity);
         TEST_METHOD(TestCancelCustomAgentWithoutAvailableAcpResetsEditor);
         TEST_METHOD(TestCustomAgentEditorPreservesInternalMetadata);
+        TEST_METHOD(TestClearingSelectedCustomAcpCommandSynchronizesReplacement);
         TEST_METHOD(TestCliOnlyCustomAgentEditPreservesSelectedAcpAgent);
         TEST_METHOD(TestSelectingActiveAcpAgentCancelsCliOnlyEdit);
         TEST_METHOD(TestCustomAgentCaseVariantReplacesLegacyEntry);
@@ -1564,6 +1566,68 @@ namespace TerminalAppLocalTests
         VERIFY_ARE_EQUAL(agent.Id(), saved.Id());
         VERIFY_IS_TRUE(saved.ResumeCommand().empty());
         VERIFY_IS_FALSE(saved.CanResumeAcpSessions());
+    }
+
+    void SettingsTests::TestClearingSelectedCustomAcpCommandSynchronizesReplacement()
+    {
+        for (const bool hasReplacement : { true, false })
+        {
+            CascadiaSettings settings{ LR"({"profiles":[{"name":"Fixture","commandline":"cmd.exe"}]})", inboxSettings };
+            auto globals = settings.GlobalSettings();
+            if (globals.IsCustomAgentPolicyLocked())
+            {
+                Log::Result(TestResults::Skipped, L"Custom agents are disabled by policy.");
+                return;
+            }
+            CustomAgent selected{ L"custom:selected-fixture", L"Selected fixture" };
+            selected.AcpCommand(L"missing-selected-fixture.exe --stdio");
+            selected.CliCommand(L"missing-selected-fixture.exe --interactive");
+            CustomAgent cliOnly{ L"custom:cli-fixture", L"CLI fixture" };
+            cliOnly.CliCommand(L"missing-cli-fixture.exe");
+            CustomAgent replacement{ L"custom:replacement-fixture", L"Replacement fixture" };
+            replacement.AcpCommand(L"missing-replacement-fixture.exe --stdio");
+            auto agents = winrt::single_threaded_vector<CustomAgent>({ cliOnly, selected });
+            if (hasReplacement)
+            {
+                agents.Append(replacement);
+            }
+            globals.CustomAgents(agents);
+            globals.AcpAgent(selected.Id());
+            globals.AcpCustomCommand(selected.AcpCommand());
+            globals.AcpModel(L"selected-provider-model");
+
+            Editor::AIAgentsViewModel viewModel{ globals };
+            // Exclude host agents so replacement depends only on custom ACP capability.
+            viewModel.AcpAgentList().Clear();
+            viewModel.EditCustomAcpAgent();
+            viewModel.CustomAcpCommand(L"");
+            viewModel.SaveCustomAcpAgent();
+
+            VERIFY_IS_TRUE(viewModel.CustomAgentError().empty());
+            VERIFY_IS_FALSE(viewModel.IsAddingCustomAcpAgent());
+            VERIFY_IS_TRUE(viewModel.CustomAgentId().empty());
+            VERIFY_IS_TRUE(globals.AcpModel().empty());
+            const auto saved = ::Microsoft::Terminal::CustomAgents::Find(globals, selected.Id());
+            VERIFY_IS_NOT_NULL(saved);
+            VERIFY_IS_TRUE(saved.AcpCommand().empty());
+            VERIFY_ARE_EQUAL(selected.CliCommand(), saved.CliCommand());
+            if (hasReplacement)
+            {
+                VERIFY_IS_NOT_NULL(viewModel.CurrentAcpAgent());
+                VERIFY_ARE_EQUAL(replacement.Id(), viewModel.CurrentAcpAgent().Id());
+                VERIFY_ARE_EQUAL(viewModel.CurrentAcpAgent().Id(), globals.AcpAgent());
+                VERIFY_ARE_EQUAL(replacement.Id(), globals.EffectiveAcpAgent());
+                VERIFY_ARE_EQUAL(replacement.AcpCommand(), globals.AcpCustomCommand());
+                VERIFY_ARE_EQUAL(std::wstring{ replacement.AcpCommand() },
+                                 ::Microsoft::Terminal::CustomAgents::AcpCommand(globals, globals.EffectiveAcpAgent()));
+            }
+            else
+            {
+                VERIFY_IS_NULL(viewModel.CurrentAcpAgent());
+                VERIFY_IS_TRUE(globals.EffectiveAcpAgent().empty());
+                VERIFY_IS_TRUE(globals.AcpCustomCommand().empty());
+            }
+        }
     }
 
     void SettingsTests::TestCustomAgentCaseVariantReplacesLegacyEntry()

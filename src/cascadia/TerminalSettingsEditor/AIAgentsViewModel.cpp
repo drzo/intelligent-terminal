@@ -1560,6 +1560,8 @@ namespace winrt::Microsoft::Terminal::Settings::Editor::implementation
                 _GlobalSettings.AcpCustomCommands(_RemoveCustomCommand(_GlobalSettings.AcpCustomCommands(), settingsId));
             }
             _RebuildCustomEntries(_acpAgentList, _GlobalSettings.AcpCustomCommands(), true);
+            _isAddingCustomAcpAgent = false;
+            _editingCustomAcpAgentId = L"";
             if (!_customAcpCommand.empty())
             {
                 _GlobalSettings.AcpAgent(settingsId);
@@ -1568,11 +1570,17 @@ namespace winrt::Microsoft::Terminal::Settings::Editor::implementation
             }
             else if (AgentRegistry::AgentIdEquals(_GlobalSettings.AcpAgent(), settingsId))
             {
-                _GlobalSettings.AcpAgent(L"");
-                _GlobalSettings.AcpCustomCommand(L"");
+                if (const auto replacement = _FindReplacementAgent(_acpAgentList, L""))
+                {
+                    CurrentAcpAgent(replacement);
+                }
+                else
+                {
+                    _GlobalSettings.AcpAgent(L"");
+                    _GlobalSettings.AcpCustomCommand(L"");
+                    _GlobalSettings.AcpModel(L"");
+                }
             }
-            _isAddingCustomAcpAgent = false;
-            _editingCustomAcpAgentId = L"";
             CustomAgentError(L"");
             Model::AcpRuntimeState::Current().SetAvailableModels(settingsId, winrt::single_threaded_vector<Model::AcpModelInfo>().GetView(), L"");
             _TriggerAcpModelProbe();
