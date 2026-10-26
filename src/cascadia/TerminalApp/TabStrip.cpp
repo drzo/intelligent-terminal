@@ -1362,8 +1362,7 @@ namespace winrt::TerminalApp::implementation
                     }
                 }
             }
-            const auto groupIndicatorVisible = isGroup && display.ChildrenVisibility() == Visibility::Visible &&
-                                               display.SelectionVisibility() == Visibility::Visible;
+            const auto groupIndicatorVisible = isGroup && display.ChildrenVisibility() == Visibility::Visible;
             const auto selected = display.SelectionVisibility() == Visibility::Visible && !selectedPaneVisible;
             const auto pointerOver = winrt::get_self<TabStripDisplayItem>(display)->IsPointerOver();
             if (const auto hoverBackground = grid.FindName(L"TabHoverBackground").try_as<WUX::Controls::Border>())

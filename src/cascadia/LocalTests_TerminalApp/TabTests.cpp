@@ -15825,15 +15825,15 @@ namespace TerminalAppLocalTests
                 VERIFY_IS_NOT_NULL(nativePresenter);
                 if (hasNativeIndicator)
                 {
-                    VERIFY_ARE_EQUAL(selectedPane < 0, nativePresenter.SelectionIndicatorVisualEnabled());
+                    VERIFY_IS_FALSE(nativePresenter.SelectionIndicatorVisualEnabled());
                 }
                 const auto root = container.ContentTemplateRoot().as<StackPanel>();
                 VERIFY_IS_NOT_NULL(root);
                 const auto paneList = root.Children().GetAt(1).as<ItemsControl>();
                 const auto groupIndicator = Media::VisualTreeHelper::GetChild(paneList, 0).as<Grid>().Children().GetAt(0).as<Border>();
                 VERIFY_ARE_EQUAL(10.0, paneList.Margin().Left);
-                VERIFY_ARE_EQUAL(display.SelectionVisibility(), winrt::unbox_value<Visibility>(paneList.Tag()));
-                VERIFY_ARE_EQUAL(selectedPane < 0 ? Visibility::Collapsed : Visibility::Visible, groupIndicator.Visibility());
+                VERIFY_IS_NULL(paneList.Tag());
+                VERIFY_ARE_EQUAL(Visibility::Visible, groupIndicator.Visibility());
                 for (uint32_t index = 0; index < display.PaneItems().Size(); ++index)
                 {
                     const auto expected = static_cast<int32_t>(index) == selectedPane ? Visibility::Visible : Visibility::Collapsed;
@@ -15845,10 +15845,7 @@ namespace TerminalAppLocalTests
                     VERIFY_ARE_EQUAL(expected, background.Visibility());
                     VERIFY_ARE_EQUAL(10.0, background.Margin().Left);
                 }
-                if (selectedPane >= 0)
-                {
-                    VERIFY_ARE_EQUAL(paneList.ActualHeight() - 10, groupIndicator.ActualHeight());
-                }
+                VERIFY_ARE_EQUAL(paneList.ActualHeight() - 10, groupIndicator.ActualHeight());
             };
             verifySelection(firstDisplay, 1);
             verifySelection(secondDisplay, -1);
