@@ -20,7 +20,8 @@ BeforeAll {
         'Agents live tab mutations reconcile rows without refreshing history',
         'Mixed Sidebar keyboard crosses the Recent Sessions boundary without activation',
         'Sidebar header search and options show their actual action tooltips',
-        'Sidebar navigation hotkeys cycle through displayed tabs'
+        'Sidebar navigation hotkeys cycle through displayed tabs',
+        'Introduction survives window movement, maximize and restore until dismissed'
     )
     $cases = $script:titles | ForEach-Object {
         '<test-case name="Synthetic report contract.' + [Security.SecurityElement]::Escape($_) +
@@ -180,6 +181,26 @@ Describe 'Sidebar release-report contracts without product activation' {
                 $text | Should -Match ('(?m)^- \[x\].*\*\*' + [regex]::Escape($title) + ':')
             }
             $text | Should -Not -Match '(?m)^- \[x\].*`C38[23]`'
+        }
+    }
+    It 'marks movement coverage failed when either layout fails in full and incremental reports' {
+        $title = $script:titles[-1]
+        $xml = Join-Path $script:root 'movement.xml'
+        $escaped = [Security.SecurityElement]::Escape($title)
+        $cases = @(
+            "<test-case name=`"Feature.SidebarUpgrade.$escaped (vertical)`" executed=`"True`" result=`"Success`" />"
+            "<test-case name=`"Feature.SidebarUpgrade.$escaped (horizontal)`" executed=`"True`" result=`"Failure`" />"
+        ) -join ''
+        "<test-results><test-suite><results>$cases</results></test-suite></test-results>" |
+            Set-Content -LiteralPath $xml
+        & (Join-Path $PSScriptRoot '..\New-ReleaseReport.ps1') -ResultsXml $xml -OutFile $script:full
+        & (Join-Path $PSScriptRoot '..\New-ReleaseReport.ps1') -ResultsXml @() -OutFile $script:incremental
+        & (Join-Path $PSScriptRoot '..\Update-ReleaseReport.ps1') -Report $script:incremental `
+            -ResultsXml $xml -OutFile $script:incremental
+        foreach ($path in @($script:full, $script:incremental)) {
+            @(Get-Content -LiteralPath $path | Where-Object {
+                $_ -match '^- \[ \] `C460`.*AUTOMATION FAILED.*\*\*Introduction survives window movement'
+            }) | Should -HaveCount 1
         }
     }
     It 'marks a matching failed case as failed and does not erase that evidence with a skipped-only update' {

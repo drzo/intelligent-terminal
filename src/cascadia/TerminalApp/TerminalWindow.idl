@@ -115,7 +115,6 @@ namespace TerminalApp
         // See IDialogPresenter and TerminalPage's DialogPresenter for more
         // information.
         void DismissDialog();
-        void WindowMoved();
 
         event Windows.Foundation.TypedEventHandler<Object, Object> Initialized;
 
@@ -160,5 +159,6 @@ namespace TerminalApp
                                   Windows.Foundation.IReference<Windows.Foundation.Rect> bounds);
 
         Microsoft.Terminal.Settings.Model.WindowLayout GetStartupRestoreLayout();
+        void WindowMoved();
     }
 }
