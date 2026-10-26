@@ -208,29 +208,29 @@ Describe 'Sidebar release-report contracts without product activation' {
                 -ResultsXml $xml -OutFile $script:incremental
             foreach ($path in @($script:full, $script:incremental)) {
                 $text = Get-Content -LiteralPath $path -Raw
-                $text | Should -Match '(?m)^- \[x\] `C460`'
-                $text | Should -Match '(?m)^- \[ \] `C461`'
-                $text | Should -Not -Match '(?m)^- \[ \] `C461`.*AUTOMATION FAILED'
+                $text | Should -Match '(?m)^- \[x\] `C461`'
+                $text | Should -Match '(?m)^- \[ \] `C462`'
+                $text | Should -Not -Match '(?m)^- \[ \] `C462`.*AUTOMATION FAILED'
             }
         }
 
         & (Join-Path $PSScriptRoot '..\New-ReleaseReport.ps1') -ResultsXml $reverseFailureXml -OutFile $script:full
-        (Get-Content -LiteralPath $script:full -Raw) | Should -Match '(?m)^- \[ \] `C460`.*AUTOMATION FAILED'
-        (Get-Content -LiteralPath $script:full -Raw) | Should -Match '(?m)^- \[x\] `C461`'
+        (Get-Content -LiteralPath $script:full -Raw) | Should -Match '(?m)^- \[ \] `C461`.*AUTOMATION FAILED'
+        (Get-Content -LiteralPath $script:full -Raw) | Should -Match '(?m)^- \[x\] `C462`'
         & (Join-Path $PSScriptRoot '..\New-ReleaseReport.ps1') -ResultsXml $failureXml -OutFile $script:full
         & (Join-Path $PSScriptRoot '..\New-ReleaseReport.ps1') -ResultsXml @() -OutFile $script:incremental
         & (Join-Path $PSScriptRoot '..\Update-ReleaseReport.ps1') -Report $script:incremental `
             -ResultsXml $failureXml -OutFile $script:incremental
         foreach ($path in @($script:full, $script:incremental)) {
             $text = Get-Content -LiteralPath $path -Raw
-            $text | Should -Match '(?m)^- \[x\] `C460`'
-            $text | Should -Match '(?m)^- \[ \] `C461`.*AUTOMATION FAILED'
+            $text | Should -Match '(?m)^- \[x\] `C461`'
+            $text | Should -Match '(?m)^- \[ \] `C462`.*AUTOMATION FAILED'
         }
         foreach ($xml in @($partialXml, $skippedXml)) {
             & (Join-Path $PSScriptRoot '..\Update-ReleaseReport.ps1') -Report $script:incremental `
                 -ResultsXml $xml -OutFile $script:incremental
             (Get-Content -LiteralPath $script:incremental -Raw) |
-                Should -Match '(?m)^- \[ \] `C461`.*AUTOMATION FAILED'
+                Should -Match '(?m)^- \[ \] `C462`.*AUTOMATION FAILED'
         }
     }
     It 'marks a matching failed case as failed and does not erase that evidence with a skipped-only update' {
