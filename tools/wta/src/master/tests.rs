@@ -13029,6 +13029,66 @@ async fn sidebar_cli_resume_startup_failure_before_create_returns_stays_historic
 }
 
 #[tokio::test(flavor = "current_thread")]
+async fn native_off_master_failure_after_reset_broadcasts_only_real_mutations() {
+    use crate::agent_sessions::{AgentStatus, SessionLocation};
+    use crate::session_registry::{SessionIdentity, SessionInfo};
+
+    let _capture = crate::wt_protocol_events::capture_test_published_events();
+    let state = make_state();
+    let pane = "00112233-4455-6677-8899-aabbccddeeff";
+    let mut row = SessionInfo::new(SessionId::new("resumed"), "C:\\repo".into());
+    row.provider_id = Some("copilot".into());
+    row.location = SessionLocation::Host;
+    row.status = Some(AgentStatus::Historical);
+    let identity = SessionIdentity::from_info(&row);
+    state.registry.upsert(row).await;
+    let mut native = serde_json::json!({
+        "pane_id":pane,"provider_id":"copilot","window_id":0,"tab_id":"tab",
+        "mode_epoch":1,"kind":"reset","tracking_enabled":false,
+        "agent_session_id":"resumed","location":"Host"
+    });
+    handle_master_wt_event(
+        &state,
+        serde_json::json!({"method":"native_agent_observation","params":native.clone()}),
+    )
+    .await;
+    assert_eq!(
+        state
+            .registry
+            .lookup_identity(&identity)
+            .await
+            .unwrap()
+            .status,
+        Some(AgentStatus::Idle)
+    );
+    crate::wt_protocol_events::take_test_published_events();
+    let failure = serde_json::json!({
+        "method":"connection_state",
+        "params":{"pane_id":pane,"state":"failed","process_started":false}
+    });
+    handle_master_wt_event(&state, failure.clone()).await;
+    let restored = state.registry.lookup_identity(&identity).await.unwrap();
+    assert_eq!(restored.status, Some(AgentStatus::Historical));
+    assert!(restored.pane_session_id.is_none());
+    let events = crate::wt_protocol_events::take_test_published_events();
+    assert_eq!(events.len(), 1);
+    let event: serde_json::Value = serde_json::from_str(&events[0]).unwrap();
+    assert_eq!(event["method"], "session_registry_changed");
+    handle_master_wt_event(&state, failure).await;
+    assert!(crate::wt_protocol_events::take_test_published_events().is_empty());
+    native["kind"] = serde_json::json!("removed");
+    handle_master_wt_event(
+        &state,
+        serde_json::json!({"method":"native_agent_observation","params":native}),
+    )
+    .await;
+    assert_eq!(
+        state.registry.lookup_identity(&identity).await.unwrap(),
+        restored
+    );
+}
+
+#[tokio::test(flavor = "current_thread")]
 async fn sidebar_cli_resume_failure_after_binding_distinguishes_started_connections() {
     use crate::agent_sessions::{AgentStatus, CliSource, SessionEvent};
     use crate::session_registry::{SessionIdentity, SessionInfo};

@@ -11655,10 +11655,15 @@ async fn handle_master_wt_event(state: &Arc<MasterStateInner>, event_json: serde
         state.registry.record_pane_connected(&pane_id).await;
         return;
     }
-    let event = match pane_state {
-        "closed" => crate::agent_sessions::SessionEvent::PaneClosed {
-            pane_session_id: pane_id.clone(),
-        },
+    let applied = match pane_state {
+        "closed" => {
+            state
+                .registry
+                .apply_event(crate::agent_sessions::SessionEvent::PaneClosed {
+                    pane_session_id: pane_id.clone(),
+                })
+                .await
+        }
         "failed" => {
             let reason = params
                 .get("reason")
@@ -11674,11 +11679,7 @@ async fn handle_master_wt_event(state: &Arc<MasterStateInner>, event_json: serde
                         .get("process_started")
                         .and_then(|value| value.as_bool()),
                 )
-                .await;
-            crate::agent_sessions::SessionEvent::ConnectionFailed {
-                pane_session_id: pane_id.clone(),
-                reason,
-            }
+                .await
         }
         _ => return,
     };
@@ -11686,10 +11687,8 @@ async fn handle_master_wt_event(state: &Arc<MasterStateInner>, event_json: serde
         target: "master_wt_event",
         pane_id = %pane_id,
         state = %pane_state,
-        event = ?event,
         "applying WT connection_state event to master registry"
     );
-    let applied = state.registry.apply_event(event).await;
     if applied {
         tracing::info!(
             target: "master_wt_event",

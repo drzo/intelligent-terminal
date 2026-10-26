@@ -3846,8 +3846,17 @@ namespace winrt::TerminalApp::implementation
                     processStarted = connection.ProcessStarted();
                 }
             }
+            // Failure evidence must reach the owner before removal clears it,
+            // even when teardown beats the queued connection-state callback.
+            if (stateStr == std::string_view{ "failed" })
+            {
+                _TryRaiseTerminalEndStateEvent(paneIdStr, stateStr, _FindTabIdForSessionId(paneIdStr), processStarted);
+            }
             _PublishNativeAgentObservation(control, "removed");
-            _TryRaiseTerminalEndStateEvent(paneIdStr, stateStr, _FindTabIdForSessionId(paneIdStr), processStarted);
+            if (stateStr == std::string_view{ "closed" })
+            {
+                _TryRaiseTerminalEndStateEvent(paneIdStr, stateStr, _FindTabIdForSessionId(paneIdStr), processStarted);
+            }
             // This pane is going away for good, so its agent binding goes with
             // it — including the failed case that the call above deliberately
             // keeps for panes that merely outlived their CLI.

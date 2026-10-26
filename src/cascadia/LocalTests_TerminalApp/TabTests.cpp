@@ -731,6 +731,7 @@ namespace TerminalAppLocalTests
         TEST_METHOD(NaturalFailedEventThenNotifyPanesClosingEmitsOnce);
         TEST_METHOD(ConptyLaunchEvidenceSurvivesProcessExitAndNewConnection);
         TEST_METHOD(ConnectionFailureEventPreservesOptionalLaunchEvidence);
+        TEST_METHOD(NativeOffTeardownBeforeQueuedFailurePublishesFailureBeforeRemoval);
         TEST_METHOD(ReusedSessionIdAcrossControlLifetimesEmitsEndStatePerLifetime);
         TEST_METHOD(SyntheticFailedEventSuppressesDelayedNormalCallback);
         TEST_METHOD(CloseNonLastPaneEmitsOneEndStateWithoutKeepingTheTab);
@@ -4993,6 +4994,56 @@ namespace TerminalAppLocalTests
             const auto paneStates = _statesForPane(connectionStates, expectedPaneId);
             VERIFY_ARE_EQUAL(1u, static_cast<unsigned int>(paneStates.size()));
             VERIFY_ARE_EQUAL(std::string{ "failed" }, paneStates.at(0));
+        });
+    }
+
+    void TabTests::NativeOffTeardownBeforeQueuedFailurePublishesFailureBeforeRemoval()
+    {
+        BEGIN_TEST_METHOD_PROPERTIES()
+            TEST_METHOD_PROPERTY(L"IsolationLevel", L"Method")
+        END_TEST_METHOD_PROPERTIES()
+
+        auto page = _commonSetup();
+        std::vector<std::string> events;
+        TestOnUIThread([&]() {
+            page->_settings.GlobalSettings().AgentSessionManagementEnabled(false);
+            page->_SyncNativeAgentStatusMode();
+            const winrt::guid paneId{ L"{32345678-1234-5678-9abc-def012345679}" };
+            using State = winrt::Microsoft::Terminal::TerminalConnection::ConnectionState;
+            const auto connection = winrt::make_self<TestConnection>(paneId, State::Connected);
+            NewTerminalArgs args;
+            args.NativeAgentProviderId(L"copilot");
+            const auto pane = page->_MakePane(args, nullptr, *connection);
+            VERIFY_IS_NOT_NULL(page->_CreateNewTabFromPane(pane));
+            page->_PublishNativeAgentObservation(pane->GetTerminalControl(), "reset");
+            const auto token = page->ProtocolVtSequenceReceived([&](auto&&, const auto& json) {
+                Json::Value event;
+                Json::Reader reader;
+                VERIFY_IS_TRUE(reader.parse(winrt::to_string(json), event));
+                if (event["params"]["pane_id"].asString() != _formatPaneId(paneId))
+                {
+                    return;
+                }
+                if (event["method"] == "connection_state")
+                {
+                    events.emplace_back(event["params"]["state"].asString());
+                }
+                else if (event["method"] == "native_agent_observation")
+                {
+                    events.emplace_back(event["params"]["kind"].asString());
+                }
+            });
+            const auto cleanup = wil::scope_exit([&]() noexcept {
+                page->ProtocolVtSequenceReceived(token);
+            });
+            connection->SetState(State::Failed);
+            page->_NotifyPanesClosing(pane);
+            VERIFY_ARE_EQUAL(size_t{ 2 }, events.size());
+            VERIFY_ARE_EQUAL(std::string{ "failed" }, events.at(0));
+            VERIFY_ARE_EQUAL(std::string{ "removed" }, events.at(1));
+            connection->RaiseStateChanged();
+            VERIFY_IS_FALSE(page->_TryRaiseTerminalEndStateEvent(_formatPaneId(paneId), "failed"));
+            VERIFY_ARE_EQUAL(size_t{ 2 }, events.size());
         });
     }
 
