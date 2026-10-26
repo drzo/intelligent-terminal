@@ -223,7 +223,9 @@ namespace winrt::Microsoft::Terminal::Settings::Model::implementation
             fmt::format_to(std::back_inserter(str), FMT_COMPILE(L"--colorScheme {} "), QuoteAndEscapeCommandlineArg(ColorScheme()));
         }
 
-        if (!Commandline().empty())
+        // Structured resumes are rebuilt from the current definition after elevation.
+        // Their expanded shell commands may contain Terminal action delimiters.
+        if (CustomAgentSessionId().empty() && !Commandline().empty())
         {
             fmt::format_to(std::back_inserter(str), FMT_COMPILE(L"-- \"{}\" "), Commandline());
         }
