@@ -1950,7 +1950,7 @@ namespace winrt::TerminalApp::implementation
 
     void TabStrip::TryCompleteAgentFilterTelemetry()
     {
-        if (_historySnapshotReady && !_historyLoading &&
+        if (_historySnapshotReady && !_historyLoadPending &&
             _historyError.empty() && _historyRefreshError.empty() &&
             _sidebarFilters.RecentAgentSessionsVisible() && _agentFilterTelemetryPending)
         {
@@ -2211,9 +2211,9 @@ namespace winrt::TerminalApp::implementation
         {
             InvalidateHistorySnapshotReadiness();
         }
-        if (_historyLoading != value)
+        if (_historyLoadPending != value)
         {
-            _historyLoading = value;
+            _historyLoadPending = value;
             _updateHistoryVisualState();
         }
     }
@@ -2676,7 +2676,7 @@ namespace winrt::TerminalApp::implementation
 
     void TabStrip::OnHistoryItemClick(IInspectable const&, ItemClickEventArgs const& e)
     {
-        if (_historyActivating || _historyLoading)
+        if (_historyActivating || HistoryLoading())
         {
             return;
         }
@@ -3338,6 +3338,7 @@ namespace winrt::TerminalApp::implementation
     {
         const auto visible = _sidebarFilters.RecentAgentSessionsVisible() && !_isRailCollapsed;
         const auto expanded = _historyExpanded || _sidebarFilters.HasSearchQuery();
+        const auto loading = HistoryLoading();
         const auto section = HistorySection();
         if (section)
         {
@@ -3350,7 +3351,7 @@ namespace winrt::TerminalApp::implementation
         WUX::Automation::AutomationProperties::SetName(FilterTabsButton(), detailsLabel);
         WUX::Automation::AutomationProperties::SetHelpText(FilterTabsButton(), detailsLabel);
         ItemsList().Visibility(visible || _tabsVisible ? Visibility::Visible : Visibility::Collapsed);
-        ItemsList().IsItemClickEnabled(visible && !_historyActivating && !_historyLoading);
+        ItemsList().IsItemClickEnabled(visible && !_historyActivating && !loading);
         if (section)
         {
             const auto previousSync = std::exchange(_syncingHistorySection, true);
@@ -3359,14 +3360,14 @@ namespace winrt::TerminalApp::implementation
             HistoryHeaderButton().IsEnabled(!_sidebarFilters.HasSearchQuery());
             HistoryChevron().Glyph(expanded ? L"\xE70D" : L"\xE76C");
             HistoryStatusPanel().Visibility(expanded ? Visibility::Visible : Visibility::Collapsed);
-            HistoryLoadingIndicator().IsActive(visible && expanded && _historyLoading);
-            HistoryLoadingIndicator().Visibility(visible && _historyLoading ? Visibility::Visible : Visibility::Collapsed);
+            HistoryLoadingIndicator().IsActive(visible && expanded && loading);
+            HistoryLoadingIndicator().Visibility(visible && loading ? Visibility::Visible : Visibility::Collapsed);
             WUX::Automation::AutomationProperties::SetName(HistoryHeaderButton(), HistoryHeader().Text());
             const auto historyAction = expanded ?
                                            RS_(L"VerticalTabsCollapseRecentSessions") : RS_(L"VerticalTabsExpandRecentSessions");
             ToolTipService::SetToolTip(HistoryHeaderButton(), box_value(historyAction));
             WUX::Automation::AutomationProperties::SetHelpText(HistoryHeaderButton(), historyAction);
-            if (!visible || _historyLoading)
+            if (!visible || loading)
             {
                 HistoryMessage().Visibility(Visibility::Collapsed);
             }
@@ -3810,7 +3811,7 @@ namespace winrt::TerminalApp::implementation
     void TabStrip::_onHistoryPreviewKeyDown(IInspectable const&, WUX::Input::KeyRoutedEventArgs const& e)
     {
         if (e.Handled() || e.OriginalKey() != Windows::System::VirtualKey::Enter ||
-            _historyActivating || _historyLoading)
+            _historyActivating || HistoryLoading())
         {
             return;
         }
