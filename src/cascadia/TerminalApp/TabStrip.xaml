@@ -697,7 +697,6 @@
                         <ItemsControl x:Name="TabPaneItems"
                                       Margin="10,0,0,0"
                                       ItemsSource="{x:Bind PaneItems, Mode=OneWay}"
-                                      Tag="{x:Bind SelectionVisibility, Mode=OneWay}"
                                       Visibility="{x:Bind ChildrenVisibility, Mode=OneWay}">
                             <ItemsControl.Template>
                                 <ControlTemplate TargetType="ItemsControl">
@@ -708,8 +707,7 @@
                                                 HorizontalAlignment="Left"
                                                 Background="{ThemeResource PaneActiveIndicatorBrush}"
                                                 CornerRadius="2"
-                                                IsHitTestVisible="False"
-                                                Visibility="{Binding Tag, RelativeSource={RelativeSource TemplatedParent}, Mode=OneWay}" />
+                                                IsHitTestVisible="False" />
                                         <ItemsPresenter />
                                     </Grid>
                                 </ControlTemplate>

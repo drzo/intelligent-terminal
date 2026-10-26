@@ -8243,14 +8243,16 @@ namespace winrt::TerminalApp::implementation
     bool TerminalPage::_ReleaseSidebarIntroduction(const bool shown)
     {
         _sidebarIntroductionLayoutRevoker.revoke();
-        _sidebarIntroductionPresented |= shown;
+        _sidebarIntroductionPopup = nullptr;
+        _sidebarIntroductionDismissed |= shown;
         if (_sidebarIntroductionClaim)
         {
             try
             {
-                ApplicationState::SharedInstance().EndSidebarIntroduction(_sidebarIntroductionClaim, _sidebarIntroductionPresented);
+                ApplicationState::SharedInstance().EndSidebarIntroduction(_sidebarIntroductionClaim, _sidebarIntroductionDismissed);
                 _sidebarIntroductionClaim = 0;
                 _sidebarIntroductionPresented = false;
+                _sidebarIntroductionDismissed = false;
                 return true;
             }
             catch (...)
@@ -8278,7 +8280,15 @@ namespace winrt::TerminalApp::implementation
     void TerminalPage::_TryShowSidebarIntroduction()
     try
     {
-        if (_sidebarIntroductionClaim && _sidebarIntroductionPresented)
+        // The Win32 host closes Popup directly on WM_MOVE without closing TeachingTip.
+        if (_sidebarIntroductionClaim && SidebarIntroductionTip().IsOpen() &&
+            _sidebarIntroductionPopup && !_sidebarIntroductionPopup.IsOpen())
+        {
+            SidebarIntroductionTip().IsOpen(false);
+            _ReleaseSidebarIntroduction(false);
+            return;
+        }
+        if (_sidebarIntroductionClaim && _sidebarIntroductionDismissed)
         {
             if (_ReleaseSidebarIntroduction(true))
             {
@@ -8286,7 +8296,7 @@ namespace winrt::TerminalApp::implementation
             }
             return;
         }
-        if (_windowPanesShutdown || ApplicationState::SharedInstance().SidebarIntroductionShown())
+        if (_sidebarIntroductionShuttingDown || _windowPanesShutdown || ApplicationState::SharedInstance().SidebarIntroductionShown())
         {
             _sidebarIntroductionTimer.Stop();
             _ReleaseSidebarIntroduction(false);
@@ -8303,7 +8313,7 @@ namespace winrt::TerminalApp::implementation
             else
             {
                 _OnSidebarIntroductionPresented();
-                if (_sidebarIntroductionClaim && ++_sidebarIntroductionPresentationAttempts >= 3)
+                if (_sidebarIntroductionClaim && !_sidebarIntroductionPresented && ++_sidebarIntroductionPresentationAttempts >= 3)
                 {
                     SidebarIntroductionTip().IsOpen(false);
                     _ReleaseSidebarIntroduction(false);
@@ -8491,10 +8501,9 @@ namespace winrt::TerminalApp::implementation
             }
             if (titleVisible && subtitleVisible)
             {
-                if (_ReleaseSidebarIntroduction(true))
-                {
-                    _sidebarIntroductionTimer.Stop();
-                }
+                _sidebarIntroductionPopup = popup;
+                _sidebarIntroductionPresented = true;
+                _sidebarIntroductionLayoutRevoker.revoke();
                 return;
             }
         }
@@ -8505,9 +8514,38 @@ namespace winrt::TerminalApp::implementation
         _ReleaseSidebarIntroduction(false);
     }
 
-    void TerminalPage::_OnSidebarIntroductionClosed(const MUX::Controls::TeachingTip&, const IInspectable&)
+    void TerminalPage::_OnSidebarIntroductionClosed(const MUX::Controls::TeachingTip&, const IInspectable& args)
     {
-        _ReleaseSidebarIntroduction(false);
+        if (!_sidebarIntroductionClaim)
+        {
+            return;
+        }
+        const auto closed = args.try_as<MUX::Controls::TeachingTipClosedEventArgs>();
+        const bool dismissed = closed && closed.Reason() != MUX::Controls::TeachingTipCloseReason::Programmatic;
+        if (_ReleaseSidebarIntroduction(dismissed) && dismissed && _sidebarIntroductionTimer)
+        {
+            _sidebarIntroductionTimer.Stop();
+        }
+    }
+
+    void TerminalPage::_OnSidebarIntroductionCloseButtonClick(const MUX::Controls::TeachingTip&, const IInspectable&)
+    {
+        if (_sidebarIntroductionClaim)
+        {
+            _sidebarIntroductionDismissed = true;
+        }
+    }
+
+    void TerminalPage::WindowMoved()
+    {
+        if (_sidebarIntroductionClaim)
+        {
+            if (const auto tip = SidebarIntroductionTip(); tip && tip.IsOpen())
+            {
+                tip.IsOpen(false);
+            }
+            _ReleaseSidebarIntroduction(false);
+        }
     }
 
     winrt::hstring TerminalPage::ApplicationDisplayName()
