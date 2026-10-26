@@ -567,6 +567,7 @@ namespace TerminalAppLocalTests
         TEST_METHOD(AgentSnapshotAttentionBellOnlyNotifiesTransitions);
         TEST_METHOD(AttentionBellPreservesTerminalNotifications);
         TEST_METHOD(SessionCompletionUnreadFollowsTabFocus);
+        TEST_METHOD(SessionCompletionClearsWhenActivePaneRegainsFocus);
         TEST_METHOD(SessionCompletionSnapshotsPreserveReadState);
         TEST_METHOD(SessionCompletionHistoryPreservesCanonicalStatusAndRows);
         TEST_METHOD(FailedAgentStatusRefreshDoesNotRestoreStaleCwds);
@@ -9594,6 +9595,41 @@ namespace TerminalAppLocalTests
             VERIFY_ARE_EQUAL(std::string{ "Complete" }, report("completion-session", 16000, "Idle"));
             VERIFY_ARE_EQUAL(std::string{ "Idle" }, report("replacement-session", 17000, "Idle"));
             VERIFY_IS_FALSE(manager->HasUnreadAgentCompletion(first->SessionId(), "completion-session", "copilot"));
+        });
+    }
+
+    void TabTests::SessionCompletionClearsWhenActivePaneRegainsFocus()
+    {
+        const auto connection = winrt::make_self<TestConnection>(
+            winrt::guid{ L"64811111-2222-3333-4444-555555555555" },
+            winrt::Microsoft::Terminal::TerminalConnection::ConnectionState::Connected);
+        auto page = _commonSetup(*connection, nullptr, std::nullopt, true);
+        const auto cleanup = wil::scope_exit([&]() { RunOnUIThread([&]() { page = nullptr; }); });
+        TestOnUIThread([&]() {
+            const auto tab = page->_GetFocusedTabImpl();
+            const auto pane = tab->GetActivePane();
+            const auto control = tab->GetActiveTerminalControl();
+            const auto paneId = winrt::to_string(::Microsoft::Console::Utils::GuidToPlainString(connection->SessionId()));
+            const auto report = [&](const uint64_t activity, const std::string_view status) {
+                VERIFY_IS_TRUE(page->_ApplyAgentSessionStatusDelta("pane-focus-completion", paneId, "copilot", activity, status));
+                return page->_BuildRichTabFirstPartyFields(control).at("agentStatusId");
+            };
+
+            pane->LostFocus.raise(pane);
+            VERIFY_IS_FALSE(tab->IsFocused());
+            VERIFY_ARE_EQUAL(std::string{ "Working" }, report(1000, "Working"));
+            VERIFY_ARE_EQUAL(std::string{ "Complete" }, report(2000, "Idle"));
+            VERIFY_ARE_EQUAL(std::string{ "Idle" }, page->_richTabAgentStatusByPaneId.at(connection->SessionId()).status);
+
+            uint32_t activePaneChanges = 0;
+            const auto token = tab->ActivePaneChanged([&](auto&&, auto&&) { ++activePaneChanges; });
+            const auto revoke = wil::scope_exit([&]() { tab->ActivePaneChanged(token); });
+            pane->GotFocus.raise(pane, FocusState::Pointer);
+            VERIFY_IS_TRUE(tab->IsFocused());
+            VERIFY_IS_TRUE(tab->GetActivePane() == pane);
+            VERIFY_ARE_EQUAL(0u, activePaneChanges);
+            VERIFY_ARE_EQUAL(std::string{ "Idle" }, page->_BuildRichTabFirstPartyFields(control).at("agentStatusId"));
+            VERIFY_ARE_EQUAL(std::string{ "Idle" }, report(3000, "Idle"));
         });
     }
 

@@ -1910,6 +1910,7 @@ namespace winrt::TerminalApp::implementation
                 {
                     tab->ShowBellIndicator(false);
                 }
+                tab->Focused.raise();
             }
         });
 
