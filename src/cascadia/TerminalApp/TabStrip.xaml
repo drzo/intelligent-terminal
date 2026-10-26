@@ -29,6 +29,8 @@
                     <ResourceDictionary.ThemeDictionaries>
                         <ResourceDictionary x:Key="Light">
                             <SolidColorBrush x:Key="AgentsOnlyIndicatorBrush" Color="#005FB7" />
+                            <StaticResource x:Key="PaneActiveIndicatorBrush"
+                                            ResourceKey="SystemControlForegroundBaseHighBrush" />
                             <StaticResource x:Key="PaneProgressAccentBrush"
                                             ResourceKey="SystemControlForegroundAccentBrush" />
                             <StaticResource x:Key="PaneProgressCriticalBrush"
@@ -38,6 +40,8 @@
                         </ResourceDictionary>
                         <ResourceDictionary x:Key="Dark">
                             <SolidColorBrush x:Key="AgentsOnlyIndicatorBrush" Color="#60CDFF" />
+                            <StaticResource x:Key="PaneActiveIndicatorBrush"
+                                            ResourceKey="SystemControlForegroundBaseHighBrush" />
                             <StaticResource x:Key="PaneProgressAccentBrush"
                                             ResourceKey="SystemControlForegroundAccentBrush" />
                             <StaticResource x:Key="PaneProgressCriticalBrush"
@@ -47,6 +51,8 @@
                         </ResourceDictionary>
                         <ResourceDictionary x:Key="HighContrast">
                             <StaticResource x:Key="AgentsOnlyIndicatorBrush"
+                                            ResourceKey="SystemColorWindowTextColorBrush" />
+                            <StaticResource x:Key="PaneActiveIndicatorBrush"
                                             ResourceKey="SystemColorWindowTextColorBrush" />
                             <StaticResource x:Key="PaneProgressAccentBrush"
                                             ResourceKey="SystemControlForegroundAccentBrush" />
@@ -332,6 +338,10 @@
             <RowDefinition Height="Auto" />
             <RowDefinition Height="*" />
         </Grid.RowDefinitions>
+        <Border x:Name="SidebarDefaultHoverBrush"
+                Background="{ThemeResource TabViewItemHeaderBackgroundPointerOver}"
+                IsHitTestVisible="False"
+                Visibility="Collapsed" />
 
         <Grid x:Name="TopChrome"
               Grid.Row="0"
@@ -521,8 +531,10 @@
                   Drop="OnListDrop"
                   DragItemsStarting="OnDragItemsStarting"
                   DragItemsCompleted="OnDragItemsCompleted"
+                  GotFocus="OnSidebarListFocusChanged"
                   IsItemClickEnabled="False"
                   ItemClick="OnHistoryItemClick"
+                  LostFocus="OnSidebarListFocusChanged"
                   ReorderMode="Disabled"
                   SelectionChanged="OnListSelectionChanged"
                   SelectionMode="Single"
@@ -542,9 +554,11 @@
                               GotFocus="OnSidebarRowGotFocus"
                               Loaded="OnTabHeaderLoaded"
                               PointerEntered="OnSidebarRowPointerEntered"
+                              PointerExited="OnSidebarRowPointerExited"
                               PointerPressed="OnTabHeaderPointerPressed"
                               SizeChanged="OnSidebarRowSizeChanged"
-                              Tapped="OnTabHeaderTapped">
+                              Tapped="OnTabHeaderTapped"
+                              Unloaded="OnTabHeaderUnloaded">
                             <ToolTipService.ToolTip>
                                 <ToolTip AutomationProperties.Name="{x:Bind ToolTipText, Mode=OneWay}"
                                          FlowDirection="LeftToRight">
@@ -558,12 +572,23 @@
                                 <ColumnDefinition Width="*" />
                                 <ColumnDefinition Width="Auto" />
                             </Grid.ColumnDefinitions>
+                            <Border x:Name="TabHoverBackground"
+                                    Grid.ColumnSpan="3"
+                                    Background="{ThemeResource TabViewItemHeaderBackgroundPointerOver}"
+                                    CornerRadius="{StaticResource SidebarTabCornerRadius}"
+                                    IsHitTestVisible="False"
+                                    Opacity="0" />
+                            <Border x:Name="TabColorHoverBackground"
+                                    Grid.ColumnSpan="3"
+                                    CornerRadius="{StaticResource SidebarTabCornerRadius}"
+                                    IsHitTestVisible="False"
+                                    Opacity="0" />
                             <Border x:Name="TabSelectionBackground"
                                     Grid.ColumnSpan="3"
                                     Background="{ThemeResource ListViewItemBackgroundSelected}"
                                     CornerRadius="{StaticResource SidebarTabCornerRadius}"
                                     IsHitTestVisible="False"
-                                    Visibility="{x:Bind SelectionVisibility, Mode=OneWay}" />
+                                    Visibility="Collapsed" />
                             <Border x:Name="TabColorSelectionBackground"
                                     Grid.ColumnSpan="3"
                                     Background="Transparent"
@@ -586,7 +611,7 @@
                                               FontFamily="{ThemeResource SymbolThemeFontFamily}"
                                               FontSize="10"
                                               Glyph="{x:Bind ChevronGlyph, Mode=OneWay}"
-                                              Visibility="{x:Bind mtu:Converters.InvertedBooleanToVisibility(ShowProgressRing), Mode=OneWay}" />
+                                              Visibility="{x:Bind mtu:Converters.InvertedBooleanToVisibility(ShowStatusIcon), Mode=OneWay}" />
                                 </Button>
                                 <ContentPresenter x:Name="TabIconPresenter"
                                                   Width="16"
@@ -595,6 +620,17 @@
                                                   VerticalAlignment="Center"
                                                   Content="{x:Bind CreateIcon(IconSource), Mode=OneWay}"
                                                   Visibility="{x:Bind IconVisibility, Mode=OneWay}" />
+                                <FontIcon x:Name="TabBellIndicator"
+                                          Width="16"
+                                          Height="16"
+                                          HorizontalAlignment="Center"
+                                          VerticalAlignment="Center"
+                                          FontFamily="{ThemeResource SymbolThemeFontFamily}"
+                                          FontSize="12"
+                                          Foreground="{Binding Foreground, ElementName=TabHeaderPresenter, Mode=OneWay}"
+                                          Glyph="&#xEA8F;"
+                                          IsHitTestVisible="False"
+                                          Visibility="{x:Bind Presentation.TabStatus.BellIndicator, Mode=OneWay}" />
                                 <Grid IsHitTestVisible="False"
                                       HorizontalAlignment="Center"
                                       VerticalAlignment="Center"
@@ -645,12 +681,13 @@
                                     Height="28"
                                     MinWidth="0"
                                     MinHeight="0"
-                                    Margin="0,0,4,0"
+                                    Margin="0,4,4,0"
                                     Padding="0"
                                     Background="Transparent"
                                     BorderThickness="0"
                                     CornerRadius="4"
                                     Click="OnTabCloseClick"
+                                    VerticalAlignment="Top"
                                     Visibility="{x:Bind CloseVisibility, Mode=OneWay}">
                                 <FontIcon FontFamily="{ThemeResource SymbolThemeFontFamily}"
                                           FontSize="10"
@@ -658,33 +695,67 @@
                             </Button>
                         </Grid>
                         <ItemsControl x:Name="TabPaneItems"
-                                      Margin="22,0,0,0"
+                                      Margin="10,0,0,0"
                                       ItemsSource="{x:Bind PaneItems, Mode=OneWay}"
+                                      Tag="{x:Bind SelectionVisibility, Mode=OneWay}"
                                       Visibility="{x:Bind ChildrenVisibility, Mode=OneWay}">
+                            <ItemsControl.Template>
+                                <ControlTemplate TargetType="ItemsControl">
+                                    <Grid>
+                                        <Border x:Name="PaneGroupIndicator"
+                                                Width="3"
+                                                Margin="0,5"
+                                                HorizontalAlignment="Left"
+                                                Background="{ThemeResource PaneActiveIndicatorBrush}"
+                                                CornerRadius="2"
+                                                IsHitTestVisible="False"
+                                                Visibility="{Binding Tag, RelativeSource={RelativeSource TemplatedParent}, Mode=OneWay}" />
+                                        <ItemsPresenter />
+                                    </Grid>
+                                </ControlTemplate>
+                            </ItemsControl.Template>
                             <ItemsControl.ItemTemplate>
                                 <DataTemplate x:DataType="local:TabStripPaneItem">
                                     <Grid MinHeight="30"
                                           Margin="0,1,0,1"
                                           Background="Transparent"
                                           DoubleTapped="OnPaneDoubleTapped"
+                                          GotFocus="OnPaneRowFocusChanged"
                                           Loaded="OnPaneRowLoaded"
+                                          LostFocus="OnPaneRowFocusChanged"
                                           PointerEntered="OnPanePointerEntered"
                                           PointerExited="OnPanePointerExited"
                                           PointerPressed="OnPanePointerPressed"
-                                          RightTapped="OnPaneRightTapped">
+                                          RightTapped="OnPaneRightTapped"
+                                          Unloaded="OnPaneRowUnloaded">
                                         <Grid.ColumnDefinitions>
                                             <ColumnDefinition Width="*" />
                                             <ColumnDefinition Width="30" />
                                         </Grid.ColumnDefinitions>
                                         <Border x:Name="PaneActiveBackground"
                                                 Grid.ColumnSpan="2"
+                                                Margin="10,0,0,0"
                                                 Background="{ThemeResource ListViewItemBackgroundSelected}"
+                                                CornerRadius="{StaticResource SidebarTabCornerRadius}"
+                                                IsHitTestVisible="False"
+                                                Visibility="Collapsed" />
+                                        <Border x:Name="PaneColorSelectionBackground"
+                                                Grid.ColumnSpan="2"
+                                                Margin="10,0,0,0"
+                                                Background="Transparent"
                                                 CornerRadius="{StaticResource SidebarTabCornerRadius}"
                                                 IsHitTestVisible="False"
                                                 Visibility="{x:Bind ActiveIndicatorVisibility, Mode=OneWay}" />
                                         <Border x:Name="PaneHoverBackground"
                                                 Grid.ColumnSpan="2"
-                                                Background="{ThemeResource ListViewItemBackgroundPointerOver}"
+                                                Margin="10,0,0,0"
+                                                Background="{ThemeResource TabViewItemHeaderBackgroundPointerOver}"
+                                                CornerRadius="{StaticResource SidebarTabCornerRadius}"
+                                                IsHitTestVisible="False"
+                                                Opacity="0" />
+                                        <Border x:Name="PaneColorHoverBackground"
+                                                Grid.ColumnSpan="2"
+                                                Margin="10,0,0,0"
                                                 CornerRadius="{StaticResource SidebarTabCornerRadius}"
                                                 IsHitTestVisible="False"
                                                 Opacity="0" />
@@ -705,7 +776,7 @@
                                                 <SolidColorBrush x:Key="ButtonBackgroundPressed"
                                                                  Color="Transparent" />
                                             </Button.Resources>
-                                            <Grid Margin="0,0,30,0">
+                                            <Grid Margin="12,0,30,0">
                                                 <Grid.RowDefinitions>
                                                     <RowDefinition Height="Auto" />
                                                     <RowDefinition Height="Auto" />
@@ -715,15 +786,6 @@
                                                     <ColumnDefinition Width="28" />
                                                     <ColumnDefinition Width="*" />
                                                 </Grid.ColumnDefinitions>
-                                                <Border x:Name="PaneActiveIndicator"
-                                                        Grid.Column="0"
-                                                        Grid.RowSpan="2"
-                                                        Width="3"
-                                                        Margin="0,5"
-                                                        HorizontalAlignment="Left"
-                                                        Background="{ThemeResource SystemAccentColor}"
-                                                        CornerRadius="2"
-                                                        Visibility="{x:Bind ActiveIndicatorVisibility, Mode=OneWay}" />
                                                 <ContentPresenter x:Name="PaneIconPresenter"
                                                                   Grid.Column="1"
                                                                   Grid.RowSpan="2"
@@ -801,12 +863,14 @@
                                                 Height="26"
                                                 MinWidth="0"
                                                 MinHeight="0"
-                                                Margin="0,0,4,0"
+                                                Margin="0,4,4,0"
                                                 Padding="0"
                                                 Background="Transparent"
                                                 BorderThickness="0"
                                                 CornerRadius="4"
-                                                Click="OnPaneCloseClick">
+                                                Click="OnPaneCloseClick"
+                                                VerticalAlignment="Top"
+                                                Visibility="{x:Bind CloseVisibility, Mode=OneWay}">
                                             <FontIcon FontFamily="{ThemeResource SymbolThemeFontFamily}"
                                                       FontSize="10"
                                                       Glyph="&#xE711;" />
@@ -836,7 +900,8 @@
                     <Setter Property="Template">
                         <Setter.Value>
                             <ControlTemplate TargetType="ListViewItem">
-                                <ListViewItemPresenter CheckBoxBrush="{ThemeResource ListViewItemCheckBoxBrush}"
+                                <ListViewItemPresenter x:Name="SidebarItemPresenter"
+                                                       CheckBoxBrush="{ThemeResource ListViewItemCheckBoxBrush}"
                                                        CheckBrush="{ThemeResource ListViewItemCheckBrush}"
                                                        CheckMode="{ThemeResource ListViewItemCheckMode}"
                                                        Content="{TemplateBinding Content}"
@@ -858,7 +923,7 @@
                                                        FocusVisualSecondaryThickness="{TemplateBinding FocusVisualSecondaryThickness}"
                                                        HorizontalContentAlignment="{TemplateBinding HorizontalContentAlignment}"
                                                        PlaceholderBackground="{ThemeResource ListViewItemPlaceholderBackground}"
-                                                       PointerOverBackground="{ThemeResource ListViewItemBackgroundPointerOver}"
+                                                       PointerOverBackground="{ThemeResource TabViewItemHeaderBackgroundPointerOver}"
                                                        PointerOverForeground="{ThemeResource ListViewItemForegroundPointerOver}"
                                                        PressedBackground="{ThemeResource ListViewItemBackgroundPressed}"
                                                        ReorderHintOffset="{ThemeResource ListViewItemReorderHintThemeOffset}"
