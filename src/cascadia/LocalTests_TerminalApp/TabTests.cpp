@@ -728,6 +728,9 @@ namespace TerminalAppLocalTests
         TEST_METHOD(ElevatedPersistedTabKeepsShellCommands);
         TEST_METHOD(ElevatedPersistedTabExcludesAgentPanes);
         TEST_METHOD(ResumedPaneIdentityPersistsWithoutHooksOrBannerParsing);
+        TEST_METHOD(SavedAgentResumeCreatesFreshConnectionIdentities);
+        TEST_METHOD(SavedShellRestorePreservesConnectionIdentity);
+        TEST_METHOD(SavedAgentResumePreservesExistingConnectionIdentity);
         TEST_METHOD(RestoredSessionBindingsWaitForTheirHelperSubscription);
         TEST_METHOD(RestoredSessionBindingsKeepHelperFallbackWhileMasterUnready);
         TEST_METHOD(RestoredSessionBindingsRegisterBeforeHelperAndLayoutReadiness);
@@ -4251,6 +4254,74 @@ namespace TerminalAppLocalTests
             }
         });
         return page;
+    }
+
+    void TabTests::SavedAgentResumeCreatesFreshConnectionIdentities()
+    {
+        auto page = _commonSetup(nullptr, nullptr, std::nullopt, true);
+        TestOnUIThread([&]() {
+            page->_settings.GlobalSettings().AgentSessionManagementEnabled(true);
+            NewTerminalArgs resumeArgs;
+            const winrt::guid savedPaneId{ ::Microsoft::Console::Utils::CreateGuid() };
+            resumeArgs.SessionId(savedPaneId);
+            resumeArgs.Commandline(winrt::hstring{ ::Microsoft::Terminal::AgentPaneRestore::BuildResumeCommandline(L"copilot", L"saved-conversation") });
+            const auto first = page->_MakeTerminalPane(resumeArgs);
+            const auto second = page->_MakeTerminalPane(resumeArgs);
+            VERIFY_IS_NOT_NULL(first);
+            VERIFY_IS_NOT_NULL(second);
+            const auto firstId = first->GetSessionId();
+            const auto secondId = second->GetSessionId();
+            VERIFY_ARE_NOT_EQUAL(winrt::guid{}, firstId);
+            VERIFY_ARE_NOT_EQUAL(savedPaneId, firstId);
+            VERIFY_ARE_NOT_EQUAL(savedPaneId, secondId);
+            VERIFY_ARE_NOT_EQUAL(firstId, secondId);
+            VERIFY_ARE_EQUAL(savedPaneId, resumeArgs.SessionId());
+            for (const auto paneId : { firstId, secondId })
+            {
+                VERIFY_IS_TRUE(page->_explicitNativeAgentSessions.contains(paneId));
+                VERIFY_ARE_EQUAL(winrt::hstring{ L"saved-conversation" }, page->_paneAgentSessions.at(paneId).sessionId);
+                const auto& pending = page->_pendingRestoredSessionBindings.at(paneId);
+                VERIFY_ARE_EQUAL(winrt::hstring{ L"saved-conversation" }, pending.sessionId);
+                VERIFY_ARE_EQUAL(winrt::hstring{ L"copilot" }, pending.agent);
+            }
+            VERIFY_IS_FALSE(page->_pendingRestoredSessionBindings.contains(savedPaneId));
+        });
+    }
+
+    void TabTests::SavedShellRestorePreservesConnectionIdentity()
+    {
+        auto page = _commonSetup(nullptr, nullptr, std::nullopt, true);
+        TestOnUIThread([&]() {
+            NewTerminalArgs args;
+            const winrt::guid savedPaneId{ ::Microsoft::Console::Utils::CreateGuid() };
+            args.SessionId(savedPaneId);
+            const auto pane = page->_MakeTerminalPane(args);
+            VERIFY_IS_NOT_NULL(pane);
+            VERIFY_ARE_EQUAL(savedPaneId, pane->GetSessionId());
+            VERIFY_IS_FALSE(page->_pendingRestoredSessionBindings.contains(savedPaneId));
+        });
+    }
+
+    void TabTests::SavedAgentResumePreservesExistingConnectionIdentity()
+    {
+        auto page = _commonSetup(nullptr, nullptr, std::nullopt, true);
+        TestOnUIThread([&]() {
+            page->_settings.GlobalSettings().AgentSessionManagementEnabled(true);
+            const winrt::guid livePaneId{ ::Microsoft::Console::Utils::CreateGuid() };
+            const auto connection = winrt::make_self<TestConnection>(
+                livePaneId, winrt::Microsoft::Terminal::TerminalConnection::ConnectionState::Connected);
+            NewTerminalArgs args;
+            const winrt::guid savedPaneId{ ::Microsoft::Console::Utils::CreateGuid() };
+            args.SessionId(savedPaneId);
+            args.Commandline(winrt::hstring{ ::Microsoft::Terminal::AgentPaneRestore::BuildResumeCommandline(L"copilot", L"saved-conversation") });
+            const auto pane = page->_MakeTerminalPane(args, nullptr, *connection);
+            VERIFY_IS_NOT_NULL(pane);
+            VERIFY_ARE_EQUAL(livePaneId, pane->GetSessionId());
+            VERIFY_ARE_EQUAL(savedPaneId, args.SessionId());
+            VERIFY_ARE_EQUAL(winrt::hstring{ L"saved-conversation" }, page->_paneAgentSessions.at(livePaneId).sessionId);
+            VERIFY_ARE_EQUAL(winrt::hstring{ L"saved-conversation" }, page->_pendingRestoredSessionBindings.at(livePaneId).sessionId);
+            VERIFY_IS_FALSE(page->_pendingRestoredSessionBindings.contains(savedPaneId));
+        });
     }
 
     void TabTests::RestoredSessionBindingsWaitForTheirHelperSubscription()

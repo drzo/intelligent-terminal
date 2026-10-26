@@ -16777,6 +16777,14 @@ namespace winrt::TerminalApp::implementation
         }
         else
         {
+            if (hasSessionId && !restoredAgent.agent.empty())
+            {
+                // A saved resume creates a new shell lifetime, not a reattachment.
+                // Keep its conversation identity without reusing a failed pane's fence.
+                const auto connectionArgs = newTerminalArgs.Copy().as<NewTerminalArgs>();
+                connectionArgs.SessionId(winrt::guid{});
+                controlSettings = Settings::TerminalSettings::CreateWithNewTerminalArgs(_settings, connectionArgs);
+            }
             connection = _CreateConnectionFromSettings(profile, *controlSettings.DefaultSettings(), hasSessionId);
         }
 
