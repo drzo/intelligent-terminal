@@ -544,6 +544,7 @@ namespace TerminalAppLocalTests
         TEST_METHOD(SidebarIntroductionAnchorMatchesDesign);
         TEST_METHOD(SidebarIntroductionContentMatchesDesign);
         TEST_METHOD(SidebarIntroductionPopupMatchesDesign);
+        TEST_METHOD(SidebarIntroductionSurvivesHostPopupDismissal);
         TEST_METHOD(HorizontalTabsIntroductionPopupMatchesDesign);
         TEST_METHOD(LiteralSearchHighlighting);
         TEST_METHOD(VerticalTabAgentsOnlyHasNoStatusFooter);
@@ -8135,6 +8136,79 @@ namespace TerminalAppLocalTests
     void TabTests::HorizontalTabsIntroductionPopupMatchesDesign()
     {
         _verifyTabIntroductionPopup(false);
+    }
+
+    void TabTests::SidebarIntroductionSurvivesHostPopupDismissal()
+    {
+        const CascadiaSettings settings{ LR"({
+            "defaultProfile": "{6239a42c-1111-49a3-80bd-e8fdd045185c}",
+            "showTabsInTitlebar": false,
+            "tabLayout": "vertical",
+            "profiles": [{
+                "name": "profile0",
+                "guid": "{6239a42c-1111-49a3-80bd-e8fdd045185c}",
+                "closeOnExit": "never"
+            }]
+        })",
+                                         {} };
+        const auto connection = winrt::make_self<TestConnection>(
+            winrt::guid{ L"{6239a42c-aaaa-49a3-80bd-e8fdd045185c}" },
+            winrt::Microsoft::Terminal::TerminalConnection::ConnectionState::Connected);
+        winrt::com_ptr<winrt::TerminalApp::implementation::TerminalPage> page;
+        Grid host{ nullptr };
+        TestOnUIThread([&]() {
+            host = Grid{};
+            host.Width(1300);
+            host.Height(690);
+        });
+        _initializeTerminalPage(page, settings, *connection, host);
+
+        winrt::MUX::Controls::TeachingTip tip{ nullptr };
+        TextBlock title{ nullptr };
+        TestOnUIThread([&]() {
+            if (page->_sidebarIntroductionTimer)
+            {
+                page->_sidebarIntroductionTimer.Stop();
+            }
+            page->_ReleaseSidebarIntroduction(false);
+            page->WindowActivated(true);
+            host.UpdateLayout();
+            tip = page->_PrepareSidebarIntroduction();
+            VERIFY_IS_NOT_NULL(tip);
+            title = tip.Content().as<FrameworkElement>().FindName(L"SidebarIntroductionTitleText").as<TextBlock>();
+            page->_sidebarIntroductionClaim = 42;
+            tip.IsOpen(true);
+        });
+        _waitForContentTransferReviewUI([&]() {
+            host.UpdateLayout();
+            page->_OnSidebarIntroductionPresented();
+            return title.ActualWidth() > 0 && Media::VisualTreeHelper::GetOpenPopupsForXamlRoot(page->XamlRoot()).Size() > 0;
+        });
+        TestOnUIThread([&]() {
+            VERIFY_IS_TRUE(tip.IsOpen());
+            VERIFY_IS_TRUE(page->_sidebarIntroductionPresented);
+            VERIFY_ARE_EQUAL(uint64_t{ 42 }, page->_sidebarIntroductionClaim);
+            const auto popups = Media::VisualTreeHelper::GetOpenPopupsForXamlRoot(page->XamlRoot());
+            VERIFY_ARE_EQUAL(1u, popups.Size());
+            popups.GetAt(0).IsOpen(false);
+            page->_TryShowSidebarIntroduction();
+            VERIFY_IS_FALSE(tip.IsOpen());
+        });
+        _waitForContentTransferReviewUI([&]() { return page->_sidebarIntroductionClaim == 0; });
+        TestOnUIThread([&]() {
+            VERIFY_IS_FALSE(page->_sidebarIntroductionPresented);
+            VERIFY_IS_FALSE(tip.IsOpen());
+            page->_sidebarIntroductionClaim = 43;
+            tip.IsOpen(true);
+        });
+        _waitForContentTransferReviewUI([&]() {
+            return tip.IsOpen() && Media::VisualTreeHelper::GetOpenPopupsForXamlRoot(page->XamlRoot()).Size() > 0;
+        });
+        TestOnUIThread([&]() {
+            page->WindowMoved();
+            VERIFY_IS_FALSE(tip.IsOpen());
+            VERIFY_ARE_EQUAL(uint64_t{ 0 }, page->_sidebarIntroductionClaim);
+        });
     }
 
     void TabTests::_verifyTabIntroductionPopup(const bool vertical)

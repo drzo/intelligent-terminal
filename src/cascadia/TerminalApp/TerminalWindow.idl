@@ -115,6 +115,7 @@ namespace TerminalApp
         // See IDialogPresenter and TerminalPage's DialogPresenter for more
         // information.
         void DismissDialog();
+        void WindowMoved();
 
         event Windows.Foundation.TypedEventHandler<Object, Object> Initialized;
 
