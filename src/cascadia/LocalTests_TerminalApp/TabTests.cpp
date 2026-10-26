@@ -13949,6 +13949,38 @@ namespace TerminalAppLocalTests
                 VERIFY_ARE_EQUAL(winrt::Windows::UI::Colors::White(), title.Foreground().as<Media::SolidColorBrush>().Color());
                 VERIFY_ARE_EQUAL(winrt::Windows::UI::Colors::White(), cwd.Foreground().as<Media::SolidColorBrush>().Color());
 
+                {
+                    const auto background = first.CurrentBackground();
+                    const auto foreground = first.CurrentForeground();
+                    uint32_t paletteNotifications = 0;
+                    const auto paletteChanged = first.PropertyChanged(winrt::auto_revoke, [&](auto&&, const auto& args) {
+                        if (args.PropertyName() == L"CurrentBackground" || args.PropertyName() == L"CurrentForeground")
+                        {
+                            ++paletteNotifications;
+                        }
+                    });
+                    impl->SetCurrentHistoryItem(first, tab);
+                    tabBrush = Media::SolidColorBrush{ tabBrush.Color() };
+                    tab.Background(tabBrush);
+                    impl->SetCurrentHistoryItem(first, tab);
+                    VERIFY_ARE_EQUAL(0u, paletteNotifications);
+                    VERIFY_IS_TRUE(first.CurrentBackground() == background);
+                    VERIFY_IS_TRUE(first.CurrentForeground() == foreground);
+
+                    background.Opacity(0.25);
+                    impl->SetCurrentHistoryItem(first, tab);
+                    VERIFY_ARE_EQUAL(1.0, first.CurrentBackground().Opacity());
+
+                    tabBrush.Color(winrt::Windows::UI::Colors::White());
+                    impl->SetCurrentHistoryItem(first, tab);
+                    strip.UpdateLayout();
+                    VERIFY_ARE_EQUAL(winrt::Windows::UI::Colors::White(), first.CurrentBackground().as<Media::SolidColorBrush>().Color());
+                    VERIFY_ARE_EQUAL(winrt::Windows::UI::Colors::Black(), title.Foreground().as<Media::SolidColorBrush>().Color());
+
+                    tabBrush.Color(winrt::Windows::UI::Colors::DarkBlue());
+                    impl->SetCurrentHistoryItem(first, tab);
+                }
+
                 impl->SetCurrentHistoryItem(second, tab);
                 strip.UpdateLayout();
                 VERIFY_IS_FALSE(first.IsCurrent());
@@ -13959,11 +13991,14 @@ namespace TerminalAppLocalTests
                 VERIFY_IS_TRUE(cwd.ReadLocalValue(Control::ForegroundProperty()) == DependencyProperty::UnsetValue());
                 VERIFY_IS_TRUE(title.Foreground() == inheritedForeground);
                 VERIFY_IS_TRUE(Automation::AutomationProperties::GetItemStatus(container).empty());
-                VERIFY_ARE_EQUAL(currentStatus, Automation::AutomationProperties::GetItemStatus(
-                                                    impl->ItemsList().ContainerFromItem(second)));
+                VERIFY_ARE_EQUAL(currentStatus, Automation::AutomationProperties::GetItemStatus(impl->ItemsList().ContainerFromItem(second)));
             }
+            impl->CommitHistorySnapshot({ first, second });
             impl->SetCurrentHistoryItem(nullptr, tab);
             VERIFY_IS_FALSE(second.IsCurrent());
+            const auto secondContainer = impl->ItemsList().ContainerFromItem(second).as<ListViewItem>();
+            VERIFY_IS_TRUE(Automation::AutomationProperties::GetItemStatus(secondContainer).empty());
+            VERIFY_IS_TRUE(secondContainer.ContentTemplateRoot().as<Grid>().FindName(L"HistoryTitleText").as<winrt::TerminalApp::HighlightedTextControl>().ReadLocalValue(Control::ForegroundProperty()) == DependencyProperty::UnsetValue());
             VERIFY_ARE_EQUAL(0u, collectionChanges);
 
             tab.Background(nullptr);
