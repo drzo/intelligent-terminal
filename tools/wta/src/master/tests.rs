@@ -12936,7 +12936,7 @@ async fn sidebar_cli_resume_binds_created_pane_for_agent_filtering() {
 }
 
 #[tokio::test(flavor = "current_thread")]
-async fn sidebar_cli_resume_startup_failure_before_create_returns_stays_historical() {
+async fn native_resume_reset_failure_before_create_returns_stays_historical() {
     use crate::agent_sessions::{AgentStatus, CliSource, SessionLocation, SessionOrigin};
     use crate::session_registry::{SessionActivateParams, SessionIdentity, SessionInfo};
 
@@ -12957,6 +12957,30 @@ async fn sidebar_cli_resume_startup_failure_before_create_returns_stays_historic
                 handle_master_wt_event(
                     &self.state.get().unwrap().upgrade().unwrap(),
                     serde_json::json!({
+                        "method": "native_agent_observation",
+                        "params": {
+                            "pane_id": "AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE",
+                            "provider_id": "copilot", "window_id": 42, "tab_id": "tab",
+                            "mode_epoch": 1, "kind": "reset", "tracking_enabled": false,
+                            "agent_session_id": "failed-resume", "location": "Host"
+                        }
+                    }),
+                )
+                .await;
+                let state = self.state.get().unwrap().upgrade().unwrap();
+                let bound = state
+                    .registry
+                    .lookup(&SessionId::new("failed-resume"))
+                    .await
+                    .unwrap();
+                assert_eq!(bound.status, Some(AgentStatus::Idle));
+                assert_eq!(
+                    bound.pane_session_id.as_deref(),
+                    Some("aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee")
+                );
+                handle_master_wt_event(
+                    &self.state.get().unwrap().upgrade().unwrap(),
+                    serde_json::json!({
                         "method": "connection_state",
                         "params": {
                             "pane_id": "{AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE}",
@@ -12967,6 +12991,13 @@ async fn sidebar_cli_resume_startup_failure_before_create_returns_stays_historic
                     }),
                 )
                 .await;
+                let failed = state
+                    .registry
+                    .lookup(&SessionId::new("failed-resume"))
+                    .await
+                    .unwrap();
+                assert_eq!(failed.status, Some(AgentStatus::Historical));
+                assert!(failed.pane_session_id.is_none());
             }
             Ok(serde_json::json!({
                 "session_id": "AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE"
@@ -12996,7 +13027,6 @@ async fn sidebar_cli_resume_startup_failure_before_create_returns_stays_historic
     row.origin = Some(SessionOrigin::Unknown);
     row.status = Some(AgentStatus::Historical);
     row.title = Some("Test Session".into());
-    row.pane_session_id = Some("previous-pane".into());
     let identity = SessionIdentity::from_info(&row);
     state.registry.upsert(row).await;
 
@@ -13022,10 +13052,98 @@ async fn sidebar_cli_resume_startup_failure_before_create_returns_stays_historic
     assert!(state.born_bound.lock().await.is_empty());
     assert!(state.hook_owned.lock().await.is_empty());
     let events = crate::wt_protocol_events::take_test_published_events();
-    assert_eq!(events.len(), 1);
-    let event: serde_json::Value = serde_json::from_str(&events[0]).unwrap();
-    assert_eq!(event["method"], "session_registry_changed");
-    assert_eq!(event["params"], serde_json::json!({}));
+    assert!(!events.is_empty());
+    assert!(events.iter().all(|event| {
+        let event: serde_json::Value = serde_json::from_str(event).unwrap();
+        event["method"] == "session_registry_changed"
+    }));
+}
+
+#[tokio::test]
+async fn native_resume_tracking_enabled_born_replay_preserves_owner_and_title_work() {
+    use crate::agent_sessions::{AgentStatus, CliSource, SessionEvent, SessionLocation};
+    use crate::session_registry::{SessionIdentity, SessionInfo};
+
+    for retry in [false, true] {
+        let state = make_state();
+        let sid = SessionId::new("consumed-birth");
+        let mut row = SessionInfo::new(sid.clone(), "C:\\repo".into());
+        row.provider_id = Some("copilot".into());
+        row.cli_source = Some(CliSource::Copilot);
+        row.location = SessionLocation::Host;
+        row.status = Some(AgentStatus::Historical);
+        let identity = SessionIdentity::from_info(&row);
+        state.registry.upsert(row).await;
+        handle_master_wt_event(
+            &state,
+            serde_json::json!({
+                "method": "native_agent_observation",
+                "params": {
+                    "pane_id": "pane-a", "provider_id": "copilot",
+                    "window_id": 42, "tab_id": "tab", "mode_epoch": 1,
+                    "kind": "reset", "tracking_enabled": true
+                }
+            }),
+        )
+        .await;
+        assert!(
+            state
+                .registry
+                .assign_resume_pane_identity(&identity, "pane-a".into())
+                .await
+        );
+        state
+            .registry
+            .record_pane_connection_failure("pane-a", "startup failed", Some(false))
+            .await;
+        if retry {
+            assert!(
+                state
+                    .registry
+                    .assign_resume_pane_identity(&identity, "pane-b".into())
+                    .await
+            );
+            state.hook_owned.lock().await.insert(sid.clone());
+        } else {
+            state.born_bound.lock().await.insert(sid.clone());
+        }
+        let before = state.registry.lookup_identity(&identity).await.unwrap();
+        let hook_owned = state.hook_owned.lock().await.clone();
+        let born_bound = state.born_bound.lock().await.clone();
+        let birth = SessionEvent::SessionStarted {
+            key: sid.to_string(),
+            cli_source: CliSource::Copilot,
+            pane_session_id: "PANE-A".into(),
+            cwd: "C:\\stale".into(),
+            title: "stale title".into(),
+        };
+        let result = state
+            .registry
+            .apply_born_bound_event(birth.clone(), SessionLocation::Host, false)
+            .await;
+        assert!(result.rejected);
+        assert!(!result.applied);
+        assert!(!result.native_pane_owned);
+        let (applied, refresh) =
+            apply_master_session_event(&state, birth, true, SessionLocation::Host).await;
+        assert!(!applied);
+        assert!(refresh.is_none());
+        assert_eq!(
+            state.registry.lookup_identity(&identity).await.unwrap(),
+            before
+        );
+        assert_eq!(*state.hook_owned.lock().await, hook_owned);
+        assert_eq!(*state.born_bound.lock().await, born_bound);
+        assert_eq!(
+            before.status,
+            Some(if retry {
+                AgentStatus::Idle
+            } else {
+                AgentStatus::Historical
+            })
+        );
+        assert_eq!(before.pane_session_id.as_deref(), retry.then_some("pane-b"));
+    }
 }
 
 #[tokio::test(flavor = "current_thread")]

@@ -8831,22 +8831,6 @@ async fn execute_session_activation(
                     };
                     let lifecycle_gate = session_lifecycle_gate(state, &row.session_id).await;
                     let lifecycle_guard = lifecycle_gate.lock().await;
-                    if state
-                        .registry
-                        .mark_resume_dispatched_identity(&parsed.identity)
-                        .await
-                        .is_none()
-                    {
-                        return respond!(
-                            "resume_cli",
-                            false,
-                            Some(
-                                "The selected session changed before it could be resumed."
-                                    .to_string()
-                            ),
-                            Unknown
-                        );
-                    }
                     let binding_changed = state
                         .registry
                         .assign_resume_pane_identity(&parsed.identity, pane_session_id.clone())
@@ -9155,6 +9139,9 @@ async fn apply_master_session_event(
                     .registry
                     .apply_born_bound_event(event, birth_location, preserve_live_binding)
                     .await;
+                if result.rejected {
+                    return (false, None);
+                }
                 (result.applied, result.native_pane_owned)
             } else {
                 (state.registry.apply_event(event).await, false)

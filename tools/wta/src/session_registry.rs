@@ -558,6 +558,7 @@ pub struct NativePaneBindingPredecessor {
 pub struct BornBoundEventResult {
     pub applied: bool,
     pub native_pane_owned: bool,
+    pub rejected: bool,
 }
 
 #[derive(Debug, Clone, Copy, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
@@ -2650,6 +2651,22 @@ impl SessionRegistry for InMemoryRegistry {
             ..
         } = &ev
         {
+            if let Some(provider) = cli_source.canonical_provider_id() {
+                let identity = SessionIdentity {
+                    session_id: acp::schema::v1::SessionId::new(key.clone()),
+                    history_key: HistoryRowKey::new(&provider, location.clone(), key, None),
+                };
+                if state
+                    .failed_resume_assignments
+                    .contains(&(identity, pane_key(pane_session_id)))
+                {
+                    return BornBoundEventResult {
+                        applied: false,
+                        native_pane_owned: false,
+                        rejected: true,
+                    };
+                }
+            }
             if state.native_panes.contains_key(&pane_key(pane_session_id)) {
                 let applied = if let Some(provider) = cli_source.canonical_provider_id() {
                     let identity = SessionIdentity {
@@ -2671,6 +2688,7 @@ impl SessionRegistry for InMemoryRegistry {
                 return BornBoundEventResult {
                     applied,
                     native_pane_owned: true,
+                    rejected: false,
                 };
             }
         }
@@ -2689,6 +2707,7 @@ impl SessionRegistry for InMemoryRegistry {
         BornBoundEventResult {
             applied,
             native_pane_owned: false,
+            rejected: false,
         }
     }
 
@@ -3044,8 +3063,6 @@ fn register_native_born_binding_locked(
         row.last_activity_at_ms = Some(now_ms());
         upsert_locked(state, row);
     }
-    let revived =
-        mark_resume_dispatched_identity_locked(state, identity).is_some_and(|(changed, _)| changed);
     if previous.is_some() {
         let row = state.sessions.get(identity).cloned();
         if let (Some(native), Some(row)) = (state.native_panes.get_mut(&pane), row) {
@@ -3079,7 +3096,7 @@ fn register_native_born_binding_locked(
         native.observation.inferred_agent_session_id = None;
         native.observation.inferred_history_key = None;
     }
-    created || revived || assigned || confirmed || bind_native
+    created || assigned || confirmed || bind_native
 }
 
 fn set_location_locked(
@@ -3328,12 +3345,6 @@ fn apply_native_observation_locked(
                 let candidate = candidates.next().map(|(identity, _)| identity.clone());
                 if candidates.next().is_none() {
                     if let Some(identity) = candidate {
-                        if !state
-                            .failed_resume_assignments
-                            .contains(&(identity.clone(), pane.clone()))
-                        {
-                            mark_resume_dispatched_identity_locked(state, &identity);
-                        }
                         assign_resume_pane_identity_locked(
                             state,
                             &identity,
@@ -3582,6 +3593,9 @@ fn assign_resume_pane_identity_locked(
             .insert((identity.clone(), pane_session_id));
         return restored;
     }
+    // Promotion and binding share the consumed-pair fence and registry lock.
+    let revived =
+        mark_resume_dispatched_identity_locked(state, identity).is_some_and(|(changed, _)| changed);
     if let Some(previous) = state.active_by_pane.get(&pane_session_id).cloned() {
         if &previous != identity {
             let _ = end_entry(state, &previous, now);
@@ -3592,7 +3606,7 @@ fn assign_resume_pane_identity_locked(
         return false;
     };
     if entry.pane_session_id.as_deref() == Some(pane_session_id.as_str()) {
-        return false;
+        return revived;
     }
     if let Some(old_pane) = entry.pane_session_id.take() {
         let old_pane = pane_key(&old_pane);
@@ -3662,11 +3676,8 @@ fn assign_resume_pane_identity_locked(
     if let Some(PaneConnectionState::Failed { reason, .. }) =
         state.pane_connections.get(&pane_session_id)
     {
-        let event = SessionEvent::ConnectionFailed {
-            pane_session_id,
-            reason: reason.clone(),
-        };
-        apply_event_locked(state, event, None);
+        let reason = reason.clone();
+        apply_connection_failure_locked(state, &pane_session_id, &reason, now);
     }
     true
 }
@@ -5040,6 +5051,59 @@ mod tests {
             .unwrap()
             .extend(kind.as_object().unwrap().clone());
         serde_json::from_value(value).unwrap()
+    }
+
+    #[tokio::test]
+    async fn native_resume_cached_failure_after_unbound_reset_retains_error() {
+        for process_started in [Some(true), None, Some(false)] {
+            let registry = InMemoryRegistry::new();
+            let row = qualified_info(
+                "cached-failure",
+                "copilot",
+                SessionLocation::Host,
+                "history",
+            );
+            let identity = SessionIdentity::from_info(&row);
+            registry.upsert(row).await;
+            registry
+                .apply_native_observation(native_event(
+                    serde_json::json!({"kind":"reset","tracking_enabled":false}),
+                    1,
+                ))
+                .await;
+            registry
+                .record_pane_connection_failure(NATIVE_PANE, "trusted failure", process_started)
+                .await;
+            assert!(
+                registry
+                    .assign_resume_pane_identity(&identity, NATIVE_PANE.into())
+                    .await
+            );
+            let row = registry.lookup_identity(&identity).await.unwrap();
+            let failed_start = process_started == Some(false);
+            assert_eq!(
+                row.status,
+                Some(if failed_start {
+                    AgentStatus::Historical
+                } else {
+                    AgentStatus::Error
+                })
+            );
+            assert_eq!(
+                row.pane_session_id.as_deref(),
+                (!failed_start).then_some(NATIVE_PANE)
+            );
+            assert_eq!(row.last_error.as_deref(), Some("trusted failure"));
+            assert!(
+                !registry
+                    .apply_event(SessionEvent::ConnectionFailed {
+                        pane_session_id: NATIVE_PANE.into(),
+                        reason: "untrusted helper failure".into(),
+                    })
+                    .await
+            );
+            assert_eq!(registry.lookup_identity(&identity).await.unwrap(), row);
+        }
     }
 
     async fn pending_native(registry: &InMemoryRegistry, pane: &str, birth: u64, sequence: u64) {
