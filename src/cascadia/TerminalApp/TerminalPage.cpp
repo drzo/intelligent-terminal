@@ -16778,6 +16778,9 @@ namespace winrt::TerminalApp::implementation
             // (or ProfileDefaults) instead of the profile already resolved above.
             newTerminalArgs.Profile(Utils::GuidToString(profile.Guid()));
             newTerminalArgs.Commandline(winrt::hstring{ command });
+            // ResumeCommand already includes the executable, not arguments to
+            // append to the selected profile's command line.
+            newTerminalArgs.AppendCommandLine(false);
             controlSettings = Settings::TerminalSettings::CreateWithNewTerminalArgs(_settings, newTerminalArgs);
             restoredAgent.agent = id;
             restoredAgent.sessionId = newTerminalArgs.CustomAgentSessionId();

@@ -723,6 +723,7 @@ namespace TerminalAppLocalTests
         TEST_METHOD(CustomResumeRetainsIdentityAfterDefinitionChanges);
         TEST_METHOD(CustomHistoryActivationOverridesInheritedProvider);
         TEST_METHOD(CustomResumeWithoutProfilePreservesDefaultSettings);
+        TEST_METHOD(CustomResumeOverridesProfileAppendCommandLine);
         TEST_METHOD(CustomResumeRejectsPersistedNonHostBackend);
         TEST_METHOD(ElevatedPersistedTabExcludesAgentPanes);
         TEST_METHOD(ResumedPaneIdentityPersistsWithoutHooksOrBannerParsing);
@@ -4243,6 +4244,40 @@ namespace TerminalAppLocalTests
             VERIFY_ARE_EQUAL(winrt::hstring{ directory }, control.Settings().StartingDirectory());
             const auto manager = winrt::get_self<winrt::TerminalApp::implementation::ContentManager>(page->_manager);
             VERIFY_ARE_EQUAL(agent.Id(), manager->NativeAgentProviderId(control.ContentId()));
+        });
+    }
+
+    void TabTests::CustomResumeOverridesProfileAppendCommandLine()
+    {
+        using State = winrt::Microsoft::Terminal::TerminalConnection::ConnectionState;
+        const auto page = _commonSetup(nullptr, nullptr, std::nullopt, true);
+        TestOnUIThread([&]() {
+            CustomAgent agent{ L"custom:work", L"Work" };
+            agent.CliCommand(L"work.exe");
+            agent.ResumeCommand(L"work.exe resume {sessionId}");
+            page->_settings.GlobalSettings().CustomAgents(winrt::single_threaded_vector<CustomAgent>({ agent }));
+            const auto profile = page->_settings.ActiveProfiles().GetAt(1);
+            const winrt::hstring profileCli{ L"work.exe --profile-option" };
+            profile.Commandline(profileCli);
+            profile.AgentProfileId(agent.Id());
+            for (const auto append : { false, true })
+            {
+                NewTerminalArgs args;
+                args.Profile(Utils::GuidToString(profile.Guid()));
+                args.NativeAgentProviderId(agent.Id());
+                args.CustomAgentSessionId(L"abc");
+                args.AppendCommandLine(append);
+                const auto connection = winrt::make_self<TestConnection>(
+                    ::Microsoft::Console::Utils::CreateGuid(), State::Connected);
+                const auto pane = page->_MakePane(args, nullptr, *connection);
+                VERIFY_IS_NOT_NULL(pane);
+                const auto settings = winrt::get_self<winrt::Microsoft::Terminal::Settings::TerminalSettings>(
+                    pane->GetTerminalControl().Settings());
+                VERIFY_ARE_EQUAL(winrt::hstring{ LR"("work.exe" "resume" "abc")" }, settings->Commandline());
+                VERIFY_IS_FALSE(args.AppendCommandLine());
+                VERIFY_ARE_EQUAL(profileCli, profile.Commandline());
+                pane->Shutdown();
+            }
         });
     }
 
