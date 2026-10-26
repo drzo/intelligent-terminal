@@ -210,9 +210,7 @@ namespace winrt::Microsoft::Terminal::Settings::Model::implementation
     try
     {
         const std::scoped_lock introductionGuard{ _sidebarIntroductionMutex };
-        // A pending presentation owns the cross-process lock. Our ordinary
-        // state writer may borrow it instead of waiting on its own reservation.
-        const auto sidebarLock = _sidebarIntroductionLock ? wil::unique_handle{} : LockSidebarState();
+        const auto sidebarLock = LockSidebarState();
         Json::Value previous{ Json::objectValue };
         try
         {
@@ -280,8 +278,13 @@ namespace winrt::Microsoft::Terminal::Settings::Model::implementation
 
     wil::unique_handle ApplicationState::LockSidebarState(const bool wait) const
     {
+        return _lockSidebarFile(L".sidebar.lock", wait);
+    }
+
+    wil::unique_handle ApplicationState::_lockSidebarFile(const std::wstring_view suffix, const bool wait) const
+    {
         auto path = _sharedPath;
-        path += L".sidebar.lock";
+        path += suffix;
         // A file lock follows the settings directory's user/package isolation and
         // is shared by elevated and unelevated processes, without a global mutex.
         for (auto attempt = 0; attempt < (wait ? 1000 : 1); ++attempt)
@@ -466,8 +469,13 @@ namespace winrt::Microsoft::Terminal::Settings::Model::implementation
         {
             return 0;
         }
-        auto lock = LockSidebarState(false);
+        auto lock = _lockSidebarFile(L".sidebar.introduction.lock", false);
         if (!lock)
+        {
+            return 0;
+        }
+        const auto stateLock = LockSidebarState(false);
+        if (!stateLock)
         {
             return 0;
         }
@@ -499,6 +507,7 @@ namespace winrt::Microsoft::Terminal::Settings::Model::implementation
         {
             // Keep exclusion on failure, including cancellation/window close
             // after presentation. The page timer and ordinary writer can retry.
+            const auto stateLock = LockSidebarState();
             _persistSidebarFlag("sidebarIntroductionShown");
         }
         _sidebarIntroductionPresented = false;

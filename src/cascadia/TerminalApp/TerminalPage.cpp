@@ -8505,6 +8505,14 @@ namespace winrt::TerminalApp::implementation
         }
     }
 
+    void TerminalPage::_OnSidebarIntroductionCloseButtonClick(const MUX::Controls::TeachingTip&, const IInspectable&)
+    {
+        if (_sidebarIntroductionClaim)
+        {
+            _sidebarIntroductionDismissed = true;
+        }
+    }
+
     void TerminalPage::WindowMoved()
     {
         if (_sidebarIntroductionClaim)

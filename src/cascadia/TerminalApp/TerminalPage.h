@@ -453,6 +453,7 @@ namespace winrt::TerminalApp::implementation
         Microsoft::UI::Xaml::Controls::TeachingTip _PrepareSidebarIntroduction();
         void _OnSidebarIntroductionPresented();
         void _OnSidebarIntroductionClosed(const Microsoft::UI::Xaml::Controls::TeachingTip& sender, const Windows::Foundation::IInspectable& args);
+        void _OnSidebarIntroductionCloseButtonClick(const Microsoft::UI::Xaml::Controls::TeachingTip& sender, const Windows::Foundation::IInspectable& args);
         bool _ReleaseSidebarIntroduction(bool shown);
         void _NotifySidebarPersistenceFailure();
         bool _sidebarIntroductionPresented{ false };

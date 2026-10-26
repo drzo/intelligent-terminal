@@ -145,6 +145,29 @@ Describe 'Feature: Sidebar upgrade' -Tag @('Feature', 'SidebarUpgrade') {
             @(Get-UpgradeVisiblePeer SidebarIntroductionTip) | Should -HaveCount 0
         }
     }
+    It 'Settings reload does not block while the introduction is open' {
+        Start-UpgradeFixture -Migration $true -Shown $false -Layout vertical
+        Wait-Until -TimeoutSec 10 -Condition { @(Get-UpgradeVisiblePeer SidebarIntroductionTip).Count -eq 1 } | Out-Null
+        Set-WtSetting -App $script:app -Key tabLayout -Value horizontal | Out-Null
+        Wait-Until -TimeoutSec 5 -Because 'settings reloads promptly while the introduction is still pending' -Condition {
+            @(Get-UpgradeVisiblePeer TabView).Count -eq 1 -and
+                @(Get-UpgradeVisiblePeer SidebarIntroductionTip).Count -eq 1 -and
+                (Get-WtStateObject -App $script:app).sidebarIntroductionShown -eq $false
+        } | Out-Null
+        Start-Sleep -Seconds 2
+        $messages = @(Get-WtReswTextValues -Key FailedToWriteToSettings)
+        $root = [Windows.Automation.AutomationElement]::FromHandle([IntPtr][long]$script:app.Hwnd)
+        $warnings = @($root.FindAll([Windows.Automation.TreeScope]::Descendants,
+            [Windows.Automation.Condition]::TrueCondition) | Where-Object {
+                $name = $_.Current.Name
+                $_.Current.ProcessId -eq $script:app.Pid -and -not $_.Current.IsOffscreen -and
+                    @($messages | Where-Object { $name.Contains($_) }).Count -gt 0
+            })
+        $warnings | Should -HaveCount 0
+        @(Get-UpgradeVisiblePeer SidebarIntroductionTip) | Should -HaveCount 1
+        Close-UpgradeIntroduction
+        Wait-Until -TimeoutSec 10 -Condition { (Get-WtStateObject -App $script:app).sidebarIntroductionShown -eq $true } | Out-Null
+    }
     It 'Introduction survives window movement, maximize and restore until dismissed (<Layout>)' -ForEach @(
         @{ Layout = 'vertical'; TabId = 'ItemsList' }
         @{ Layout = 'horizontal'; TabId = 'TabView' }
