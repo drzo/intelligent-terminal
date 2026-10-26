@@ -83,6 +83,9 @@ using namespace winrt::Windows::UI::Xaml;
 using namespace winrt::Windows::UI::Xaml::Media;
 namespace AgentPolicy = ::Microsoft::Terminal::Settings::Model::AgentPolicy;
 namespace AgentYoloPolicy = ::Microsoft::Terminal::Settings::Model::AgentYoloPolicy;
+
+// Keep direct pane dismissal disabled until split-pane chrome exposes the same affordance.
+static constexpr bool PaneDismissActionsEnabled = false;
 using namespace ::TerminalApp;
 using namespace ::Microsoft::Console;
 using namespace ::Microsoft::Terminal::Core;
@@ -8396,11 +8399,26 @@ namespace winrt::TerminalApp::implementation
         }
         const auto target = _isVerticalLayout ?
                                 winrt::get_self<implementation::TabStrip>(_tabStrip)->SidebarIntroductionTarget() :
-                                _tabView.SelectedItem().try_as<FrameworkElement>();
+                                winrt::get_self<implementation::TabRowControl>(_tabRow)->HorizontalTabsIntroductionTarget();
         if (!target || target.Visibility() != Visibility::Visible ||
             target.ActualWidth() <= 0 || target.ActualHeight() <= 0)
         {
             return nullptr;
+        }
+        if (!_isVerticalLayout)
+        {
+            const auto items = _tabView.TabItems();
+            const auto firstTab = items.Size() ? items.GetAt(0).try_as<FrameworkElement>() : nullptr;
+            if (!firstTab || firstTab.Visibility() != Visibility::Visible ||
+                firstTab.ActualWidth() <= 0 || firstTab.ActualHeight() <= 0)
+            {
+                return nullptr;
+            }
+            const auto firstTabBounds = firstTab.TransformToVisual(target.Parent().as<UIElement>()).TransformBounds(Windows::Foundation::Rect{ 0, 0, static_cast<float>(firstTab.ActualWidth()), static_cast<float>(firstTab.ActualHeight()) });
+            Media::TranslateTransform position;
+            position.X(_isRightToLeft ? firstTabBounds.X + firstTabBounds.Width - target.ActualWidth() : firstTabBounds.X);
+            position.Y(firstTabBounds.Y + firstTabBounds.Height - target.ActualHeight());
+            target.RenderTransform(position);
         }
         const auto titleKey = _isVerticalLayout ? L"SidebarIntroductionTitle" : L"HorizontalTabsIntroductionTitle";
         const auto descriptionKey = _isVerticalLayout ? L"SidebarIntroductionDescription" : L"HorizontalTabsIntroductionDescription";
@@ -18957,7 +18975,7 @@ namespace winrt::TerminalApp::implementation
 
         makeMenuItem(RS_(L"SplitPaneText"), L"\xF246", splitPaneMenu, menu);
 
-        // Only wire up "Close Pane" if there's multiple panes.
+        // Only add pane-specific commands if there are multiple panes.
         if (_GetFocusedTabImpl()->GetLeafPaneCount() > 1)
         {
             MUX::Controls::CommandBarFlyout swapPaneMenu{};
@@ -18998,7 +19016,10 @@ namespace winrt::TerminalApp::implementation
 
             makeItem(RS_(L"TogglePaneZoomText"), L"\xE8A3", ActionAndArgs{ ShortcutAction::TogglePaneZoom, nullptr }, menu);
             makeItem(RS_(L"CloseOtherPanesText"), L"\xE89F", ActionAndArgs{ ShortcutAction::CloseOtherPanes, nullptr }, menu);
-            makeItem(RS_(L"PaneClose"), L"\xE89F", ActionAndArgs{ ShortcutAction::ClosePane, nullptr }, menu);
+            if constexpr (PaneDismissActionsEnabled)
+            {
+                makeItem(RS_(L"PaneClose"), L"\xE89F", ActionAndArgs{ ShortcutAction::ClosePane, nullptr }, menu);
+            }
         }
 
         if (control.ConnectionState() >= ConnectionState::Closed)

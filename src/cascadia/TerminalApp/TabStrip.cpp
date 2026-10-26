@@ -38,6 +38,8 @@ using namespace winrt::Windows::UI::Xaml::Controls;
 
 static constexpr double SearchPanelExpandedHeight = 40.0;
 static constexpr auto SearchPanelAnimationDuration = std::chrono::milliseconds{ 200 };
+// Keep the pane dismiss implementation intact so it can be restored when split-pane chrome exposes the same affordance.
+static constexpr bool PaneDismissActionsEnabled = false;
 
 namespace winrt
 {
@@ -269,7 +271,7 @@ namespace winrt::TerminalApp::implementation
 
     void TabStripPaneItem::UpdateCloseVisibility(bool railCollapsed)
     {
-        CloseVisibility(!railCollapsed && (ActiveIndicatorVisibility() == Visibility::Visible || _pointerOver || _keyboardFocused) ?
+        CloseVisibility(PaneDismissActionsEnabled && !railCollapsed && (ActiveIndicatorVisibility() == Visibility::Visible || _pointerOver || _keyboardFocused) ?
                             Visibility::Visible :
                             Visibility::Collapsed);
     }
