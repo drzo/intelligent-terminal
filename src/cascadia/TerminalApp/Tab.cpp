@@ -441,6 +441,7 @@ namespace winrt::TerminalApp::implementation
             {
                 ShowBellIndicator(false);
             }
+            Focused.raise();
         }
     }
 

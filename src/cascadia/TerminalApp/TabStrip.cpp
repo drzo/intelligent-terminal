@@ -119,10 +119,21 @@ namespace winrt::TerminalApp::implementation
         if (_locallyHeadless != headless)
         {
             _locallyHeadless = headless;
-            UpdateStatusText(TerminalPage::_SidebarHistoryStatusText(winrt::to_string(Status())));
+            UpdateStatusText(TerminalPage::_SidebarHistoryStatusText(winrt::to_string(StatusForPresentation())));
             return true;
         }
         return false;
+    }
+
+    bool TabStripHistoryItem::SetUnreadCompletion(const bool unread)
+    {
+        const auto previous = _hasUnreadCompletion;
+        _hasUnreadCompletion = unread && Status() == L"Idle";
+        if (previous || _hasUnreadCompletion)
+        {
+            UpdateStatusText(TerminalPage::_SidebarHistoryStatusText(winrt::to_string(StatusForPresentation())));
+        }
+        return previous != _hasUnreadCompletion;
     }
 
     DataTemplate TabStripItemTemplateSelector::SelectTemplateCore(IInspectable const& item)
@@ -1915,6 +1926,51 @@ namespace winrt::TerminalApp::implementation
         return Resources().Lookup(box_value(styleKey)).as<WUX::Style>();
     }
 
+    bool TabStrip::_updateHistoryCompletionPresentation(const TerminalApp::TabStripHistoryItem& item)
+    {
+        const auto nativeItem = winrt::get_self<TabStripHistoryItem>(item);
+        const auto changed = nativeItem->SetUnreadCompletion(_agentCompletionResolver && _agentCompletionResolver(item));
+        const auto style = _historyStatusTextStyle(nativeItem->StatusForPresentation());
+        const auto styleChanged = item.StatusTextStyle() != style;
+        item.StatusTextStyle(style);
+        return changed || styleChanged;
+    }
+
+    void TabStrip::SetAgentCompletionResolver(std::function<bool(const TerminalApp::TabStripHistoryItem&)> resolver)
+    {
+        _agentCompletionResolver = std::move(resolver);
+        RefreshHistoryAgentCompletions();
+    }
+
+    void TabStrip::RefreshHistoryAgentCompletions()
+    {
+        bool changed = false;
+        for (size_t index = 0; index < _historySnapshot.size(); ++index)
+        {
+            if (_updateHistoryCompletionPresentation(_historySnapshot[index]))
+            {
+                _historySearchTerms[index] = _buildHistorySearchTerms(_historySnapshot[index]);
+                changed = true;
+            }
+        }
+        for (const auto& item : _historyItems)
+        {
+            changed = _updateHistoryCompletionPresentation(item) || changed;
+            if (changed)
+            {
+                if (const auto container = ItemsList().ContainerFromItem(item).try_as<ListViewItem>())
+                {
+                    _applyHistoryRowForeground(container.ContentTemplateRoot().try_as<FrameworkElement>(), item);
+                    _applyHistoryRowAutomation(container, item);
+                }
+            }
+        }
+        if (changed)
+        {
+            _applyHistoryProjection(true);
+        }
+    }
+
     void TabStrip::CommitHistorySnapshot(std::vector<TerminalApp::TabStripHistoryItem> items, const bool ready)
     {
         _historySnapshotReady = ready;
@@ -1935,7 +1991,7 @@ namespace winrt::TerminalApp::implementation
             item.IsCurrent(false);
             item.CurrentBackground(nullptr);
             item.CurrentForeground(nullptr);
-            item.StatusTextStyle(_historyStatusTextStyle(item.Status()));
+            _updateHistoryCompletionPresentation(item);
             auto iconKey = box_value(L"AgentIcon." + item.AgentId());
             if (!Resources().HasKey(iconKey))
             {
@@ -2156,6 +2212,7 @@ namespace winrt::TerminalApp::implementation
                         status == L"Error" ||
                         status == L"InUse");
             item.IsHistorical(status == L"Ended" || status == L"Historical");
+            _updateHistoryCompletionPresentation(item);
         };
         for (size_t index = 0; index < _historySnapshot.size(); ++index)
         {
@@ -3122,6 +3179,7 @@ namespace winrt::TerminalApp::implementation
                 left.IconTemplate() == right.IconTemplate() &&
                 (!includeStatus ||
                  (left.Status() == right.Status() &&
+                  winrt::get_self<TabStripHistoryItem>(left)->HasUnreadCompletion() == winrt::get_self<TabStripHistoryItem>(right)->HasUnreadCompletion() &&
                   left.StatusText() == right.StatusText() &&
                   left.PaneSessionId() == right.PaneSessionId() &&
                   left.IsLive() == right.IsLive() &&
@@ -3301,6 +3359,7 @@ namespace winrt::TerminalApp::implementation
                             current.IsHistorical(incoming.IsHistorical());
                             nativeCurrent->BackgroundTab(nativeIncoming->BackgroundTab());
                             nativeCurrent->OtherWindow(nativeIncoming->OtherWindow());
+                            nativeCurrent->SetUnreadCompletion(nativeIncoming->HasUnreadCompletion());
                             if (paneChanged)
                             {
                                 nativeCurrent->UpdateHeadlessState(false);

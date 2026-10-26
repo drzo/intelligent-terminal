@@ -200,6 +200,15 @@ namespace winrt::TerminalApp::implementation
         // for it. The Title change will be propagated upwards through the tab's
         // PropertyChanged event handler.
         newTabImpl->ActivePaneChanged({ get_weak(), &TerminalPage::_activePaneChanged });
+        newTabImpl->Focused([weakTab, weakThis{ get_weak() }]() {
+            if (const auto page = weakThis.get())
+            {
+                if (const auto tab = weakTab.get())
+                {
+                    page->_ReadTabAgentCompletions(*tab);
+                }
+            }
+        });
         newTabImpl->PaneProjectionChanged([weakTab, weakThis{ get_weak() }]() {
             const auto page = weakThis.get();
             const auto tab = weakTab.get();

@@ -111,11 +111,15 @@ namespace winrt::TerminalApp::implementation
         bool RefreshAge(uint64_t nowMs);
         void UpdateStatusText(winrt::hstring const& text);
         bool UpdateHeadlessState(bool headless);
+        bool SetUnreadCompletion(bool unread);
+        bool HasUnreadCompletion() const noexcept { return _hasUnreadCompletion; }
+        winrt::hstring StatusForPresentation() const { return _hasUnreadCompletion ? winrt::hstring{ L"Complete" } : Status(); }
         til::property_changed_event PropertyChanged;
 
     private:
         std::optional<std::pair<uint64_t, uint64_t>> _ageKey;
         bool _locallyHeadless{ false };
+        bool _hasUnreadCompletion{ false };
     };
 
     struct TabStripHistoryActivationEventArgs : TabStripHistoryActivationEventArgsT<TabStripHistoryActivationEventArgs>
@@ -371,6 +375,8 @@ namespace winrt::TerminalApp::implementation
         bool FocusTabSearch();
         winrt::Windows::Foundation::Collections::IObservableVector<TerminalApp::TabStripHistoryItem> HistoryItems() const { return _historyItems; }
         void CommitHistorySnapshot(std::vector<TerminalApp::TabStripHistoryItem> items, bool ready = false);
+        void SetAgentCompletionResolver(std::function<bool(const TerminalApp::TabStripHistoryItem&)> resolver);
+        void RefreshHistoryAgentCompletions();
         void InvalidateHistorySnapshotReadiness() noexcept { _historySnapshotReady = false; }
         void TryCompleteAgentFilterTelemetry();
         struct RepresentedHistorySession
@@ -629,6 +635,7 @@ namespace winrt::TerminalApp::implementation
         }
         winrt::Windows::Foundation::Collections::IObservableVector<TerminalApp::TabStripHistoryItem> _historyItems{ nullptr };
         std::vector<TerminalApp::TabStripHistoryItem> _historySnapshot;
+        std::function<bool(const TerminalApp::TabStripHistoryItem&)> _agentCompletionResolver;
         std::vector<std::vector<winrt::hstring>> _historySearchTerms;
         winrt::Windows::Foundation::Collections::IObservableVector<winrt::Windows::Foundation::IInspectable>::VectorChanged_revoker _vectorChangedRevoker;
         winrt::Windows::UI::ViewManagement::AccessibilitySettings _accessibilitySettings;
@@ -701,6 +708,7 @@ namespace winrt::TerminalApp::implementation
         void _updateSearchVisualState();
         static std::vector<winrt::hstring> _buildHistorySearchTerms(TerminalApp::TabStripHistoryItem const& item);
         winrt::Windows::UI::Xaml::Style _historyStatusTextStyle(winrt::hstring const& status);
+        bool _updateHistoryCompletionPresentation(const TerminalApp::TabStripHistoryItem& item);
         bool _matchesHistorySearch(size_t index) const;
         void _applyHistoryProjection(bool preserveScroll = false);
         void _updateHistoryVisualState();

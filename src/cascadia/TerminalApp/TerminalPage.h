@@ -900,6 +900,7 @@ namespace winrt::TerminalApp::implementation
         TerminalApp::ContentManager _manager{ nullptr };
         winrt::event_token _keepRunningTabsChangedToken{};
         winrt::event_token _paneWindowChangedToken{};
+        winrt::event_token _agentCompletionChangedToken{};
 
         std::shared_ptr<TerminalSettingsCache> _terminalSettingsCache{};
 
@@ -1034,6 +1035,11 @@ namespace winrt::TerminalApp::implementation
         void _PreserveNativeAgentIdentity(const Microsoft::Terminal::Control::TermControl& control);
         void _ReplayNativeAgentObservationsForReceiver(uint64_t receiverGeneration);
         std::optional<_RichTabAgentInfo> _RichTabAgentInfoForControl(const Microsoft::Terminal::Control::TermControl& control);
+        void _UpdateAgentCompletions();
+        void _ReadTabAgentCompletions(Tab& tab);
+        void _AgentCompletionChanged(const winrt::guid& paneId);
+        bool _HistoryItemHasUnreadCompletion(const TerminalApp::TabStripHistoryItem& item) const;
+        std::string_view _AgentStatusForPresentation(const _RichTabAgentInfo& info) const;
         void _SyncNativeAgentStatusMode();
         void _PublishNativeAgentSignal(const Microsoft::Terminal::Control::TermControl& control, bool attention, uint64_t progressState);
         void _PublishNativeAgentObservation(const Microsoft::Terminal::Control::TermControl& control, std::string_view kind, bool reset = false, std::optional<uint64_t> progressState = std::nullopt, bool birthBeforeReset = false);
