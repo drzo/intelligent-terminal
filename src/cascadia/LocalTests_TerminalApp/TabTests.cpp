@@ -12387,11 +12387,14 @@ namespace TerminalAppLocalTests
             VERIFY_IS_TRUE(strip->ItemsList().IsItemClickEnabled());
             const auto item = page->_tabStrip.HistoryItems().GetAt(0);
 
-            strip->SearchTextBox().Text(L"no match");
+            page->_tabStrip.SearchQuery(L"no match");
+            VERIFY_ARE_EQUAL(0u, page->_tabStrip.HistoryItems().Size());
             page->_CompleteSidebarHistoryRefresh(generation, page->_ParseSidebarHistorySnapshot(R"({"sessions":[],"history_status":"loading"})"));
-            VERIFY_IS_FALSE(page->_tabStrip.HistoryLoading());
+            VERIFY_IS_TRUE(page->_tabStrip.HistoryLoading());
             VERIFY_IS_TRUE(strip->HasHistoryItems());
-            strip->SearchTextBox().Text(L"");
+            page->_tabStrip.SearchQuery(L"");
+            VERIFY_ARE_EQUAL(1u, page->_tabStrip.HistoryItems().Size());
+            VERIFY_IS_FALSE(page->_tabStrip.HistoryLoading());
 
             for (const auto response : {
                      R"({"sessions":[],"history_status":"error"})",
