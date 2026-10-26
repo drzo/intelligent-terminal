@@ -210,7 +210,7 @@ namespace TerminalAppLocalTests
         return !header.ShowProgressRing() &&
                _findProgressElement(header, L"HeaderProgressRingPresenter").Visibility() == Visibility::Collapsed &&
                display.ShowProgressRing() == shown &&
-               root.FindName(L"TabGroupChevronIcon").as<UIElement>().Visibility() == (shown ? Visibility::Collapsed : Visibility::Visible) &&
+               root.FindName(L"TabGroupChevronIcon").as<UIElement>().Visibility() == (display.ShowStatusIcon() ? Visibility::Collapsed : Visibility::Visible) &&
                _progressIndicatorsMatch(root, L"Tab", shown, indeterminate, value);
     }
 
@@ -481,6 +481,7 @@ namespace TerminalAppLocalTests
         TEST_METHOD(VerticalTabStripCollapsedItemsPreserveSelection);
         TEST_METHOD(VerticalTabKeyboardFocusPreservesSelection);
         TEST_METHOD(VerticalTabStripHostsPaneGroups);
+        TEST_METHOD(PaneContextMenuOmitsDirectClose);
         TEST_METHOD(VerticalTabPaneSelectionTracksSelectedTab);
         TEST_METHOD(VerticalSidebarPaneActivationSkipsPreviousFocus);
         TEST_METHOD(HorizontalTabProgressSurvivesAsyncVerticalTeardown);
@@ -495,6 +496,7 @@ namespace TerminalAppLocalTests
         TEST_METHOD(SidebarHeaderRenamerStaysAtTitlePosition);
         TEST_METHOD(VerticalTabStripCompatibilitySetPaneItemsPreservesHeaderProgress);
         TEST_METHOD(VerticalSinglePaneProgressReplacesProfileIcon);
+        TEST_METHOD(SidebarBellReplacesIdentityIcon);
         TEST_METHOD(ProgressReplacementPreservesIndependentStatusGlyphs);
         TEST_METHOD(PaneProgressSurvivesTabLayoutLifecycle);
         TEST_METHOD(VerticalTabPaneProgressThemeSwitchRefreshesBrushes);
@@ -504,6 +506,7 @@ namespace TerminalAppLocalTests
         TEST_METHOD(AgentScopeMoveTabDispatchPreservesOwner);
         TEST_METHOD(PresentedTabNumbersUseRealBindings);
         TEST_METHOD(SidebarNavigationHotkeysCycleDisplayedTabs);
+        TEST_METHOD(SidebarNavigationHotkeysRevealSelectedTab);
         TEST_METHOD(AgentScopeMoveTabSearchAndPinBoundaries);
         TEST_METHOD(MoveTabDispatchPreservesOrdinaryLayouts);
         TEST_METHOD(VerticalTabSelectionPreservesPresentation);
@@ -533,6 +536,8 @@ namespace TerminalAppLocalTests
         TEST_METHOD(VerticalTabThemeChangesDoNotReprojectPanes);
         TEST_METHOD(VerticalTabColorsFollowSidebarTheme);
         TEST_METHOD(VerticalTabStripUsesNativeInteractionStates);
+        TEST_METHOD(VerticalTabStripContrastsRenderedColors);
+        TEST_METHOD(VerticalTabStripCloseAffordanceTracksRowState);
         TEST_METHOD(VerticalTabStripRefreshesHighContrastColors);
         TEST_METHOD(VerticalTabGroupingIgnoresAgentPane);
         TEST_METHOD(AgentViewFiltersSplitPaneChildren);
@@ -545,7 +550,9 @@ namespace TerminalAppLocalTests
         TEST_METHOD(SidebarIntroductionAnchorMatchesDesign);
         TEST_METHOD(SidebarIntroductionContentMatchesDesign);
         TEST_METHOD(SidebarIntroductionPopupMatchesDesign);
+        TEST_METHOD(SidebarIntroductionSurvivesHostPopupDismissal);
         TEST_METHOD(HorizontalTabsIntroductionPopupMatchesDesign);
+        TEST_METHOD(HorizontalTabsIntroductionPopupMatchesDesignRtl);
         TEST_METHOD(LiteralSearchHighlighting);
         TEST_METHOD(VerticalTabAgentsOnlyHasNoStatusFooter);
         TEST_METHOD(VerticalTabStaticHeaderAndIndependentFilterMenu);
@@ -655,6 +662,7 @@ namespace TerminalAppLocalTests
         TEST_METHOD(RichTabMetadataExpandsVerticalRow);
         TEST_METHOD(RichTabManifestAcceptsCamelCaseFieldIds);
         TEST_METHOD(RichTabRequestIncludesFirstPartyFields);
+        TEST_METHOD(RichTabAgentStatusHidesNonLiveSessions);
         TEST_METHOD(VisibleFieldsDoNotFilterTabs);
 
         TEST_METHOD(CreateSimpleTerminalXamlType);
@@ -662,6 +670,7 @@ namespace TerminalAppLocalTests
 
         TEST_METHOD(CreateTerminalPage);
         TEST_METHOD(PaneContextPropagatesCaptureFailure);
+        TEST_METHOD(ProtocolProfilesReflectRuntimeSettings);
         TEST_METHOD(AgentSessionRestoreRequiresPersistedBufferPath);
         TEST_METHOD(InteractiveResumeCommandPublishesSessionLifecycle);
         TEST_METHOD(InteractiveResumeOscPersistsSessionWithoutHooks);
@@ -739,6 +748,8 @@ namespace TerminalAppLocalTests
         TEST_METHOD(TryDuplicateBadTab);
         TEST_METHOD(TryDuplicateBadPane);
         TEST_METHOD(ProfileAwareSplitPreservesExplicitTargets);
+        TEST_METHOD(SplitActionDoesNotRetainAgentIdentity);
+        TEST_METHOD(NewTabActionDoesNotRetainDefaultAgentIdentity);
         TEST_METHOD(SplitDirectoryFollowsShellAndAgentSources);
         TEST_METHOD(SplitDirectoryPreservesExplicitAndRestoreArguments);
         TEST_METHOD(SplitDirectoryDuplicatePreservesElevation);
@@ -856,7 +867,7 @@ namespace TerminalAppLocalTests
         void _verifyContentTransferReviewScroll(bool transfer, bool reject = true);
         void _verifyContentTransferReviewSuppression(bool singlePane, bool destinationSuppressed = false);
         void _waitForContentTransferReviewUI(const std::function<bool()>& predicate);
-        void _verifyTabIntroductionPopup(const bool vertical);
+        void _verifyTabIntroductionPopup(const bool vertical, const wchar_t* language);
         TransferTabSnapshot _snapshotTransferTab(const winrt::com_ptr<winrt::TerminalApp::implementation::TerminalPage>& page,
                                                const winrt::com_ptr<winrt::TerminalApp::implementation::Tab>& tab);
         void _verifyTransferTabUnchanged(const winrt::com_ptr<winrt::TerminalApp::implementation::TerminalPage>& page,
@@ -1644,6 +1655,62 @@ namespace TerminalAppLocalTests
                 winrt::hresult_error,
                 [](const winrt::hresult_error& error) { return error.code() == E_INVALIDARG; });
         }
+    }
+
+    void TabTests::ProtocolProfilesReflectRuntimeSettings()
+    {
+        const auto page = _commonSetup();
+        const winrt::guid defaultId{ L"{5784e726-2a17-4932-bd11-18a387ef9c01}" };
+        const winrt::guid generatedId{ L"{5784e726-2a17-4932-bd11-18a387ef9c02}" };
+        winrt::TerminalApp::TerminalPage projectedPage{ nullptr };
+        TestOnUIThread([&]() {
+            projectedPage = *page;
+            page->_settings = CascadiaSettings{
+                LR"({
+                    "defaultProfile": "{5784e726-2a17-4932-bd11-18a387ef9c01}",
+                    "profiles": [
+                        { "guid": "{5784e726-2a17-4932-bd11-18a387ef9c01}", "name": "Same name" },
+                        { "guid": "{5784e726-2a17-4932-bd11-18a387ef9c03}", "name": "Hidden", "hidden": true }
+                    ]
+                })",
+                L"{}"
+            };
+            Profile generated{ generatedId };
+            generated.Name(L"Same name");
+            generated.AgentProfileId(L"copilot");
+            page->_settings.AllProfiles().Append(generated);
+            page->_settings.ActiveProfiles().Append(generated);
+        });
+
+        const auto query = [&]() {
+            winrt::Windows::Foundation::IAsyncOperation<winrt::Windows::Foundation::Collections::IVector<winrt::Microsoft::Terminal::Protocol::ProfileInfo>> operation{ nullptr };
+            TestOnUIThread([&]() {
+                operation = projectedPage.GetProtocolProfiles();
+            });
+            return operation.get();
+        };
+        const auto profiles = query();
+        VERIFY_ARE_EQUAL(2u, profiles.Size());
+        VERIFY_ARE_EQUAL(defaultId, profiles.GetAt(0).Id);
+        VERIFY_IS_TRUE(profiles.GetAt(0).IsDefault);
+        VERIFY_IS_TRUE(profiles.GetAt(0).AgentId.empty());
+        VERIFY_ARE_EQUAL(generatedId, profiles.GetAt(1).Id);
+        VERIFY_ARE_EQUAL(profiles.GetAt(0).Name, profiles.GetAt(1).Name);
+        VERIFY_ARE_EQUAL(winrt::hstring{ L"copilot" }, profiles.GetAt(1).AgentId);
+        VERIFY_IS_FALSE(profiles.GetAt(1).IsDefault);
+
+        TestOnUIThread([&]() {
+            NewTerminalArgs args;
+            args.Profile(Utils::GuidToString(profiles.GetAt(1).Id));
+            VERIFY_ARE_EQUAL(generatedId, page->_settings.GetProfileForArgs(args).Guid());
+            page->_settings.GlobalSettings().DefaultProfile(generatedId);
+            page->_settings.ActiveProfiles().GetAt(1).Name(L"Renamed agent");
+        });
+        const auto refreshed = query();
+        VERIFY_IS_FALSE(refreshed.GetAt(0).IsDefault);
+        VERIFY_IS_TRUE(refreshed.GetAt(1).IsDefault);
+        VERIFY_ARE_EQUAL(winrt::hstring{ L"Renamed agent" }, refreshed.GetAt(1).Name);
+        VERIFY_ARE_EQUAL(winrt::hstring{ L"Same name" }, profiles.GetAt(1).Name);
     }
 
     void TabTests::PaneAgentSessionBindingRequiresPaneIdentity()
@@ -5474,7 +5541,7 @@ namespace TerminalAppLocalTests
                 LR"({
                     "actions": [
                         { "command": "toggleSidebarAgentsOnly", "id": "Terminal.ToggleSidebarAgentsOnly", "keys": "ctrl+shift+g" },
-                        { "command": "toggleSidebarRecentAgentSessions", "id": "Terminal.ToggleSidebarRecentAgentSessions", "keys": "ctrl+shift+r" }
+                        { "command": "openAgentSessions", "id": "Terminal.OpenAgentSessions", "keys": "ctrl+shift+/" }
                     ]
                 })"
             };
@@ -5525,10 +5592,24 @@ namespace TerminalAppLocalTests
                 VERIFY_ARE_EQUAL(chord.empty() ? Visibility::Collapsed : Visibility::Visible, shortcut.Visibility());
             };
             verifyHint(L"Ctrl+Shift+S");
+            verifyFilterHints(L"Ctrl+Shift+G", L"Ctrl+Shift+/");
+            const auto recentChord = KeyChordSerialization::FromString(L"ctrl+shift+/");
+            const auto customRecentChord = KeyChordSerialization::FromString(L"ctrl+shift+r");
+            actionMap.RegisterKeyBinding(customRecentChord, ActionAndArgs{ ShortcutAction::ToggleSidebarRecentAgentSessions, nullptr });
+            page->_RefreshUIForSettingsReload();
+            verifyFilterHints(L"Ctrl+Shift+G", L"Ctrl+Shift+/");
+            actionMap.DeleteKeyBinding(recentChord);
+            page->_RefreshUIForSettingsReload();
             verifyFilterHints(L"Ctrl+Shift+G", L"Ctrl+Shift+R");
+            actionMap.DeleteKeyBinding(customRecentChord);
+            page->_RefreshUIForSettingsReload();
+            verifyFilterHints(L"Ctrl+Shift+G", {});
+            actionMap.RegisterKeyBinding(recentChord, ActionAndArgs{ ShortcutAction::OpenAgentSessions, nullptr });
+            page->_RefreshUIForSettingsReload();
+            verifyFilterHints(L"Ctrl+Shift+G", L"Ctrl+Shift+/");
             page->_OnVerticalRailCollapseRequested(nullptr, nullptr);
             verifyHint(L"Ctrl+Shift+S");
-            verifyFilterHints(L"Ctrl+Shift+G", L"Ctrl+Shift+R");
+            verifyFilterHints(L"Ctrl+Shift+G", L"Ctrl+Shift+/");
 
             actionMap.RebindKeys(initial, rebound);
             page->_RefreshUIForSettingsReload();
@@ -5548,12 +5629,12 @@ namespace TerminalAppLocalTests
             verifyHint({});
 
             actionMap.AddKeyBinding(KeyChordSerialization::FromString(L"ctrl+shift+j"), L"Terminal.ToggleSidebarAgentsOnly");
-            actionMap.AddKeyBinding(KeyChordSerialization::FromString(L"ctrl+shift+k"), L"Terminal.ToggleSidebarRecentAgentSessions");
+            actionMap.AddKeyBinding(KeyChordSerialization::FromString(L"ctrl+shift+k"), L"Terminal.OpenAgentSessions");
             page->_RefreshUIForSettingsReload();
             verifyFilterHints(L"Ctrl+Shift+J", L"Ctrl+Shift+K");
 
             actionMap.DeleteKeyBinding(KeyChordSerialization::FromString(L"ctrl+shift+g"));
-            actionMap.DeleteKeyBinding(KeyChordSerialization::FromString(L"ctrl+shift+r"));
+            actionMap.DeleteKeyBinding(KeyChordSerialization::FromString(L"ctrl+shift+/"));
             page->_RefreshUIForSettingsReload();
             verifyFilterHints(L"Ctrl+Shift+J", L"Ctrl+Shift+K");
             actionMap.DeleteKeyBinding(KeyChordSerialization::FromString(L"ctrl+shift+j"));
@@ -5562,7 +5643,7 @@ namespace TerminalAppLocalTests
             verifyFilterHints({}, {});
 
             actionMap.RegisterKeyBinding(KeyChordSerialization::FromString(L"ctrl+shift+g"), ActionAndArgs{ ShortcutAction::CopyText, nullptr });
-            actionMap.RegisterKeyBinding(KeyChordSerialization::FromString(L"ctrl+shift+r"), ActionAndArgs{ ShortcutAction::CopyText, nullptr });
+            actionMap.RegisterKeyBinding(KeyChordSerialization::FromString(L"ctrl+shift+/"), ActionAndArgs{ ShortcutAction::CopyText, nullptr });
             page->_RefreshUIForSettingsReload();
             verifyFilterHints({}, {});
 
@@ -5571,13 +5652,13 @@ namespace TerminalAppLocalTests
             agentsAlias.GenerateID();
             actionMap.AddAction(agentsAlias, KeyChordSerialization::FromString(L"ctrl+shift+u"));
             const auto recentAlias = Command::NewUserCommand();
-            recentAlias.ActionAndArgs(ActionAndArgs{ ShortcutAction::ToggleSidebarRecentAgentSessions, nullptr });
+            recentAlias.ActionAndArgs(ActionAndArgs{ ShortcutAction::OpenAgentSessions, nullptr });
             recentAlias.GenerateID();
             actionMap.AddAction(recentAlias, KeyChordSerialization::FromString(L"ctrl+shift+v"));
             page->_RefreshUIForSettingsReload();
             verifyFilterHints(L"Ctrl+Shift+U", L"Ctrl+Shift+V");
             actionMap.AddKeyBinding(KeyChordSerialization::FromString(L"ctrl+shift+g"), L"Terminal.ToggleSidebarAgentsOnly");
-            actionMap.AddKeyBinding(KeyChordSerialization::FromString(L"ctrl+shift+r"), L"Terminal.ToggleSidebarRecentAgentSessions");
+            actionMap.AddKeyBinding(KeyChordSerialization::FromString(L"ctrl+shift+/"), L"Terminal.OpenAgentSessions");
             page->_RefreshUIForSettingsReload();
             verifyFilterHints(L"Ctrl+Shift+U", L"Ctrl+Shift+V");
             actionMap.AddKeyBinding(KeyChordSerialization::FromString(L"ctrl+shift+w"), agentsAlias.ID());
@@ -5997,7 +6078,6 @@ namespace TerminalAppLocalTests
             "showTabsInTitlebar": false,
             "tabLayout": "vertical",
             "sidebarShowAgentsOnly": true,
-            "sidebarShowRecentAgentSessions": true,
             "profiles": [{
                 "name": "profile0",
                 "guid": "{6239a42c-1111-49a3-80bd-e8fdd045185c}",
@@ -6020,6 +6100,7 @@ namespace TerminalAppLocalTests
             const auto strip = winrt::get_self<winrt::TerminalApp::implementation::TabStrip>(page->_tabStrip);
             VERIFY_IS_TRUE(filters.ShowAgentsOnly());
             VERIFY_IS_TRUE(filters.ShowRecentAgentSessions());
+            VERIFY_IS_TRUE(strip->RecentAgentSessionsFilterMenuItem().IsChecked());
             VERIFY_ARE_EQUAL(Visibility::Visible, strip->AgentsOnlyIndicator().Visibility());
             VERIFY_ARE_EQUAL(TabStripFilterMode::AgentsOnly, page->_tabFilterMode);
             VERIFY_ARE_EQUAL(before, til::io::read_file_as_utf8_string_if_exists(settingsPath));
@@ -6036,6 +6117,7 @@ namespace TerminalAppLocalTests
                     page->SetSettings(reloaded, false);
                     VERIFY_ARE_EQUAL(agentsOnly, filters.ShowAgentsOnly());
                     VERIFY_ARE_EQUAL(recentSessions, filters.ShowRecentAgentSessions());
+                    VERIFY_ARE_EQUAL(recentSessions, strip->RecentAgentSessionsFilterMenuItem().IsChecked());
                     VERIFY_ARE_EQUAL(agentsOnly ? Visibility::Visible : Visibility::Collapsed,
                                      strip->AgentsOnlyIndicator().Visibility());
                     VERIFY_ARE_EQUAL(agentsOnly ? TabStripFilterMode::AgentsOnly : TabStripFilterMode::AllTabs, page->_tabFilterMode);
@@ -6119,25 +6201,27 @@ namespace TerminalAppLocalTests
             auto temporaryPath = settingsPath;
             temporaryPath += L".tmp";
             const auto cleanup = wil::scope_exit([&]() { std::filesystem::remove(temporaryPath); });
+            globals.ClearSidebarShowRecentAgentSessions();
 
             for (const auto explicitValue : { false, true })
             {
                 if (explicitValue)
                 {
                     globals.SidebarShowAgentsOnly(true);
-                    globals.SidebarShowRecentAgentSessions(true);
+                    globals.SidebarShowRecentAgentSessions(false);
                 }
+                const auto recentSessions = globals.SidebarShowRecentAgentSessions();
                 page->_ApplySidebarFilterSettings();
                 VERIFY_IS_TRUE(page->_settings.WriteSettingsToDisk());
                 const auto before = til::io::read_file_as_utf8_string_if_exists(settingsPath);
                 wil::unique_hfile lock{ CreateFileW(settingsPath.c_str(), GENERIC_READ, FILE_SHARE_READ, nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr) };
                 VERIFY_IS_TRUE(static_cast<bool>(lock));
                 filters.ShowAgentsOnly(!explicitValue);
-                filters.ShowRecentAgentSessions(!explicitValue);
+                filters.ShowRecentAgentSessions(!recentSessions);
                 VERIFY_ARE_EQUAL(explicitValue, filters.ShowAgentsOnly());
-                VERIFY_ARE_EQUAL(explicitValue, filters.ShowRecentAgentSessions());
+                VERIFY_ARE_EQUAL(recentSessions, filters.ShowRecentAgentSessions());
                 VERIFY_ARE_EQUAL(explicitValue, globals.SidebarShowAgentsOnly());
-                VERIFY_ARE_EQUAL(explicitValue, globals.SidebarShowRecentAgentSessions());
+                VERIFY_ARE_EQUAL(recentSessions, globals.SidebarShowRecentAgentSessions());
                 VERIFY_ARE_EQUAL(explicitValue, globals.HasSidebarShowAgentsOnly());
                 VERIFY_ARE_EQUAL(explicitValue, globals.HasSidebarShowRecentAgentSessions());
                 VERIFY_ARE_EQUAL(before, til::io::read_file_as_utf8_string_if_exists(settingsPath));
@@ -6538,7 +6622,44 @@ namespace TerminalAppLocalTests
                     VERIFY_ARE_EQUAL(40.0f, dragBounds.Height);
                     VERIFY_IS_TRUE(dragBounds.X >= 40.0f);
                     VERIFY_ARE_EQUAL(buttonBounds.X, dragBounds.X + dragBounds.Width);
+                    VERIFY_ARE_EQUAL(71.0f, buttonBounds.Width);
                     VERIFY_IS_TRUE(row->VerticalNewTabButton().IsHitTestVisible());
+                    VERIFY_ARE_EQUAL(static_cast<float>(width), buttonBounds.X + buttonBounds.Width);
+                    VERIFY_IS_TRUE(buttonBounds.Y >= 4.0f);
+                    VERIFY_IS_TRUE(buttonBounds.Y + buttonBounds.Height <= chrome.ActualHeight() - 4.0f);
+                    const auto newTab = row->VerticalNewTabButton();
+                    newTab.ApplyTemplate();
+                    const auto buttonRoot = Media::VisualTreeHelper::GetChild(newTab, 0).as<Grid>();
+                    const auto primaryBackground = buttonRoot.FindName(L"PrimaryBackgroundGrid").as<Grid>();
+                    const auto secondaryBackground = buttonRoot.FindName(L"SecondaryBackgroundGrid").as<Grid>();
+                    const auto primaryButton = buttonRoot.FindName(L"PrimaryButton").as<Button>();
+                    const auto secondaryButton = buttonRoot.FindName(L"SecondaryButton").as<Button>();
+                    const auto primaryBounds = bounds(primaryBackground);
+                    const auto secondaryBounds = bounds(secondaryBackground);
+                    VERIFY_ARE_EQUAL(buttonBounds.X, primaryBounds.X);
+                    VERIFY_ARE_EQUAL(primaryBounds.X + primaryBounds.Width, secondaryBounds.X);
+                    VERIFY_ARE_EQUAL(buttonBounds.X + buttonBounds.Width, secondaryBounds.X + secondaryBounds.Width);
+                    VERIFY_ARE_EQUAL(buttonBounds.Y, primaryBounds.Y);
+                    VERIFY_ARE_EQUAL(buttonBounds.Height, primaryBounds.Height);
+                    VERIFY_ARE_EQUAL(buttonBounds.Y, secondaryBounds.Y);
+                    VERIFY_ARE_EQUAL(buttonBounds.Height, secondaryBounds.Height);
+                    VERIFY_IS_TRUE(newTab.CornerRadius().TopLeft > 0);
+                    VERIFY_ARE_EQUAL(newTab.CornerRadius(), primaryBackground.CornerRadius());
+                    VERIFY_ARE_EQUAL(newTab.CornerRadius(), secondaryBackground.CornerRadius());
+                    VERIFY_ARE_EQUAL(Thickness{}, primaryButton.Padding());
+                    VERIFY_ARE_EQUAL(Thickness{}, secondaryButton.Padding());
+                    const auto chevron = secondaryButton.Content().as<FrameworkElement>();
+                    const auto chevronBounds = bounds(chevron);
+                    VERIFY_ARE_EQUAL(secondaryBounds.X + secondaryBounds.Width / 2,
+                                     chevronBounds.X + chevronBounds.Width / 2);
+                    for (const auto state : { L"PrimaryPointerOver", L"SecondaryPointerOver" })
+                    {
+                        VERIFY_IS_TRUE(VisualStateManager::GoToState(newTab, state, false));
+                        VERIFY_ARE_EQUAL(buttonBounds.X, bounds(primaryBackground).X);
+                        VERIFY_ARE_EQUAL(buttonBounds.X + buttonBounds.Width,
+                                         bounds(secondaryBackground).X + bounds(secondaryBackground).Width);
+                    }
+                    VERIFY_IS_TRUE(VisualStateManager::GoToState(newTab, L"Normal", false));
                     if (elevated)
                     {
                         const auto shieldBounds = bounds(row->ElevationShieldIcon());
@@ -6547,7 +6668,7 @@ namespace TerminalAppLocalTests
                     else
                     {
                         VERIFY_ARE_EQUAL(40.0f, dragBounds.X);
-                        VERIFY_ARE_EQUAL(static_cast<float>(width - 108), dragBounds.Width);
+                        VERIFY_ARE_EQUAL(static_cast<float>(width - 111), dragBounds.Width);
                     }
                 }
             }
@@ -8126,16 +8247,95 @@ namespace TerminalAppLocalTests
 
     void TabTests::SidebarIntroductionPopupMatchesDesign()
     {
-        _verifyTabIntroductionPopup(true);
+        _verifyTabIntroductionPopup(true, L"en-US");
     }
 
     void TabTests::HorizontalTabsIntroductionPopupMatchesDesign()
     {
-        _verifyTabIntroductionPopup(false);
+        _verifyTabIntroductionPopup(false, L"en-US");
     }
 
-    void TabTests::_verifyTabIntroductionPopup(const bool vertical)
+    void TabTests::SidebarIntroductionSurvivesHostPopupDismissal()
     {
+        const CascadiaSettings settings{ LR"({
+            "defaultProfile": "{6239a42c-1111-49a3-80bd-e8fdd045185c}",
+            "showTabsInTitlebar": false,
+            "tabLayout": "vertical",
+            "profiles": [{
+                "name": "profile0",
+                "guid": "{6239a42c-1111-49a3-80bd-e8fdd045185c}",
+                "closeOnExit": "never"
+            }]
+        })",
+                                         {} };
+        const auto connection = winrt::make_self<TestConnection>(
+            winrt::guid{ L"{6239a42c-aaaa-49a3-80bd-e8fdd045185c}" },
+            winrt::Microsoft::Terminal::TerminalConnection::ConnectionState::Connected);
+        winrt::com_ptr<winrt::TerminalApp::implementation::TerminalPage> page;
+        Grid host{ nullptr };
+        TestOnUIThread([&]() {
+            host = Grid{};
+            host.Width(1300);
+            host.Height(690);
+        });
+        _initializeTerminalPage(page, settings, *connection, host);
+
+        winrt::MUX::Controls::TeachingTip tip{ nullptr };
+        TextBlock title{ nullptr };
+        TestOnUIThread([&]() {
+            if (page->_sidebarIntroductionTimer)
+            {
+                page->_sidebarIntroductionTimer.Stop();
+            }
+            page->_ReleaseSidebarIntroduction(false);
+            page->WindowActivated(true);
+            host.UpdateLayout();
+            tip = page->_PrepareSidebarIntroduction();
+            VERIFY_IS_NOT_NULL(tip);
+            title = tip.Content().as<FrameworkElement>().FindName(L"SidebarIntroductionTitleText").as<TextBlock>();
+            page->_sidebarIntroductionClaim = 42;
+            tip.IsOpen(true);
+        });
+        _waitForContentTransferReviewUI([&]() {
+            host.UpdateLayout();
+            page->_OnSidebarIntroductionPresented();
+            return title.ActualWidth() > 0 && Media::VisualTreeHelper::GetOpenPopupsForXamlRoot(page->XamlRoot()).Size() > 0;
+        });
+        TestOnUIThread([&]() {
+            VERIFY_IS_TRUE(tip.IsOpen());
+            VERIFY_IS_TRUE(page->_sidebarIntroductionPresented);
+            VERIFY_ARE_EQUAL(uint64_t{ 42 }, page->_sidebarIntroductionClaim);
+            VERIFY_IS_NOT_NULL(page->_sidebarIntroductionPopup);
+            page->_sidebarIntroductionPopup.IsOpen(false);
+            page->_TryShowSidebarIntroduction();
+            VERIFY_IS_FALSE(tip.IsOpen());
+        });
+        _waitForContentTransferReviewUI([&]() { return page->_sidebarIntroductionClaim == 0; });
+        TestOnUIThread([&]() {
+            VERIFY_IS_FALSE(page->_sidebarIntroductionPresented);
+            VERIFY_IS_FALSE(tip.IsOpen());
+            page->_sidebarIntroductionClaim = 43;
+            tip.IsOpen(true);
+        });
+        _waitForContentTransferReviewUI([&]() {
+            return tip.IsOpen() && Media::VisualTreeHelper::GetOpenPopupsForXamlRoot(page->XamlRoot()).Size() > 0;
+        });
+        TestOnUIThread([&]() {
+            page->WindowMoved();
+            VERIFY_IS_FALSE(tip.IsOpen());
+            VERIFY_ARE_EQUAL(uint64_t{ 0 }, page->_sidebarIntroductionClaim);
+        });
+    }
+
+    void TabTests::HorizontalTabsIntroductionPopupMatchesDesignRtl()
+    {
+        _verifyTabIntroductionPopup(false, L"ar-SA");
+    }
+
+    void TabTests::_verifyTabIntroductionPopup(const bool vertical, const wchar_t* language)
+    {
+        const auto rtl = std::wstring_view{ language } == L"ar-SA";
+        const auto expectedFlowDirection = rtl ? FlowDirection::RightToLeft : FlowDirection::LeftToRight;
         const CascadiaSettings settings{ LR"({
             "defaultProfile": "{6239a42c-1111-49a3-80bd-e8fdd045185c}",
             "showTabsInTitlebar": false,
@@ -8149,6 +8349,7 @@ namespace TerminalAppLocalTests
         })",
                                          {} };
         settings.GlobalSettings().TabLayout(vertical ? TabLayout::Vertical : TabLayout::Horizontal);
+        settings.GlobalSettings().Language(language);
         const auto connection = winrt::make_self<TestConnection>(
             winrt::guid{ L"{6239a42c-aaaa-49a3-80bd-e8fdd045185c}" },
             winrt::Microsoft::Terminal::TerminalConnection::ConnectionState::Connected);
@@ -8167,9 +8368,23 @@ namespace TerminalAppLocalTests
         TextBlock badge{ nullptr };
         Border badgeContainer{ nullptr };
         TestOnUIThread([&]() {
+            VERIFY_ARE_EQUAL(rtl, page->_isRightToLeft);
+            VERIFY_ARE_EQUAL(FlowDirection::LeftToRight, page->FlowDirection());
+            VERIFY_ARE_EQUAL(expectedFlowDirection, page->_tabRow.FlowDirection());
+            VERIFY_ARE_EQUAL(expectedFlowDirection, page->_tabView.FlowDirection());
+            VERIFY_ARE_EQUAL(expectedFlowDirection, page->_tabStrip.FlowDirection());
             if (page->_sidebarIntroductionTimer)
             {
                 page->_sidebarIntroductionTimer.Stop();
+            }
+            if (!vertical)
+            {
+                const auto second = winrt::make_self<TestConnection>(
+                    winrt::guid{ L"{6239a42c-aaaa-49a3-80bd-e8fdd045185d}" },
+                    winrt::Microsoft::Terminal::TerminalConnection::ConnectionState::Connected);
+                VERIFY_IS_NOT_NULL(page->_CreateNewTabFromPane(page->_MakePane(nullptr, nullptr, *second)));
+                page->_GetFocusedTabImpl()->SuppressAgentPrewarm();
+                VERIFY_ARE_EQUAL(1, page->_tabView.SelectedIndex());
             }
             host.UpdateLayout();
             const auto tabBar = vertical ? page->_tabStrip.as<FrameworkElement>() : page->_tabRow.as<FrameworkElement>();
@@ -8179,6 +8394,7 @@ namespace TerminalAppLocalTests
             host.UpdateLayout();
             tip = page->_PrepareSidebarIntroduction();
             VERIFY_IS_NOT_NULL(tip);
+            VERIFY_ARE_EQUAL(FlowDirection::LeftToRight, tip.FlowDirection());
             VERIFY_IS_FALSE(tip.IsLightDismissEnabled());
             VERIFY_IS_TRUE(tip.Title().empty());
             VERIFY_IS_TRUE(tip.Subtitle().empty());
@@ -8206,8 +8422,14 @@ namespace TerminalAppLocalTests
             }
             VERIFY_ARE_EQUAL(RS_(L"SidebarIntroductionNewBadge"), badge.Text());
             const auto target = vertical ? page->_tabStrip.FindName(L"SidebarIntroductionTarget").as<FrameworkElement>() :
-                                           page->_tabView.SelectedItem().as<FrameworkElement>();
+                                           page->_tabRow.FindName(L"HorizontalTabsIntroductionTarget").as<FrameworkElement>();
             VERIFY_IS_TRUE(tip.Target() == target);
+            if (!vertical)
+            {
+                VERIFY_IS_NOT_NULL(target.Parent().try_as<Canvas>());
+                VERIFY_ARE_EQUAL(FlowDirection::LeftToRight, target.Parent().as<FrameworkElement>().FlowDirection());
+                VERIFY_ARE_EQUAL(FlowDirection::LeftToRight, target.FlowDirection());
+            }
             tip.IsOpen(true);
         });
 
@@ -8249,11 +8471,17 @@ namespace TerminalAppLocalTests
             VERIFY_IS_TRUE(badgeColor.B > badgeColor.R && badgeColor.G > badgeColor.R);
 
             Button closeButton{ nullptr };
+            FrameworkElement tipBox{ nullptr };
             std::vector<DependencyObject> pending{ popupContent };
             for (size_t visited = 0; !pending.empty() && visited < 512; ++visited)
             {
                 const auto element = pending.back();
                 pending.pop_back();
+                if (const auto frame = element.try_as<FrameworkElement>();
+                    frame && frame.Name() == L"ContentRootGrid")
+                {
+                    tipBox = frame;
+                }
                 if (const auto button = element.try_as<Button>();
                     button && button.Visibility() == Visibility::Visible && button.ActualWidth() > 0 &&
                     button.ActualHeight() > 0 && button.IsEnabled())
@@ -8267,6 +8495,23 @@ namespace TerminalAppLocalTests
                 }
             }
             VERIFY_IS_NOT_NULL(closeButton);
+            if (!vertical)
+            {
+                VERIFY_IS_NOT_NULL(tipBox);
+                const auto firstTab = page->_tabView.TabItems().GetAt(0).as<FrameworkElement>();
+                VERIFY_ARE_EQUAL(expectedFlowDirection, firstTab.FlowDirection());
+                const auto firstTabBounds = firstTab.TransformToVisual(page->Root()).TransformBounds({ 0, 0, static_cast<float>(firstTab.ActualWidth()), static_cast<float>(firstTab.ActualHeight()) });
+                const auto boxBounds = tipBox.TransformToVisual(page->Root()).TransformBounds({ 0, 0, static_cast<float>(tipBox.ActualWidth()), static_cast<float>(tipBox.ActualHeight()) });
+                const auto firstTabEdge = rtl ? firstTabBounds.X + firstTabBounds.Width : firstTabBounds.X;
+                VERIFY_IS_TRUE(std::abs((rtl ? boxBounds.X + boxBounds.Width : boxBounds.X) - firstTabEdge) <= 1.0);
+                page->_SelectTab(0);
+                VERIFY_ARE_EQUAL(0, page->_tabView.SelectedIndex());
+                host.UpdateLayout();
+                const auto selectedBoxBounds = tipBox.TransformToVisual(page->Root()).TransformBounds({ 0, 0, static_cast<float>(tipBox.ActualWidth()), static_cast<float>(tipBox.ActualHeight()) });
+                const auto selectedFirstTabBounds = firstTab.TransformToVisual(page->Root()).TransformBounds({ 0, 0, static_cast<float>(firstTab.ActualWidth()), static_cast<float>(firstTab.ActualHeight()) });
+                const auto selectedFirstTabEdge = rtl ? selectedFirstTabBounds.X + selectedFirstTabBounds.Width : selectedFirstTabBounds.X;
+                VERIFY_IS_TRUE(std::abs((rtl ? selectedBoxBounds.X + selectedBoxBounds.Width : selectedBoxBounds.X) - selectedFirstTabEdge) <= 1.0);
+            }
             const auto closeBounds = closeButton.TransformToVisual(page->Root()).TransformBounds({ 0, 0, static_cast<float>(closeButton.ActualWidth()), static_cast<float>(closeButton.ActualHeight()) });
             VERIFY_IS_TRUE(closeBounds.X > badgeBounds.X + badgeBounds.Width);
             VERIFY_IS_TRUE(closeBounds.Y < titleBounds.Y + titleBounds.Height);
@@ -9378,7 +9623,7 @@ namespace TerminalAppLocalTests
             std::wstring{ L"sessions list --json --include-status --master \"\\\\.\\pipe\\wta-master-owned fixture\"" },
             Page::_BuildSessionsListArguments(pipe));
         VERIFY_ARE_EQUAL(
-            std::wstring{ L"sessions list --json --include-status" },
+            std::wstring{ L"sessions list --json --include-status --master \"\"" },
             Page::_BuildSessionsListArguments({}));
     }
 
@@ -11541,7 +11786,7 @@ namespace TerminalAppLocalTests
                 filters.ShowRecentAgentSessions(true);
                 VERIFY_IS_TRUE(page->_tabStrip.SearchQuery().empty());
                 VERIFY_IS_TRUE(page->_AreRecentAgentSessionsVisible());
-                const auto request = page->_PrepareSidebarHistoryActivation(item);
+                const auto request = page->_PrepareSidebarHistoryActivation(item, L"\\\\.\\pipe\\wta-master-normal");
                 VERIFY_IS_FALSE(request.statusOnly);
                 page->_tabStrip.HistoryLoading(true);
                 page->_tabStrip.HistoryActivating(true);
@@ -11581,7 +11826,7 @@ namespace TerminalAppLocalTests
                 VERIFY_IS_TRUE(page->_tabStrip.HistoryError().empty());
 
                 // Prepare the native retry without launching WTA: query the receipt instead of dispatching the request again.
-                const auto retry = page->_PrepareSidebarHistoryActivation(item);
+                const auto retry = page->_PrepareSidebarHistoryActivation(item, L"\\\\.\\pipe\\wta-master-normal");
                 VERIFY_IS_TRUE(retry.statusOnly);
                 VERIFY_ARE_EQUAL(request.id, retry.id);
                 VERIFY_ARE_EQUAL(request.arguments, retry.arguments);
@@ -15192,34 +15437,42 @@ namespace TerminalAppLocalTests
             item.AgentId(L"copilot");
             item.AgentSource(L"host");
             page->_tabStrip.HistoryActive(true);
-            const auto first = page->_PrepareSidebarHistoryActivation(item);
+            const std::wstring normalMaster{ L"\\\\.\\pipe\\wta-master-normal" };
+            const std::wstring adminMaster{ L"\\\\.\\pipe\\wta-master-admin" };
+            const auto first = page->_PrepareSidebarHistoryActivation(item, normalMaster);
+            VERIFY_IS_TRUE(first.arguments.find(L"--master \"" + normalMaster + L"\"") != std::wstring::npos);
+            const auto admin = page->_PrepareSidebarHistoryActivation(item, adminMaster);
+            VERIFY_IS_FALSE(admin.statusOnly);
+            VERIFY_ARE_NOT_EQUAL(first.id, admin.id);
+            VERIFY_IS_TRUE(admin.arguments.find(L"--master \"" + adminMaster + L"\"") != std::wstring::npos);
+            VERIFY_ARE_EQUAL(admin.id, page->_PrepareSidebarHistoryActivation(item, adminMaster).id);
             VERIFY_IS_FALSE(first.statusOnly);
             VERIFY_IS_FALSE(first.id.empty());
             page->_ReconcileSidebarHistoryActivation(first, {});
             page->_CloseSidebarHistory(false);
             page->_tabStrip.HistoryActive(true);
             item.Title(L"Updated title");
-            const auto retry = page->_PrepareSidebarHistoryActivation(item);
+            const auto retry = page->_PrepareSidebarHistoryActivation(item, normalMaster);
             VERIFY_IS_TRUE(retry.statusOnly);
             VERIFY_ARE_EQUAL(first.id, retry.id);
             VERIFY_ARE_EQUAL(first.arguments, retry.arguments);
             page->_ReconcileSidebarHistoryActivation(retry, { State::Pending, false, {} });
-            VERIFY_ARE_EQUAL(first.id, page->_PrepareSidebarHistoryActivation(item).id);
+            VERIFY_ARE_EQUAL(first.id, page->_PrepareSidebarHistoryActivation(item, normalMaster).id);
 
             item.AgentId(L"claude");
-            const auto otherProvider = page->_PrepareSidebarHistoryActivation(item);
+            const auto otherProvider = page->_PrepareSidebarHistoryActivation(item, normalMaster);
             VERIFY_IS_FALSE(otherProvider.statusOnly);
             VERIFY_ARE_NOT_EQUAL(first.id, otherProvider.id);
             item.AgentId(L"copilot");
             item.AgentSource(L"wsl");
             item.WslDistro(L"Ubuntu");
-            const auto wsl = page->_PrepareSidebarHistoryActivation(item);
+            const auto wsl = page->_PrepareSidebarHistoryActivation(item, normalMaster);
             VERIFY_ARE_NOT_EQUAL(first.id, wsl.id);
             item.WslDistro(L"Debian");
-            const auto otherDistro = page->_PrepareSidebarHistoryActivation(item);
+            const auto otherDistro = page->_PrepareSidebarHistoryActivation(item, normalMaster);
             VERIFY_ARE_NOT_EQUAL(wsl.id, otherDistro.id);
             item.SessionUniverse(L"other-universe");
-            VERIFY_ARE_NOT_EQUAL(otherDistro.id, page->_PrepareSidebarHistoryActivation(item).id);
+            VERIFY_ARE_NOT_EQUAL(otherDistro.id, page->_PrepareSidebarHistoryActivation(item, normalMaster).id);
 
             item.AgentSource(L"host");
             item.WslDistro(L"");
@@ -15228,15 +15481,15 @@ namespace TerminalAppLocalTests
             // but may not clear a later operation for the same row.
             page->_CloseSidebarHistory(false);
             page->_ReconcileSidebarHistoryActivation(first, { State::Complete, true, {} });
-            const auto next = page->_PrepareSidebarHistoryActivation(item);
+            const auto next = page->_PrepareSidebarHistoryActivation(item, normalMaster);
             VERIFY_IS_FALSE(next.statusOnly);
             VERIFY_ARE_NOT_EQUAL(first.id, next.id);
             page->_ReconcileSidebarHistoryActivation(first, { State::Complete, true, {} });
-            VERIFY_ARE_EQUAL(next.id, page->_PrepareSidebarHistoryActivation(item).id);
+            VERIFY_ARE_EQUAL(next.id, page->_PrepareSidebarHistoryActivation(item, normalMaster).id);
             page->_ReconcileSidebarHistoryActivation(next, { State::Complete, false, L"Rejected" });
-            VERIFY_IS_FALSE(page->_PrepareSidebarHistoryActivation(item).statusOnly);
+            VERIFY_IS_FALSE(page->_PrepareSidebarHistoryActivation(item, normalMaster).statusOnly);
             item.AgentId(L"claude");
-            VERIFY_ARE_EQUAL(otherProvider.id, page->_PrepareSidebarHistoryActivation(item).id);
+            VERIFY_ARE_EQUAL(otherProvider.id, page->_PrepareSidebarHistoryActivation(item, normalMaster).id);
         });
     }
 
@@ -15533,6 +15786,18 @@ namespace TerminalAppLocalTests
             });
             const auto templateRoot = container.ContentTemplateRoot().as<StackPanel>();
             const auto headerRoot = templateRoot.Children().GetAt(0).as<Grid>();
+            const auto groupHover = headerRoot.FindName(L"TabHoverBackground").as<Border>();
+            const auto groupSelection = headerRoot.FindName(L"TabColorSelectionBackground").as<Border>();
+            const auto nativeGroupSelection = headerRoot.FindName(L"TabSelectionBackground").as<Border>();
+            VERIFY_ARE_EQUAL(groupSelection.ActualWidth(), groupHover.ActualWidth());
+            VERIFY_ARE_EQUAL(groupSelection.ActualHeight(), groupHover.ActualHeight());
+            VERIFY_ARE_EQUAL(Visibility::Collapsed, nativeGroupSelection.Visibility());
+            stripImpl->OnSidebarRowPointerEntered(headerRoot, nullptr);
+            VERIFY_ARE_EQUAL(winrt::Windows::UI::ViewManagement::AccessibilitySettings{}.HighContrast() ? 0.0 : 1.0,
+                             groupHover.Opacity());
+            winrt::get_self<winrt::TerminalApp::implementation::TabStripDisplayItem>(display)->SetPointerOver(false, false);
+            stripImpl->RefreshTabColor(tab);
+            VERIFY_ARE_EQUAL(0.0, groupHover.Opacity());
             const auto iconPresenter = headerRoot.FindName(L"TabIconPresenter").as<ContentPresenter>();
             const auto headerPresenter = headerRoot.FindName(L"TabHeaderPresenter").as<winrt::TerminalApp::TabHeaderControl>();
             VERIFY_ARE_EQUAL(Visibility::Collapsed, iconPresenter.Visibility());
@@ -15548,20 +15813,50 @@ namespace TerminalAppLocalTests
             stripImpl->OnGroupToggleClick(groupButton, RoutedEventArgs{});
             host.UpdateLayout();
             VERIFY_ARE_EQUAL(Visibility::Collapsed, display.ChildrenVisibility());
+            VERIFY_ARE_EQUAL(Visibility::Visible, nativeGroupSelection.Visibility());
             VERIFY_ARE_EQUAL(Visibility::Visible, groupButton.Visibility());
             VERIFY_ARE_EQUAL(Visibility::Collapsed, iconPresenter.Visibility());
             VERIFY_ARE_EQUAL(groupIconCenter, centerX(groupButton));
             VERIFY_ARE_EQUAL(groupTitleOffset, headerPresenter.TransformToVisual(headerRoot).TransformPoint({ 0, 0 }).X);
             stripImpl->OnGroupToggleClick(groupButton, RoutedEventArgs{});
             host.UpdateLayout();
+            VERIFY_ARE_EQUAL(Visibility::Collapsed, nativeGroupSelection.Visibility());
             const auto paneList = templateRoot.Children().GetAt(1).as<ItemsControl>();
             const auto firstPaneContainer = paneList.ContainerFromIndex(0).as<ContentPresenter>();
             const auto firstPaneRoot = Media::VisualTreeHelper::GetChild(firstPaneContainer, 0).as<Grid>();
+            const auto secondPaneContainer = paneList.ContainerFromIndex(1).as<ContentPresenter>();
+            const auto secondPaneRoot = Media::VisualTreeHelper::GetChild(secondPaneContainer, 0).as<Grid>();
             const auto firstPaneBackground = firstPaneRoot.FindName(L"PaneActiveBackground").as<Border>();
+            const auto firstPaneHover = firstPaneRoot.FindName(L"PaneHoverBackground").as<Border>();
+            VERIFY_ARE_EQUAL(firstPaneBackground.ActualWidth(), firstPaneHover.ActualWidth());
+            VERIFY_ARE_EQUAL(firstPaneBackground.ActualHeight(), firstPaneHover.ActualHeight());
+            VERIFY_ARE_EQUAL(firstPaneBackground.TransformToVisual(firstPaneRoot).TransformPoint({ 0, 0 }),
+                             firstPaneHover.TransformToVisual(firstPaneRoot).TransformPoint({ 0, 0 }));
             const auto firstPaneActivateButton = firstPaneRoot.FindName(L"PaneActivateButton").as<Button>();
+            const auto firstPaneClose = firstPaneRoot.FindName(L"PaneCloseButton").as<Button>();
+            const auto secondPaneActivateButton = secondPaneRoot.FindName(L"PaneActivateButton").as<Button>();
+            const auto secondPaneClose = secondPaneRoot.FindName(L"PaneCloseButton").as<Button>();
             VERIFY_ARE_EQUAL(Visibility::Visible, firstPaneBackground.Visibility());
-            VERIFY_ARE_EQUAL(firstPaneRoot.ActualWidth(), firstPaneBackground.ActualWidth());
+            VERIFY_ARE_EQUAL(firstPaneRoot.ActualWidth() - 10, firstPaneBackground.ActualWidth());
             VERIFY_ARE_EQUAL(firstPaneRoot.ActualWidth(), firstPaneActivateButton.ActualWidth());
+            const auto tabSelection = headerRoot.FindName(L"TabSelectionBackground").as<Border>();
+            VERIFY_ARE_EQUAL(tabSelection.Background().as<Media::SolidColorBrush>().Color(),
+                             firstPaneBackground.Background().as<Media::SolidColorBrush>().Color());
+            VERIFY_ARE_EQUAL(Visibility::Collapsed, firstPaneClose.Visibility());
+            VERIFY_ARE_EQUAL(Visibility::Collapsed, secondPaneClose.Visibility());
+            VERIFY_ARE_EQUAL(0.0, firstPaneRoot.ColumnDefinitions().GetAt(1).ActualWidth());
+            VERIFY_ARE_EQUAL(0.0, firstPaneActivateButton.Content().as<Grid>().Margin().Right);
+            stripImpl->OnPanePointerEntered(firstPaneRoot, nullptr);
+            VERIFY_ARE_EQUAL(0.0, firstPaneHover.Opacity());
+            stripImpl->OnPanePointerEntered(secondPaneRoot, nullptr);
+            VERIFY_ARE_EQUAL(Visibility::Collapsed, secondPaneClose.Visibility());
+            stripImpl->OnPanePointerExited(secondPaneRoot, nullptr);
+            VERIFY_ARE_EQUAL(Visibility::Collapsed, secondPaneClose.Visibility());
+            VERIFY_IS_TRUE(secondPaneActivateButton.Focus(FocusState::Keyboard));
+            VERIFY_ARE_EQUAL(Visibility::Collapsed, secondPaneClose.Visibility());
+            VERIFY_IS_TRUE(stripImpl->SearchTabsButton().Focus(FocusState::Keyboard));
+            VERIFY_ARE_EQUAL(Visibility::Collapsed, secondPaneClose.Visibility());
+            VERIFY_ARE_EQUAL(Visibility::Collapsed, firstPaneClose.Visibility());
             uint32_t collectionChanges = 0;
             const auto changed = display.PaneItems().VectorChanged(winrt::auto_revoke, [&](auto&&, auto&&) {
                 ++collectionChanges;
@@ -15600,7 +15895,6 @@ namespace TerminalAppLocalTests
             const auto firstPaneTitle = firstPaneRoot.FindName(L"PaneTitleText").as<winrt::TerminalApp::HighlightedTextControl>();
             VERIFY_ARE_EQUAL(winrt::hstring{ L"Renamed pane" }, firstPaneTitle.Text());
             VERIFY_ARE_EQUAL(winrt::hstring{ L"Renamed pane" }, winrt::unbox_value<winrt::hstring>(ToolTipService::GetToolTip(firstPaneActivateButton)));
-            VERIFY_ARE_EQUAL(Visibility::Collapsed, firstPaneRoot.FindName(L"PaneActiveIndicator").as<FrameworkElement>().Visibility());
 
             stripImpl->SetTabSearchText(tab, L"pane");
             VERIFY_ARE_EQUAL(winrt::hstring{ L"pane" }, display.SearchText());
@@ -15663,13 +15957,19 @@ namespace TerminalAppLocalTests
             VERIFY_ARE_EQUAL(Visibility::Visible, display.SelectionVisibility());
             host.UpdateLayout();
             const auto selectionBackground = headerRoot.FindName(L"TabSelectionBackground").as<Border>();
+            VERIFY_ARE_EQUAL(Visibility::Collapsed, selectionBackground.Visibility());
+            VERIFY_ARE_EQUAL(headerRoot.ActualHeight(), groupSelection.ActualHeight());
+            VERIFY_IS_TRUE(container.ActualHeight() > groupSelection.ActualHeight());
+
+            strip.SetPaneItems(tab, display.PaneItems(), false);
             VERIFY_ARE_EQUAL(Visibility::Visible, selectionBackground.Visibility());
-            VERIFY_ARE_EQUAL(headerRoot.ActualHeight(), selectionBackground.ActualHeight());
-            VERIFY_IS_TRUE(container.ActualHeight() > selectionBackground.ActualHeight());
+            strip.SetPaneItems(tab, display.PaneItems(), true);
+            VERIFY_ARE_EQUAL(Visibility::Collapsed, selectionBackground.Visibility());
 
             strip.IsRailCollapsed(true);
             host.UpdateLayout();
             VERIFY_ARE_EQUAL(Visibility::Collapsed, display.ChildrenVisibility());
+            VERIFY_ARE_EQUAL(Visibility::Visible, selectionBackground.Visibility());
             VERIFY_ARE_EQUAL(Visibility::Visible, display.IconVisibility());
             VERIFY_ARE_EQUAL(32.0, display.HeaderMinHeight());
             VERIFY_IS_TRUE(container.ActualHeight() <= 40.0);
@@ -15677,6 +15977,7 @@ namespace TerminalAppLocalTests
 
             strip.IsRailCollapsed(false);
             host.UpdateLayout();
+            VERIFY_ARE_EQUAL(Visibility::Collapsed, selectionBackground.Visibility());
             VERIFY_ARE_EQUAL(groupIconCenter, centerX(groupButton));
             VERIFY_ARE_EQUAL(groupTitleOffset, headerPresenter.TransformToVisual(headerRoot).TransformPoint({ 0, 0 }).X);
             strip.IsRailCollapsed(true);
@@ -15758,13 +16059,39 @@ namespace TerminalAppLocalTests
             const auto secondDisplay = impl->DisplayItemForTab(second);
             const auto firstActive = firstDisplay.PaneItems().GetAt(1);
             const auto secondActive = secondDisplay.PaneItems().GetAt(0);
+            const auto hasNativeIndicator = winrt::Windows::Foundation::Metadata::ApiInformation::IsPropertyPresent(
+                L"Windows.UI.Xaml.Controls.Primitives.ListViewItemPresenter", L"SelectionIndicatorVisualEnabled");
+            const auto findPresenter = [](const auto& self, const DependencyObject& element) -> Primitives::ListViewItemPresenter {
+                if (const auto presenter = element.try_as<Primitives::ListViewItemPresenter>())
+                {
+                    return presenter;
+                }
+                for (auto index = 0; index < Media::VisualTreeHelper::GetChildrenCount(element); ++index)
+                {
+                    if (const auto presenter = self(self, Media::VisualTreeHelper::GetChild(element, index)))
+                    {
+                        return presenter;
+                    }
+                }
+                return nullptr;
+            };
             const auto verifySelection = [&](const auto& display, const int32_t selectedPane) {
                 host.UpdateLayout();
                 const auto container = strip.ContainerFromIndex(display == firstDisplay ? 0 : 1).as<ListViewItem>();
                 VERIFY_IS_NOT_NULL(container);
+                const auto nativePresenter = findPresenter(findPresenter, container);
+                VERIFY_IS_NOT_NULL(nativePresenter);
+                if (hasNativeIndicator)
+                {
+                    VERIFY_IS_FALSE(nativePresenter.SelectionIndicatorVisualEnabled());
+                }
                 const auto root = container.ContentTemplateRoot().as<StackPanel>();
                 VERIFY_IS_NOT_NULL(root);
                 const auto paneList = root.Children().GetAt(1).as<ItemsControl>();
+                const auto groupIndicator = Media::VisualTreeHelper::GetChild(paneList, 0).as<Grid>().Children().GetAt(0).as<Border>();
+                VERIFY_ARE_EQUAL(10.0, paneList.Margin().Left);
+                VERIFY_IS_NULL(paneList.Tag());
+                VERIFY_ARE_EQUAL(Visibility::Visible, groupIndicator.Visibility());
                 for (uint32_t index = 0; index < display.PaneItems().Size(); ++index)
                 {
                     const auto expected = static_cast<int32_t>(index) == selectedPane ? Visibility::Visible : Visibility::Collapsed;
@@ -15772,16 +16099,65 @@ namespace TerminalAppLocalTests
                     const auto presenter = paneList.ContainerFromIndex(index).as<ContentPresenter>();
                     VERIFY_IS_NOT_NULL(presenter);
                     const auto paneRoot = Media::VisualTreeHelper::GetChild(presenter, 0).as<FrameworkElement>();
-                    VERIFY_ARE_EQUAL(expected, paneRoot.FindName(L"PaneActiveBackground").as<Border>().Visibility());
-                    VERIFY_ARE_EQUAL(expected, paneRoot.FindName(L"PaneActiveIndicator").as<Border>().Visibility());
+                    const auto background = paneRoot.FindName(L"PaneActiveBackground").as<Border>();
+                    VERIFY_ARE_EQUAL(expected, background.Visibility());
+                    VERIFY_ARE_EQUAL(10.0, background.Margin().Left);
                 }
+                VERIFY_ARE_EQUAL(paneList.ActualHeight() - 10, groupIndicator.ActualHeight());
             };
             verifySelection(firstDisplay, 1);
             verifySelection(secondDisplay, -1);
+            setPanes(first, true);
+            verifySelection(firstDisplay, 0);
+            setPanes(first, false);
+            verifySelection(firstDisplay, 1);
+            const auto firstHeader = strip.ContainerFromIndex(0).as<ListViewItem>().ContentTemplateRoot().as<StackPanel>().Children().GetAt(0).as<Grid>();
+            const auto groupToggle = firstHeader.FindName(L"TabGroupToggleButton").as<Button>();
+            impl->OnGroupToggleClick(groupToggle, RoutedEventArgs{});
+            host.UpdateLayout();
+            if (hasNativeIndicator)
+            {
+                VERIFY_IS_TRUE(findPresenter(findPresenter, strip.ContainerFromIndex(0)).SelectionIndicatorVisualEnabled());
+            }
+            VERIFY_ARE_EQUAL(Visibility::Collapsed, firstDisplay.ChildrenVisibility());
+            impl->OnGroupToggleClick(groupToggle, RoutedEventArgs{});
+            verifySelection(firstDisplay, 1);
+
+            if (!winrt::Windows::UI::ViewManagement::AccessibilitySettings{}.HighContrast())
+            {
+                for (const auto theme : { ElementTheme::Dark, ElementTheme::Light })
+                {
+                    strip.RequestedTheme(theme);
+                    host.UpdateLayout();
+                    const auto root = strip.ContainerFromIndex(0).as<ListViewItem>().ContentTemplateRoot().as<StackPanel>();
+                    const auto paneList = root.Children().GetAt(1).as<ItemsControl>();
+                    const auto indicator = Media::VisualTreeHelper::GetChild(paneList, 0).as<Grid>().Children().GetAt(0).as<Border>();
+                    const auto actual = indicator.Background().as<Media::SolidColorBrush>();
+                    VERIFY_ARE_EQUAL(theme, paneList.ActualTheme());
+                    VERIFY_ARE_EQUAL(Visibility::Visible, indicator.Visibility());
+                    VERIFY_ARE_EQUAL(actual.Color().R, actual.Color().G);
+                    VERIFY_ARE_EQUAL(actual.Color().R, actual.Color().B);
+                    VERIFY_ARE_EQUAL(1.0, actual.Opacity());
+                    if (theme == ElementTheme::Dark)
+                    {
+                        VERIFY_ARE_EQUAL(winrt::Windows::UI::Colors::White(), actual.Color());
+                    }
+                    else
+                    {
+                        VERIFY_IS_TRUE(actual.Color().R < 128);
+                    }
+                }
+                strip.RequestedTheme(ElementTheme::Default);
+                host.UpdateLayout();
+            }
 
             strip.SelectedItem(single);
             verifySelection(firstDisplay, -1);
             verifySelection(secondDisplay, -1);
+            if (hasNativeIndicator)
+            {
+                VERIFY_IS_TRUE(findPresenter(findPresenter, strip.ContainerFromIndex(2)).SelectionIndicatorVisualEnabled());
+            }
             VERIFY_IS_TRUE(firstActive.IsActive());
             VERIFY_IS_TRUE(secondActive.IsActive());
 
@@ -16177,6 +16553,113 @@ namespace TerminalAppLocalTests
         });
     }
 
+    void TabTests::SidebarBellReplacesIdentityIcon()
+    {
+        const CascadiaSettings settings{ LR"({
+            "defaultProfile": "{6239a42c-1111-49a3-80bd-e8fdd045185c}",
+            "showTabsInTitlebar": false,
+            "tabLayout": "vertical",
+            "profiles": [{
+                "name": "profile0",
+                "guid": "{6239a42c-1111-49a3-80bd-e8fdd045185c}",
+                "icon": "\uE8A5",
+                "closeOnExit": "never"
+            }]
+        })",
+                                         {} };
+        const auto connection = winrt::make_self<TestConnection>(
+            winrt::guid{ L"{6239a42c-aaaa-49a3-80bd-e8fdd045185c}" },
+            winrt::Microsoft::Terminal::TerminalConnection::ConnectionState::Connected);
+        winrt::com_ptr<winrt::TerminalApp::implementation::TerminalPage> page;
+        Grid host{ nullptr };
+        TestOnUIThread([&]() {
+            host = Grid{};
+            host.Width(1280);
+            host.Height(720);
+        });
+        _initializeTerminalPage(page, settings, *connection, host);
+        _waitForContentTransferReviewUI([&]() {
+            page->UpdateLayout();
+            return page->_tabStrip.ContainerFromIndex(0) != nullptr;
+        });
+
+        winrt::com_ptr<winrt::TerminalApp::implementation::Tab> tab;
+        winrt::TerminalApp::TabStripDisplayItem display{ nullptr };
+        FrameworkElement root{ nullptr };
+        ContentPresenter icon{ nullptr };
+        FontIcon bell{ nullptr };
+        TestOnUIThread([&]() {
+            tab = page->_GetFocusedTabImpl();
+            display = winrt::get_self<winrt::TerminalApp::implementation::TabStrip>(page->_tabStrip)->DisplayItemForTab(tab->TabViewItem());
+            root = _sidebarProgressRoot(page->_tabStrip, tab->TabViewItem());
+            icon = root.FindName(L"TabIconPresenter").as<ContentPresenter>();
+            bell = root.FindName(L"TabBellIndicator").as<FontIcon>();
+            VERIFY_IS_TRUE(Media::VisualTreeHelper::GetParent(bell) == Media::VisualTreeHelper::GetParent(icon));
+        });
+        for (const auto collapsed : { false, true })
+        {
+            TestOnUIThread([&]() {
+                page->_tabStrip.IsRailCollapsed(collapsed);
+                tab->UpdateIcon(L"\xE8A5", IconStyle::Default);
+                tab->ShowBellIndicator(true);
+                page->UpdateLayout();
+                VERIFY_IS_TRUE(display.ShowStatusIcon());
+                VERIFY_IS_FALSE(display.ShowProgressRing());
+                VERIFY_ARE_EQUAL(Visibility::Collapsed, icon.Visibility());
+                VERIFY_ARE_EQUAL(Visibility::Visible, bell.Visibility());
+                VERIFY_IS_TRUE(bell.IsLoaded());
+                VERIFY_ARE_EQUAL(16.0, bell.ActualWidth());
+                const auto slot = Media::VisualTreeHelper::GetParent(icon).as<FrameworkElement>();
+                const auto bellBounds = bell.TransformToVisual(slot).TransformBounds({ 0, 0, 16, 16 });
+                VERIFY_IS_TRUE(std::abs(bellBounds.X + bellBounds.Width / 2 - slot.ActualWidth() / 2) <= 0.5);
+                VERIFY_IS_TRUE(std::abs(bellBounds.Y + bellBounds.Height / 2 - slot.ActualHeight() / 2) <= 0.5);
+                const auto rowHeader = root.FindName(L"TabHeaderPresenter").as<winrt::TerminalApp::TabHeaderControl>();
+                VERIFY_ARE_EQUAL(Visibility::Collapsed, _findProgressElement(rowHeader, L"HeaderProgressRingPresenter").Visibility());
+                tab->UpdateIcon(L"ms-appx:///AgentIcons/copilot.svg", IconStyle::Monochrome);
+                VERIFY_IS_TRUE(display.IconSource() == tab->_iconSource);
+                VERIFY_IS_TRUE(tab->TabViewItem().IconSource() == tab->_progressIconSource);
+            });
+            _emitOsc(connection, u"\x1b]9;4;1;42\a");
+            _waitForContentTransferReviewUI([&]() {
+                return tab->_tabStatus.IsProgressRingActive() && tab->_tabStatus.BellIndicator() &&
+                       display.ShowStatusIcon() && !display.ShowProgressRing() &&
+                       _sidebarProgressIndicatorsMatch(page->_tabStrip, tab->TabViewItem(), false, false);
+            });
+            TestOnUIThread([&]() { tab->ShowBellIndicator(false); });
+            _waitForContentTransferReviewUI([&]() {
+                return bell.Visibility() == Visibility::Collapsed &&
+                       _sidebarProgressIndicatorsMatch(page->_tabStrip, tab->TabViewItem(), true, false, 42);
+            });
+            TestOnUIThread([&]() { tab->ShowBellIndicator(true); });
+            _emitOsc(connection, u"\x1b]9;4;0\a");
+            _waitForContentTransferReviewUI([&]() {
+                return !tab->_tabStatus.IsProgressRingActive() && display.ShowStatusIcon() &&
+                       bell.Visibility() == Visibility::Visible && icon.Visibility() == Visibility::Collapsed;
+            });
+            TestOnUIThread([&]() {
+                tab->ShowBellIndicator(false);
+                VERIFY_IS_FALSE(display.ShowStatusIcon());
+                VERIFY_ARE_EQUAL(Visibility::Visible, icon.Visibility());
+                VERIFY_IS_TRUE(display.IconSource() == tab->_iconSource);
+                VERIFY_IS_TRUE(tab->TabViewItem().IconSource() == tab->_iconSource);
+                const auto provider = icon.Content().as<BitmapIcon>();
+                VERIFY_ARE_EQUAL(winrt::hstring{ L"ms-appx:///AgentIcons/copilot.svg" }, provider.UriSource().AbsoluteUri());
+
+                tab->HideIcon(true);
+                tab->ShowBellIndicator(true);
+                VERIFY_ARE_EQUAL(Visibility::Visible, bell.Visibility());
+                VERIFY_ARE_EQUAL(Visibility::Collapsed, icon.Visibility());
+                VERIFY_IS_NULL(display.Presentation().IconSource());
+                tab->ShowBellIndicator(false);
+                VERIFY_IS_FALSE(display.ShowStatusIcon());
+                VERIFY_ARE_EQUAL(Visibility::Collapsed, icon.Visibility());
+                VERIFY_IS_NULL(tab->TabViewItem().IconSource());
+                tab->HideIcon(false);
+                VERIFY_ARE_EQUAL(Visibility::Visible, icon.Visibility());
+            });
+        }
+    }
+
     void TabTests::ProgressReplacementPreservesIndependentStatusGlyphs()
     {
         UIElement previousContent{ nullptr };
@@ -16226,8 +16709,7 @@ namespace TerminalAppLocalTests
             status.IsKeepRunning(true);
             status.IsPinned(true);
             const auto verifyGlyphs = [&](const winrt::TerminalApp::TabHeaderControl& header) {
-                for (const auto name : { L"HeaderBellIndicator", L"HeaderZoomIcon", L"HeaderLockIcon", L"HeaderClosedIcon",
-                                         L"HeaderBroadcastIcon", L"HeaderKeepRunningIcon", L"HeaderPinnedIcon" })
+                for (const auto name : { L"HeaderZoomIcon", L"HeaderLockIcon", L"HeaderClosedIcon", L"HeaderBroadcastIcon", L"HeaderKeepRunningIcon", L"HeaderPinnedIcon" })
                 {
                     const auto glyph = header.as<FrameworkElement>().FindName(name).as<FontIcon>();
                     VERIFY_IS_TRUE(glyph.IsLoaded());
@@ -16252,13 +16734,17 @@ namespace TerminalAppLocalTests
                     VERIFY_IS_TRUE(rowHeader.TabStatus() == status);
                     VERIFY_IS_TRUE(nativeHeader.TabStatus() == status);
                     VERIFY_IS_TRUE(display.IconSource() == icon);
-                    VERIFY_ARE_EQUAL(active ? Visibility::Collapsed : Visibility::Visible, display.IconVisibility());
-                    VERIFY_IS_TRUE(_sidebarProgressIndicatorsMatch(strip, tab, active, indeterminate));
+                    VERIFY_ARE_EQUAL(Visibility::Collapsed, display.IconVisibility());
+                    VERIFY_IS_TRUE(display.ShowStatusIcon());
+                    VERIFY_IS_TRUE(_sidebarProgressIndicatorsMatch(strip, tab, false, indeterminate));
+                    const auto progress = Media::VisualTreeHelper::GetParent(_findProgressElement(nativeHeader, L"HeaderProgressRing"));
+                    VERIFY_ARE_EQUAL(Visibility::Collapsed, Media::VisualTreeHelper::GetParent(progress).as<UIElement>().Visibility());
                     verifyGlyphs(rowHeader);
                     verifyGlyphs(nativeHeader);
                 }
             }
             status.BellIndicator(false);
+            strip.SetTabPresentation(tab, nativeHeader.Title(), L"\xE8A5");
             strip.UpdateLayout();
             VERIFY_ARE_EQUAL(Visibility::Collapsed, rowHeader.as<FrameworkElement>().FindName(L"HeaderBellIndicator").as<FontIcon>().Visibility());
             VERIFY_ARE_EQUAL(Visibility::Visible, rowHeader.as<FrameworkElement>().FindName(L"HeaderLockIcon").as<FontIcon>().Visibility());
@@ -16360,6 +16846,37 @@ namespace TerminalAppLocalTests
                        root.FindName(L"ContentPresenter").as<UIElement>().Visibility() ==
                            (widthMode == winrt::MUX::Controls::TabViewWidthMode::Compact ? Visibility::Collapsed : Visibility::Visible);
             });
+            TestOnUIThread([&]() {
+                tab->ShowBellIndicator(true);
+                tab->UpdateIcon(L"\xE8A5", IconStyle::Default);
+                const auto controlTemplate = tab->TabViewItem().Template();
+                tab->TabViewItem().Template(nullptr);
+                tab->TabViewItem().Template(controlTemplate);
+                tab->TabViewItem().ApplyTemplate();
+                host.UpdateLayout();
+            });
+            _waitForContentTransferReviewUI([&]() {
+                host.UpdateLayout();
+                const auto item = tab->TabViewItem();
+                const auto root = Media::VisualTreeHelper::GetChild(item, 0).as<FrameworkElement>();
+                const auto header = item.Header().as<winrt::TerminalApp::TabHeaderControl>();
+                const auto bell = _findProgressElement(header, L"HeaderBellIndicator");
+                const auto ring = _findProgressElement(header, L"HeaderIndeterminateProgressRing");
+                const auto box = root.FindName(L"IconBox").as<Viewbox>();
+                return page->_tabView.SelectedItem() == sibling.TabViewItem() &&
+                       visible(bell) && visible(box) && bell.ActualWidth() > 0 && !visible(ring) &&
+                       Media::VisualTreeHelper::GetParent(_findProgressElement(header, L"HeaderProgressRingPresenter")) == box.Child() &&
+                       root.FindName(L"IconControl").as<ContentControl>().Visibility() == Visibility::Collapsed &&
+                       header.Presentation().IconSource() == tab->_iconSource &&
+                       item.IconSource() == tab->_progressIconSource;
+            });
+            TestOnUIThread([&]() { tab->ShowBellIndicator(false); });
+            _waitForContentTransferReviewUI([&]() {
+                const auto header = tab->TabViewItem().Header().as<winrt::TerminalApp::TabHeaderControl>();
+                return visible(_findProgressElement(header, L"HeaderIndeterminateProgressRing")) &&
+                       !visible(_findProgressElement(header, L"HeaderBellIndicator")) &&
+                       tab->_tabStatus.IsProgressRingActive();
+            });
             _emitOsc(connection, u"\x1b]9;4;0\a");
             _waitForContentTransferReviewUI([&]() {
                 const auto item = tab->TabViewItem();
@@ -16370,9 +16887,17 @@ namespace TerminalAppLocalTests
                        item.IconSource() == header.Presentation().IconSource() &&
                        visible(root.FindName(L"IconControl").as<UIElement>());
             });
+            TestOnUIThread([&]() { tab->ShowBellIndicator(true); });
+            _waitForContentTransferReviewUI([&]() {
+                const auto header = tab->TabViewItem().Header().as<winrt::TerminalApp::TabHeaderControl>();
+                return !tab->_tabStatus.IsProgressRingActive() &&
+                       visible(_findProgressElement(header, L"HeaderBellIndicator")) &&
+                       tab->TabViewItem().IconSource() == tab->_progressIconSource;
+            });
             TestOnUIThread([&]() {
                 page->_tabView.SelectedItem(tab->TabViewItem());
                 host.UpdateLayout();
+                VERIFY_IS_FALSE(tab->_tabStatus.BellIndicator());
                 VERIFY_IS_FALSE(tab->_tabStatus.IsProgressRingActive());
                 VERIFY_IS_TRUE(tab->TabViewItem().IconSource() == tab->_iconSource);
             });
@@ -18798,42 +19323,69 @@ namespace TerminalAppLocalTests
     void TabTests::SidebarNavigationHotkeysCycleDisplayedTabs()
     {
         using Page = winrt::TerminalApp::implementation::TerminalPage;
+        using Tab = winrt::TerminalApp::implementation::Tab;
         using State = winrt::Microsoft::Terminal::TerminalConnection::ConnectionState;
         const auto connection = winrt::make_self<TestConnection>(
             winrt::guid{ L"{6239a42c-a001-49a3-80bd-e8fdd045185c}" }, State::Connected);
-        const auto page = _commonSetup(*connection, nullptr, std::nullopt, true);
+        Grid host{ nullptr };
+        UIElement previousContent{ nullptr };
+        TestOnUIThread([&]() {
+            previousContent = Window::Current().Content();
+            host = Grid{};
+            host.Width(1200);
+            host.Height(600);
+        });
+        const auto restoreContent = wil::scope_exit([&]() {
+            TestOnUIThread([&]() {
+                Window::Current().Content(previousContent);
+                host.Children().Clear();
+            });
+        });
+        const auto page = _commonSetup(*connection, host, std::nullopt, true);
+        winrt::com_ptr<Tab> first, middle, last;
+        winrt::com_ptr<TestConnection> lastConnection;
+        winrt::com_ptr<winrt::TerminalApp::implementation::AppKeyBindings> keys;
+        winrt::Microsoft::Terminal::Control::KeyChord up{ nullptr }, down{ nullptr }, alias{ nullptr };
+        std::shared_ptr<Pane> root, active;
+        std::vector<Tab::VisiblePaneSnapshot> panes;
         TestOnUIThread([&]() {
             page->_historyRefreshInFlight = true;
-            const auto first = page->_GetFocusedTabImpl();
+            first = page->_GetFocusedTabImpl();
             first->SuppressAgentPrewarm();
             first->SetTabText(L"displayed-first");
             const auto middleConnection = winrt::make_self<TestConnection>(
                 winrt::guid{ L"{6239a42c-a002-49a3-80bd-e8fdd045185c}" }, State::Connected);
-            const auto lastConnection = winrt::make_self<TestConnection>(
+            lastConnection = winrt::make_self<TestConnection>(
                 winrt::guid{ L"{6239a42c-a003-49a3-80bd-e8fdd045185c}" }, State::Connected);
-            const auto middle = page->_GetTabImpl(page->_CreateNewTabFromPane(page->_MakePane(nullptr, nullptr, *middleConnection)));
-            const auto last = page->_GetTabImpl(page->_CreateNewTabFromPane(page->_MakePane(nullptr, nullptr, *lastConnection)));
+            middle = page->_GetTabImpl(page->_CreateNewTabFromPane(page->_MakePane(nullptr, nullptr, *middleConnection)));
+            last = page->_GetTabImpl(page->_CreateNewTabFromPane(page->_MakePane(nullptr, nullptr, *lastConnection)));
             middle->SuppressAgentPrewarm();
             last->SuppressAgentPrewarm();
             middle->SetTabText(L"other-middle");
             last->SetTabText(L"displayed-last");
+            page->UpdateLayout();
+        });
+        _waitForContentTransferReviewUI([&]() {
+            return last->GetActivePane()->GetTerminalControl().ActualWidth() > 400;
+        });
+        TestOnUIThread([&]() {
             const auto splitConnection = winrt::make_self<TestConnection>(
                 winrt::guid{ L"{6239a42c-a004-49a3-80bd-e8fdd045185c}" }, State::Connected);
             VERIFY_IS_TRUE(page->_SplitPane(last, SplitDirection::Right, 0.5f, page->_MakePane(nullptr, nullptr, *splitConnection), false));
-            const auto root = last->GetRootPane();
-            const auto active = last->GetActivePane();
-            const auto panes = last->GetVisiblePaneSnapshot();
+            root = last->GetRootPane();
+            active = last->GetActivePane();
+            panes = last->GetVisiblePaneSnapshot();
             page->_SetTabPinned(first, true);
             page->_tabStrip.SidebarFilters().ShowAgentsOnly(false);
             page->_ApplyTabListProjection();
             page->_SelectTab(0);
 
             const auto map = CascadiaSettings::LoadDefaults().ActionMap();
-            const auto keys = winrt::make_self<winrt::TerminalApp::implementation::AppKeyBindings>();
+            keys = winrt::make_self<winrt::TerminalApp::implementation::AppKeyBindings>();
             keys->SetActionMap(map);
             keys->SetDispatch(*page->_actionDispatch);
-            const auto up = KeyChordSerialization::FromString(L"ctrl+alt+up");
-            const auto down = KeyChordSerialization::FromString(L"ctrl+alt+down");
+            up = KeyChordSerialization::FromString(L"ctrl+alt+up");
+            down = KeyChordSerialization::FromString(L"ctrl+alt+down");
             const auto navigate = [&](const auto& chord, const auto& expected) {
                 const auto handled = keys->TryKeyChord(chord);
                 VERIFY_IS_TRUE(page->_GetFocusedTabImpl() == expected, L"The keyboard entry must select the adjacent displayed live tab.");
@@ -18893,7 +19445,7 @@ namespace TerminalAppLocalTests
                 *guard = false;
             }
             const auto defaultDown = map.GetActionByKeyChord(down).ActionAndArgs();
-            const auto alias = KeyChordSerialization::FromString(L"ctrl+shift+y");
+            alias = KeyChordSerialization::FromString(L"ctrl+shift+y");
             map.RegisterKeyBinding(alias, defaultDown);
             navigate(alias, first);
             map.DeleteKeyBinding(down);
@@ -18905,7 +19457,12 @@ namespace TerminalAppLocalTests
             navigate(down, last);
 
             VERIFY_IS_TRUE(page->_ApplyTabLayout(TabLayout::Horizontal));
-            page->_CompleteTabLayoutChange(page->_tabLayoutGeneration);
+        });
+        _waitForContentTransferReviewUI([&]() {
+            return !page->_changingTabLayout && !page->_isVerticalLayout &&
+                   page->_GetFocusedTabImpl() == last;
+        });
+        TestOnUIThread([&]() {
             for (const auto& chord : { up, down, alias })
             {
                 VERIFY_IS_FALSE(keys->TryKeyChord(chord), L"Sidebar navigation must leave horizontal input unhandled.");
@@ -18926,6 +19483,161 @@ namespace TerminalAppLocalTests
                 VERIFY_ARE_EQUAL(panes[index].ContentId, after[index].ContentId);
                 VERIFY_ARE_EQUAL(panes[index].IsActive, after[index].IsActive);
             }
+        });
+    }
+
+    void TabTests::SidebarNavigationHotkeysRevealSelectedTab()
+    {
+        using Tab = winrt::TerminalApp::implementation::Tab;
+        using State = winrt::Microsoft::Terminal::TerminalConnection::ConnectionState;
+        const auto connection = winrt::make_self<TestConnection>(
+            winrt::guid{ L"{6239a42c-b001-49a3-80bd-e8fdd045185c}" }, State::Connected);
+        Grid host{ nullptr };
+        UIElement previousContent{ nullptr };
+        TestOnUIThread([&]() {
+            previousContent = Window::Current().Content();
+            host = Grid{};
+            host.Width(1200);
+            host.Height(600);
+        });
+        const auto restoreContent = wil::scope_exit([&]() {
+            TestOnUIThread([&]() {
+                Window::Current().Content(previousContent);
+                host.Children().Clear();
+            });
+        });
+        const auto page = _commonSetup(*connection, host, std::nullopt, true);
+        std::vector<winrt::com_ptr<Tab>> tabs;
+        ScrollViewer scroll{ nullptr };
+        winrt::com_ptr<winrt::TerminalApp::implementation::AppKeyBindings> keys;
+        TestOnUIThread([&]() {
+            page->_historyRefreshInFlight = true;
+            page->_tabStrip.Height(300);
+            tabs.emplace_back(page->_GetFocusedTabImpl());
+            tabs.front()->SuppressAgentPrewarm();
+            for (uint32_t index = 1; index < 16; ++index)
+            {
+                auto id = winrt::guid{ L"{6239a42c-b002-49a3-80bd-e8fdd045185c}" };
+                id.Data1 += index;
+                const auto nextConnection = winrt::make_self<TestConnection>(id, State::Connected);
+                const auto tab = page->_GetTabImpl(page->_CreateNewTabFromPane(page->_MakePane(nullptr, nullptr, *nextConnection)));
+                tab->SuppressAgentPrewarm();
+                tab->SetTabText(winrt::hstring{ L"viewport-tab-" } + winrt::to_hstring(index));
+                tabs.emplace_back(tab);
+            }
+            page->_tabStrip.SidebarFilters().ShowAgentsOnly(false);
+            page->_ApplyTabListProjection();
+            page->_SelectTab(0);
+            page->UpdateLayout();
+            const auto strip = winrt::get_self<winrt::TerminalApp::implementation::TabStrip>(page->_tabStrip);
+            const auto findScroll = [](auto&& self, const DependencyObject& parent) -> ScrollViewer {
+                if (const auto viewer = parent.try_as<ScrollViewer>())
+                {
+                    return viewer;
+                }
+                for (int32_t index = 0; index < Media::VisualTreeHelper::GetChildrenCount(parent); ++index)
+                {
+                    if (const auto viewer = self(self, Media::VisualTreeHelper::GetChild(parent, index)))
+                    {
+                        return viewer;
+                    }
+                }
+                return nullptr;
+            };
+            scroll = findScroll(findScroll, strip->ItemsList());
+            VERIFY_IS_NOT_NULL(scroll);
+            VERIFY_IS_TRUE(scroll.ScrollableHeight() > 0);
+            scroll.ChangeView(nullptr, 0.0, nullptr, true);
+            keys = winrt::make_self<winrt::TerminalApp::implementation::AppKeyBindings>();
+            keys->SetActionMap(CascadiaSettings::LoadDefaults().ActionMap());
+            keys->SetDispatch(*page->_actionDispatch);
+        });
+        const auto headerVisible = [&](const auto& tab) {
+            const auto strip = winrt::get_self<winrt::TerminalApp::implementation::TabStrip>(page->_tabStrip);
+            const auto header = strip->HeaderForTab(tab->TabViewItem()).try_as<FrameworkElement>();
+            if (!header || !header.IsLoaded() || header.ActualHeight() <= 0)
+            {
+                return false;
+            }
+            const auto list = strip->ItemsList();
+            const auto bounds = header.TransformToVisual(list).TransformBounds(
+                { 0, 0, static_cast<float>(header.ActualWidth()), static_cast<float>(header.ActualHeight()) });
+            return bounds.Y >= -1.0f && bounds.Y + bounds.Height <= list.ActualHeight() + 1.0;
+        };
+        _waitForContentTransferReviewUI([&]() {
+            return scroll.VerticalOffset() <= 1.0 && headerVisible(tabs.front()) && !headerVisible(tabs.back());
+        });
+        const auto navigate = [&](const wchar_t* chord, const auto& expected) {
+            TestOnUIThread([&]() {
+                VERIFY_IS_TRUE(keys->TryKeyChord(KeyChordSerialization::FromString(chord)));
+                VERIFY_IS_TRUE(page->_GetFocusedTabImpl() == expected, L"Tab activation must already be correct independently of scrolling.");
+            });
+            _waitForContentTransferReviewUI([&]() {
+                return headerVisible(expected);
+            });
+            TestOnUIThread([&]() {
+                VERIFY_IS_TRUE(page->_GetActiveControl() == expected->GetActivePane()->GetTerminalControl());
+                VERIFY_IS_TRUE(page->_GetActiveControl().FocusState() != FocusState::Unfocused);
+            });
+        };
+        navigate(L"ctrl+alt+up", tabs.back());
+        navigate(L"ctrl+alt+down", tabs.front());
+
+        TestOnUIThread([&]() {
+            page->_tabStrip.SearchActive(true);
+            page->_tabStrip.SearchQuery(L"viewport-tab-");
+            page->_SelectTab(1);
+            scroll.ChangeView(nullptr, 0.0, nullptr, true);
+        });
+        _waitForContentTransferReviewUI([&]() {
+            return scroll.VerticalOffset() <= 1.0 && headerVisible(tabs.at(1));
+        });
+        navigate(L"ctrl+alt+up", tabs.back());
+        navigate(L"ctrl+alt+down", tabs.at(1));
+        TestOnUIThread([&]() {
+            VERIFY_ARE_EQUAL(winrt::hstring{ L"viewport-tab-" }, page->_tabStrip.SearchQuery());
+            VERIFY_IS_TRUE(keys->TryKeyChord(KeyChordSerialization::FromString(L"ctrl+alt+up")));
+            page->_SelectTab(1);
+            scroll.ChangeView(nullptr, 0.0, nullptr, true);
+        });
+        _waitForContentTransferReviewUI([&]() {
+            return scroll.VerticalOffset() <= 1.0 && headerVisible(tabs.at(1)) && !headerVisible(tabs.back());
+        });
+        TestOnUIThread([&]() {
+            page->_tabStrip.SearchActive(false);
+            page->_SelectTab(0);
+            page->UpdateLayout();
+        });
+        _waitForContentTransferReviewUI([&]() {
+            return page->_GetFocusedTabImpl() == tabs.front() && headerVisible(tabs.front());
+        });
+
+        double manualOffset = 0;
+        TestOnUIThread([&]() {
+            // Keep the manual-scroll oracle independent of virtualized extent changes.
+            manualOffset = scroll.ScrollableHeight() / 2;
+            VERIFY_IS_TRUE(manualOffset > 0);
+            VERIFY_IS_TRUE(scroll.ChangeView(nullptr, manualOffset, nullptr, true));
+        });
+        _waitForContentTransferReviewUI([&]() {
+            return std::abs(scroll.VerticalOffset() - manualOffset) <= 1.0 &&
+                   !headerVisible(tabs.front()) && !headerVisible(tabs.at(1));
+        });
+        TestOnUIThread([&]() {
+            page->_ApplyTabListProjection();
+            page->UpdateLayout();
+        });
+        _waitForContentTransferReviewUI([&]() {
+            return std::abs(scroll.VerticalOffset() - manualOffset) <= 1.0;
+        });
+        navigate(L"ctrl+alt+down", tabs.at(1));
+        TestOnUIThread([&]() {
+            page->_OnVerticalRailCollapseRequested(nullptr, nullptr);
+            VERIFY_IS_TRUE(page->_isVerticalRailCollapsed);
+            VERIFY_IS_TRUE(keys->TryKeyChord(KeyChordSerialization::FromString(L"ctrl+alt+down")));
+            VERIFY_IS_TRUE(page->_GetFocusedTabImpl() == tabs.at(2));
+            VERIFY_IS_TRUE(page->_isVerticalRailCollapsed, L"Revealing a selection must not expand a collapsed sidebar.");
+            VERIFY_ARE_EQUAL(tabs.size(), static_cast<size_t>(page->_tabs.Size()));
         });
     }
 
@@ -21633,6 +22345,7 @@ namespace TerminalAppLocalTests
 
         TestOnUIThread([&]() {
             const auto tab = page->_GetFocusedTabImpl();
+            tab->ShowBellIndicator(true);
             const auto terminalColor = ThemeColor::ColorFromBrush(tab->_BackgroundBrush());
             const auto headerGrid = [&](const uint32_t index) {
                 page->UpdateLayout();
@@ -21641,16 +22354,24 @@ namespace TerminalAppLocalTests
             const auto sidebarTabColor = [&](const uint32_t index) {
                 return headerGrid(index).FindName(L"TabColorSelectionBackground").as<Border>().Background().as<Media::SolidColorBrush>().Color();
             };
-            const auto verifyNativeBackground = [&]() {
+            const auto sidebarDefaultHover = [&]() {
+                return page->_tabStrip.Content().as<Grid>().FindName(L"SidebarDefaultHoverBrush").as<Border>().Background().as<Media::SolidColorBrush>();
+            };
+            const auto verifyThemedBackground = [&]() {
                 const auto grid = headerGrid(0);
                 VERIFY_ARE_EQUAL(uint8_t{ 0 }, grid.Background().as<Media::SolidColorBrush>().Color().A);
-                VERIFY_ARE_EQUAL(uint8_t{ 0 }, sidebarTabColor(0).A);
-                VERIFY_ARE_EQUAL(Visibility::Visible, grid.FindName(L"TabSelectionBackground").as<Border>().Visibility());
+                const auto selectedBrush = grid.FindName(L"TabColorSelectionBackground").as<Border>().Background().as<Media::SolidColorBrush>();
+                VERIFY_ARE_EQUAL(terminalColor, til::color{ selectedBrush.Color() });
+                VERIFY_ARE_EQUAL(1.0, selectedBrush.Opacity());
+                VERIFY_ARE_EQUAL(Visibility::Collapsed, grid.FindName(L"TabSelectionBackground").as<Border>().Visibility());
                 const auto header = grid.FindName(L"TabHeaderPresenter").as<winrt::TerminalApp::TabHeaderControl>();
-                VERIFY_IS_TRUE(header.ReadLocalValue(Control::ForegroundProperty()) == DependencyProperty::UnsetValue());
+                VERIFY_IS_TRUE(header.ReadLocalValue(Control::ForegroundProperty()) != DependencyProperty::UnsetValue());
                 const auto icon = grid.FindName(L"TabIconPresenter").as<ContentPresenter>().Content().as<IconElement>();
                 VERIFY_IS_NOT_NULL(icon.Foreground());
                 VERIFY_ARE_EQUAL(header.Foreground().as<Media::SolidColorBrush>().Color(), icon.Foreground().as<Media::SolidColorBrush>().Color());
+                const auto bell = grid.FindName(L"TabBellIndicator").as<FontIcon>();
+                VERIFY_IS_NOT_NULL(bell.Foreground());
+                VERIFY_ARE_EQUAL(header.Foreground().as<Media::SolidColorBrush>().Color(), bell.Foreground().as<Media::SolidColorBrush>().Color());
                 VERIFY_ARE_EQUAL(terminalColor, ThemeColor::ColorFromBrush(tab->_BackgroundBrush()));
             };
             const auto selectedTabColor = [](const winrt::MUX::Controls::TabViewItem& item) {
@@ -21672,17 +22393,27 @@ namespace TerminalAppLocalTests
                 page->RequestedTheme(theme);
                 tab->ThemeColor(ThemeColor::FromTerminalBackground(), nullptr, til::color{});
                 VERIFY_ARE_EQUAL(theme, headerGrid(0).ActualTheme());
-                verifyNativeBackground();
+                verifyThemedBackground();
+                VERIFY_ARE_EQUAL(sidebarDefaultHover().Color(),
+                                 headerGrid(0).FindName(L"TabHoverBackground").as<Border>().Background().as<Media::SolidColorBrush>().Color());
                 for (const auto color : { winrt::Windows::UI::Colors::Black(), winrt::Windows::UI::Colors::White() })
                 {
                     tab->SetRuntimeTabColor(color);
                     verifyForegroundResources(tab->TabViewItem());
                     VERIFY_ARE_EQUAL(color, sidebarTabColor(0));
-                    const auto icon = headerGrid(0).FindName(L"TabIconPresenter").as<ContentPresenter>().Content().as<IconElement>();
-                    VERIFY_ARE_EQUAL(color == winrt::Windows::UI::Colors::Black() ? winrt::Windows::UI::Colors::White() : winrt::Windows::UI::Colors::Black(),
-                                     icon.Foreground().as<Media::SolidColorBrush>().Color());
+                    const auto grid = headerGrid(0);
+                    const auto header = grid.FindName(L"TabHeaderPresenter").as<winrt::TerminalApp::TabHeaderControl>();
+                    const auto icon = grid.FindName(L"TabIconPresenter").as<ContentPresenter>().Content().as<IconElement>();
+                    const auto bell = grid.FindName(L"TabBellIndicator").as<FontIcon>();
+                    const auto expectedForeground = color == winrt::Windows::UI::Colors::Black() ? winrt::Windows::UI::Colors::White() : winrt::Windows::UI::Colors::Black();
+                    VERIFY_ARE_EQUAL(expectedForeground, header.Foreground().as<Media::SolidColorBrush>().Color());
+                    VERIFY_ARE_EQUAL(expectedForeground, icon.Foreground().as<Media::SolidColorBrush>().Color());
+                    VERIFY_ARE_EQUAL(Visibility::Visible, bell.Visibility());
+                    VERIFY_IS_NOT_NULL(bell.Foreground());
+                    VERIFY_ARE_EQUAL(header.Foreground().as<Media::SolidColorBrush>().Color(), bell.Foreground().as<Media::SolidColorBrush>().Color());
+                    VERIFY_ARE_EQUAL(expectedForeground, bell.Foreground().as<Media::SolidColorBrush>().Color());
                     tab->ResetRuntimeTabColor();
-                    verifyNativeBackground();
+                    verifyThemedBackground();
                 }
             }
 
@@ -21691,7 +22422,7 @@ namespace TerminalAppLocalTests
             VERIFY_ARE_EQUAL(terminalColor, til::color{ selectedTabColor(tab->TabViewItem()) });
             VERIFY_IS_TRUE(page->_ApplyTabLayout(TabLayout::Vertical));
             page->_CompleteTabLayoutChange(page->_tabLayoutGeneration);
-            verifyNativeBackground();
+            verifyThemedBackground();
 
             NewTerminalArgs args;
             args.Profile(L"colored");
@@ -21725,6 +22456,135 @@ namespace TerminalAppLocalTests
             VERIFY_IS_TRUE(page->_ApplyTabLayout(TabLayout::Vertical));
             page->_CompleteTabLayoutChange(page->_tabLayoutGeneration);
             VERIFY_ARE_EQUAL(winrt::Windows::UI::Colors::Red(), sidebarTabColor(1));
+
+            const auto strip = winrt::get_self<winrt::TerminalApp::implementation::TabStrip>(page->_tabStrip);
+            const auto display = strip->DisplayItemForTab(tab->TabViewItem());
+            const auto horizontalHover = tab->TabViewItem().Resources().ThemeDictionaries()
+                                             .Lookup(winrt::box_value(L"Dark")).as<ResourceDictionary>()
+                                             .Lookup(winrt::box_value(L"TabViewItemHeaderBackgroundPointerOver")).as<Media::SolidColorBrush>();
+            const auto findPresenter = [](const auto& self, const DependencyObject& element) -> Primitives::ListViewItemPresenter {
+                if (const auto presenter = element.try_as<Primitives::ListViewItemPresenter>())
+                {
+                    return presenter;
+                }
+                for (int32_t index = 0; index < Media::VisualTreeHelper::GetChildrenCount(element); ++index)
+                {
+                    if (const auto presenter = self(self, Media::VisualTreeHelper::GetChild(element, index)))
+                    {
+                        return presenter;
+                    }
+                }
+                return nullptr;
+            };
+            const auto parentPresenter = findPresenter(findPresenter, page->_tabStrip.ContainerFromIndex(0));
+            VERIFY_IS_NOT_NULL(parentPresenter);
+            if (!highContrast)
+            {
+                strip->OnSidebarRowPointerEntered(headerGrid(0), nullptr);
+                const auto hover = headerGrid(0).FindName(L"TabColorHoverBackground").as<Border>().Background().as<Media::SolidColorBrush>();
+                VERIFY_ARE_EQUAL(horizontalHover.Color(), hover.Color());
+                VERIFY_ARE_EQUAL(horizontalHover.Opacity(), hover.Opacity());
+                VERIFY_ARE_EQUAL(uint8_t{ 0 }, parentPresenter.PointerOverBackground().as<Media::SolidColorBrush>().Color().A);
+                winrt::get_self<winrt::TerminalApp::implementation::TabStripDisplayItem>(display)->SetPointerOver(false, false);
+                strip->RefreshTabColor(tab->TabViewItem());
+            }
+            page->_SelectTab(0);
+            if (!highContrast)
+            {
+                const auto coloredHover = coloredTab->TabViewItem().Resources().ThemeDictionaries()
+                                              .Lookup(winrt::box_value(L"Dark")).as<ResourceDictionary>()
+                                              .Lookup(winrt::box_value(L"TabViewItemHeaderBackgroundPointerOver")).as<Media::SolidColorBrush>();
+                const auto coloredPresenter = findPresenter(findPresenter, page->_tabStrip.ContainerFromIndex(1));
+                VERIFY_IS_NOT_NULL(coloredPresenter);
+                strip->OnSidebarRowPointerEntered(headerGrid(1), nullptr);
+                const auto hover = headerGrid(1).FindName(L"TabColorHoverBackground").as<Border>().Background().as<Media::SolidColorBrush>();
+                VERIFY_ARE_EQUAL(coloredHover.Color(), hover.Color());
+                VERIFY_ARE_EQUAL(coloredHover.Opacity(), hover.Opacity());
+                VERIFY_ARE_EQUAL(uint8_t{ 0 }, coloredPresenter.PointerOverBackground().as<Media::SolidColorBrush>().Color().A);
+                VERIFY_ARE_EQUAL(uint8_t{ 0 }, sidebarTabColor(1).A);
+                winrt::get_self<winrt::TerminalApp::implementation::TabStripDisplayItem>(
+                    strip->DisplayItemForTab(coloredTab->TabViewItem()))->SetPointerOver(false, false);
+                strip->RefreshTabColor(coloredTab->TabViewItem());
+            }
+            const auto originalPaneId = tab->GetRootPane()->Id().value();
+            const auto secondPane = page->_MakePane(nullptr, page->_GetFocusedTab(), nullptr);
+            VERIFY_IS_TRUE(page->_SplitPane(tab, SplitDirection::Right, 0.5f, secondPane));
+            const auto paneList = page->_tabStrip.ContainerFromIndex(0).as<ListViewItem>()
+                                      .ContentTemplateRoot().as<StackPanel>().Children().GetAt(1).as<ItemsControl>();
+            const auto verifyPaneColors = [&](const til::color expected) {
+                page->UpdateLayout();
+                VERIFY_ARE_EQUAL(2u, display.PaneItems().Size());
+                VERIFY_ARE_EQUAL(Visibility::Collapsed,
+                                 headerGrid(0).FindName(L"TabSelectionBackground").as<Border>().Visibility());
+                VERIFY_ARE_EQUAL(uint8_t{ 0 }, sidebarTabColor(0).A);
+                VERIFY_IS_TRUE(headerGrid(0).FindName(L"TabHeaderPresenter").as<winrt::TerminalApp::TabHeaderControl>()
+                                   .ReadLocalValue(Control::ForegroundProperty()) == DependencyProperty::UnsetValue());
+                for (uint32_t index = 0; index < display.PaneItems().Size(); ++index)
+                {
+                    const auto pane = display.PaneItems().GetAt(index);
+                    const auto root = Media::VisualTreeHelper::GetChild(paneList.ContainerFromIndex(index), 0).as<Grid>();
+                    const auto selected = root.FindName(L"PaneActiveBackground").as<Border>();
+                    const auto colored = root.FindName(L"PaneColorSelectionBackground").as<Border>();
+                    const auto isActive = pane.ActiveIndicatorVisibility() == Visibility::Visible;
+                    VERIFY_ARE_EQUAL(Visibility::Collapsed, selected.Visibility());
+                    VERIFY_ARE_EQUAL(isActive ? expected : til::color{ winrt::Windows::UI::Colors::Transparent() },
+                                     til::color{ colored.Background().as<Media::SolidColorBrush>().Color() });
+                    if (isActive)
+                    {
+                        const auto title = root.FindName(L"PaneTitleText").as<winrt::TerminalApp::HighlightedTextControl>();
+                        VERIFY_IS_TRUE(title.ReadLocalValue(Control::ForegroundProperty()) != DependencyProperty::UnsetValue());
+                    }
+                }
+            };
+            verifyPaneColors(terminalColor);
+            VERIFY_IS_TRUE(tab->FocusPane(originalPaneId));
+            verifyPaneColors(terminalColor);
+            VERIFY_IS_TRUE(tab->FocusPane(secondPane->Id().value()));
+            verifyPaneColors(terminalColor);
+            tab->SetRuntimeTabColor(winrt::Windows::UI::Colors::Blue());
+            verifyPaneColors(winrt::Windows::UI::Colors::Blue());
+            tab->ResetRuntimeTabColor();
+            verifyPaneColors(terminalColor);
+            if (!highContrast)
+            {
+                strip->OnSidebarRowPointerEntered(headerGrid(0), nullptr);
+                const auto nativeHover = sidebarDefaultHover();
+                VERIFY_ARE_EQUAL(nativeHover.Color(), headerGrid(0).FindName(L"TabHoverBackground").as<Border>().Background().as<Media::SolidColorBrush>().Color());
+                VERIFY_ARE_EQUAL(uint8_t{ 0 }, parentPresenter.PointerOverBackground().as<Media::SolidColorBrush>().Color().A);
+                for (uint32_t index = 0; index < display.PaneItems().Size(); ++index)
+                {
+                    if (display.PaneItems().GetAt(index).ActiveIndicatorVisibility() == Visibility::Visible)
+                    {
+                        continue;
+                    }
+                    const auto root = Media::VisualTreeHelper::GetChild(paneList.ContainerFromIndex(index), 0).as<Grid>();
+                    strip->OnPanePointerEntered(root, nullptr);
+                    const auto hover = root.FindName(L"PaneColorHoverBackground").as<Border>().Background().as<Media::SolidColorBrush>();
+                    VERIFY_ARE_EQUAL(horizontalHover.Color(), hover.Color());
+                    VERIFY_ARE_EQUAL(horizontalHover.Opacity(), hover.Opacity());
+                }
+                tab->ThemeColor(nullptr, nullptr, til::color{});
+                page->UpdateLayout();
+                for (const auto theme : { ElementTheme::Light, ElementTheme::Dark })
+                {
+                    page->RequestedTheme(theme);
+                    const auto defaultHover = sidebarDefaultHover();
+                    VERIFY_ARE_EQUAL(theme, headerGrid(0).ActualTheme());
+                    VERIFY_ARE_EQUAL(defaultHover.Color(), headerGrid(0).FindName(L"TabHoverBackground").as<Border>().Background().as<Media::SolidColorBrush>().Color());
+                    VERIFY_ARE_EQUAL(uint8_t{ 0 }, parentPresenter.PointerOverBackground().as<Media::SolidColorBrush>().Color().A);
+                    for (uint32_t index = 0; index < display.PaneItems().Size(); ++index)
+                    {
+                        if (display.PaneItems().GetAt(index).ActiveIndicatorVisibility() == Visibility::Collapsed)
+                        {
+                            const auto root = Media::VisualTreeHelper::GetChild(paneList.ContainerFromIndex(index), 0).as<Grid>();
+                            const auto hover = root.FindName(L"PaneHoverBackground").as<Border>().Background().as<Media::SolidColorBrush>();
+                            VERIFY_ARE_EQUAL(defaultHover.Color(), hover.Color());
+                            VERIFY_ARE_EQUAL(defaultHover.Opacity(), hover.Opacity());
+                            VERIFY_ARE_EQUAL(0.0, root.FindName(L"PaneColorHoverBackground").as<Border>().Opacity());
+                        }
+                    }
+                }
+            }
         });
     }
 
@@ -21744,6 +22604,7 @@ namespace TerminalAppLocalTests
             strip.TabItems().Append(tab);
             Window::Current().Content(strip);
             Window::Current().Activate();
+            strip.SelectedItem(tab);
             strip.UpdateLayout();
 
             const auto impl = winrt::get_self<winrt::TerminalApp::implementation::TabStrip>(strip);
@@ -21761,16 +22622,30 @@ namespace TerminalAppLocalTests
             const auto root = container.ContentTemplateRoot().as<StackPanel>();
             VERIFY_ARE_EQUAL(uint8_t{ 0 }, container.Background().as<Media::SolidColorBrush>().Color().A);
             const auto headerGrid = root.Children().GetAt(0).as<Grid>();
+            header = headerGrid.FindName(L"TabHeaderPresenter").as<winrt::TerminalApp::TabHeaderControl>();
+            VERIFY_IS_NOT_NULL(header);
             const auto selectionBackground = headerGrid.FindName(L"TabSelectionBackground").as<Border>();
             const auto colorSelectionBackground = headerGrid.FindName(L"TabColorSelectionBackground").as<Border>();
+            const auto hoverBackground = headerGrid.FindName(L"TabHoverBackground").as<Border>();
             VERIFY_IS_NOT_NULL(selectionBackground);
             VERIFY_IS_NOT_NULL(colorSelectionBackground);
+            VERIFY_IS_NOT_NULL(hoverBackground);
+            VERIFY_ARE_EQUAL(colorSelectionBackground.ActualWidth(), hoverBackground.ActualWidth());
+            VERIFY_ARE_EQUAL(colorSelectionBackground.ActualHeight(), hoverBackground.ActualHeight());
+            VERIFY_ARE_EQUAL(colorSelectionBackground.TransformToVisual(headerGrid).TransformPoint({ 0, 0 }),
+                             hoverBackground.TransformToVisual(headerGrid).TransformPoint({ 0, 0 }));
             VERIFY_ARE_EQUAL(CornerRadiusHelper::FromUniformRadius(6), headerGrid.CornerRadius());
             strip.SelectedItem(nullptr);
+            const auto highContrast = winrt::Windows::UI::ViewManagement::AccessibilitySettings{}.HighContrast();
             VERIFY_ARE_EQUAL(uint8_t{ 0 }, headerGrid.Background().as<Media::SolidColorBrush>().Color().A);
             VERIFY_ARE_EQUAL(Visibility::Collapsed, selectionBackground.Visibility());
-            VERIFY_IS_TRUE(header.ReadLocalValue(Control::ForegroundProperty()) == DependencyProperty::UnsetValue());
-            const auto highContrast = winrt::Windows::UI::ViewManagement::AccessibilitySettings{}.HighContrast();
+            impl->OnSidebarRowPointerEntered(headerGrid, nullptr);
+            VERIFY_ARE_EQUAL(highContrast ? 0.0 : 1.0, hoverBackground.Opacity());
+            winrt::get_self<winrt::TerminalApp::implementation::TabStripDisplayItem>(impl->DisplayItemForTab(tab))->SetPointerOver(false, false);
+            impl->RefreshTabColor(tab);
+            VERIFY_ARE_EQUAL(0.0, hoverBackground.Opacity());
+            VERIFY_ARE_EQUAL(highContrast,
+                             header.ReadLocalValue(Control::ForegroundProperty()) == DependencyProperty::UnsetValue());
 
             for (const auto color : { winrt::Windows::UI::Colors::Black(), winrt::Windows::UI::Colors::White() })
             {
@@ -21787,7 +22662,11 @@ namespace TerminalAppLocalTests
                     VERIFY_ARE_EQUAL(uint8_t{ 0 }, inactiveBrush.Color().A);
                 }
                 strip.SelectedItem(tab);
-                VERIFY_ARE_EQUAL(Visibility::Visible, selectionBackground.Visibility());
+                VERIFY_ARE_EQUAL(Visibility::Collapsed, selectionBackground.Visibility());
+                impl->OnSidebarRowPointerEntered(headerGrid, nullptr);
+                VERIFY_ARE_EQUAL(0.0, hoverBackground.Opacity());
+                winrt::get_self<winrt::TerminalApp::implementation::TabStripDisplayItem>(impl->DisplayItemForTab(tab))->SetPointerOver(false, false);
+                impl->RefreshTabColor(tab);
                 VERIFY_ARE_EQUAL(color, colorSelectionBackground.Background().as<Media::SolidColorBrush>().Color());
                 VERIFY_ARE_EQUAL(1.0, colorSelectionBackground.Background().as<Media::SolidColorBrush>().Opacity());
                 strip.SelectedItem(nullptr);
@@ -21796,7 +22675,8 @@ namespace TerminalAppLocalTests
                 {
                     VERIFY_ARE_EQUAL(color, colorSelectionBackground.Background().as<Media::SolidColorBrush>().Color());
                 }
-                VERIFY_IS_TRUE(header.ReadLocalValue(Control::ForegroundProperty()) == DependencyProperty::UnsetValue());
+                VERIFY_ARE_EQUAL(highContrast,
+                                 header.ReadLocalValue(Control::ForegroundProperty()) == DependencyProperty::UnsetValue());
             }
             const auto display = impl->DisplayItemForTab(tab);
             winrt::MUX::Controls::BitmapIconSource coloredIdentity;
@@ -21835,10 +22715,37 @@ namespace TerminalAppLocalTests
             VERIFY_IS_TRUE(presenter.ContentTemplate() == winrt::get_self<winrt::TerminalApp::implementation::TabStripItemTemplateSelector>(
                 impl->ItemsList().ItemTemplateSelector().as<winrt::TerminalApp::TabStripItemTemplateSelector>())->LiveTemplate);
             VERIFY_ARE_EQUAL(container.CornerRadius(), presenter.CornerRadius());
-            for (const auto brush : { presenter.PointerOverBackground(), presenter.PressedBackground() })
+            for (const auto theme : { ElementTheme::Light, ElementTheme::Dark })
             {
-                VERIFY_IS_TRUE(brush.as<Media::SolidColorBrush>().Color().A > 0);
+                strip.RequestedTheme(theme);
+                strip.UpdateLayout();
+                VERIFY_ARE_EQUAL(theme, headerGrid.ActualTheme());
+                const auto expectedHover = strip.Content().as<Grid>().FindName(L"SidebarDefaultHoverBrush").as<Border>().Background().as<Media::SolidColorBrush>();
+                const auto actualHover = presenter.PointerOverBackground().as<Media::SolidColorBrush>();
+                const auto rowHover = hoverBackground.Background().as<Media::SolidColorBrush>();
+                VERIFY_IS_NOT_NULL(selectionBackground.Background());
+                VERIFY_ARE_EQUAL(expectedHover.Color(), rowHover.Color());
+                VERIFY_ARE_EQUAL(expectedHover.Opacity(), rowHover.Opacity());
+                VERIFY_ARE_EQUAL(highContrast ? expectedHover.Color().A : uint8_t{ 0 }, actualHover.Color().A);
+                const auto backdrop = ThemeLookup(Application::Current().Resources(), theme,
+                                                  winrt::box_value(L"TabViewBackground")).as<Media::SolidColorBrush>();
+                const auto composite = [&](const Media::SolidColorBrush& brush) {
+                    auto color = til::color{ brush.Color() };
+                    color.a = static_cast<uint8_t>(std::lround(color.a * brush.Opacity()));
+                    return color.layer_over(til::color{ backdrop.Color() });
+                };
+                VERIFY_ARE_EQUAL(composite(expectedHover), composite(rowHover));
             }
+            strip.RequestedTheme(ElementTheme::Default);
+            if (highContrast)
+            {
+                VERIFY_IS_TRUE(presenter.PointerOverBackground().as<Media::SolidColorBrush>().Color().A > 0);
+            }
+            else
+            {
+                VERIFY_ARE_EQUAL(uint8_t{ 0 }, presenter.PointerOverBackground().as<Media::SolidColorBrush>().Color().A);
+            }
+            VERIFY_IS_TRUE(presenter.PressedBackground().as<Media::SolidColorBrush>().Color().A > 0);
             for (const auto brush : {
                      presenter.SelectedBackground(),
                      presenter.SelectedPointerOverBackground(),
@@ -21874,6 +22781,288 @@ namespace TerminalAppLocalTests
             const auto replacementGrid = replacementRoot.Children().GetAt(0).as<Grid>();
             const auto replacementColor = replacementGrid.FindName(L"TabColorSelectionBackground").as<Border>();
             VERIFY_ARE_EQUAL(uint8_t{ 0 }, replacementColor.Background().as<Media::SolidColorBrush>().Color().A);
+        });
+    }
+
+    void TabTests::VerticalTabStripContrastsRenderedColors()
+    {
+        TestOnUIThread([&]() {
+            if (winrt::Windows::UI::ViewManagement::AccessibilitySettings{}.HighContrast())
+            {
+                return;
+            }
+
+            winrt::TerminalApp::TabStrip strip;
+            strip.Width(240);
+            strip.Height(240);
+            strip.RequestedTheme(ElementTheme::Light);
+            strip.Background(Media::SolidColorBrush{ winrt::Windows::UI::Colors::White() });
+            winrt::MUX::Controls::TabViewItem tab;
+            tab.Header(winrt::box_value(L"Contrast tab"));
+            Media::SolidColorBrush inactive{ winrt::Windows::UI::Colors::Black() };
+            inactive.Opacity(0.3);
+            tab.Background(inactive);
+            const auto gray = winrt::Windows::UI::ColorHelper::FromArgb(255, 0x90, 0x90, 0x90);
+            Media::SolidColorBrush selected{ gray };
+            Media::SolidColorBrush hover{ gray };
+            hover.Opacity(0.6);
+            for (const auto theme : { L"Light", L"Dark" })
+            {
+                ResourceDictionary resources;
+                resources.Insert(winrt::box_value(L"TabViewItemHeaderBackgroundSelected"), selected);
+                resources.Insert(winrt::box_value(L"TabViewItemHeaderBackgroundPointerOver"), hover);
+                tab.Resources().ThemeDictionaries().Insert(winrt::box_value(theme), resources);
+            }
+            strip.TabItems().Append(tab);
+            Window::Current().Content(strip);
+            Window::Current().Activate();
+            strip.SelectedItem(tab);
+            strip.UpdateLayout();
+
+            const auto impl = winrt::get_self<winrt::TerminalApp::implementation::TabStrip>(strip);
+            const auto root = strip.ContainerFromIndex(0).as<ListViewItem>().ContentTemplateRoot().as<StackPanel>();
+            const auto header = root.Children().GetAt(0).as<Grid>();
+            const auto headerText = header.FindName(L"TabHeaderPresenter").as<winrt::TerminalApp::TabHeaderControl>();
+            const auto nativeSelection = header.FindName(L"TabSelectionBackground").as<Border>();
+            const auto colorSelection = header.FindName(L"TabColorSelectionBackground").as<Border>();
+            VERIFY_ARE_EQUAL(Visibility::Collapsed, nativeSelection.Visibility());
+            VERIFY_ARE_EQUAL(gray, colorSelection.Background().as<Media::SolidColorBrush>().Color());
+            VERIFY_ARE_EQUAL(winrt::Windows::UI::Colors::Black(), headerText.Foreground().as<Media::SolidColorBrush>().Color());
+
+            strip.SelectedItem(nullptr);
+            impl->OnSidebarRowPointerEntered(header, nullptr);
+            VERIFY_ARE_EQUAL(winrt::Windows::UI::Colors::Black(), headerText.Foreground().as<Media::SolidColorBrush>().Color());
+            strip.Background(Media::SolidColorBrush{ winrt::Windows::UI::Colors::Black() });
+            impl->RefreshTabColor(tab);
+            VERIFY_ARE_EQUAL(winrt::Windows::UI::Colors::White(), headerText.Foreground().as<Media::SolidColorBrush>().Color());
+            strip.Background(Media::SolidColorBrush{ winrt::Windows::UI::Colors::White() });
+            impl->RefreshTabColor(tab);
+            strip.SelectedItem(tab);
+            strip.SetPaneItems(tab, winrt::single_threaded_vector<winrt::TerminalApp::TabStripPaneItem>({
+                                        winrt::make<winrt::TerminalApp::implementation::TabStripPaneItem>(tab, 11, L"", L"Active", true),
+                                        winrt::make<winrt::TerminalApp::implementation::TabStripPaneItem>(tab, 12, L"", L"Hovered", false) }),
+                               true);
+            strip.UpdateLayout();
+            const auto paneList = root.Children().GetAt(1).as<ItemsControl>();
+            const auto paneRoot = [&](const uint32_t index) {
+                return Media::VisualTreeHelper::GetChild(paneList.ContainerFromIndex(index), 0).as<Grid>();
+            };
+            const auto active = paneRoot(0);
+            const auto other = paneRoot(1);
+            const auto activeText = active.FindName(L"PaneTitleText").as<winrt::TerminalApp::HighlightedTextControl>();
+            const auto otherText = other.FindName(L"PaneTitleText").as<winrt::TerminalApp::HighlightedTextControl>();
+            VERIFY_ARE_EQUAL(Visibility::Collapsed, active.FindName(L"PaneActiveBackground").as<Border>().Visibility());
+            VERIFY_ARE_EQUAL(winrt::Windows::UI::Colors::Black(), activeText.Foreground().as<Media::SolidColorBrush>().Color());
+            impl->OnPanePointerEntered(other, nullptr);
+            VERIFY_ARE_EQUAL(winrt::Windows::UI::Colors::Black(), otherText.Foreground().as<Media::SolidColorBrush>().Color());
+            strip.Background(Media::SolidColorBrush{ winrt::Windows::UI::Colors::Black() });
+            impl->RefreshTabColor(tab);
+            VERIFY_ARE_EQUAL(winrt::Windows::UI::Colors::White(), otherText.Foreground().as<Media::SolidColorBrush>().Color());
+            strip.Background(Media::SolidColorBrush{ winrt::Windows::UI::Colors::White() });
+            impl->RefreshTabColor(tab);
+
+            selected.Color(winrt::Windows::UI::ColorHelper::FromArgb(128, 0, 0, 0));
+            impl->RefreshTabColor(tab);
+            VERIFY_ARE_EQUAL(uint8_t{ 128 }, active.FindName(L"PaneColorSelectionBackground").as<Border>().Background().as<Media::SolidColorBrush>().Color().A);
+            VERIFY_ARE_EQUAL(winrt::Windows::UI::Colors::Black(), activeText.Foreground().as<Media::SolidColorBrush>().Color());
+
+            selected.Color(winrt::Windows::UI::Colors::Transparent());
+            impl->RefreshTabColor(tab);
+            VERIFY_ARE_EQUAL(uint8_t{ 0 }, active.FindName(L"PaneColorSelectionBackground").as<Border>().Background().as<Media::SolidColorBrush>().Color().A);
+            VERIFY_ARE_EQUAL(Visibility::Collapsed, active.FindName(L"PaneActiveBackground").as<Border>().Visibility());
+            VERIFY_ARE_EQUAL(winrt::Windows::UI::Colors::Black(), activeText.Foreground().as<Media::SolidColorBrush>().Color());
+            strip.Background(Media::SolidColorBrush{ winrt::Windows::UI::Colors::Black() });
+            impl->RefreshTabColor(tab);
+            VERIFY_ARE_EQUAL(winrt::Windows::UI::Colors::White(), activeText.Foreground().as<Media::SolidColorBrush>().Color());
+            strip.Background(Media::SolidColorBrush{ winrt::Windows::UI::Colors::White() });
+            impl->RefreshTabColor(tab);
+            strip.SetPaneItems(tab, nullptr, false);
+            VERIFY_ARE_EQUAL(uint8_t{ 0 }, colorSelection.Background().as<Media::SolidColorBrush>().Color().A);
+            VERIFY_ARE_EQUAL(Visibility::Collapsed, nativeSelection.Visibility());
+            VERIFY_ARE_EQUAL(winrt::Windows::UI::Colors::Black(), headerText.Foreground().as<Media::SolidColorBrush>().Color());
+
+            inactive.Opacity(1.0);
+            winrt::get_self<winrt::TerminalApp::implementation::TabStripDisplayItem>(impl->DisplayItemForTab(tab))->SetPointerOver(false, false);
+            strip.SelectedItem(nullptr);
+            impl->RefreshTabColor(tab);
+            VERIFY_ARE_EQUAL(winrt::Windows::UI::Colors::Black(), colorSelection.Background().as<Media::SolidColorBrush>().Color());
+            VERIFY_ARE_EQUAL(winrt::Windows::UI::Colors::White(), headerText.Foreground().as<Media::SolidColorBrush>().Color());
+            inactive.Opacity(0.3);
+            impl->RefreshTabColor(tab);
+            VERIFY_ARE_EQUAL(winrt::Windows::UI::Colors::Black(), headerText.Foreground().as<Media::SolidColorBrush>().Color());
+            inactive.Opacity(1.0);
+            for (const auto theme : { L"Light", L"Dark" })
+            {
+                tab.Resources().ThemeDictionaries().Lookup(winrt::box_value(theme)).as<ResourceDictionary>()
+                    .Remove(winrt::box_value(L"TabViewItemHeaderBackgroundPointerOver"));
+            }
+            impl->OnSidebarRowPointerEntered(header, nullptr);
+            VERIFY_ARE_EQUAL(1.0, header.FindName(L"TabHoverBackground").as<Border>().Opacity());
+            VERIFY_ARE_EQUAL(winrt::Windows::UI::Colors::Black(), colorSelection.Background().as<Media::SolidColorBrush>().Color());
+            VERIFY_ARE_EQUAL(winrt::Windows::UI::Colors::White(), headerText.Foreground().as<Media::SolidColorBrush>().Color());
+            inactive.Color(gray);
+            inactive.Opacity(0.3);
+            header.FindName(L"TabHoverBackground").as<Border>().Background(Media::SolidColorBrush{ winrt::Windows::UI::Colors::Black() });
+            impl->RefreshTabColor(tab);
+            VERIFY_ARE_EQUAL(winrt::Windows::UI::Colors::White(), headerText.Foreground().as<Media::SolidColorBrush>().Color());
+            winrt::get_self<winrt::TerminalApp::implementation::TabStripDisplayItem>(impl->DisplayItemForTab(tab))->SetPointerOver(false, false);
+            impl->RefreshTabColor(tab);
+            VERIFY_ARE_EQUAL(winrt::Windows::UI::Colors::Black(), headerText.Foreground().as<Media::SolidColorBrush>().Color());
+            inactive.Color(winrt::Windows::UI::Colors::Transparent());
+            impl->RefreshTabColor(tab);
+            VERIFY_IS_TRUE(headerText.ReadLocalValue(Control::ForegroundProperty()) == DependencyProperty::UnsetValue());
+        });
+    }
+
+    void TabTests::VerticalTabStripCloseAffordanceTracksRowState()
+    {
+        TestOnUIThread([&]() {
+            winrt::TerminalApp::TabStrip strip;
+            strip.Width(240);
+            strip.Height(220);
+            winrt::MUX::Controls::TabViewItem first;
+            winrt::TerminalApp::TabHeaderControl firstHeader;
+            firstHeader.Title(L"First tab");
+            first.Header(firstHeader);
+            winrt::MUX::Controls::TabViewItem second;
+            winrt::TerminalApp::TabHeaderControl secondHeader;
+            secondHeader.Title(L"Second tab");
+            second.Header(secondHeader);
+            second.IsClosable(false);
+            strip.TabItems().Append(first);
+            strip.TabItems().Append(second);
+            Window::Current().Content(strip);
+            Window::Current().Activate();
+            strip.SelectedItem(nullptr);
+            strip.UpdateLayout();
+
+            const auto impl = winrt::get_self<winrt::TerminalApp::implementation::TabStrip>(strip);
+            const auto row = [&](uint32_t index) {
+                return strip.ContainerFromIndex(index).as<ListViewItem>().ContentTemplateRoot().as<StackPanel>().Children().GetAt(0).as<Grid>();
+            };
+            const auto firstRow = row(0);
+            const auto secondRow = row(1);
+            const auto firstClose = firstRow.FindName(L"TabCloseButton").as<Button>();
+            const auto secondClose = secondRow.FindName(L"TabCloseButton").as<Button>();
+            const auto secondDisplay = impl->DisplayItemForTab(second);
+
+            VERIFY_ARE_EQUAL(Visibility::Collapsed, firstClose.Visibility());
+            VERIFY_ARE_EQUAL(Visibility::Collapsed, secondClose.Visibility());
+            VERIFY_IS_TRUE(firstClose.Margin().Top >= 4);
+            VERIFY_IS_TRUE(firstClose.Margin().Right >= 4);
+            const auto verifyCloseInteractionBackground = [](const Button& close) {
+                close.ApplyTemplate();
+                const auto findPresenter = [](const auto& self, const DependencyObject& element) -> ContentPresenter {
+                    if (const auto presenter = element.try_as<ContentPresenter>())
+                    {
+                        return presenter;
+                    }
+                    for (int32_t index = 0; index < Media::VisualTreeHelper::GetChildrenCount(element); ++index)
+                    {
+                        if (const auto presenter = self(self, Media::VisualTreeHelper::GetChild(element, index)))
+                        {
+                            return presenter;
+                        }
+                    }
+                    return nullptr;
+                };
+                const auto presenter = findPresenter(findPresenter, close);
+                VERIFY_IS_NOT_NULL(presenter);
+                for (const auto state : { L"PointerOver", L"Pressed" })
+                {
+                    VERIFY_IS_TRUE(VisualStateManager::GoToState(close, state, false));
+                    const auto background = presenter.Background().as<Media::SolidColorBrush>();
+                    VERIFY_IS_TRUE(background.Color().A > 0 && background.Opacity() > 0);
+                }
+                VERIFY_IS_TRUE(VisualStateManager::GoToState(close, L"Normal", false));
+            };
+            strip.SelectedItem(first);
+            verifyCloseInteractionBackground(firstClose);
+            const auto panes = winrt::single_threaded_vector<winrt::TerminalApp::TabStripPaneItem>(
+                { winrt::make<winrt::TerminalApp::implementation::TabStripPaneItem>(first, 1, L"", L"First pane", true),
+                  winrt::make<winrt::TerminalApp::implementation::TabStripPaneItem>(first, 2, L"", L"Second pane", false) });
+            strip.SetPaneItems(first, panes, true);
+            strip.UpdateLayout();
+            const auto paneList = strip.ContainerFromIndex(0).as<ListViewItem>().ContentTemplateRoot().as<StackPanel>().Children().GetAt(1).as<ItemsControl>();
+            const auto paneRoot = Media::VisualTreeHelper::GetChild(paneList.ContainerFromIndex(0), 0).as<Grid>();
+            const auto paneClose = paneRoot.FindName(L"PaneCloseButton").as<Button>();
+            VERIFY_ARE_EQUAL(Visibility::Collapsed, paneClose.Visibility());
+            VERIFY_ARE_EQUAL(0.0, paneRoot.ColumnDefinitions().GetAt(1).ActualWidth());
+            strip.SetPaneItems(first, nullptr, false);
+            strip.SelectedItem(nullptr);
+            second.IsClosable(true);
+            winrt::get_self<winrt::TerminalApp::implementation::TabStripDisplayItem>(secondDisplay)->SyncTabPresentation(false, true);
+            VERIFY_IS_TRUE(strip.ContainerFromIndex(1).as<ListViewItem>().Focus(FocusState::Keyboard));
+            VERIFY_ARE_EQUAL(Visibility::Visible, secondClose.Visibility());
+            VERIFY_IS_TRUE(impl->SearchTabsButton().Focus(FocusState::Keyboard));
+            VERIFY_ARE_EQUAL(Visibility::Collapsed, secondClose.Visibility());
+            second.IsClosable(false);
+            winrt::get_self<winrt::TerminalApp::implementation::TabStripDisplayItem>(secondDisplay)->SyncTabPresentation(false, true);
+            impl->OnSidebarRowPointerEntered(firstRow, nullptr);
+            VERIFY_ARE_EQUAL(Visibility::Visible, firstClose.Visibility());
+            impl->OnSidebarRowPointerEntered(secondRow, nullptr);
+            VERIFY_ARE_EQUAL(Visibility::Collapsed, secondClose.Visibility());
+            strip.SelectedItem(first);
+            VERIFY_ARE_EQUAL(Visibility::Visible, firstClose.Visibility());
+            strip.SelectedItem(second);
+            VERIFY_ARE_EQUAL(Visibility::Collapsed, secondClose.Visibility());
+
+            strip.SelectedItem(first);
+            const auto firstDisplay = impl->DisplayItemForTab(first);
+            firstDisplay.HeaderMinHeight(56);
+            strip.UpdateLayout();
+            VERIFY_IS_TRUE(firstRow.ActualHeight() >= 56);
+            const auto closeTop = firstClose.TransformToVisual(firstRow).TransformPoint({ 0, 0 }).Y;
+            VERIFY_IS_TRUE(closeTop <= 8);
+            VERIFY_IS_TRUE(firstClose.TransformToVisual(firstRow).TransformPoint({ 0, 0 }).X + firstClose.ActualWidth() <= firstRow.ActualWidth());
+
+            strip.IsRailCollapsed(true);
+            VERIFY_ARE_EQUAL(Visibility::Collapsed, firstClose.Visibility());
+            strip.IsRailCollapsed(false);
+            VERIFY_ARE_EQUAL(Visibility::Visible, firstClose.Visibility());
+        });
+    }
+
+    void TabTests::PaneContextMenuOmitsDirectClose()
+    {
+        const auto page = _commonSetup();
+        TestOnUIThread([&]() {
+            const auto tab = page->_GetFocusedTabImpl();
+            VERIFY_IS_NOT_NULL(tab);
+            VERIFY_IS_TRUE(page->_SplitPane(
+                tab,
+                SplitDirection::Right,
+                0.5f,
+                page->_MakePane(nullptr, page->_GetFocusedTab(), nullptr)));
+
+            winrt::Microsoft::UI::Xaml::Controls::CommandBarFlyout menu;
+            page->_PopulateContextMenu(page->_GetActiveControl(), menu, false);
+
+            bool hasClosePane = false;
+            bool hasCloseOtherPanes = false;
+            bool hasCloseTab = false;
+            bool hasSplitPane = false;
+            bool hasSwapPane = false;
+            bool hasTogglePaneZoom = false;
+            for (const auto& command : menu.SecondaryCommands())
+            {
+                if (const auto button = command.try_as<AppBarButton>())
+                {
+                    hasClosePane = hasClosePane || button.Label() == RS_(L"PaneClose");
+                    hasCloseOtherPanes = hasCloseOtherPanes || button.Label() == RS_(L"CloseOtherPanesText");
+                    hasCloseTab = hasCloseTab || button.Label() == RS_(L"TabClose");
+                    hasSplitPane = hasSplitPane || button.Label() == RS_(L"SplitPaneText");
+                    hasSwapPane = hasSwapPane || button.Label() == RS_(L"SwapPaneText");
+                    hasTogglePaneZoom = hasTogglePaneZoom || button.Label() == RS_(L"TogglePaneZoomText");
+                }
+            }
+
+            VERIFY_IS_FALSE(hasClosePane);
+            VERIFY_IS_TRUE(hasCloseOtherPanes);
+            VERIFY_IS_TRUE(hasCloseTab);
+            VERIFY_IS_TRUE(hasSplitPane);
+            VERIFY_IS_TRUE(hasSwapPane);
+            VERIFY_IS_TRUE(hasTogglePaneZoom);
         });
     }
 
@@ -21950,6 +23139,9 @@ namespace TerminalAppLocalTests
         TestOnUIThread([&]() {
             const auto tab = page->_GetFocusedTabImpl();
             VERIFY_IS_NOT_NULL(tab);
+            const auto sourcePane = tab->GetActivePane();
+            VERIFY_IS_TRUE(sourcePane && sourcePane->Id().has_value());
+            const auto sourcePaneId = sourcePane->Id().value();
 
             const auto agentPane = page->_MakePane(nullptr, nullptr, nullptr);
             VERIFY_IS_NOT_NULL(agentPane);
@@ -21986,9 +23178,51 @@ namespace TerminalAppLocalTests
             VERIFY_ARE_EQUAL(Visibility::Visible, display.GroupVisibility());
             VERIFY_ARE_EQUAL(Visibility::Visible, display.ChildrenVisibility());
 
+            VERIFY_IS_TRUE(tab->FocusPane(sourcePaneId));
+            page->_ApplyTabListProjection();
+            page->_tabStrip.UpdateLayout();
+            VERIFY_ARE_EQUAL(1u, display.PaneItems().Size());
+            VERIFY_ARE_EQUAL(Visibility::Visible, display.SelectionVisibility());
+            VERIFY_ARE_EQUAL(Visibility::Collapsed, display.PaneItems().GetAt(0).ActiveIndicatorVisibility());
+            const auto container = page->_tabStrip.ContainerFromIndex(0).as<ListViewItem>();
+            const auto findPresenter = [](const auto& self, const DependencyObject& element) -> Primitives::ListViewItemPresenter {
+                if (const auto presenter = element.try_as<Primitives::ListViewItemPresenter>())
+                {
+                    return presenter;
+                }
+                for (auto index = 0; index < Media::VisualTreeHelper::GetChildrenCount(element); ++index)
+                {
+                    if (const auto presenter = self(self, Media::VisualTreeHelper::GetChild(element, index)))
+                    {
+                        return presenter;
+                    }
+                }
+                return nullptr;
+            };
+            const auto nativePresenter = findPresenter(findPresenter, container);
+            VERIFY_IS_NOT_NULL(nativePresenter);
+            const auto hasNativeIndicator = winrt::Windows::Foundation::Metadata::ApiInformation::IsPropertyPresent(
+                L"Windows.UI.Xaml.Controls.Primitives.ListViewItemPresenter", L"SelectionIndicatorVisualEnabled");
+            if (hasNativeIndicator)
+            {
+                VERIFY_IS_FALSE(nativePresenter.SelectionIndicatorVisualEnabled());
+            }
+            const auto contentRoot = container.ContentTemplateRoot().as<StackPanel>();
+            const auto headerRoot = contentRoot.Children().GetAt(0).as<Grid>();
+            const auto paneList = contentRoot.Children().GetAt(1).as<ItemsControl>();
+            const auto groupIndicator = Media::VisualTreeHelper::GetChild(paneList, 0).as<Grid>().Children().GetAt(0).as<Border>();
+            VERIFY_ARE_EQUAL(Visibility::Visible, groupIndicator.Visibility());
+            const auto nativeSelection = headerRoot.FindName(L"TabSelectionBackground").as<Border>();
+            VERIFY_ARE_EQUAL(Visibility::Visible, nativeSelection.Visibility());
+
             page->_tabFilterMode = winrt::TerminalApp::TabStripFilterMode::AllTabs;
             page->_ApplyTabListProjection();
             VERIFY_ARE_EQUAL(2u, display.PaneItems().Size());
+            VERIFY_ARE_EQUAL(Visibility::Collapsed, nativeSelection.Visibility());
+            if (hasNativeIndicator)
+            {
+                VERIFY_IS_FALSE(nativePresenter.SelectionIndicatorVisualEnabled());
+            }
         });
     }
 
@@ -22603,6 +23837,47 @@ namespace TerminalAppLocalTests
                        serialized.value->find("\"agentStatus\":\"\xE6\xAD\xA3\xE5\x9C\xA8\xE5\xB7\xA5\xE4\xBD\x9C\"") != std::string::npos);
     }
 
+    void TabTests::RichTabAgentStatusHidesNonLiveSessions()
+    {
+        using Page = winrt::TerminalApp::implementation::TerminalPage;
+        auto page = _commonSetup(nullptr, nullptr, std::nullopt, true);
+
+        TestOnUIThread([&]() {
+            const auto control = page->_GetFocusedTabImpl()->GetActiveTerminalControl();
+            const auto paneId = control.Connection().SessionId();
+            const auto paneIdString = winrt::to_string(::Microsoft::Console::Utils::GuidToPlainString(paneId));
+            page->_paneAgentSessions[paneId] = { L"restored-session", L"copilot", {} };
+            VERIFY_IS_TRUE(page->_ApplyAgentSessionStatusDelta(
+                "restored-session", "", "copilot", uint64_t{ 1000 }, "Historical"));
+
+            const auto verifyStatus = [&](const std::string_view status) {
+                const auto info = page->_RichTabAgentInfoForControl(control);
+                VERIFY_IS_TRUE(info.has_value());
+                VERIFY_ARE_EQUAL(std::string{ status }, info->status);
+                const auto fields = page->_BuildRichTabFirstPartyFields(control);
+                if (status == "Historical" || status == "Ended")
+                {
+                    VERIFY_IS_FALSE(fields.contains("agentStatus"));
+                    VERIFY_IS_FALSE(fields.contains("agentStatusId"));
+                }
+                else
+                {
+                    VERIFY_ARE_EQUAL(winrt::to_string(Page::_SidebarHistoryStatusText(status)), fields.at("agentStatus"));
+                    VERIFY_ARE_EQUAL(std::string{ status }, fields.at("agentStatusId"));
+                }
+            };
+            verifyStatus("Historical");
+
+            uint64_t activity = 1000;
+            for (const auto status : { "Idle", "Working", "Attention", "Error", "InUse", "Ended", "Historical", "Idle" })
+            {
+                VERIFY_IS_TRUE(page->_ApplyAgentSessionStatusDelta(
+                    "restored-session", paneIdString, "copilot", ++activity, status));
+                verifyStatus(status);
+            }
+        });
+    }
+
     void TabTests::RichTabMetadataSelectionIsLimitedToTwo()
     {
         auto page = _commonSetup(nullptr, nullptr, std::nullopt, true);
@@ -23098,6 +24373,7 @@ namespace TerminalAppLocalTests
         {
             "defaultProfile": "{6239a42c-1111-49a3-80bd-e8fdd045185c}",
             "showTabsInTitlebar": false,
+            "sidebarShowRecentAgentSessions": false,
             "profiles": [
                 {
                     "name" : "profile0",
@@ -23610,6 +24886,89 @@ namespace TerminalAppLocalTests
                 VERIFY_ARE_EQUAL(explicitTarget.Guid(), page->_GetFocusedTabImpl()->GetFocusedProfile().Guid());
             }));
         }
+    }
+
+    void TabTests::SplitActionDoesNotRetainAgentIdentity()
+    {
+        for (const auto& [splitMode, splitDirection] : {
+                 std::pair{ SplitType::Duplicate, SplitDirection::Right },
+                 std::pair{ SplitType::Duplicate, SplitDirection::Down },
+                 std::pair{ SplitType::Profile, SplitDirection::Right },
+                 std::pair{ SplitType::Profile, SplitDirection::Down } })
+        {
+            for (const auto explicitDirectory : { false, true })
+            {
+                auto page = _commonSetup(nullptr, nullptr, std::nullopt, true);
+                TestOnUIThread([&]() {
+                    const auto shellTab = page->_GetFocusedTabImpl();
+                    shellTab->SuppressAgentPrewarm();
+                    const auto shellProfile = shellTab->GetFocusedProfile();
+                    const auto shellIcon = shellProfile.Icon().Resolved();
+                    const auto agentProfile = page->_settings.ActiveProfiles().GetAt(1);
+                    agentProfile.AgentProfileId(L"copilot");
+                    agentProfile.Commandline(L"cmd.exe /d /k");
+                    NewTerminalArgs agentArgs;
+                    agentArgs.Profile(Utils::GuidToString(agentProfile.Guid()));
+                    VERIFY_SUCCEEDED(page->_OpenNewTab(agentArgs));
+                    const auto agentTab = page->_GetFocusedTabImpl();
+                    agentTab->SuppressAgentPrewarm();
+
+                    NewTerminalArgs contentArgs;
+                    if (explicitDirectory)
+                    {
+                        contentArgs.StartingDirectory(winrt::hstring{ wil::ExpandEnvironmentStringsW<std::wstring>(L"%SystemRoot%") });
+                    }
+                    SplitPaneArgs splitArgs{ splitMode, splitDirection, .5f, contentArgs };
+                    ActionEventArgs agentSplit{ splitArgs };
+                    page->_HandleSplitPane(nullptr, agentSplit);
+                    VERIFY_IS_TRUE(agentSplit.Handled());
+                    const auto manager = winrt::get_self<winrt::TerminalApp::implementation::ContentManager>(page->_manager);
+                    VERIFY_ARE_EQUAL(winrt::hstring{ L"copilot" }, manager->NativeAgentProviderId(agentTab->GetActiveTerminalControl().ContentId()));
+                    VERIFY_IS_TRUE(contentArgs.NativeAgentProviderId().empty());
+
+                    page->_SelectTab(0);
+                    ActionEventArgs shellSplit{ splitArgs };
+                    page->_HandleSplitPane(nullptr, shellSplit);
+                    VERIFY_IS_TRUE(shellSplit.Handled());
+                    VERIFY_ARE_EQUAL(2, shellTab->GetLeafPaneCount());
+                    VERIFY_ARE_EQUAL(shellProfile.Guid(), shellTab->GetFocusedProfile().Guid());
+                    VERIFY_IS_TRUE(manager->NativeAgentProviderId(shellTab->GetActiveTerminalControl().ContentId()).empty());
+                    VERIFY_ARE_EQUAL(shellIcon, shellTab->Icon());
+                    page->_RefreshTabStripPaneItems(shellTab);
+                    const auto strip = winrt::get_self<winrt::TerminalApp::implementation::TabStrip>(page->_tabStrip);
+                    const auto display = strip->DisplayItemForTab(shellTab->TabViewItem());
+                    VERIFY_ARE_EQUAL(2u, display.PaneItems().Size());
+                    for (const auto& item : display.PaneItems())
+                    {
+                        VERIFY_ARE_EQUAL(shellIcon, winrt::get_self<winrt::TerminalApp::implementation::TabStripPaneItem>(item)->IconPath());
+                    }
+                });
+            }
+        }
+    }
+
+    void TabTests::NewTabActionDoesNotRetainDefaultAgentIdentity()
+    {
+        auto page = _commonSetup();
+        TestOnUIThread([&]() {
+            const auto shellProfile = page->_GetFocusedTabImpl()->GetFocusedProfile();
+            const auto agentProfile = page->_settings.ActiveProfiles().GetAt(1);
+            agentProfile.AgentProfileId(L"copilot");
+            agentProfile.Commandline(L"cmd.exe /d /k");
+            NewTerminalArgs contentArgs;
+            page->_settings.GlobalSettings().DefaultProfile(agentProfile.Guid());
+            VERIFY_SUCCEEDED(page->_OpenNewTab(contentArgs));
+            const auto manager = winrt::get_self<winrt::TerminalApp::implementation::ContentManager>(page->_manager);
+            VERIFY_ARE_EQUAL(winrt::hstring{ L"copilot" }, manager->NativeAgentProviderId(page->_GetActiveControl().ContentId()));
+            VERIFY_IS_TRUE(contentArgs.NativeAgentProviderId().empty());
+
+            page->_settings.GlobalSettings().DefaultProfile(shellProfile.Guid());
+            VERIFY_SUCCEEDED(page->_OpenNewTab(contentArgs));
+            const auto shellTab = page->_GetFocusedTabImpl();
+            VERIFY_ARE_EQUAL(shellProfile.Guid(), shellTab->GetFocusedProfile().Guid());
+            VERIFY_IS_TRUE(manager->NativeAgentProviderId(shellTab->GetActiveTerminalControl().ContentId()).empty());
+            VERIFY_ARE_EQUAL(shellProfile.Icon().Resolved(), shellTab->Icon());
+        });
     }
 
     void TabTests::TryZoomPane()

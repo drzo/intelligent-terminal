@@ -113,7 +113,7 @@ namespace winrt::TerminalApp::implementation
             const auto settings{ Settings::TerminalSettings::CreateWithNewTerminalArgs(_settings, newTerminalArgs) };
 
             // Try to handle auto-elevation
-            if (!newTerminalArgs.ContentId() && _maybeElevate(newTerminalArgs, settings, profile))
+            if (!newTerminalArgs.ContentId() && _maybeElevate(newTerminalArgs.Copy().as<NewTerminalArgs>(), settings, profile))
             {
                 return S_OK;
             }
@@ -1308,11 +1308,16 @@ namespace winrt::TerminalApp::implementation
         if (target && target->canonicalIndex < _tabs.Size() &&
             _GetTabImpl(_tabs.GetAt(target->canonicalIndex)).get() == target->identity)
         {
+            const auto tabItem = _tabs.GetAt(target->canonicalIndex).TabViewItem();
             _SelectTab(target->canonicalIndex);
             if (focused && focused.get() == target->identity)
             {
                 // Re-enter the only displayed tab through the existing row-activation path.
                 focused->RequestFocusActiveControl.raise();
+            }
+            else if (!_IsCollapsedVerticalRail())
+            {
+                winrt::get_self<implementation::TabStrip>(_tabStrip)->BringTabHeaderIntoView(tabItem);
             }
         }
         return true;

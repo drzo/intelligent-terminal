@@ -135,8 +135,28 @@ already selected sidebar row. Preserve the search query, active pane within each
 tab, session identities, drafts and filter preferences. These actions do not use
 the tab switcher and leave horizontal-layout input unhandled.
 
+When navigation selects an offscreen tab, the expanded Sidebar brings its header
+into view without taking focus from the terminal. It does not expand a collapsed
+Sidebar or reset manual scrolling when the selection is unchanged.
+
 The default command IDs are `Terminal.NextSidebarTab` and
 `Terminal.PrevSidebarTab`. User rebinding, command overrides and explicit
 unbinding retain normal action-map precedence. Existing `nextTab`/`prevTab`,
-numeric tab shortcuts, Escape and the deferred filter-shortcut group keep their
-existing behavior.
+numeric tab shortcuts and Escape keep their existing behavior.
+
+## Sidebar Display options shortcuts
+
+| Default shortcut | Behavior in Sidebar layout |
+| --- | --- |
+| Ctrl+Shift+G | Toggle Agents only without changing the Recent preference or search query. |
+| Ctrl+Shift+/ | Toggle Agent recent sessions without changing the Agents-only preference or search query. |
+
+Both shortcuts work while Sidebar Display options is expanded, including when
+the other filter item owns keyboard focus. Each press changes its preference
+once and updates the native checked state. The menu displays the effective
+configured shortcuts rather than fixed default text.
+
+User-defined bindings and explicit unbinding retain normal action-map precedence.
+Horizontal Agent Pane session
+behavior, other flyouts/dialogs, native mouse/Space/Enter activation, Escape,
+metadata-toggle behavior, terminal input and selection remain unchanged.

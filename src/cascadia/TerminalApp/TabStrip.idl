@@ -104,6 +104,7 @@ namespace TerminalApp
         Windows.UI.Xaml.Controls.IconElement CreateIcon(Object source);
         TextHighlightColor MetadataHighlightColor;
         IVector<HighlightedRun> MetadataHighlightRanges;
+        Windows.UI.Xaml.Visibility CloseVisibility;
     };
 
     [default_interface] runtimeclass TabStripDisplayItem : Windows.UI.Xaml.Data.INotifyPropertyChanged
@@ -140,6 +141,7 @@ namespace TerminalApp
         Object IconSource;
         Windows.UI.Xaml.Controls.IconElement CreateIcon(Object source);
         Int32 LeadingContentColumnSpan;
+        Boolean ShowStatusIcon;
     };
 
     [default_interface] runtimeclass TabStripPaneEventArgs
