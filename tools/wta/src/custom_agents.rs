@@ -218,7 +218,7 @@ pub(crate) fn history_commands(settings: &serde_json::Value) -> Result<Vec<(Stri
         .into_iter()
         .filter_map(|agent| agent.acp.map(|acp| (agent.id, acp.commandline())))
         .collect();
-    let mut legacy: Vec<String> = match settings.get("acpCustomCommands") {
+    let legacy: Vec<String> = match settings.get("acpCustomCommands") {
         Some(value) => {
             serde_json::from_value(value.clone()).context("invalid legacy custom ACP commands")?
         }
@@ -226,19 +226,24 @@ pub(crate) fn history_commands(settings: &serde_json::Value) -> Result<Vec<(Stri
     };
     // The singular setting mirrors the selection, including structured entries.
     // Do not turn that compatibility mirror into another executable-derived ID.
-    if settings
+    let selected_legacy = settings
         .get("acpAgent")
         .and_then(serde_json::Value::as_str)
-        .is_some_and(|id| id.starts_with("custom:") && !ids.contains(&id.to_ascii_lowercase()))
+        .filter(|id| {
+            id.get(..7)
+                .is_some_and(|prefix| prefix.eq_ignore_ascii_case("custom:"))
+                && !ids.contains(&id.to_ascii_lowercase())
+        })
+        .and_then(|id| {
+            settings
+                .get("acpCustomCommand")
+                .and_then(serde_json::Value::as_str)
+                .map(|command| (Some(id), command.to_owned()))
+        });
+    for (selected_id, command) in selected_legacy
+        .into_iter()
+        .chain(legacy.into_iter().map(|command| (None, command)))
     {
-        if let Some(command) = settings
-            .get("acpCustomCommand")
-            .and_then(serde_json::Value::as_str)
-        {
-            legacy.push(command.to_owned());
-        }
-    }
-    for command in legacy {
         if command.trim().is_empty() {
             continue;
         }
@@ -262,6 +267,9 @@ pub(crate) fn history_commands(settings: &serde_json::Value) -> Result<Vec<(Stri
         };
         ensure!(!name.is_empty(), "missing custom ACP executable name");
         let id = format!("custom:{name}");
+        if selected_id.is_some_and(|selected| !selected.eq_ignore_ascii_case(&id)) {
+            continue;
+        }
         if ids.insert(id.to_ascii_lowercase()) {
             commands.push((id, command));
         }
@@ -342,6 +350,37 @@ mod tests {
         }))
         .unwrap()
         .is_empty());
+    }
+
+    #[test]
+    fn history_catalog_prefers_only_the_matching_selected_legacy_command() {
+        for (selection, expected) in [
+            ("CUSTOM:WORK", "work.exe --new"),
+            ("custom:other", "work.exe --old"),
+            ("copilot", "work.exe --old"),
+        ] {
+            let settings = json!({
+                "acpAgent": selection,
+                "acpCustomCommand": "work.exe --new",
+                "acpCustomCommands": ["work.exe --old"]
+            });
+            assert_eq!(
+                history_commands(&settings).unwrap(),
+                [("custom:work".into(), expected.into())]
+            );
+        }
+        let settings = json!({
+            "acpAgent": "custom:work",
+            "acpCustomCommand": "work.exe --new",
+            "acpCustomCommands": ["work.exe --old"],
+            "customAgents": [
+                {"id": "custom:work", "acp": {"command": "structured.exe"}}
+            ]
+        });
+        assert_eq!(
+            history_commands(&settings).unwrap(),
+            [("custom:work".into(), "structured.exe".into())]
+        );
     }
 
     #[test]

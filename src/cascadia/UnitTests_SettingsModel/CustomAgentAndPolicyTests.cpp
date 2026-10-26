@@ -75,6 +75,7 @@ namespace SettingsModelUnitTests
         TEST_METHOD(CustomDelegateAgentRoundtrips);
         TEST_METHOD(CustomAgentCollectionsRoundtrip);
         TEST_METHOD(StructuredCustomAgentRoundtripAndProfiles);
+        TEST_METHOD(CustomAcpCommandPrecedence);
         TEST_METHOD(StructuredCustomAgentValidation);
         TEST_METHOD(StructuredCustomAgentBatchInvocation);
         TEST_METHOD(CustomAgentLayoutIdentityRoundtrip);
@@ -402,6 +403,28 @@ namespace SettingsModelUnitTests
     }
 
     // ── Round-trip ──────────────────────────────────────────────────────
+
+    void CustomAgentAndPolicyTests::CustomAcpCommandPrecedence()
+    {
+        namespace Custom = ::Microsoft::Terminal::CustomAgents;
+        auto globals = winrt::make_self<implementation::GlobalAppSettings>();
+        globals->LayerJson(VerifyParseSucceeded(R"({
+            "acpAgent": "CUSTOM:WORK",
+            "acpCustomCommand": "work.exe --new",
+            "acpCustomCommands": ["work.exe --old", "other.exe --stdio"]
+        })"), OriginTag::User);
+        VERIFY_ARE_EQUAL(std::wstring{ L"work.exe --new" }, Custom::AcpCommand(*globals, L"custom:work"));
+        VERIFY_ARE_EQUAL(std::wstring{ L"other.exe --stdio" }, Custom::AcpCommand(*globals, L"custom:other"));
+        globals->AcpAgent(L"custom:other");
+        VERIFY_ARE_EQUAL(std::wstring{ L"work.exe --old" }, Custom::AcpCommand(*globals, L"custom:work"));
+        globals->AcpAgent(L"copilot");
+        VERIFY_ARE_EQUAL(std::wstring{ L"work.exe --old" }, Custom::AcpCommand(*globals, L"custom:work"));
+        globals->AcpAgent(L"custom:work");
+        globals->LayerJson(VerifyParseSucceeded(R"({
+            "customAgents": [{"id":"custom:work","acp":{"command":"structured.exe"}}]
+        })"), OriginTag::User);
+        VERIFY_ARE_EQUAL(std::wstring{ L"\"structured.exe\"" }, Custom::AcpCommand(*globals, L"custom:work"));
+    }
 
     void CustomAgentAndPolicyTests::StructuredCustomAgentRoundtripAndProfiles()
     {

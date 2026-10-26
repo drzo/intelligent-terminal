@@ -226,6 +226,14 @@ namespace Microsoft::Terminal::CustomAgents
         {
             return std::wstring{ agent.AcpCommand() };
         }
+        const auto selectedCommand = globals.AcpCustomCommand();
+        const auto selectedLegacyId = L"custom:" + std::wstring{ Settings::Model::DeriveCustomAgentId(selectedCommand) };
+        if (!selectedCommand.empty() &&
+            Settings::Model::AgentRegistry::AgentIdEquals(globals.AcpAgent(), id) &&
+            Settings::Model::AgentRegistry::AgentIdEquals(selectedLegacyId, id))
+        {
+            return std::wstring{ selectedCommand };
+        }
         for (const auto& command : globals.AcpCustomCommands())
         {
             const auto legacyId = L"custom:" + std::wstring{ Settings::Model::DeriveCustomAgentId(command) };
@@ -233,12 +241,6 @@ namespace Microsoft::Terminal::CustomAgents
             {
                 return std::wstring{ command };
             }
-        }
-        const auto command = globals.AcpCustomCommand();
-        const auto legacyId = L"custom:" + std::wstring{ Settings::Model::DeriveCustomAgentId(command) };
-        if (!command.empty() && Settings::Model::AgentRegistry::AgentIdEquals(legacyId, id))
-        {
-            return std::wstring{ command };
         }
         return {};
     }
