@@ -145,6 +145,20 @@ Describe 'Feature: Sidebar upgrade' -Tag @('Feature', 'SidebarUpgrade') {
             @(Get-UpgradeVisiblePeer SidebarIntroductionTip) | Should -HaveCount 0
         }
     }
+    It 'Close-button dismissal survives timer ticks and restart' {
+        Start-UpgradeFixture -Migration $true -Shown $false -Layout vertical
+        Wait-Until -TimeoutSec 10 -Condition {
+            @(Get-UpgradeVisiblePeer SidebarIntroductionTip).Count -eq 1 -and
+                (Get-WtStateObject -App $script:app).sidebarIntroductionShown -eq $false
+        } | Out-Null
+        Close-UpgradeIntroduction
+        Start-Sleep -Seconds 3
+        (Get-WtStateObject -App $script:app).sidebarIntroductionShown | Should -BeTrue
+        @(Get-UpgradeVisiblePeer SidebarIntroductionTip) | Should -HaveCount 0
+        Restart-UpgradeFixture
+        (Get-WtStateObject -App $script:app).sidebarIntroductionShown | Should -BeTrue
+        @(Get-UpgradeVisiblePeer SidebarIntroductionTip) | Should -HaveCount 0
+    }
     It 'Settings reload does not block while the introduction is open' {
         Start-UpgradeFixture -Migration $true -Shown $false -Layout vertical
         Wait-Until -TimeoutSec 10 -Condition { @(Get-UpgradeVisiblePeer SidebarIntroductionTip).Count -eq 1 } | Out-Null

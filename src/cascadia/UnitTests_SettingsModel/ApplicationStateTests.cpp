@@ -511,12 +511,17 @@ namespace SettingsModelUnitTests
         first->Flush();
         denyStateWrite.reset();
         VERIFY_IS_FALSE(_readFixture(root / L"state.json")["sidebarIntroductionShown"].asBool());
+        first->RefreshSidebarState();
+        VERIFY_IS_FALSE(first->SidebarIntroductionShown());
         VERIFY_IS_TRUE(static_cast<bool>(second->LockSidebarState(false)));
         VERIFY_ARE_EQUAL(uint64_t{ 0 }, second->TryBeginSidebarIntroduction());
         first->Flush();
         VERIFY_IS_TRUE(_readFixture(root / L"state.json")["sidebarIntroductionShown"].asBool());
+        VERIFY_IS_TRUE(first->SidebarIntroductionShown());
         VERIFY_IS_TRUE(static_cast<bool>(second->LockSidebarState(false)));
         VERIFY_ARE_EQUAL(uint64_t{ 0 }, second->TryBeginSidebarIntroduction());
+        auto restarted = winrt::make_self<implementation::ApplicationState>(root);
+        VERIFY_IS_TRUE(restarted->SidebarIntroductionShown());
         // A page retaining the token can acknowledge writer completion safely.
         first->EndSidebarIntroduction(claim, false);
     }

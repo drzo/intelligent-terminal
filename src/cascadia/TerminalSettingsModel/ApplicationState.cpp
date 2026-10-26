@@ -127,7 +127,7 @@ namespace winrt::Microsoft::Terminal::Settings::Model::implementation
         if (pendingIntroduction)
         {
             // Also retry on graceful shutdown if the queued attempt already
-            // failed; borrowing our reservation avoids waiting on ourselves.
+            // failed; keep the introduction reservation until the write succeeds.
             _write();
         }
     }
@@ -254,6 +254,10 @@ namespace winrt::Microsoft::Terminal::Settings::Model::implementation
             // and write it back out.
             _toJsonWithBlob(root, FileSource::Shared);
             _preserveSidebarFlags(root, previous);
+            if (_sidebarIntroductionPresented)
+            {
+                root["sidebarIntroductionShown"] = true;
+            }
             _writeSharedContents(Json::writeString(wbuilder, root));
 
             // Finally, write our Local properties back to elevated-state.json
@@ -264,12 +268,17 @@ namespace winrt::Microsoft::Terminal::Settings::Model::implementation
             // We're unelevated, this is easy. Just write everything back out.
             auto root = ToJson(FileSource::Local | FileSource::Shared);
             _preserveSidebarFlags(root, previous);
+            if (_sidebarIntroductionPresented)
+            {
+                root["sidebarIntroductionShown"] = true;
+            }
             _writeLocalContents(Json::writeString(wbuilder, root));
         }
         if (_sidebarIntroductionLock && _sidebarIntroductionPresented)
         {
             // The shared write above included the shown flag. Only durable
             // completion permits another process to acquire the reservation.
+            _state.lock()->SidebarIntroductionShown = true;
             _sidebarIntroductionPresented = false;
             _sidebarIntroductionLock.reset();
         }

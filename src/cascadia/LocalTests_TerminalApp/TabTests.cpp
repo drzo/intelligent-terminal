@@ -8208,15 +8208,6 @@ namespace TerminalAppLocalTests
             VERIFY_IS_FALSE(tip.IsOpen());
             VERIFY_ARE_EQUAL(uint64_t{ 0 }, page->_sidebarIntroductionClaim);
         });
-        TestOnUIThread([&]() {
-            page->_sidebarIntroductionClaim = 44;
-            tip.IsOpen(true);
-            page->_OnSidebarIntroductionCloseButtonClick(tip, nullptr);
-            tip.IsOpen(false);
-            page->_TryShowSidebarIntroduction();
-            VERIFY_ARE_EQUAL(uint64_t{ 0 }, page->_sidebarIntroductionClaim);
-            VERIFY_IS_FALSE(page->_sidebarIntroductionDismissed);
-        });
     }
 
     void TabTests::_verifyTabIntroductionPopup(const bool vertical)
