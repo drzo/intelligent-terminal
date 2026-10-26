@@ -730,7 +730,8 @@
                                           Unloaded="OnPaneRowUnloaded">
                                         <Grid.ColumnDefinitions>
                                             <ColumnDefinition Width="*" />
-                                            <ColumnDefinition Width="30" />
+                                            <!-- The pane dismiss button remains wired below; its collapsed state makes this Auto column zero-width. -->
+                                            <ColumnDefinition Width="Auto" />
                                         </Grid.ColumnDefinitions>
                                         <Border x:Name="PaneActiveBackground"
                                                 Grid.ColumnSpan="2"
@@ -761,7 +762,6 @@
                                                 Opacity="0" />
                                         <Button x:Name="PaneActivateButton"
                                                 Grid.Column="0"
-                                                Grid.ColumnSpan="2"
                                                 Padding="0"
                                                 HorizontalContentAlignment="Stretch"
                                                 VerticalContentAlignment="Stretch"
@@ -776,7 +776,7 @@
                                                 <SolidColorBrush x:Key="ButtonBackgroundPressed"
                                                                  Color="Transparent" />
                                             </Button.Resources>
-                                            <Grid Margin="12,0,30,0">
+                                            <Grid Margin="12,0,0,0">
                                                 <Grid.RowDefinitions>
                                                     <RowDefinition Height="Auto" />
                                                     <RowDefinition Height="Auto" />

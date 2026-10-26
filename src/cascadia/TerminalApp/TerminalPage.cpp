@@ -83,6 +83,9 @@ using namespace winrt::Windows::UI::Xaml;
 using namespace winrt::Windows::UI::Xaml::Media;
 namespace AgentPolicy = ::Microsoft::Terminal::Settings::Model::AgentPolicy;
 namespace AgentYoloPolicy = ::Microsoft::Terminal::Settings::Model::AgentYoloPolicy;
+
+// Keep direct pane dismissal disabled until split-pane chrome exposes the same affordance.
+static constexpr bool PaneDismissActionsEnabled = false;
 using namespace ::TerminalApp;
 using namespace ::Microsoft::Console;
 using namespace ::Microsoft::Terminal::Core;
@@ -18833,7 +18836,7 @@ namespace winrt::TerminalApp::implementation
 
         makeMenuItem(RS_(L"SplitPaneText"), L"\xF246", splitPaneMenu, menu);
 
-        // Only wire up "Close Pane" if there's multiple panes.
+        // Only add pane-specific commands if there are multiple panes.
         if (_GetFocusedTabImpl()->GetLeafPaneCount() > 1)
         {
             MUX::Controls::CommandBarFlyout swapPaneMenu{};
@@ -18874,7 +18877,10 @@ namespace winrt::TerminalApp::implementation
 
             makeItem(RS_(L"TogglePaneZoomText"), L"\xE8A3", ActionAndArgs{ ShortcutAction::TogglePaneZoom, nullptr }, menu);
             makeItem(RS_(L"CloseOtherPanesText"), L"\xE89F", ActionAndArgs{ ShortcutAction::CloseOtherPanes, nullptr }, menu);
-            makeItem(RS_(L"PaneClose"), L"\xE89F", ActionAndArgs{ ShortcutAction::ClosePane, nullptr }, menu);
+            if constexpr (PaneDismissActionsEnabled)
+            {
+                makeItem(RS_(L"PaneClose"), L"\xE89F", ActionAndArgs{ ShortcutAction::ClosePane, nullptr }, menu);
+            }
         }
 
         if (control.ConnectionState() >= ConnectionState::Closed)

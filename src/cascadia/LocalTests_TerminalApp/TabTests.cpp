@@ -477,6 +477,7 @@ namespace TerminalAppLocalTests
         TEST_METHOD(VerticalTabStripCollapsedItemsPreserveSelection);
         TEST_METHOD(VerticalTabKeyboardFocusPreservesSelection);
         TEST_METHOD(VerticalTabStripHostsPaneGroups);
+        TEST_METHOD(PaneContextMenuOmitsDirectClose);
         TEST_METHOD(VerticalTabPaneSelectionTracksSelectedTab);
         TEST_METHOD(VerticalSidebarPaneActivationSkipsPreviousFocus);
         TEST_METHOD(HorizontalTabProgressSurvivesAsyncVerticalTeardown);
@@ -15583,21 +15584,21 @@ namespace TerminalAppLocalTests
             const auto tabSelection = headerRoot.FindName(L"TabSelectionBackground").as<Border>();
             VERIFY_ARE_EQUAL(tabSelection.Background().as<Media::SolidColorBrush>().Color(),
                              firstPaneBackground.Background().as<Media::SolidColorBrush>().Color());
-            VERIFY_ARE_EQUAL(Visibility::Visible, firstPaneClose.Visibility());
+            VERIFY_ARE_EQUAL(Visibility::Collapsed, firstPaneClose.Visibility());
             VERIFY_ARE_EQUAL(Visibility::Collapsed, secondPaneClose.Visibility());
-            VERIFY_IS_TRUE(firstPaneClose.Margin().Top >= 4);
-            VERIFY_IS_TRUE(secondPaneClose.Margin().Top >= 4);
+            VERIFY_ARE_EQUAL(0.0, firstPaneRoot.ColumnDefinitions().GetAt(1).ActualWidth());
+            VERIFY_ARE_EQUAL(0.0, firstPaneActivateButton.Content().as<Grid>().Margin().Right);
             stripImpl->OnPanePointerEntered(firstPaneRoot, nullptr);
             VERIFY_ARE_EQUAL(0.0, firstPaneHover.Opacity());
             stripImpl->OnPanePointerEntered(secondPaneRoot, nullptr);
-            VERIFY_ARE_EQUAL(Visibility::Visible, secondPaneClose.Visibility());
+            VERIFY_ARE_EQUAL(Visibility::Collapsed, secondPaneClose.Visibility());
             stripImpl->OnPanePointerExited(secondPaneRoot, nullptr);
             VERIFY_ARE_EQUAL(Visibility::Collapsed, secondPaneClose.Visibility());
             VERIFY_IS_TRUE(secondPaneActivateButton.Focus(FocusState::Keyboard));
-            VERIFY_ARE_EQUAL(Visibility::Visible, secondPaneClose.Visibility());
+            VERIFY_ARE_EQUAL(Visibility::Collapsed, secondPaneClose.Visibility());
             VERIFY_IS_TRUE(stripImpl->SearchTabsButton().Focus(FocusState::Keyboard));
             VERIFY_ARE_EQUAL(Visibility::Collapsed, secondPaneClose.Visibility());
-            VERIFY_ARE_EQUAL(Visibility::Visible, firstPaneClose.Visibility());
+            VERIFY_ARE_EQUAL(Visibility::Collapsed, firstPaneClose.Visibility());
             uint32_t collectionChanges = 0;
             const auto changed = display.PaneItems().VectorChanged(winrt::auto_revoke, [&](auto&&, auto&&) {
                 ++collectionChanges;
@@ -22730,8 +22731,8 @@ namespace TerminalAppLocalTests
             const auto paneList = strip.ContainerFromIndex(0).as<ListViewItem>().ContentTemplateRoot().as<StackPanel>().Children().GetAt(1).as<ItemsControl>();
             const auto paneRoot = Media::VisualTreeHelper::GetChild(paneList.ContainerFromIndex(0), 0).as<Grid>();
             const auto paneClose = paneRoot.FindName(L"PaneCloseButton").as<Button>();
-            VERIFY_ARE_EQUAL(Visibility::Visible, paneClose.Visibility());
-            verifyCloseInteractionBackground(paneClose);
+            VERIFY_ARE_EQUAL(Visibility::Collapsed, paneClose.Visibility());
+            VERIFY_ARE_EQUAL(0.0, paneRoot.ColumnDefinitions().GetAt(1).ActualWidth());
             strip.SetPaneItems(first, nullptr, false);
             strip.SelectedItem(nullptr);
             second.IsClosable(true);
@@ -22764,6 +22765,49 @@ namespace TerminalAppLocalTests
             VERIFY_ARE_EQUAL(Visibility::Collapsed, firstClose.Visibility());
             strip.IsRailCollapsed(false);
             VERIFY_ARE_EQUAL(Visibility::Visible, firstClose.Visibility());
+        });
+    }
+
+    void TabTests::PaneContextMenuOmitsDirectClose()
+    {
+        const auto page = _commonSetup();
+        TestOnUIThread([&]() {
+            const auto tab = page->_GetFocusedTabImpl();
+            VERIFY_IS_NOT_NULL(tab);
+            VERIFY_IS_TRUE(page->_SplitPane(
+                tab,
+                SplitDirection::Right,
+                0.5f,
+                page->_MakePane(nullptr, page->_GetFocusedTab(), nullptr)));
+
+            winrt::Microsoft::UI::Xaml::Controls::CommandBarFlyout menu;
+            page->_PopulateContextMenu(page->_GetActiveControl(), menu, false);
+
+            bool hasClosePane = false;
+            bool hasCloseOtherPanes = false;
+            bool hasCloseTab = false;
+            bool hasSplitPane = false;
+            bool hasSwapPane = false;
+            bool hasTogglePaneZoom = false;
+            for (const auto& command : menu.SecondaryCommands())
+            {
+                if (const auto button = command.try_as<AppBarButton>())
+                {
+                    hasClosePane = hasClosePane || button.Label() == RS_(L"PaneClose");
+                    hasCloseOtherPanes = hasCloseOtherPanes || button.Label() == RS_(L"CloseOtherPanesText");
+                    hasCloseTab = hasCloseTab || button.Label() == RS_(L"TabClose");
+                    hasSplitPane = hasSplitPane || button.Label() == RS_(L"SplitPaneText");
+                    hasSwapPane = hasSwapPane || button.Label() == RS_(L"SwapPaneText");
+                    hasTogglePaneZoom = hasTogglePaneZoom || button.Label() == RS_(L"TogglePaneZoomText");
+                }
+            }
+
+            VERIFY_IS_FALSE(hasClosePane);
+            VERIFY_IS_TRUE(hasCloseOtherPanes);
+            VERIFY_IS_TRUE(hasCloseTab);
+            VERIFY_IS_TRUE(hasSplitPane);
+            VERIFY_IS_TRUE(hasSwapPane);
+            VERIFY_IS_TRUE(hasTogglePaneZoom);
         });
     }
 
