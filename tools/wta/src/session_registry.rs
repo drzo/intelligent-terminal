@@ -4492,6 +4492,17 @@ fn apply_event_qualified_at_ms(
             let Some(identity) = unique_identity_for_raw(state, &sid) else {
                 return false;
             };
+            // The helper callback only binds an already-dispatched attempt.
+            // A hook followed by PaneClosed may have ended it while the
+            // callback was in flight; only an explicit new resume may revive it.
+            if state.sessions.get(&identity).is_some_and(|row| {
+                matches!(
+                    row.status,
+                    Some(AgentStatus::Historical | AgentStatus::Ended)
+                )
+            }) {
+                return false;
+            }
             assign_resume_pane_identity_locked(state, &identity, pane_session_id, now)
         }
     }
@@ -8933,6 +8944,120 @@ mod tests {
         assert!(changed);
         assert_eq!(row.status, Some(crate::agent_sessions::AgentStatus::Idle));
         assert_eq!(row.pane_session_id.as_deref(), Some("new-pane"));
+    }
+
+    #[tokio::test]
+    async fn resume_pane_callback_after_started_then_closed_does_not_revive() {
+        let reg = InMemoryRegistry::new();
+        let sid = acp::schema::v1::SessionId::new("resumed");
+        let pane = "{ABCDEFAB-1234-5678-9ABC-DEFABCDEFABC}";
+        assert!(
+            reg.apply_event(SessionEvent::SessionStarted {
+                key: "resumed".into(),
+                cli_source: CliSource::Copilot,
+                pane_session_id: pane.into(),
+                cwd: "C:\\repo".into(),
+                title: "Resumed session".into(),
+            })
+            .await
+        );
+        assert!(
+            reg.apply_event(SessionEvent::PaneClosed {
+                pane_session_id: pane.to_ascii_lowercase(),
+            })
+            .await
+        );
+        let ended = reg.lookup(&sid).await.unwrap();
+        assert_eq!(ended.status, Some(AgentStatus::Ended));
+        assert!(ended.pane_session_id.is_none());
+        assert!(!ended.born_bound_pane);
+        assert!(
+            !reg.apply_event(SessionEvent::ResumePaneAssigned {
+                key: "resumed".into(),
+                pane_session_id: pane.trim_matches(['{', '}']).into(),
+            })
+            .await
+        );
+        assert_eq!(reg.lookup(&sid).await.unwrap(), ended);
+        assert!(reg.lookup_active_by_pane(pane).await.is_none());
+        assert!(reg.inner.lock().await.active_by_pane.is_empty());
+
+        // Explicit master activation still atomically revives and binds.
+        let identity = SessionIdentity::from_info(&ended);
+        assert!(
+            reg.assign_resume_pane_identity(&identity, "explicit-retry-pane".into())
+                .await
+        );
+        let retried = reg.lookup(&sid).await.unwrap();
+        assert_eq!(retried.status, Some(AgentStatus::Idle));
+        assert_eq!(
+            retried.pane_session_id.as_deref(),
+            Some("explicit-retry-pane")
+        );
+        assert!(retried.born_bound_pane);
+        assert_eq!(
+            reg.lookup_active_by_pane("explicit-retry-pane").await,
+            Some(retried)
+        );
+
+        assert!(
+            reg.apply_event(SessionEvent::PaneClosed {
+                pane_session_id: "explicit-retry-pane".into(),
+            })
+            .await
+        );
+        assert!(
+            reg.apply_event(SessionEvent::ResumeDispatched {
+                key: "resumed".into(),
+            })
+            .await
+        );
+        assert!(
+            reg.apply_event(SessionEvent::ResumePaneAssigned {
+                key: "resumed".into(),
+                pane_session_id: "helper-retry-pane".into(),
+            })
+            .await
+        );
+        let retried = reg.lookup(&sid).await.unwrap();
+        assert_eq!(retried.status, Some(AgentStatus::Idle));
+        assert_eq!(
+            retried.pane_session_id.as_deref(),
+            Some("helper-retry-pane")
+        );
+        assert!(retried.born_bound_pane);
+        assert_eq!(
+            reg.lookup_active_by_pane("helper-retry-pane").await,
+            Some(retried)
+        );
+    }
+
+    #[tokio::test]
+    async fn resume_pane_callback_for_history_preserves_current_pane_owner() {
+        let reg = InMemoryRegistry::new();
+        let history = listed_native("resumed", 1);
+        let sid = history.session_id.clone();
+        reg.upsert(history).await;
+        reg.apply_event(SessionEvent::SessionStarted {
+            key: "current".into(),
+            cli_source: CliSource::Copilot,
+            pane_session_id: "CURRENT-PANE".into(),
+            cwd: "C:\\repo".into(),
+            title: "Current session".into(),
+        })
+        .await;
+        let historical = reg.lookup(&sid).await.unwrap();
+        assert_eq!(historical.status, Some(AgentStatus::Historical));
+        let owner = reg.lookup_active_by_pane("current-pane").await.unwrap();
+        assert!(
+            !reg.apply_event(SessionEvent::ResumePaneAssigned {
+                key: "resumed".into(),
+                pane_session_id: "current-pane".into(),
+            })
+            .await
+        );
+        assert_eq!(reg.lookup(&sid).await.unwrap(), historical);
+        assert_eq!(reg.lookup_active_by_pane("current-pane").await, Some(owner));
     }
 
     /// Seed a `/sessions` resume: a historical row promoted to Idle and bound
