@@ -1106,6 +1106,7 @@ namespace winrt::TerminalApp::implementation
                                            std::optional<uint64_t> lastActivityAtMs,
                                            std::string_view status,
                                            std::optional<std::string> cwd = std::nullopt);
+        void _RaiseAgentAttentionBell(const winrt::guid& paneSessionId);
         static winrt::hstring _SidebarHistoryAgeText(std::optional<uint64_t> lastActivityAtMs, uint64_t nowMs, std::wstring_view languageTag = {});
         friend struct TabStripHistoryItem;
         struct _SidebarHistorySnapshot

@@ -3738,7 +3738,12 @@ namespace winrt::TerminalApp::implementation
         if (paneId)
         {
             auto& paneInfo = _richTabAgentStatusByPaneId[*paneId];
+            const auto wasAttention = paneInfo.sessionId == sessionInfo.sessionId && paneInfo.status == "Attention";
             updateInfo(paneInfo, sessionInfo);
+            if (!wasAttention && paneInfo.sessionId == sessionInfo.sessionId && paneInfo.status == "Attention")
+            {
+                _RaiseAgentAttentionBell(*paneId);
+            }
         }
         if (statusChanged && sessionInfo.status == statusString && sessionInfo.paneSessionId == paneId)
         {
@@ -3773,6 +3778,25 @@ namespace winrt::TerminalApp::implementation
         // neither of which is carried by this delta. Its caller requests the
         // existing throttled full snapshot rather than matching only session ID.
         return true;
+    }
+
+    void TerminalPage::_RaiseAgentAttentionBell(const winrt::guid& paneSessionId)
+    {
+        if (!winrt::get_self<ContentManager>(_manager)->AcceptsAgentSessionEvents(paneSessionId))
+        {
+            return;
+        }
+        for (const auto& runtimeTab : _RuntimeTabs())
+        {
+            if (const auto tab = _GetTabImpl(runtimeTab))
+            {
+                if (const auto rootPane = tab->GetRootPane(); rootPane && rootPane->FindPaneBySessionId(paneSessionId))
+                {
+                    tab->RaiseBellIndicator();
+                    return;
+                }
+            }
+        }
     }
 
     // Tells wta that a tab has been destroyed so it can drop the per-tab
@@ -13028,6 +13052,13 @@ namespace winrt::TerminalApp::implementation
                 {
                     const auto binding = page->_paneAgentSessions.find(paneId);
                     const auto previous = page->_richTabAgentStatusByPaneId.find(paneId);
+                    if (!report.modeEpoch && !report.sessionId.empty() && report.status == "Attention" &&
+                        (previous == page->_richTabAgentStatusByPaneId.end() ||
+                         previous->second.sessionId != report.sessionId ||
+                         previous->second.status != "Attention"))
+                    {
+                        page->_RaiseAgentAttentionBell(paneId);
+                    }
                     if (binding != page->_paneAgentSessions.end() &&
                         winrt::to_string(binding->second.sessionId) == report.sessionId &&
                         (previous == page->_richTabAgentStatusByPaneId.end() ||

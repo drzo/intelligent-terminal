@@ -53,6 +53,7 @@ namespace winrt::TerminalApp::implementation
         void HideIcon(const bool hide);
 
         void ShowBellIndicator(const bool show);
+        void RaiseBellIndicator();
         void ActivateBellIndicatorTimer();
 
         float CalcSnappedDimension(const bool widthOrHeight, const float dimension) const;
