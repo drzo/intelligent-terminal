@@ -3553,6 +3553,9 @@ fn assign_resume_pane_identity_locked(
     pane_session_id: String,
     now: u64,
 ) -> bool {
+    let Some(entry) = state.sessions.get(identity) else {
+        return false;
+    };
     let pane_session_id = pane_key(&pane_session_id);
     if state
         .failed_resume_assignments
@@ -3565,9 +3568,6 @@ fn assign_resume_pane_identity_locked(
         reason,
     }) = state.pane_connections.get(&pane_session_id)
     {
-        let Some(entry) = state.sessions.get(identity) else {
-            return false;
-        };
         if entry.pane_session_id.as_deref().is_some_and(|pane| {
             pane != pane_session_id
                 || !entry.born_bound_pane
@@ -9030,6 +9030,39 @@ mod tests {
             reg.lookup_active_by_pane("helper-retry-pane").await,
             Some(retried)
         );
+    }
+
+    #[tokio::test]
+    async fn resume_pane_assignment_missing_target_preserves_current_pane_owner() {
+        let reg = InMemoryRegistry::new();
+        let history = listed_native("resumed", 1);
+        let identity = SessionIdentity::from_info(&history);
+        reg.upsert(history).await;
+        reg.apply_event(SessionEvent::SessionStarted {
+            key: "bootstrap".into(),
+            cli_source: CliSource::Copilot,
+            pane_session_id: "RETURNED-PANE".into(),
+            cwd: "C:\\repo".into(),
+            title: "Bootstrap session".into(),
+        })
+        .await;
+        let owner = reg.lookup_active_by_pane("returned-pane").await.unwrap();
+        let active_by_pane = reg.inner.lock().await.active_by_pane.clone();
+
+        // History reconciliation removes the selected row while create_tab is in flight.
+        assert!(reg.remove_identity(&identity).await.is_some());
+        assert!(
+            !reg.assign_resume_pane_identity(&identity, "RETURNED-PANE".into())
+                .await
+        );
+
+        assert!(reg.lookup_identity(&identity).await.is_none());
+        assert_eq!(reg.lookup(&owner.session_id).await, Some(owner.clone()));
+        assert_eq!(
+            reg.lookup_active_by_pane("returned-pane").await,
+            Some(owner)
+        );
+        assert_eq!(reg.inner.lock().await.active_by_pane, active_by_pane);
     }
 
     #[tokio::test]
