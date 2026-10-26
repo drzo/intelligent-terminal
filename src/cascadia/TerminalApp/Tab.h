@@ -413,6 +413,7 @@ namespace winrt::TerminalApp::implementation
         void _Setup();
 
         SafeDispatcherTimer _bellIndicatorTimer;
+        bool _terminalBellActive{ false };
         void _BellIndicatorTimerTick(const Windows::Foundation::IInspectable& sender, const Windows::Foundation::IInspectable& e);
 
         void _UpdateHeaderControlMaxWidth();

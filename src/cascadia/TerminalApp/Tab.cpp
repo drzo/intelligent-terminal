@@ -555,6 +555,10 @@ namespace winrt::TerminalApp::implementation
     {
         ASSERT_UI_THREAD();
 
+        if (!show)
+        {
+            _terminalBellActive = false;
+        }
         if (_tabStatus.BellIndicator() != show)
         {
             _tabStatus.BellIndicator(show);
@@ -1503,10 +1507,10 @@ namespace winrt::TerminalApp::implementation
                         tab->TabRaiseVisualBell.raise();
                     }
 
-                    // Send a desktop toast notification if requested, but only if
-                    // the pane isn't already in the belled state. This prevents
-                    // sending repeated toasts for repeated BEL characters.
-                    if (bellArgs.SendNotification() && !tab->_tabStatus.BellIndicator())
+                    // Attention can light the indicator without a terminal BEL.
+                    // Only terminal BELs consume notification deduplication.
+                    const auto terminalBellActive = std::exchange(tab->_terminalBellActive, true);
+                    if (bellArgs.SendNotification() && !terminalBellActive)
                     {
                         tab->TabToastNotificationRequested.raise(tab->Title(), L"", sender);
                     }

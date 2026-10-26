@@ -560,6 +560,7 @@ namespace TerminalAppLocalTests
         TEST_METHOD(SessionRegistryAttentionBellUsesOrdinaryLifecycle);
         TEST_METHOD(SessionRegistryAttentionBellRoutesToOwningPane);
         TEST_METHOD(AgentSnapshotAttentionBellOnlyNotifiesTransitions);
+        TEST_METHOD(AttentionBellPreservesTerminalNotifications);
         TEST_METHOD(FailedAgentStatusRefreshDoesNotRestoreStaleCwds);
         TEST_METHOD(UnknownAgentSessionDoesNotReusePreviousCwd);
         TEST_METHOD(LatestBuiltinAgentReportWinsForPane);
@@ -9314,6 +9315,83 @@ namespace TerminalAppLocalTests
             complete();
             VERIFY_IS_TRUE(tab->_tabStatus.BellIndicator());
         });
+    }
+
+    void TabTests::AttentionBellPreservesTerminalNotifications()
+    {
+        winrt::com_ptr<TestSettingsPaneContent> first;
+        winrt::com_ptr<TestSettingsPaneContent> second;
+        winrt::com_ptr<winrt::TerminalApp::implementation::Tab> tab;
+        uint32_t notifications = 0;
+        IPaneContent lastSource{ nullptr };
+        const auto cleanup = wil::scope_exit([&]() {
+            RunOnUIThread([&]() {
+                tab = nullptr;
+                first = nullptr;
+                second = nullptr;
+                lastSource = nullptr;
+            });
+        });
+        TestOnUIThread([&]() {
+            first = winrt::make_self<TestSettingsPaneContent>();
+            second = winrt::make_self<TestSettingsPaneContent>();
+            tab = winrt::make_self<winrt::TerminalApp::implementation::Tab>(
+                std::make_shared<Pane>(
+                    std::make_shared<Pane>(first.as<IPaneContent>()),
+                    std::make_shared<Pane>(second.as<IPaneContent>()),
+                    SplitState::Vertical,
+                    0.5f));
+            tab->Initialize();
+            tab->Focus(FocusState::Unfocused);
+            tab->TabToastNotificationRequested([&](auto&&, auto&&, const IPaneContent& source) {
+                ++notifications;
+                lastSource = source;
+            });
+            tab->RaiseBellIndicator();
+            VERIFY_IS_TRUE(tab->_tabStatus.BellIndicator());
+            VERIFY_ARE_EQUAL(0u, notifications);
+        });
+        const auto bell = [&](const winrt::com_ptr<TestSettingsPaneContent>& source, const bool notify, const uint32_t expected) {
+            const auto processed = std::make_shared<::details::Event>();
+            TestOnUIThread([&]() {
+                source->BellRequested.raise(
+                    source.as<IPaneContent>(),
+                    winrt::make<winrt::TerminalApp::implementation::BellEventArgs>(false, notify));
+                // Drain the normal-priority bell handler before checking deduplication.
+                tab->TabViewItem().Dispatcher().RunAsync(CoreDispatcherPriority::Low, [processed]() { processed->Set(); });
+            });
+            VERIFY_ARE_EQUAL(static_cast<DWORD>(WAIT_OBJECT_0), WaitForSingleObject(processed->m_handle, 10000));
+            TestOnUIThread([&]() { VERIFY_ARE_EQUAL(expected, notifications); });
+        };
+
+        bell(second, true, 1);
+        TestOnUIThread([&]() { VERIFY_IS_TRUE(lastSource == second.as<IPaneContent>()); });
+        bell(first, true, 1);
+        TestOnUIThread([&]() {
+            tab->Focus(FocusState::Programmatic);
+            tab->Focus(FocusState::Unfocused);
+            tab->RaiseBellIndicator();
+        });
+        bell(first, true, 2);
+
+        TestOnUIThread([&]() {
+            tab->Focus(FocusState::Programmatic);
+            tab->RaiseBellIndicator();
+        });
+        bell(second, true, 3);
+        TestOnUIThread([&]() {
+            tab->_BellIndicatorTimerTick(nullptr, nullptr);
+            VERIFY_IS_FALSE(tab->_tabStatus.BellIndicator());
+            tab->RaiseBellIndicator();
+        });
+        bell(first, true, 4);
+
+        TestOnUIThread([&]() {
+            tab->_BellIndicatorTimerTick(nullptr, nullptr);
+            tab->Focus(FocusState::Unfocused);
+        });
+        bell(first, false, 4);
+        bell(second, true, 4);
     }
 
     void TabTests::FailedAgentStatusRefreshDoesNotRestoreStaleCwds()
