@@ -14616,6 +14616,7 @@ namespace winrt::TerminalApp::implementation
     //   the specified tab is not a host of terminals (such as the settings tab).
     // - If the Window is specified, the pane will instead be detached and moved
     //   to the window with the given name/id.
+    // - Agent panes belong to their owning tab and cannot be moved independently.
     // Return Value:
     // - true if the pane was moved locally or a cross-window request was sent.
     bool TerminalPage::_MovePane(MovePaneArgs args)
@@ -14627,6 +14628,11 @@ namespace winrt::TerminalApp::implementation
         auto focusedTab{ _GetFocusedTabImpl() };
 
         if (!focusedTab)
+        {
+            return false;
+        }
+
+        if (const auto pane = focusedTab->GetActivePane(); pane && pane->IsAgentPane())
         {
             return false;
         }
