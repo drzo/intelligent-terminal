@@ -13103,6 +13103,12 @@ namespace winrt::TerminalApp::implementation
 
         if (!_EnsureSharedWtaService())
         {
+            if (_historyRefreshInFlight)
+            {
+                _SidebarHistorySnapshot history;
+                history.state = _SidebarHistorySnapshot::State::MasterUnavailable;
+                _CompleteSidebarHistoryRefresh(_historyRequestGeneration, std::move(history));
+            }
             return;
         }
         _agentSnapshotRefreshInFlight = true;
