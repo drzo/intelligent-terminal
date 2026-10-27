@@ -4525,6 +4525,7 @@ namespace winrt::TerminalApp::implementation
             args.StartingDirectory(winrt::hstring{ resolvedWorkingDirectories.helper });
         }
 
+        SidebarUpdateBatch sidebarBatch{ *this, autoStash && _isVerticalLayout };
         auto rawPane = _MakeTerminalPane(args, nullptr, nullptr);
         if (!rawPane)
         {
@@ -4621,6 +4622,7 @@ namespace winrt::TerminalApp::implementation
             }
             tab->StashAgentPane();
             _UpdateBottomBarState();
+            sidebarBatch.Commit();
             _agentPaneLog("_AutoCreateHiddenAgentPaneShared: done — helper pre-warmed + stashed");
             return true;
         }
@@ -6894,6 +6896,14 @@ namespace winrt::TerminalApp::implementation
     }
 
     void TerminalPage::_UpdateSidebarHistoryCurrentSession()
+    {
+        if (!_DeferSidebarUpdates())
+        {
+            _UpdateSidebarHistoryCurrentSessionCore();
+        }
+    }
+
+    void TerminalPage::_UpdateSidebarHistoryCurrentSessionCore()
     {
         if (!_AreRecentAgentSessionsVisible())
         {
@@ -14001,7 +14011,8 @@ namespace winrt::TerminalApp::implementation
                     page->_UpdateTitle(*tab);
                     page->_ApplyTabListProjection(*tab, false);
                 }
-                else if ((propertyName == L"Icon" || propertyName == L"ToolTip") && page->_isVerticalLayout)
+                else if ((propertyName == L"Icon" || propertyName == L"ToolTip") && page->_isVerticalLayout &&
+                         !page->_DeferSidebarUpdates())
                 {
                     const auto strip = winrt::get_self<TabStrip>(page->_tabStrip);
                     if (const auto display = strip->DisplayItemForTab(tab->TabViewItem()))
@@ -14941,7 +14952,7 @@ namespace winrt::TerminalApp::implementation
                 _UpdateBackground(profile);
             }
             _RefreshRichTabForTab(*tab, true, false);
-            if (tabStrip)
+            if (tabStrip && !_DeferSidebarUpdates())
             {
                 tabStrip->SyncTabPresentation(display);
             }
@@ -14953,6 +14964,16 @@ namespace winrt::TerminalApp::implementation
     }
 
     void TerminalPage::_RefreshTabStripPaneItems(
+        const winrt::com_ptr<Tab>& tab,
+        const TerminalApp::TabStripDisplayItem& projectedDisplay)
+    {
+        if (!_DeferSidebarUpdates())
+        {
+            _RefreshTabStripPaneItemsCore(tab, projectedDisplay);
+        }
+    }
+
+    void TerminalPage::_RefreshTabStripPaneItemsCore(
         const winrt::com_ptr<Tab>& tab,
         const TerminalApp::TabStripDisplayItem& projectedDisplay)
     {
