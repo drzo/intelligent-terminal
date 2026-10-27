@@ -1843,6 +1843,13 @@ pub trait SessionRegistry: Send + Sync {
     /// Copilot's internal sidekick sessions are intentionally omitted.
     async fn lookup_active_by_pane(&self, pane_session_id: &str) -> Option<SessionInfo>;
 
+    async fn rebind_copilot_fork(
+        &self,
+        source: &SessionIdentity,
+        pane_session_id: &str,
+        target: &acp::schema::v1::SessionId,
+    ) -> bool;
+
     async fn remove_identity(&self, identity: &SessionIdentity) -> Option<SessionInfo>;
 
     async fn remove_identity_if(
@@ -2547,6 +2554,94 @@ impl SessionRegistry for InMemoryRegistry {
     async fn snapshot(&self) -> Vec<SessionInfo> {
         let guard = self.inner.lock().await;
         guard.sessions.values().cloned().collect()
+    }
+
+    async fn rebind_copilot_fork(
+        &self,
+        source: &SessionIdentity,
+        pane_session_id: &str,
+        target: &acp::schema::v1::SessionId,
+    ) -> bool {
+        let mut state = self.inner.lock().await;
+        let pane = pane_key(pane_session_id);
+        let Some(source_row) = state.sessions.get(source) else {
+            return false;
+        };
+        let Some(source_key) = source_row.history_row_key() else {
+            return false;
+        };
+        if source_key.provider_id != "copilot"
+            || source_key.location != SessionLocation::Host
+            || source_key.session_universe.is_some()
+            || source_row.origin == Some(SessionOrigin::AgentPane)
+            || !active_source_pane_session(source_row)
+            || state.active_by_pane.get(&pane) != Some(source)
+            || source.session_id == *target
+        {
+            return false;
+        }
+        let Some(target_key) =
+            HistoryRowKey::new("copilot", SessionLocation::Host, target.to_string(), None)
+        else {
+            return false;
+        };
+        let target_identity = SessionIdentity {
+            session_id: target.clone(),
+            history_key: Some(target_key),
+        };
+        if state.sessions.get(&target_identity).is_some_and(|row| {
+            row.origin == Some(SessionOrigin::AgentPane)
+                || (active_source_pane_session(row) && row.pane_session_id.is_some())
+        }) {
+            return false;
+        }
+        let mut next = state
+            .sessions
+            .get(&target_identity)
+            .cloned()
+            .unwrap_or_else(|| {
+                let mut row = SessionInfo::new(target.clone(), source_row.cwd.clone());
+                row.provider_id = Some("copilot".into());
+                row.cli_source = Some(CliSource::Copilot);
+                row.origin = source_row.origin.clone();
+                row
+            });
+        let now = now_ms();
+        if let Some(previous) = state.sessions.get_mut(source) {
+            previous.pane_session_id = None;
+            previous.status = Some(AgentStatus::Historical);
+            previous.current_tool = None;
+            previous.attention_reason = None;
+            previous.attention_timestamp_ms = None;
+            previous.attention_cooldown_until_ms = None;
+            previous.last_error = None;
+            previous.born_bound_pane = false;
+        }
+        if !active_source_pane_session(&next) {
+            next.status = Some(AgentStatus::Idle);
+            next.current_tool = None;
+            next.attention_reason = None;
+            next.attention_timestamp_ms = None;
+            next.attention_cooldown_until_ms = None;
+            next.last_error = None;
+            next.born_bound_pane = true;
+        }
+        next.pane_session_id = Some(pane.clone());
+        next.last_activity_at_ms = Some(now);
+        // Retain the epoch until Terminal's ordered reset admits its successor.
+        if let Some(native) = state.native_panes.get_mut(&pane) {
+            if native.bound_identity.as_ref() == Some(source) {
+                native.bound_identity = Some(target_identity);
+                native.observation.agent_session_id = Some(target.to_string());
+                native.observation.inferred_agent_session_id = None;
+                native.observation.inferred_history_key = None;
+                native.observation.status = next.status.clone().unwrap_or(AgentStatus::Idle);
+                native.observation.last_activity_at_ms = now;
+            }
+        }
+        state.active_by_pane.remove(&pane);
+        upsert_locked(&mut state, next);
+        true
     }
 
     async fn apply_event(&self, ev: SessionEvent) -> bool {
@@ -6922,6 +7017,172 @@ mod tests {
         assert!(parsed.native_observation_listener_ready.is_none());
     }
 
+    #[tokio::test]
+    async fn copilot_fork_rebinds_only_the_current_owner_and_preserves_original_history() {
+        let registry = InMemoryRegistry::new();
+        let source = acp::schema::v1::SessionId::new("11111111-1111-4111-8111-111111111111");
+        let target = acp::schema::v1::SessionId::new("22222222-2222-4222-8222-222222222222");
+        registry
+            .apply_event(SessionEvent::SessionStarted {
+                key: source.to_string(),
+                cli_source: CliSource::Copilot,
+                pane_session_id: NATIVE_PANE.into(),
+                cwd: PathBuf::from("C:\\repo"),
+                title: "Original".into(),
+            })
+            .await;
+        let identity = SessionIdentity::from_info(&registry.lookup(&source).await.unwrap());
+        let mut fork = qualified_info(
+            &target.to_string(),
+            "copilot",
+            SessionLocation::Host,
+            "Fork",
+        );
+        fork.status = Some(AgentStatus::Historical);
+        registry.upsert(fork).await;
+        assert!(
+            registry
+                .rebind_copilot_fork(&identity, NATIVE_PANE, &target)
+                .await
+        );
+        let original = registry.lookup(&source).await.unwrap();
+        assert_eq!(original.title.as_deref(), Some("Original"));
+        assert_eq!(original.status, Some(AgentStatus::Historical));
+        assert!(original.pane_session_id.is_none());
+        let fork = registry.lookup(&target).await.unwrap();
+        assert_eq!(fork.title.as_deref(), Some("Fork"));
+        assert_eq!(fork.status, Some(AgentStatus::Idle));
+        assert_eq!(fork.pane_session_id.as_deref(), Some(NATIVE_PANE));
+        assert!(fork.born_bound_pane);
+        assert!(
+            !registry
+                .rebind_copilot_fork(&identity, NATIVE_PANE, &target)
+                .await
+        );
+        assert!(
+            !registry
+                .apply_event(SessionEvent::ToolStarting {
+                    key: source.to_string(),
+                    tool_name: "late old hook".into(),
+                })
+                .await
+        );
+        assert_eq!(
+            registry
+                .lookup_active_by_pane(NATIVE_PANE)
+                .await
+                .unwrap()
+                .session_id,
+            target
+        );
+    }
+
+    #[tokio::test]
+    async fn copilot_fork_cannot_take_another_live_pane_or_a_superseded_source() {
+        let registry = InMemoryRegistry::new();
+        for (id, pane) in [("original", NATIVE_PANE), ("fork", "other-pane")] {
+            registry
+                .apply_event(SessionEvent::SessionStarted {
+                    key: id.into(),
+                    cli_source: CliSource::Copilot,
+                    pane_session_id: pane.into(),
+                    cwd: PathBuf::from("C:\\repo"),
+                    title: id.into(),
+                })
+                .await;
+        }
+        let source = acp::schema::v1::SessionId::new("original");
+        let identity = SessionIdentity::from_info(&registry.lookup(&source).await.unwrap());
+        assert!(
+            !registry
+                .rebind_copilot_fork(
+                    &identity,
+                    NATIVE_PANE,
+                    &acp::schema::v1::SessionId::new("fork"),
+                )
+                .await
+        );
+        assert!(
+            !registry
+                .rebind_copilot_fork(
+                    &identity,
+                    "other-pane",
+                    &acp::schema::v1::SessionId::new("new-fork"),
+                )
+                .await
+        );
+        assert_eq!(
+            registry
+                .lookup(&source)
+                .await
+                .unwrap()
+                .pane_session_id
+                .as_deref(),
+            Some(NATIVE_PANE)
+        );
+    }
+
+    #[tokio::test]
+    async fn copilot_fork_keeps_native_epoch_and_early_target_activity() {
+        let registry = InMemoryRegistry::new();
+        let source = acp::schema::v1::SessionId::new("11111111-1111-4111-8111-111111111111");
+        let target = acp::schema::v1::SessionId::new("22222222-2222-4222-8222-222222222222");
+        let mut original = qualified_info(
+            &source.to_string(),
+            "copilot",
+            SessionLocation::Host,
+            "Original",
+        );
+        original.status = Some(AgentStatus::Idle);
+        original.pane_session_id = Some(NATIVE_PANE.into());
+        original.born_bound_pane = true;
+        let identity = SessionIdentity::from_info(&original);
+        registry.upsert(original).await;
+        let mut native = native_event(
+            serde_json::json!({
+                "kind": "reset", "tracking_enabled": false
+            }),
+            1,
+        );
+        native.agent_session_id = Some(source.to_string());
+        native.location = Some(SessionLocation::Host);
+        assert!(registry.apply_native_observation(native.clone()).await);
+        let mut next = qualified_info(
+            &target.to_string(),
+            "copilot",
+            SessionLocation::Host,
+            "Fork",
+        );
+        next.status = Some(AgentStatus::Working);
+        next.current_tool = Some("prompt".into());
+        registry.upsert(next).await;
+        assert!(
+            registry
+                .rebind_copilot_fork(&identity, NATIVE_PANE, &target)
+                .await
+        );
+        let fork = registry.lookup(&target).await.unwrap();
+        assert_eq!(fork.status, Some(AgentStatus::Working));
+        assert_eq!(fork.current_tool.as_deref(), Some("prompt"));
+        assert!(
+            !fork.born_bound_pane,
+            "an already hook-owned generation stays hook-owned"
+        );
+        let observations = registry.native_pane_observations().await;
+        assert_eq!(observations[0].mode_epoch, 1);
+        assert_eq!(
+            observations[0].agent_session_id.as_deref(),
+            Some(target.0.as_ref())
+        );
+        native.mode_epoch = 2;
+        native.agent_session_id = Some(target.to_string());
+        assert!(registry.apply_native_observation(native).await);
+        assert_eq!(
+            registry.lookup(&target).await.unwrap().status,
+            Some(AgentStatus::Working)
+        );
+    }
+
     fn info(id: &str, pane: Option<&str>) -> SessionInfo {
         let mut s = SessionInfo::new(
             acp::schema::v1::SessionId::new(id.to_string()),
@@ -10377,7 +10638,10 @@ mod tests {
                 .clone(),
         );
         let parsed = extract_wta_meta(&mut meta);
-        assert!(meta.is_none(), "private retry intent must not reach the agent");
+        assert!(
+            meta.is_none(),
+            "private retry intent must not reach the agent"
+        );
         inject_wta_meta(&mut meta, &parsed);
         assert_eq!(
             meta.as_ref().unwrap()["wta"]["startup_intent"],

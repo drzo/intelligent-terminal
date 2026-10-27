@@ -70,6 +70,7 @@ use crate::protocol::acp::spawn::{
 };
 
 pub(crate) mod config;
+mod copilot_fork;
 mod history;
 mod session_mcp;
 
@@ -589,6 +590,7 @@ struct MasterStateInner {
     /// Route reads do not need the lifecycle gate.
     pub(crate) registry: Arc<dyn crate::session_registry::SessionRegistry>,
     session_activation_receipts: Mutex<HashMap<String, SessionActivationReceipt>>,
+    pending_copilot_forks: Mutex<HashMap<String, copilot_fork::PendingFork>>,
     /// Per-helper subscribers for `intellterm.wta/*` ExtNotifications
     /// fanned out from master. Populated by `serve_helper` on connect
     /// and removed on disconnect (or whenever a send fails). Keyed by
@@ -5085,6 +5087,7 @@ async fn run_master_loop(config: MasterConfig, pipe_name: String) -> Result<()> 
         usage_generation: watch::channel(0u64).0,
         registry: crate::session_registry::InMemoryRegistry::shared(),
         session_activation_receipts: Mutex::new(HashMap::new()),
+        pending_copilot_forks: Mutex::new(HashMap::new()),
         helper_ext_subscribers: Mutex::new(HashMap::new()),
         agent_authentication: Mutex::new(HashMap::new()),
         wt,
@@ -5151,7 +5154,7 @@ async fn run_master_loop(config: MasterConfig, pipe_name: String) -> Result<()> 
     // forwards emitted events into this LocalSet via a tokio channel, where
     // they're applied to master's registry (same reducer as session_hook).
     {
-        let (sync_tx, sync_rx) = std::sync::mpsc::channel::<crate::session_watcher::Emitted>();
+        let (sync_tx, sync_rx) = std::sync::mpsc::channel::<crate::session_watcher::WatchEvent>();
         if let Err(err) = std::thread::Builder::new()
             .name("wta-session-watch".into())
             .spawn(move || {
@@ -5168,7 +5171,7 @@ async fn run_master_loop(config: MasterConfig, pipe_name: String) -> Result<()> 
         }
 
         let (async_tx, mut async_rx) =
-            tokio::sync::mpsc::unbounded_channel::<crate::session_watcher::Emitted>();
+            tokio::sync::mpsc::unbounded_channel::<crate::session_watcher::WatchEvent>();
         if let Err(err) = std::thread::Builder::new()
             .name("wta-session-watch-bridge".into())
             .spawn(move || {
@@ -5189,7 +5192,17 @@ async fn run_master_loop(config: MasterConfig, pipe_name: String) -> Result<()> 
         let inner_for_watch = Arc::clone(&inner);
         tokio::task::spawn_local(async move {
             while let Some(emitted) = async_rx.recv().await {
-                apply_watcher_event(&inner_for_watch, emitted).await;
+                match emitted {
+                    crate::session_watcher::WatchEvent::Activity(event) => {
+                        apply_watcher_event(&inner_for_watch, event).await;
+                    }
+                    crate::session_watcher::WatchEvent::CopilotFork(fork) => {
+                        tokio::task::spawn_local(copilot_fork::observe(
+                            Arc::clone(&inner_for_watch),
+                            fork,
+                        ));
+                    }
+                }
             }
         });
     }
@@ -8947,6 +8960,13 @@ async fn apply_master_session_event(
     is_born_bound: bool,
     birth_location: crate::agent_sessions::SessionLocation,
 ) -> (bool, Option<String>) {
+    if let crate::agent_sessions::SessionEvent::PaneClosed { pane_session_id } = &event {
+        state
+            .pending_copilot_forks
+            .lock()
+            .await
+            .remove(&crate::agent_sessions::pane_key(pane_session_id));
+    }
     if matches!(
         &event,
         crate::agent_sessions::SessionEvent::SessionRenamed { .. }
@@ -11184,6 +11204,11 @@ async fn handle_master_wt_event(state: &Arc<MasterStateInner>, event_json: serde
         .cloned()
         .unwrap_or_else(|| serde_json::json!({}));
 
+    if method == "agent_session_forked" {
+        copilot_fork::confirm(state, &params).await;
+        return;
+    }
+
     if method == "wt_listener_ready" {
         state
             .native_observation_listener_ready
@@ -11502,6 +11527,13 @@ async fn handle_master_wt_event(state: &Arc<MasterStateInner>, event_json: serde
         .to_string();
     if pane_id.is_empty() {
         return;
+    }
+    if shell_prompt || matches!(params["state"].as_str(), Some("closed" | "failed")) {
+        state
+            .pending_copilot_forks
+            .lock()
+            .await
+            .remove(&crate::agent_sessions::pane_key(&pane_id));
     }
     if shell_prompt {
         // A helper's exit inference can overtake the session-start hook queued

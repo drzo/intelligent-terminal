@@ -2844,6 +2844,7 @@ fn make_state_with_retirement_pending_timeout(
         usage_generation: watch::channel(0u64).0,
         registry: crate::session_registry::InMemoryRegistry::shared(),
         session_activation_receipts: Mutex::new(HashMap::new()),
+        pending_copilot_forks: Mutex::new(HashMap::new()),
         helper_ext_subscribers: Mutex::new(HashMap::new()),
         agent_authentication: Mutex::new(HashMap::new()),
         wt: None,
@@ -13946,6 +13947,7 @@ fn make_state_with_wt(wt: Arc<dyn crate::shell::wt_channel::WtChannel>) -> Arc<M
         usage_generation: watch::channel(0u64).0,
         registry: crate::session_registry::InMemoryRegistry::shared(),
         session_activation_receipts: Mutex::new(HashMap::new()),
+        pending_copilot_forks: Mutex::new(HashMap::new()),
         helper_ext_subscribers: Mutex::new(HashMap::new()),
         agent_authentication: Mutex::new(HashMap::new()),
         wt: Some(wt),
@@ -13989,6 +13991,177 @@ fn make_state_with_wt(wt: Arc<dyn crate::shell::wt_channel::WtChannel>) -> Arc<M
         retired_agent_cells: std::sync::Mutex::new(Vec::new()),
         orphaned_tabs: Mutex::new(HashMap::new()),
     })
+}
+
+#[tokio::test]
+async fn copilot_fork_without_a_prompt_or_target_lease_waits_only_for_terminal_confirmation() {
+    let source = "11111111-1111-4111-8111-111111111111";
+    let target = "22222222-2222-4222-8222-222222222222";
+    let pane = "33333333-3333-4333-8333-333333333333";
+    let wt = Arc::new(MockWtChannel::ok());
+    let state = make_state_with_wt(wt.clone());
+    state
+        .registry
+        .apply_event(crate::agent_sessions::SessionEvent::SessionStarted {
+            key: source.into(),
+            cli_source: crate::agent_sessions::CliSource::Copilot,
+            pane_session_id: pane.into(),
+            cwd: PathBuf::from("C:\\repo"),
+            title: "Original".into(),
+        })
+        .await;
+    let source_id = SessionId::new(source);
+    state.hook_owned.lock().await.insert(source_id.clone());
+    let fork = crate::session_watcher::copilot_fork::CopilotFork {
+        source: source.into(),
+        target: target.into(),
+    };
+    assert!(copilot_fork::request(&state, &fork).await.unwrap());
+    assert_eq!(wt.calls().len(), 1, "only the guarded binding update is needed");
+    let request = wt
+        .calls()
+        .into_iter()
+        .find(|(method, _)| method == "publish")
+        .unwrap()
+        .1;
+    assert_eq!(request["method"], "pane_agent_session_changed");
+    assert_eq!(
+        state
+            .registry
+            .lookup(&source_id)
+            .await
+            .unwrap()
+            .pane_session_id
+            .as_deref(),
+        Some(pane)
+    );
+    assert!(state
+        .registry
+        .lookup(&SessionId::new(target))
+        .await
+        .is_none());
+    let mut wrong = request["params"].clone();
+    wrong["operation_id"] = serde_json::json!("wrong-operation");
+    copilot_fork::confirm(&state, &wrong).await;
+    assert!(state
+        .registry
+        .lookup(&SessionId::new(target))
+        .await
+        .is_none());
+    copilot_fork::confirm(&state, &request["params"]).await;
+    assert_eq!(
+        state.registry.lookup(&source_id).await.unwrap().status,
+        Some(crate::agent_sessions::AgentStatus::Historical)
+    );
+    assert!(state
+        .registry
+        .lookup(&source_id)
+        .await
+        .unwrap()
+        .pane_session_id
+        .is_none());
+    assert_eq!(
+        state
+            .registry
+            .lookup(&SessionId::new(target))
+            .await
+            .unwrap()
+            .pane_session_id
+            .as_deref(),
+        Some(pane)
+    );
+    assert!(!state.hook_owned.lock().await.contains(&source_id));
+    assert!(state
+        .born_bound
+        .lock()
+        .await
+        .contains(&SessionId::new(target)));
+    copilot_fork::confirm(&state, &request["params"]).await;
+    assert_eq!(
+        state
+            .registry
+            .lookup_active_by_pane(pane)
+            .await
+            .unwrap()
+            .session_id,
+        SessionId::new(target)
+    );
+    assert!(
+        handle_focus_session(
+            &state,
+            &crate::session_registry::FocusSessionParams {
+                session_id: source_id,
+            }
+        )
+        .await
+        .is_err(),
+        "the original must not focus its fork's pane"
+    );
+    assert!(handle_focus_session(
+        &state,
+        &crate::session_registry::FocusSessionParams {
+            session_id: SessionId::new(target),
+        }
+    )
+    .await
+    .is_ok());
+}
+
+#[tokio::test]
+async fn copilot_fork_does_not_publish_for_unknown_or_acp_owned_sources() {
+    let pane = "33333333-3333-4333-8333-333333333333";
+    let wt = Arc::new(MockWtChannel::ok());
+    let state = make_state_with_wt(wt.clone());
+    let fork = crate::session_watcher::copilot_fork::CopilotFork {
+        source: "11111111-1111-4111-8111-111111111111".into(),
+        target: "22222222-2222-4222-8222-222222222222".into(),
+    };
+    assert!(!copilot_fork::request(&state, &fork).await.unwrap());
+    state
+        .registry
+        .apply_event(crate::agent_sessions::SessionEvent::SessionStarted {
+            key: fork.source.clone(),
+            cli_source: crate::agent_sessions::CliSource::Copilot,
+            pane_session_id: pane.into(),
+            cwd: PathBuf::new(),
+            title: String::new(),
+        })
+        .await;
+    state
+        .registry
+        .set_origin(
+            &SessionId::new(fork.source.clone()),
+            crate::agent_sessions::SessionOrigin::AgentPane,
+        )
+        .await;
+    assert!(copilot_fork::request(&state, &fork).await.unwrap());
+    assert!(wt.calls().iter().all(|(method, _)| method != "publish"));
+    assert!(state.pending_copilot_forks.lock().await.is_empty());
+}
+
+#[tokio::test]
+async fn copilot_fork_does_not_dispatch_to_an_already_bound_target() {
+    let wt = Arc::new(MockWtChannel::ok());
+    let state = make_state_with_wt(wt.clone());
+    let fork = crate::session_watcher::copilot_fork::CopilotFork {
+        source: "11111111-1111-4111-8111-111111111111".into(),
+        target: "22222222-2222-4222-8222-222222222222".into(),
+    };
+    for (key, pane) in [(&fork.source, "source-pane"), (&fork.target, "target-pane")] {
+        state
+            .registry
+            .apply_event(crate::agent_sessions::SessionEvent::SessionStarted {
+                key: key.clone(),
+                cli_source: crate::agent_sessions::CliSource::Copilot,
+                pane_session_id: pane.into(),
+                cwd: PathBuf::new(),
+                title: String::new(),
+            })
+            .await;
+    }
+    assert!(copilot_fork::request(&state, &fork).await.unwrap());
+    assert!(wt.calls().is_empty());
+    assert!(state.pending_copilot_forks.lock().await.is_empty());
 }
 
 #[tokio::test]

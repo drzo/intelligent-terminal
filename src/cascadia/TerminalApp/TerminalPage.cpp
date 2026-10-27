@@ -11350,6 +11350,91 @@ namespace winrt::TerminalApp::implementation
         }
 
         _SyncNativeAgentStatusMode();
+        if (params.get("event", "").asString() == "agent.session.fork")
+        {
+            const auto previousId = winrt::to_hstring(params.get("previous_agent_session_id", "").asString());
+            const auto operationId = params.get("operation_id", "").asString();
+            if (params.get("agent", "").asString() != "copilot" || previousId.empty() ||
+                agentSessionId.empty() || operationId.empty() ||
+                winrt::to_hstring(agentSessionId) == previousId)
+            {
+                return;
+            }
+            const auto previous = _paneAgentSessions.find(*paneSessionId);
+            if (previous == _paneAgentSessions.end() ||
+                previous->second.agent != L"copilot" ||
+                previous->second.sessionId != previousId ||
+                std::wstring_view{ previous->second.backend }.starts_with(L"wsl:"))
+            {
+                return;
+            }
+            for (const auto& tab : _RuntimeTabs())
+            {
+                const auto tabImpl = _GetTabImpl(tab);
+                const auto root = tabImpl ? tabImpl->GetRootPane() : nullptr;
+                const auto pane = root ? root->FindPaneBySessionId(*paneSessionId) : nullptr;
+                const auto control = pane && !pane->IsAgentPane() ? pane->GetTerminalControl() : nullptr;
+                if (!control || std::wstring_view{ control.ShellName() }.starts_with(L"wsl:"))
+                {
+                    continue;
+                }
+                auto binding = previous->second;
+                binding.sessionId = winrt::to_hstring(agentSessionId);
+                const auto resume = ::Microsoft::Terminal::AgentPaneRestore::BuildResumeCommandline(
+                    binding.backend.empty() ? std::wstring_view{ binding.agent } : std::wstring_view{ binding.backend },
+                    std::wstring_view{ binding.sessionId },
+                    std::wstring_view{ binding.cwd });
+                if (resume.empty())
+                {
+                    return;
+                }
+                binding.resumeCommandline = winrt::hstring{ resume };
+
+                // The shared manager may already have observed a newer owner.
+                _manager.OnPaneAgentSessionChanged(eventJson);
+                Json::Value retained;
+                Json::CharReaderBuilder retainedReader;
+                std::istringstream retainedStream{ winrt::to_string(_manager.AgentSessionEvent(control.ContentId())) };
+                std::string retainedErrors;
+                if (!Json::parseFromStream(retainedReader, retainedStream, &retained, &retainedErrors) ||
+                    retained["params"].get("fork_operation_id", "").asString() != operationId ||
+                    retained["params"].get("agent_session_id", "").asString() != agentSessionId)
+                {
+                    _agentPaneLog("OnPaneAgentSessionChanged: rejected superseded Copilot fork");
+                    return;
+                }
+                auto marker = _ActiveCliAgentPane{ binding.sessionId };
+                if (const auto active = _activeCliAgentPanes.find(*paneSessionId);
+                    active != _activeCliAgentPanes.end())
+                {
+                    marker.supersededSessionIds = std::move(active->second.supersededSessionIds);
+                }
+                marker.supersededSessionIds.emplace_back(previousId);
+                _activeCliAgentPanes.insert_or_assign(*paneSessionId, std::move(marker));
+                _paneAgentSessions.insert_or_assign(*paneSessionId, binding);
+                if (auto interactive = _interactiveResumeSessions.find(*paneSessionId);
+                    interactive != _interactiveResumeSessions.end() && interactive->second.sessionId == previousId)
+                {
+                    interactive->second = binding;
+                }
+                _pendingRestoredSessionBindings.erase(*paneSessionId);
+                _richTabEndedSessionByPaneId.erase(*paneSessionId);
+                _explicitNativeAgentSessions.insert(*paneSessionId);
+                winrt::get_self<ContentManager>(_manager)->SetExplicitNativeAgentProvider(control.ContentId(), L"copilot");
+
+                auto confirmed = params;
+                confirmed["tab_id"] = winrt::to_string(tabImpl->StableId());
+                confirmed["window_id"] = std::to_string(_WindowProperties.WindowId());
+                _RaiseProtocolEvent("agent_session_forked", confirmed);
+                _PublishNativeAgentObservation(control, "reset", true, std::nullopt, !_settings.GlobalSettings().EffectiveAgentSessionManagementEnabled());
+                _UpdateRichTabFirstPartyFields(control);
+                _RequestAgentSnapshotRefresh();
+                _UpdateTabIcon(*tabImpl);
+                _ApplyTabListProjection(tab);
+                return;
+            }
+            return;
+        }
         if (!winrt::get_self<ContentManager>(_manager)->AcceptsAgentSessionEvents(*paneSessionId))
         {
             return;

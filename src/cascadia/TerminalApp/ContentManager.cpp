@@ -6,6 +6,7 @@
 #include "ContentManager.g.cpp"
 #include "TerminalPage.h"
 #include "../inc/AgentRegistry.h"
+#include "../inc/AgentSessionId.h"
 
 #include <wil/token_helpers.h>
 #include <json/json.h>
@@ -392,7 +393,8 @@ namespace winrt::TerminalApp::implementation
         const auto started = name == "agent.session.start" || name == "agent.session.started";
         const auto prompt = name == "agent.prompt.submit";
         const auto unbound = name == "agent.session.unbind";
-        if (!ended && !started && !prompt && !unbound)
+        const auto forked = name == "agent.session.fork";
+        if (!ended && !started && !prompt && !unbound && !forked)
         {
             return;
         }
@@ -412,7 +414,7 @@ namespace winrt::TerminalApp::implementation
         const winrt::guid sessionId = paneId.starts_with('{') ?
                                           ::Microsoft::Console::Utils::GuidFromString(text.c_str()) :
                                           ::Microsoft::Console::Utils::GuidFromPlainString(text.c_str());
-        if (!AcceptsAgentSessionEvents(sessionId))
+        if (!forked && !AcceptsAgentSessionEvents(sessionId))
         {
             return;
         }
@@ -438,6 +440,45 @@ namespace winrt::TerminalApp::implementation
         }
         if (!contentId)
         {
+            return;
+        }
+        if (forked)
+        {
+            const auto previous = params.get("previous_agent_session_id", "").asString();
+            const auto operation = params.get("operation_id", "").asString();
+            if (agent != L"copilot" || operation.empty() || previous.empty() ||
+                previous == winrt::to_string(agentSessionId) ||
+                !::Microsoft::Terminal::AgentSessionId::IsSafeForCliResume(std::string_view{ previous }) ||
+                !::Microsoft::Terminal::AgentSessionId::IsSafeForCliResume(std::wstring_view{ agentSessionId }))
+            {
+                return;
+            }
+            bool matches = false;
+            if (const auto binding = _agentBindings.find(contentId);
+                binding != _agentBindings.end() && !binding->second.agentSessionId.empty())
+            {
+                matches = binding->second.agent == L"copilot" &&
+                          binding->second.agentSessionId == winrt::to_hstring(previous);
+            }
+            else
+            {
+                const auto native = NativeAgentObservationForContent(contentId);
+                matches = native && native->providerId == L"copilot" &&
+                          !native->location.starts_with("wsl:") &&
+                          (native->agentSessionId == previous || native->qualifiedSessionId == previous);
+            }
+            if (!matches)
+            {
+                return;
+            }
+            auto retained = event;
+            retained["params"]["event"] = "agent.session.start";
+            retained["params"]["fork_operation_id"] = operation;
+            _agentBindings.insert_or_assign(
+                contentId,
+                AgentBinding{ agentSessionId,
+                              winrt::to_hstring(Json::writeString(Json::StreamWriterBuilder{}, retained)),
+                              agent });
             return;
         }
         auto& policy = _agentBindings[contentId];

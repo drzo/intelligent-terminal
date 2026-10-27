@@ -1,5 +1,24 @@
 # Hooks-Fallback Agent Session Watcher (Hybrid Tracking)
 
+## Copilot foreground forks
+
+For a native Host Copilot CLI, `/fork` changes the conversation identity without
+changing the Terminal connection GUID. The watcher recognizes Copilot's
+`session.info` fork record appended to the original session before another
+prompt is submitted. That record carries the new session ID and migrates an
+already-known pane binding; it does not discover an unknown session's pane.
+Copied target logs and fork records older than their rewritten session.start
+header cannot migrate bindings. Names and working directories never establish
+ownership, and the transition does not wait for an SDK lease or another hook.
+
+WTA sends the transition to Terminal with the expected old session
+identity. Terminal compares its retained pane binding, updates the resume and
+layout identity, and acknowledges the operation. Only that acknowledgement
+lets WTA atomically detach the original as history and bind the fork to the
+same pane. Duplicate, closed-pane, or superseded operations cannot reclaim a pane.
+Normal hook activity and hook-free born-bound activity keep their existing
+precedence. This fallback does not infer WSL or ACP agent-pane ownership.
+
 ## Shared read model: pane metadata and Recent conversations
 
 Pane identity and conversation identity have different lifetimes. A live agent
