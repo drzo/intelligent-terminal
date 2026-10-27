@@ -25858,22 +25858,34 @@ namespace TerminalAppLocalTests
                     const auto hidden = alternative ? normal->_firstChild : normal;
                     const auto visible = alternative ? normal->_secondChild : nullptr;
                     const auto hiddenSource = target->GetRootPane()->FindPaneBySessionId(targetConnection->SessionId());
+                    if (!alternative)
+                    {
+                        VERIFY_IS_TRUE(target->FocusPane(*hiddenSource->Id()));
+                        target->EnterZoom();
+                        VERIFY_IS_TRUE(target->IsZoomed());
+                        VERIFY_IS_TRUE(target->NavigateFocus(FocusDirection::Down));
+                        VERIFY_IS_TRUE(target->GetActivePane() == agent);
+                        // Hiding reparents the visible sibling; release the
+                        // zoomed content while updating that visual tree.
+                        target->Content(nullptr);
+                    }
                     target->_UpdateActivePane(hidden);
                     target->TogglePaneVisibility();
+                    if (!alternative)
+                    {
+                        target->UpdateZoom(agent);
+                    }
                     VERIFY_IS_TRUE(hidden->IsHidden());
                     VERIFY_IS_TRUE(target->FocusPane(*agent->Id()));
                     target->GetRootPane()->WalkTree([](const auto& pane) { pane->SetSourceOfAgentPane(false); });
                     hiddenSource->SetSourceOfAgentPane(true);
                     VERIFY_IS_TRUE(page->_SourceTerminalPaneForTab(target) == hiddenSource);
                     VERIFY_IS_TRUE(page->_SourceTerminalPaneForTab(target, true) == visible);
-                    if (!alternative)
-                    {
-                        target->EnterZoom();
-                    }
                     const auto targetRoot = target->GetRootPane();
                     const auto targetCount = target->GetLeafPaneCount();
                     page->_selectedTabItem(source->TabViewItem());
 
+                    VERIFY_ARE_EQUAL(!alternative, target->IsZoomed());
                     VERIFY_ARE_EQUAL(alternative, page->_MovePane(MovePaneArgs{ 1, L"" }));
                     VERIFY_ARE_EQUAL(0u, connection->CloseCount());
                     VERIFY_ARE_EQUAL(0u, helperConnection->CloseCount());
@@ -25922,12 +25934,21 @@ namespace TerminalAppLocalTests
                 const auto helperConnection = winrt::make_self<TestConnection>(Utils::CreateGuid(), State::Connected);
                 const auto agent = destination->_WrapInAgentPaneContent(destination->_MakePane(nullptr, nullptr, *helperConnection));
                 const auto normal = target->SplitPaneAtRoot(SplitDirection::Left, agent, .3f, false).first;
+                VERIFY_IS_TRUE(target->FocusPane(*normal->GetActivePane()->Id()));
+                target->EnterZoom();
+                VERIFY_IS_TRUE(target->IsZoomed());
+                VERIFY_IS_TRUE(target->NavigateFocus(FocusDirection::Left));
+                VERIFY_IS_TRUE(target->GetActivePane() == agent);
+                // Release the zoomed visual before hiding its ordinary sibling.
+                target->Content(nullptr);
                 target->_UpdateActivePane(normal);
                 target->TogglePaneVisibility();
                 VERIFY_IS_TRUE(normal->IsHidden());
                 VERIFY_IS_TRUE(target->FocusPane(*agent->Id()));
-                target->EnterZoom();
+                target->UpdateZoom(agent);
                 destination->_tabContent.UpdateLayout();
+                VERIFY_IS_TRUE(target->IsZoomed());
+                VERIFY_IS_TRUE(target->GetZoomedPane() == agent);
                 const auto targetBefore = _snapshotTransferTab(destination, target);
                 winrt::TerminalApp::RequestMoveContentArgs request{ nullptr };
                 const auto token = fixture->source->RequestMoveContent([&](auto&&, const winrt::TerminalApp::RequestMoveContentArgs& args) { request = args; });
@@ -25981,7 +26002,14 @@ namespace TerminalAppLocalTests
                     target->SuppressAgentPrewarm();
                     const auto targetHelperConnection = winrt::make_self<TestConnection>(Utils::CreateGuid(), State::Connected);
                     const auto targetAgent = page->_WrapInAgentPaneContent(page->_MakePane(nullptr, nullptr, *targetHelperConnection));
-                    target->SplitPaneAtRoot(SplitDirection::Left, targetAgent, .3f, false);
+                    const auto targetNormal = target->SplitPaneAtRoot(SplitDirection::Left, targetAgent, .3f, false).first;
+                    if (!hidden && !selectRoot)
+                    {
+                        VERIFY_IS_TRUE(target->FocusPane(*targetNormal->Id()));
+                        target->EnterZoom();
+                        VERIFY_IS_TRUE(target->IsZoomed());
+                        VERIFY_IS_TRUE(target->NavigateFocus(FocusDirection::Left));
+                    }
                     VERIFY_IS_TRUE(target->FocusPane(*targetAgent->Id()));
                     if (hidden)
                     {
@@ -25991,18 +26019,19 @@ namespace TerminalAppLocalTests
                     {
                         target->_UpdateActivePane(target->GetRootPane());
                     }
-                    else if (!hidden)
-                    {
-                        target->EnterZoom();
-                    }
                     page->_selectedTabItem(source->TabViewItem());
                     VERIFY_IS_TRUE(source->FocusPane(*normal->Id()));
                     VERIFY_IS_TRUE(source->NavigateFocus(FocusDirection::Parent));
                     VERIFY_IS_TRUE(source->GetActivePane() == normalGroup);
                     if (!hidden && !selectRoot)
                     {
+                        VERIFY_IS_FALSE(normalGroup->ContainsAgentPane());
                         source->EnterZoom();
+                        VERIFY_IS_TRUE(source->GetZoomedPane() == normalGroup);
+                        VERIFY_IS_TRUE(target->GetZoomedPane() == targetAgent);
                     }
+                    VERIFY_ARE_EQUAL(!hidden && !selectRoot, source->IsZoomed());
+                    VERIFY_ARE_EQUAL(!hidden && !selectRoot, target->IsZoomed());
                     VERIFY_IS_TRUE(page->_MovePane(MovePaneArgs{ 1, L"" }));
 
                     VERIFY_ARE_EQUAL(1u, page->_tabs.Size());
@@ -26026,7 +26055,8 @@ namespace TerminalAppLocalTests
     void TabTests::MovePaneToAgentFocusedWindowPreservesAgent()
     {
         using State = winrt::Microsoft::Terminal::TerminalConnection::ConnectionState;
-        for (const auto reject : { false, true })
+        for (const auto& [reject, zoomed] : {
+                 std::pair{ false, false }, std::pair{ true, false }, std::pair{ false, true }, std::pair{ true, true } })
         {
             auto fixture = _createContentTransferFixture(false, false, false, false);
             const auto cleanup = wil::scope_exit([&]() {
@@ -26040,10 +26070,28 @@ namespace TerminalAppLocalTests
                 const auto target = destination->_GetFocusedTabImpl();
                 const auto helperConnection = winrt::make_self<TestConnection>(Utils::CreateGuid(), State::Connected);
                 const auto agent = destination->_WrapInAgentPaneContent(destination->_MakePane(nullptr, nullptr, *helperConnection));
-                target->SplitPaneAtRoot(SplitDirection::Left, agent, .3f, false);
+                const auto normal = target->SplitPaneAtRoot(SplitDirection::Left, agent, .3f, false).first;
+                const auto normalLeaf = normal->GetActivePane();
                 VERIFY_IS_TRUE(target->FocusPane(*agent->Id()));
+                target->EnterZoom();
+                VERIFY_IS_FALSE(target->IsZoomed());
+                if (zoomed)
+                {
+                    VERIFY_IS_TRUE(target->FocusPane(*normalLeaf->Id()));
+                    target->EnterZoom();
+                    VERIFY_IS_TRUE(target->IsZoomed());
+                    VERIFY_IS_TRUE(target->NavigateFocus(FocusDirection::Left));
+                }
+                VERIFY_IS_TRUE(target->GetActivePane() == agent);
                 destination->_tabContent.UpdateLayout();
+                VERIFY_ARE_EQUAL(zoomed, target->IsZoomed());
+                VERIFY_IS_TRUE(target->GetZoomedPane() == (zoomed ? agent : nullptr));
                 const auto targetBefore = _snapshotTransferTab(destination, target);
+                if (reject)
+                {
+                    destination->_SelectTab(1);
+                }
+                const auto previouslyFocused = destination->_GetFocusedTabImpl();
                 const auto source = fixture->original.tab;
                 const auto movedId = source->GetActivePane()->ContentId().value();
                 winrt::TerminalApp::RequestMoveContentArgs request{ nullptr };
@@ -26057,9 +26105,11 @@ namespace TerminalAppLocalTests
                     {
                         reachedInsertion = true;
                         VERIFY_IS_FALSE(target->GetActivePane()->ContainsAgentPane());
+                        VERIFY_IS_FALSE(target->IsZoomed());
                         THROW_HR_IF(E_ABORT, reject);
                     }
                 };
+                VERIFY_ARE_EQUAL(zoomed, target->IsZoomed());
                 const auto accepted = destination->AttachContent(ActionAndArgs::Deserialize(request.Content()), 0, request.TransferId());
                 VERIFY_IS_TRUE(reachedInsertion);
                 VERIFY_ARE_EQUAL(!reject, accepted);
@@ -26067,6 +26117,12 @@ namespace TerminalAppLocalTests
                 {
                     _verifyTransferTabUnchanged(destination, targetBefore);
                     _verifyTransferTabUnchanged(fixture->source, fixture->original);
+                    VERIFY_IS_TRUE(destination->_GetFocusedTabImpl() == previouslyFocused);
+                    VERIFY_IS_TRUE(target->GetActivePane() == agent);
+                    VERIFY_ARE_EQUAL(zoomed, target->IsZoomed());
+                    VERIFY_IS_TRUE(target->GetZoomedPane() == (zoomed ? agent : nullptr));
+                    VERIFY_ARE_EQUAL(zoomed, target->_tabStatus.IsPaneZoomed());
+                    VERIFY_IS_TRUE(target->Content() == (zoomed ? agent : target->GetRootPane())->GetRootElement());
                 }
                 else
                 {
@@ -26075,6 +26131,7 @@ namespace TerminalAppLocalTests
                     VERIFY_IS_NOT_NULL(target->GetRootPane()->FindPaneByContentId(movedId));
                     VERIFY_IS_NULL(source->GetRootPane()->FindPaneByContentId(movedId));
                     VERIFY_IS_TRUE(source->FindAgentPaneContent() == fixture->agent);
+                    VERIFY_IS_FALSE(target->IsZoomed());
                     VERIFY_ARE_EQUAL(0u, helperConnection->CloseCount());
                 }
             });

@@ -15330,7 +15330,7 @@ namespace winrt::TerminalApp::implementation
         std::vector<Json::Value> routingEvents;
         const auto targetActive = targetTab ? targetTab->GetActivePane() : nullptr;
         const auto targetActiveId = targetActive ? targetActive->Id() : std::nullopt;
-        const auto targetWasZoomed = targetTab && targetTab->IsZoomed();
+        const auto targetZoomedPane = targetTab ? targetTab->GetZoomedPane() : nullptr;
         try
         {
             for (const auto& control : sourceControls)
@@ -15445,9 +15445,11 @@ namespace winrt::TerminalApp::implementation
                     {
                         targetTab->FocusPane(*targetActiveId);
                     }
-                    if (targetWasZoomed && !targetTab->IsZoomed())
+                    if (targetZoomedPane && targetTab->GetZoomedPane() != targetZoomedPane)
                     {
-                        targetTab->ToggleZoom();
+                        // Navigation can zoom an agent even though EnterZoom
+                        // deliberately rejects a direct user zoom on it.
+                        targetTab->UpdateZoom(targetZoomedPane);
                     }
                 }
                 CATCH_LOG()
