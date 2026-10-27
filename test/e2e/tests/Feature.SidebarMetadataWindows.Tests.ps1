@@ -14,6 +14,7 @@ Describe 'Feature: sidebar metadata belongs to its window' -Tag @('Feature', 'Si
             Should -Be $env:ITE2E_EXPECTED_APP_SHA256
         (Get-FileHash $script:target.WtaPath).Hash | Should -Be $env:ITE2E_EXPECTED_WTA_SHA256
         $script:app = $null
+        $script:repository = $null
 
         function Get-RenderedMetadata {
             param($Window)
@@ -35,14 +36,37 @@ Describe 'Feature: sidebar metadata belongs to its window' -Tag @('Feature', 'Si
                 Send-WtWindowKey -App $Window -Vk 0x1B -RequireForeground | Out-Null
             }
         }
+
+        function Report-ShellWorkingDirectory {
+            param($Window)
+            $pane = Wait-Until -TimeoutSec 15 -Because 'the window shell to start' -Condition {
+                @(Get-WtPanes -App $Window -WindowId $Window.WindowId | Where-Object { $_.session_id }) |
+                    Select-Object -First 1
+            }
+            Invoke-RunCommand -App $Window -SessionId $pane.session_id -Command `
+                'Write-Host -NoNewline ([char]27 + '']9;9;"'' + (Get-Location).Path + ''"'' + [char]7)' | Out-Null
+        }
     }
 
     AfterAll {
-        if ($script:app) { Stop-Terminal -App $script:app }
+        try {
+            if ($script:app) { Stop-Terminal -App $script:app }
+        }
+        finally {
+            if ($script:repository -and (Test-Path -LiteralPath $script:repository)) {
+                Remove-Item -LiteralPath $script:repository -Recurse -Force
+            }
+        }
     }
 
     It 'keeps Repository in window one while window two displays Branch' {
-        $repository = (Resolve-Path (Join-Path $PSScriptRoot '..\..\..')).Path
+        $script:repository = Join-Path $PSScriptRoot ('..\artifacts\metadata-window-' + [guid]::NewGuid().ToString('N'))
+        New-Item -ItemType Directory -Path $script:repository -Force | Out-Null
+        & git -C $script:repository init --initial-branch fixture-branch --quiet
+        $LASTEXITCODE | Should -Be 0
+        & git -C $script:repository -c user.name='Metadata test' -c user.email='metadata-test@example.invalid' `
+            -c "core.hooksPath=$script:repository" commit --allow-empty --quiet -m 'Create metadata fixture'
+        $LASTEXITCODE | Should -Be 0
         $profile = '{' + [guid]::NewGuid() + '}'
         $script:app = Start-Terminal -Package Dev -PassFre $true -State @{
             sidebarLayoutMigrationCompleted = $true; sidebarIntroductionShown = $true
@@ -51,13 +75,14 @@ Describe 'Feature: sidebar metadata belongs to its window' -Tag @('Feature', 'Si
             firstWindowPreference = 'defaultProfile'; windowingBehavior = 'useNew'
             profiles = @{ list = @(@{
                 guid = $profile; name = 'Metadata window shell'
-                commandline = 'pwsh -NoLogo -NoProfile'; startingDirectory = $repository
+                commandline = 'pwsh -NoLogo -NoProfile'; startingDirectory = $script:repository
             }) }
         }
         $firstId = [string]$script:app.WindowId
         $previousHwnds = @(Get-WtWindowHwnds -App $script:app | ForEach-Object { [string]$_.hwnd })
+        Report-ShellWorkingDirectory -Window $script:app
         Set-OnlyMetadataField -Window $script:app -Field RichTabRepositoryVisibleItem
-        $expectedRepository = [regex]::Escape((Split-Path $repository -Leaf))
+        $expectedRepository = [regex]::Escape((Split-Path $script:repository -Leaf))
         Wait-Until -TimeoutSec 20 -Because 'the first window renders its selected repository' -Condition {
             @(Get-RenderedMetadata -Window $script:app | Where-Object { $_ -match "Repository: $expectedRepository" }).Count -eq 1
         } | Out-Null
@@ -75,8 +100,9 @@ Describe 'Feature: sidebar metadata belongs to its window' -Tag @('Feature', 'Si
         $second = $script:app.PSObject.Copy()
         $second.WindowId = [string]$secondId
         $second.Hwnd = $secondHwnd
+        Report-ShellWorkingDirectory -Window $second
         Set-OnlyMetadataField -Window $second -Field RichTabBranchVisibleItem
-        $branch = (& git -C $repository branch --show-current).Trim()
+        $branch = 'fixture-branch'
         Wait-Until -TimeoutSec 20 -Because 'each window renders its own selection' -Condition {
             @(Get-RenderedMetadata -Window $script:app | Where-Object {
                 $_ -match "Repository: $expectedRepository" -and $_ -notmatch 'Branch:'

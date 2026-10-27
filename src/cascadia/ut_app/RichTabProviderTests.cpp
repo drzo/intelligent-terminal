@@ -623,6 +623,7 @@ namespace TerminalAppUnitTests
             });
             broker._attachmentSessions.emplace(attachment, sessionId);
         }
+        broker._nextAttachment = 3;
 
         broker.SetVisibleFields(1, provider.manifest.id, { "repository" });
         broker.SetVisibleFields(2, provider.manifest.id, { "branch" });
@@ -640,6 +641,7 @@ namespace TerminalAppUnitTests
                 newTab.emplace_back(update.presentation ? update.presentation->text : L"");
             },
             { { provider.manifest.id, { "repository" } } });
+        VERIFY_ARE_EQUAL(ProviderBroker::AttachmentId{ 3 }, newAttachment);
         Snapshot newSnapshot;
         newSnapshot.fields.emplace("repository", std::string{ "project" });
         newSnapshot.fields.emplace("branch", std::string{ "main" });
@@ -648,6 +650,9 @@ namespace TerminalAppUnitTests
         VERIFY_ARE_EQUAL(std::wstring{ L"project" }, newTab.back());
         VERIFY_ARE_EQUAL(std::wstring{ L"main" }, secondWindow.back());
         broker.Detach(newAttachment);
+        VERIFY_IS_TRUE(broker._attachmentSessions.contains(1));
+        VERIFY_IS_FALSE(broker._attachmentSessions.contains(newAttachment));
+        VERIFY_IS_TRUE(broker._sessions.at("window-one").callbacks.contains(1));
     }
 
     void RichTabProviderTests::BrokerCollectsSharedSessionFieldsForBothWindows()
@@ -682,7 +687,7 @@ namespace TerminalAppUnitTests
 
         broker.SetVisibleFields(1, provider.manifest.id, {});
         VERIFY_IS_TRUE(firstWindow.back().empty());
-        VERIFY_ARE_EQUAL(std::wstring{ L"project\nmain" }, secondWindow.back());
+        VERIFY_ARE_EQUAL(std::wstring{ L"project" } + L'\n' + L"main", secondWindow.back());
         broker.SetVisibleFields(1, provider.manifest.id, { "repository" });
         broker.SetVisibleFields(2, provider.manifest.id, { "branch" });
         VERIFY_ARE_EQUAL(std::wstring{ L"project" }, firstWindow.back());
