@@ -479,8 +479,9 @@ namespace winrt::TerminalApp::implementation
         std::shared_ptr<Toast> _windowCwdToast{ nullptr };
 
         // ── Per-tab agent pane + window-level bottom bar ────────────────
-        // Each tab independently owns (or doesn't own) one agent pane,
-        // which lives as an AgentPaneContent leaf in that tab's pane tree.
+        // Each tab's root arena owns one primary agent pane, which lives as
+        // an AgentPaneContent leaf in that tab's pane tree. A nested arena
+        // from `Tab::NestAgentArena` hosts a second agent beside it.
         // The bottom bar lives at the window level (TerminalPage.xaml)
         // but reflects the active tab's agent-pane state, so its display
         // toggles each time the user switches tabs.
