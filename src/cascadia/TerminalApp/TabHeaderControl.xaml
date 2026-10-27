@@ -30,7 +30,6 @@
         <Grid.ColumnDefinitions>
             <ColumnDefinition Width="Auto" />
             <ColumnDefinition Width="*" />
-            <ColumnDefinition Width="Auto" />
         </Grid.ColumnDefinitions>
         <StackPanel x:Name="HeaderStackPanel"
                     Orientation="Horizontal">
@@ -101,42 +100,46 @@
                       Glyph="&#xEC05;"
                       Visibility="{x:Bind TabStatus.IsInputBroadcastActive, Mode=OneWay}" />
         </StackPanel>
-        <local:HighlightedTextControl x:Name="HeaderTextBlock"
-                                      Grid.Column="1"
-                                      SearchText="{x:Bind SearchText, Mode=OneWay}"
-                                      Text="{x:Bind Title, Mode=OneWay}"
-                                      Visibility="Visible">
-            <local:HighlightedTextControl.TextBlockStyle>
-                <Style TargetType="TextBlock">
-                    <Setter Property="TextTrimming" Value="CharacterEllipsis" />
-                </Style>
-            </local:HighlightedTextControl.TextBlockStyle>
-        </local:HighlightedTextControl>
-        <TextBox x:Name="HeaderRenamerTextBox"
-                 Grid.Column="1"
-                 Height="24"
-                 MinHeight="0"
-                 MaxWidth="{x:Bind RenamerMaxWidth, Mode=OneWay}"
-                 Padding="4,4,4,3"
-                 HorizontalAlignment="Left"
-                 FontSize="12"
-                 IsSpellCheckEnabled="False"
-                 LostFocus="RenameBoxLostFocusHandler"
-                 MaxLength="1024"
-                 Visibility="Collapsed">
-            <TextBox.ContextFlyout>
-                <mtu:TextMenuFlyout />
-            </TextBox.ContextFlyout>
-        </TextBox>
-        <FontIcon x:Name="HeaderKeepRunningIcon"
-                  Grid.RowSpan="2"
-                  Grid.Column="2"
-                  Margin="8,0,0,0"
-                  VerticalAlignment="Center"
-                  FontFamily="Segoe Fluent Icons, Segoe MDL2 Assets"
-                  FontSize="12"
-                  Glyph="&#xE8EE;"
-                  Visibility="{x:Bind TabStatus.IsKeepRunning, Mode=OneWay}" />
+        <Grid Grid.Column="1"
+              HorizontalAlignment="Left">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*" />
+                <ColumnDefinition Width="Auto" />
+            </Grid.ColumnDefinitions>
+            <local:HighlightedTextControl x:Name="HeaderTextBlock"
+                                          SearchText="{x:Bind SearchText, Mode=OneWay}"
+                                          Text="{x:Bind Title, Mode=OneWay}"
+                                          Visibility="Visible">
+                <local:HighlightedTextControl.TextBlockStyle>
+                    <Style TargetType="TextBlock">
+                        <Setter Property="TextTrimming" Value="CharacterEllipsis" />
+                    </Style>
+                </local:HighlightedTextControl.TextBlockStyle>
+            </local:HighlightedTextControl>
+            <TextBox x:Name="HeaderRenamerTextBox"
+                     Height="24"
+                     MinHeight="0"
+                     MaxWidth="{x:Bind RenamerMaxWidth, Mode=OneWay}"
+                     Padding="4,4,4,3"
+                     HorizontalAlignment="Left"
+                     FontSize="12"
+                     IsSpellCheckEnabled="False"
+                     LostFocus="RenameBoxLostFocusHandler"
+                     MaxLength="1024"
+                     Visibility="Collapsed">
+                <TextBox.ContextFlyout>
+                    <mtu:TextMenuFlyout />
+                </TextBox.ContextFlyout>
+            </TextBox>
+            <FontIcon x:Name="HeaderKeepRunningIcon"
+                      Grid.Column="1"
+                      Margin="6,0,0,0"
+                      VerticalAlignment="Center"
+                      FontFamily="Segoe Fluent Icons, Segoe MDL2 Assets"
+                      FontSize="12"
+                      Glyph="&#xE8EE;"
+                      Visibility="{x:Bind TabStatus.IsKeepRunning, Mode=OneWay}" />
+        </Grid>
         <local:HighlightedTextControl x:Name="HeaderMetadataTextBlock"
                                       Grid.Row="1"
                                       Grid.ColumnSpan="2"

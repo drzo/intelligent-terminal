@@ -706,7 +706,7 @@ namespace TerminalAppLocalTests
         TEST_METHOD(KeepRunningMenuIsFirstAndVerticalOnly);
         TEST_METHOD(KeepRunningMenuTogglesOwningTab);
         TEST_METHOD(KeepRunningBadgeFitsLongTitle);
-        TEST_METHOD(KeepRunningBadgeCentersAcrossRichTabRows);
+        TEST_METHOD(KeepRunningBadgeFollowsTitleAcrossRichTabRows);
         TEST_METHOD(KeepRunningMixedTabCloseRestoresSameContent);
         TEST_METHOD(KeepRunningDirectPaneCloseTerminates);
         TEST_METHOD(KeepRunningDetachedPaneCloseDiscardsGroup);
@@ -2293,7 +2293,7 @@ namespace TerminalAppLocalTests
         });
     }
 
-    void TabTests::KeepRunningBadgeCentersAcrossRichTabRows()
+    void TabTests::KeepRunningBadgeFollowsTitleAcrossRichTabRows()
     {
         const auto page = _commonSetup(nullptr, nullptr, std::nullopt, true);
         TestOnUIThread([&]() {
@@ -2301,46 +2301,52 @@ namespace TerminalAppLocalTests
             const auto header = tab->_headerControl;
             const auto layout = header.FindName(L"HeaderLayout").as<Grid>();
             const auto badge = header.FindName(L"HeaderKeepRunningIcon").as<FontIcon>();
+            const auto title = header.FindName(L"HeaderTextBlock").as<winrt::TerminalApp::HighlightedTextControl>();
             const auto metadata = header.FindName(L"HeaderMetadataTextBlock").as<winrt::TerminalApp::HighlightedTextControl>();
-            tab->SetTabText(winrt::hstring{ std::wstring(240, L'W') });
             tab->KeepRunning(true);
-            VERIFY_ARE_EQUAL(2, Grid::GetRowSpan(badge));
-            VERIFY_ARE_EQUAL(2, Grid::GetColumn(badge));
-            VERIFY_ARE_EQUAL(8.0, badge.Margin().Left);
-            VERIFY_ARE_EQUAL(VerticalAlignment::Center, badge.VerticalAlignment());
 
             constexpr double tolerance = 1.0;
             for (const auto width : { 120.0f, 240.0f })
             {
-                double singleLineX = 0;
-                double singleLineHeight = 0;
-                for (const auto text : { L"", L"main - a long metadata line that must truncate", L"main\n2 changes" })
+                for (const auto& titleText : { winrt::hstring{ L"Tab" }, winrt::hstring{ std::wstring(240, L'W') } })
                 {
-                    ::Microsoft::Terminal::RichTab::Provider::Presentation presentation;
-                    presentation.text = text;
-                    tab->SetRichTabPresentation(presentation);
-                    header.Width(width);
-                    header.Measure({ width, 100 });
-                    header.Arrange({ 0, 0, width, header.DesiredSize().Height });
-                    header.UpdateLayout();
+                    tab->SetTabText(titleText);
+                    double singleLineX = 0;
+                    double singleLineHeight = 0;
+                    for (const auto text : { L"", L"main - a long metadata line that must truncate", L"main\n2 changes" })
+                    {
+                        ::Microsoft::Terminal::RichTab::Provider::Presentation presentation;
+                        presentation.text = text;
+                        tab->SetRichTabPresentation(presentation);
+                        header.Width(width);
+                        header.Measure({ width, 100 });
+                        header.Arrange({ 0, 0, width, header.DesiredSize().Height });
+                        header.UpdateLayout();
 
-                    const auto position = badge.TransformToVisual(layout).TransformPoint({ 0, 0 });
-                    VERIFY_IS_TRUE(badge.ActualHeight() > 0);
-                    VERIFY_IS_TRUE(std::abs(position.Y + badge.ActualHeight() / 2 - layout.ActualHeight() / 2) <= tolerance);
-                    VERIFY_IS_TRUE(position.X + badge.ActualWidth() <= layout.ActualWidth() + tolerance);
-                    if (presentation.text.empty())
-                    {
-                        singleLineX = position.X;
-                        singleLineHeight = layout.ActualHeight();
-                        VERIFY_ARE_EQUAL(Visibility::Collapsed, metadata.Visibility());
-                    }
-                    else
-                    {
-                        VERIFY_ARE_EQUAL(Visibility::Visible, metadata.Visibility());
-                        VERIFY_IS_TRUE(layout.ActualHeight() > singleLineHeight);
-                        VERIFY_IS_TRUE(std::abs(position.X - singleLineX) <= tolerance);
-                        const auto metadataPosition = metadata.TransformToVisual(layout).TransformPoint({ 0, 0 });
-                        VERIFY_IS_TRUE(metadataPosition.X + metadata.ActualWidth() <= position.X - badge.Margin().Left + tolerance);
+                        const auto position = badge.TransformToVisual(layout).TransformPoint({ 0, 0 });
+                        const auto titlePosition = title.TransformToVisual(layout).TransformPoint({ 0, 0 });
+                        VERIFY_IS_TRUE(badge.ActualHeight() > 0);
+                        VERIFY_IS_TRUE(std::abs(position.X - titlePosition.X - title.ActualWidth() - 6) <= tolerance);
+                        VERIFY_IS_TRUE(std::abs(position.Y + badge.ActualHeight() / 2 - titlePosition.Y - title.ActualHeight() / 2) <= tolerance);
+                        VERIFY_IS_TRUE(position.X + badge.ActualWidth() <= layout.ActualWidth() + tolerance);
+                        if (titleText == L"Tab")
+                        {
+                            VERIFY_IS_TRUE(position.X + badge.ActualWidth() < layout.ActualWidth() - 20);
+                        }
+                        if (presentation.text.empty())
+                        {
+                            singleLineX = position.X;
+                            singleLineHeight = layout.ActualHeight();
+                            VERIFY_ARE_EQUAL(Visibility::Collapsed, metadata.Visibility());
+                        }
+                        else
+                        {
+                            VERIFY_ARE_EQUAL(Visibility::Visible, metadata.Visibility());
+                            VERIFY_IS_TRUE(layout.ActualHeight() > singleLineHeight);
+                            VERIFY_IS_TRUE(std::abs(position.X - singleLineX) <= tolerance);
+                            const auto metadataPosition = metadata.TransformToVisual(layout).TransformPoint({ 0, 0 });
+                            VERIFY_IS_TRUE(std::abs(metadataPosition.X + metadata.ActualWidth() - layout.ActualWidth()) <= tolerance);
+                        }
                     }
                 }
             }
@@ -11395,15 +11401,14 @@ namespace TerminalAppLocalTests
             const auto row = stripImpl->Resources().Lookup(winrt::box_value(L"HistoryRowTemplate")).as<DataTemplate>().LoadContent().as<Grid>();
             Window::Current().Content(row);
             Window::Current().Activate();
-            VERIFY_ARE_EQUAL(3u, row.ColumnDefinitions().Size());
+            VERIFY_ARE_EQUAL(2u, row.ColumnDefinitions().Size());
             VERIFY_ARE_EQUAL(3u, row.RowDefinitions().Size());
             VERIFY_ARE_EQUAL(GridUnitType::Pixel, row.ColumnDefinitions().GetAt(0).Width().GridUnitType);
             VERIFY_ARE_EQUAL(28.0, row.ColumnDefinitions().GetAt(0).Width().Value);
             VERIFY_ARE_EQUAL(GridUnitType::Star, row.ColumnDefinitions().GetAt(1).Width().GridUnitType);
-            VERIFY_ARE_EQUAL(GridUnitType::Auto, row.ColumnDefinitions().GetAt(2).Width().GridUnitType);
             VERIFY_ARE_EQUAL(10.0, row.ColumnSpacing());
             const auto selection = row.FindName(L"HistorySelectionBackground").as<Border>();
-            VERIFY_ARE_EQUAL(3, Grid::GetColumnSpan(selection));
+            VERIFY_ARE_EQUAL(2, Grid::GetColumnSpan(selection));
             VERIFY_ARE_EQUAL(3, Grid::GetRowSpan(selection));
             VERIFY_IS_TRUE(row.Children().GetAt(0) == selection);
             VERIFY_IS_TRUE(static_cast<bool>(row.FindName(L"HistorySelectionPalette").as<ContentControl>()));
@@ -11411,8 +11416,8 @@ namespace TerminalAppLocalTests
             VERIFY_ARE_EQUAL(0, Grid::GetColumn(icon));
             VERIFY_ARE_EQUAL(3, Grid::GetRowSpan(icon));
             const auto keepRunningIcon = row.FindName(L"HistoryKeepRunningIcon").as<FontIcon>();
-            VERIFY_ARE_EQUAL(2, Grid::GetColumn(keepRunningIcon));
-            VERIFY_ARE_EQUAL(3, Grid::GetRowSpan(keepRunningIcon));
+            VERIFY_ARE_EQUAL(1, Grid::GetColumn(keepRunningIcon));
+            VERIFY_ARE_EQUAL(1, Grid::GetRowSpan(keepRunningIcon));
             VERIFY_ARE_EQUAL(16.0, icon.Width());
             VERIFY_ARE_EQUAL(16.0, icon.Height());
             VERIFY_ARE_EQUAL(Thickness{}, icon.Margin());
@@ -11422,7 +11427,7 @@ namespace TerminalAppLocalTests
             VERIFY_ARE_EQUAL(Automation::Peers::AccessibilityView::Raw, Automation::AutomationProperties::GetAccessibilityView(icon));
             const auto title = row.FindName(L"HistoryTitleText").as<winrt::TerminalApp::HighlightedTextControl>();
             title.Text(L"History session title");
-            VERIFY_ARE_EQUAL(1, Grid::GetColumn(title));
+            VERIFY_ARE_EQUAL(0, Grid::GetColumn(title));
             VERIFY_ARE_EQUAL(0, Grid::GetRow(title));
             const auto cwd = row.FindName(L"HistoryCwdText").as<winrt::TerminalApp::HighlightedTextControl>();
             VERIFY_ARE_EQUAL(1, Grid::GetColumn(cwd));
@@ -14594,7 +14599,6 @@ namespace TerminalAppLocalTests
             const auto row = container.ContentTemplateRoot().as<Grid>();
             const auto icon = row.FindName(L"HistoryKeepRunningIcon").as<FontIcon>();
             const auto title = row.FindName(L"HistoryTitleText").as<winrt::TerminalApp::HighlightedTextControl>();
-            const auto metadata = row.FindName(L"HistoryMetadata").as<Grid>();
             title.ApplyTemplate();
             const auto text = Media::VisualTreeHelper::GetChild(title, 0).as<TextBlock>();
             VERIFY_ARE_EQUAL(Visibility::Collapsed, icon.Visibility());
@@ -14611,12 +14615,18 @@ namespace TerminalAppLocalTests
             VERIFY_ARE_EQUAL(Visibility::Visible, tooltipKeepRunning.Visibility());
             VERIFY_IS_TRUE(text.IsTextTrimmed());
             const auto titlePosition = title.TransformToVisual(row).TransformPoint({ 0, 0 });
-            const auto metadataPosition = metadata.TransformToVisual(row).TransformPoint({ 0, 0 });
             const auto iconPosition = icon.TransformToVisual(row).TransformPoint({ 0, 0 });
-            VERIFY_IS_TRUE(titlePosition.X + title.ActualWidth() + icon.Margin().Left <= iconPosition.X + 1);
+            VERIFY_IS_TRUE(std::abs(iconPosition.X - titlePosition.X - title.ActualWidth() - 6) <= 1);
             VERIFY_IS_TRUE(iconPosition.X + icon.ActualWidth() <= row.ActualWidth() - row.Padding().Right + 1);
-            const auto center = (titlePosition.Y + metadataPosition.Y + metadata.ActualHeight()) / 2;
+            const auto center = titlePosition.Y + title.ActualHeight() / 2;
             VERIFY_IS_TRUE(std::abs(iconPosition.Y + icon.ActualHeight() / 2 - center) <= 1);
+            title.Text(L"Short");
+            strip.UpdateLayout();
+            VERIFY_IS_FALSE(text.IsTextTrimmed());
+            const auto shortTitlePosition = title.TransformToVisual(row).TransformPoint({ 0, 0 });
+            const auto shortIconPosition = icon.TransformToVisual(row).TransformPoint({ 0, 0 });
+            VERIFY_IS_TRUE(std::abs(shortIconPosition.X - shortTitlePosition.X - title.ActualWidth() - 6) <= 1);
+            VERIFY_IS_TRUE(shortIconPosition.X < iconPosition.X - 20);
             enabled = false;
             impl->UpdateHistoryKeepRunning([&](const auto&) { return enabled; }, [](const auto&) { return false; });
             strip.UpdateLayout();
