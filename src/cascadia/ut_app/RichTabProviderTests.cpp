@@ -53,6 +53,7 @@ namespace TerminalAppUnitTests
         TEST_METHOD(CommandRunnerMarksLaunchFailureObservations);
         TEST_METHOD(BrokerClearsSuccessfulSnapshotAfterProviderFailure);
         TEST_METHOD(BrokerKeepsAgentStatusPairedWithSnapshotDuringRefresh);
+        TEST_METHOD(BrokerKeepsBuiltInStatusWhileMetadataRefreshes);
         TEST_METHOD(BrokerClearsSnapshotAndSkipsExecutionWhenAllFieldsDeselected);
         TEST_METHOD(BrokerKeepsVisibleFieldsIndependentAcrossWindows);
         TEST_METHOD(BrokerCollectsSharedSessionFieldsForBothWindows);
@@ -378,6 +379,7 @@ namespace TerminalAppUnitTests
         auto& session = broker._sessions["detached-git"];
         session.context.sessionId = "detached-git";
         session.context.workingDirectory = L"C:\\shell";
+        session.context.firstPartyFields = { { "agentStatus", "Idle" }, { "agentStatusId", "Idle" } };
         session.sessionIncarnation = 1;
         session.callbacks.emplace(1, [](const auto&) {});
         broker._attachmentSessions.emplace(1, session.context.sessionId);
@@ -904,6 +906,96 @@ namespace TerminalAppUnitTests
         VERIFY_IS_FALSE(updates.back().presentation.has_value());
         VERIFY_IS_FALSE(state.snapshot.has_value());
         VERIFY_IS_FALSE(updates.back().diagnostics.empty());
+    }
+
+    void RichTabProviderTests::BrokerKeepsBuiltInStatusWhileMetadataRefreshes()
+    {
+        ProviderBroker broker{ std::nullopt };
+        Registration provider;
+        provider.manifest.id = "com.microsoft.intelligent-terminal.git-status";
+        provider.manifest.activationEvents = { ActivationEvent::ManualRefresh };
+        provider.manifest.fields = { { "agentStatus", "Status", FieldType::String, true },
+                                     { "workingDirectory", "Directory", FieldType::String, true },
+                                     { "repository", "Repository", FieldType::String, false } };
+        provider.kind = RegistrationKind::Managed;
+        provider.origin = RegistrationOrigin::BuiltInCatalog;
+        provider.root = BuiltInProviderCatalog::PackageRoot() / L"RichTabProviders" / L"GitStatus";
+        provider.enabled = true;
+        provider.integrityValid = true;
+        broker._providers = { provider };
+
+        auto& session = broker._sessions["metadata-refresh"];
+        session.context.sessionId = "metadata-refresh";
+        session.context.firstPartyFields = { { "agentStatus", "Active" }, { "agentStatusId", "Working" } };
+        session.sessionIncarnation = 1;
+        std::vector<BrokerUpdate> updates;
+        session.callbacks.emplace(1, [&](const auto& update) { updates.emplace_back(update); });
+        broker._attachmentSessions.emplace(1, session.context.sessionId);
+        auto& state = session.providers[provider.manifest.id];
+        state.snapshot.emplace();
+        state.snapshot->fields = { { "agentStatus", std::string{ "Active" } },
+                                   { "workingDirectory", std::string{ "C:\\src" } } };
+        state.snapshot->agentStatus = "Working";
+        // Hold provider execution so assertions cover the interval before Git returns.
+        state.running = true;
+
+        broker.SetVisibleFields(provider.manifest.id, { "agentStatus", "repository" });
+        VERIFY_IS_TRUE(state.pending.has_value());
+        VERIFY_IS_TRUE(updates.back().presentation.has_value());
+        VERIFY_ARE_EQUAL(std::wstring{ L"Active" }, updates.back().presentation->text);
+
+        // A failed Git invocation must not remove the independently known status.
+        state.snapshot.reset();
+        const auto withoutGit = broker._UpdateFor(session.context.sessionId, session);
+        VERIFY_IS_TRUE(withoutGit.presentation.has_value());
+        VERIFY_ARE_EQUAL(std::wstring{ L"Active" }, withoutGit.presentation->text);
+        VERIFY_ARE_EQUAL(std::string{ "Working" }, withoutGit.presentation->agentStatus);
+        VERIFY_ARE_EQUAL(size_t{ 1 }, withoutGit.presentation->agentStatusRanges.size());
+
+        broker.UpdateFirstPartyFields(1, { { "agentStatus", "Failed" }, { "agentStatusId", "Error" } });
+        VERIFY_IS_TRUE(updates.back().presentation.has_value());
+        VERIFY_ARE_EQUAL(std::wstring{ L"Failed" }, updates.back().presentation->text);
+        VERIFY_ARE_EQUAL(std::string{ "Error" }, updates.back().presentation->agentStatus);
+
+        broker.SetVisibleFields(provider.manifest.id, {});
+        VERIFY_IS_FALSE(updates.back().presentation.has_value());
+        broker.SetVisibleFields(provider.manifest.id, { "repository" });
+        VERIFY_IS_FALSE(updates.back().presentation.has_value());
+        broker.SetVisibleFields(provider.manifest.id, { "agentStatus", "repository" });
+
+        state.snapshot.emplace();
+        state.snapshot->fields = { { "agentStatus", std::string{ "Active" } },
+                                   { "repository", std::string{ "terminal" } } };
+        state.snapshot->agentStatus = "Working";
+        const auto refreshed = broker._UpdateFor(session.context.sessionId, session);
+        VERIFY_IS_TRUE(refreshed.presentation.has_value());
+        VERIFY_ARE_EQUAL(std::wstring{ L"Failed\n"
+                                       L"terminal" },
+                         refreshed.presentation->text);
+        VERIFY_ARE_EQUAL(std::string{ "Error" }, refreshed.presentation->agentStatus);
+
+        broker.UpdateFirstPartyFields(1, {});
+        VERIFY_IS_TRUE(updates.back().presentation.has_value());
+        VERIFY_ARE_EQUAL(std::wstring{ L"terminal" }, updates.back().presentation->text);
+        VERIFY_IS_TRUE(updates.back().presentation->agentStatus.empty());
+        VERIFY_IS_TRUE(updates.back().presentation->agentStatusRanges.empty());
+
+        session.callbacks.emplace(2, [](const auto&) {});
+        broker._attachmentSessions.emplace(2, session.context.sessionId);
+        session.context.firstPartyFields = { { "agentStatus", "Restored" }, { "agentStatusId", "Working" } };
+        broker.SetVisibleFields(1, provider.manifest.id, { "repository" });
+        broker.SetVisibleFields(2, provider.manifest.id, { "agentStatus" });
+        const auto firstWindow = broker._UpdateFor(session.context.sessionId, session, {}, 1);
+        const auto secondWindow = broker._UpdateFor(session.context.sessionId, session, {}, 2);
+        VERIFY_ARE_EQUAL(std::wstring{ L"terminal" }, firstWindow.presentation->text);
+        VERIFY_IS_TRUE(firstWindow.presentation->agentStatus.empty());
+        VERIFY_ARE_EQUAL(std::wstring{ L"Restored" }, secondWindow.presentation->text);
+        VERIFY_ARE_EQUAL(std::string{ "Working" }, secondWindow.presentation->agentStatus);
+
+        state.snapshot.reset();
+        VERIFY_IS_FALSE(broker._UpdateFor(session.context.sessionId, session, {}, 1).presentation.has_value());
+        const auto statusWithoutGit = broker._UpdateFor(session.context.sessionId, session, {}, 2);
+        VERIFY_ARE_EQUAL(std::wstring{ L"Restored" }, statusWithoutGit.presentation->text);
     }
 
     void RichTabProviderTests::BrokerClearsSnapshotAndSkipsExecutionWhenAllFieldsDeselected()
