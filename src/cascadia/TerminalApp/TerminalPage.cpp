@@ -45,6 +45,7 @@
 #include "AgentSessionTelemetry.h"
 #include "AgentPolicyTelemetry.h"
 #include "App.h"
+#include "AppLogic.h"
 #include "DebugTapConnection.h"
 #include "FreOverlay.h"
 #include "../inc/AgentPaneRestore.h"
@@ -3985,6 +3986,21 @@ namespace winrt::TerminalApp::implementation
         }
         _agentPaneLog(std::string{ "requesting set_agent_state:" } + logSuffix);
         _RaiseProtocolEvent("set_agent_state", params);
+    }
+
+    bool TerminalPage::_EnsureSharedWtaService()
+    {
+        if (!AppLogic::Current())
+        {
+            return false;
+        }
+        auto& shared = SharedWta::Instance();
+        if (shared.IsRunning())
+        {
+            return true;
+        }
+        const auto wtaPath = _DetectWtaPath();
+        return shared.EnsureStarted(wtaPath, _BuildSharedWtaExtraArgs(), _BuildSharedWtaEnvironment());
     }
 
     // Builds the per-process flag/value pairs that wta-master inherits
@@ -12423,6 +12439,47 @@ namespace winrt::TerminalApp::implementation
         }
         const auto replacement = _lastReadyNativeAgentReceiverGeneration != receiverGeneration;
         _lastReadyNativeAgentReceiverGeneration = receiverGeneration;
+        if (replacement && _settings.GlobalSettings().EffectiveAgentSessionManagementEnabled())
+        {
+            for (const auto& runtimeTab : _RuntimeTabs())
+            {
+                if (const auto tab = _GetTabImpl(runtimeTab); tab && tab->GetRootPane())
+                {
+                    for (const auto& [paneId, binding] : _paneAgentSessions)
+                    {
+                        const auto active = _activeCliAgentPanes.find(paneId);
+                        const auto interactive = _interactiveResumeSessions.find(paneId);
+                        const auto confirmed = active != _activeCliAgentPanes.end() ?
+                                                   active->second.sessionId == binding.sessionId :
+                                                   interactive != _interactiveResumeSessions.end() &&
+                                                       interactive->second.sessionId == binding.sessionId &&
+                                                       interactive->second.agent == binding.agent;
+                        if (binding.sessionId.empty() || binding.agent.empty() ||
+                            !confirmed)
+                        {
+                            continue;
+                        }
+                        if (const auto pane = tab->GetRootPane()->FindPaneBySessionId(paneId))
+                        {
+                            if (const auto control = pane->GetTerminalControl())
+                            {
+                                // Replay only a confirmed, still-live shell binding.
+                                // This registers identity; it never launches or resumes a CLI.
+                                _pendingRestoredSessionBindings.try_emplace(
+                                    paneId,
+                                    _PendingRestoredSessionBinding{
+                                        binding.sessionId,
+                                        binding.agent,
+                                        binding.cwd.empty() ? control.WorkingDirectory() : binding.cwd,
+                                        binding.backend,
+                                        0,
+                                        true });
+                            }
+                        }
+                    }
+                }
+            }
+        }
         for (const auto& tabId : std::exchange(_tabsAwaitingRestoredBindings, {}))
         {
             if (const auto tab = _FindTabByStableId(tabId))
@@ -12496,6 +12553,7 @@ namespace winrt::TerminalApp::implementation
         const auto receiverGeneration = SharedWta::Instance().MasterGeneration();
         if (receiverGeneration != 0 && _lastReadyNativeAgentReceiverGeneration != receiverGeneration)
         {
+            _RequestAgentSnapshotRefresh();
             return;
         }
         const auto previous = manager->NativeAgentObservationForContent(control.ContentId());
@@ -13043,6 +13101,10 @@ namespace winrt::TerminalApp::implementation
             return;
         }
 
+        if (!_EnsureSharedWtaService())
+        {
+            return;
+        }
         _agentSnapshotRefreshInFlight = true;
         _agentSnapshotRefreshPending = false;
         _LoadAgentSnapshot(++_agentSnapshotRequestGeneration);

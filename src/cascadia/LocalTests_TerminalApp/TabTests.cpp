@@ -588,6 +588,7 @@ namespace TerminalAppLocalTests
         TEST_METHOD(SharedWtaNativeReceiverGenerationSurvivesWaitRetirement);
         TEST_METHOD(NativeAgentReceiverSnapshotsRequireReadyGeneration);
         TEST_METHOD(NativeAgentReceiverReplayIsPageLocalAndOrdered);
+        TEST_METHOD(MasterRecoveryReplaysOnlyConfirmedLiveCliBindings);
         TEST_METHOD(AgentSnapshotSelectionIsIndependentOfRowOrder);
         TEST_METHOD(BottomBarSessionsButtonFollowsLayout);
         TEST_METHOD(BottomBarSessionsButtonDispatchesExistingAction);
@@ -10614,6 +10615,77 @@ namespace TerminalAppLocalTests
         VERIFY_IS_FALSE(Page::_NativeAgentReceiverSnapshotReady(response, 7, 7));
         response.removeMember("native_observation_receiver_generation");
         VERIFY_IS_FALSE(Page::_NativeAgentReceiverSnapshotReady(response, 7, 7));
+    }
+
+    void TabTests::MasterRecoveryReplaysOnlyConfirmedLiveCliBindings()
+    {
+        using Owner = winrt::TerminalApp::implementation::SharedWta;
+        auto page = _restoreBindingsSetup();
+        TestOnUIThread([&]() {
+            auto& owner = Owner::Instance();
+            VERIFY_IS_FALSE(owner.IsRunning());
+            const auto originalGeneration = owner.MasterGeneration();
+            const auto restoreGeneration = wil::scope_exit([&]() {
+                std::lock_guard lock{ owner._mtx };
+                owner._masterGeneration = originalGeneration;
+            });
+            {
+                std::lock_guard lock{ owner._mtx };
+                owner._masterGeneration = 7;
+            }
+            page->_settings.GlobalSettings().AgentSessionManagementEnabled(true);
+            page->_agentSnapshotRefreshInFlight = true;
+            page->_lastReadyNativeAgentReceiverGeneration = 6;
+            const auto live = page->_GetTabImpl(page->_tabs.GetAt(0));
+            const auto ended = page->_GetTabImpl(page->_tabs.GetAt(1));
+            const auto livePane = live->GetActiveTerminalControl().Connection().SessionId();
+            const auto endedPane = ended->GetActiveTerminalControl().Connection().SessionId();
+            page->_paneAgentSessions[livePane] = { L"live-session", L"copilot", {}, L"wsl:Ubuntu:copilot", L"C:\\live" };
+            page->_activeCliAgentPanes[livePane] = { L"live-session" };
+            page->_paneAgentSessions[endedPane] = { L"ended-session", L"copilot" };
+            std::vector<Json::Value> births;
+            const auto token = page->ProtocolVtSequenceReceived([&](auto&&, const winrt::hstring& payload) {
+                Json::Value event;
+                Json::CharReaderBuilder reader;
+                std::string errors;
+                std::istringstream stream{ winrt::to_string(payload) };
+                VERIFY_IS_TRUE(Json::parseFromStream(reader, stream, &event, &errors));
+                if (event["method"] == "session_born_bound")
+                {
+                    births.push_back(event["params"]);
+                }
+            });
+            const auto revoke = wil::scope_exit([&]() { page->ProtocolVtSequenceReceived(token); });
+
+            page->_ReplayNativeAgentObservationsForReceiver(6);
+            VERIFY_IS_TRUE(births.empty());
+            page->_ReplayNativeAgentObservationsForReceiver(7);
+            VERIFY_ARE_EQUAL(size_t{ 1 }, births.size());
+            VERIFY_ARE_EQUAL(std::string{ "live-session" }, births[0]["agent_session_id"].asString());
+            VERIFY_ARE_EQUAL(winrt::to_string(live->StableId()), births[0]["tab_id"].asString());
+            VERIFY_ARE_EQUAL(std::string{ "Ubuntu" }, births[0]["wsl_distro"].asString());
+            VERIFY_ARE_EQUAL(uint64_t{ 7 }, births[0]["receiver_generation"].asUInt64());
+            VERIFY_IS_TRUE(page->_pendingRestoredSessionBindings.empty());
+            page->_ReplayNativeAgentObservationsForReceiver(7);
+            VERIFY_ARE_EQUAL(size_t{ 1 }, births.size());
+            {
+                std::lock_guard lock{ owner._mtx };
+                owner._masterGeneration = 8;
+            }
+            page->_activeCliAgentPanes[livePane].sessionId = L"unconfirmed-replacement";
+            page->_ReplayNativeAgentObservationsForReceiver(8);
+            VERIFY_ARE_EQUAL(size_t{ 1 }, births.size());
+            page->_paneAgentSessions[endedPane] = { L"resumed-session", L"claude" };
+            page->_interactiveResumeSessions[endedPane] = page->_paneAgentSessions.at(endedPane);
+            {
+                std::lock_guard lock{ owner._mtx };
+                owner._masterGeneration = 9;
+            }
+            page->_ReplayNativeAgentObservationsForReceiver(9);
+            VERIFY_ARE_EQUAL(size_t{ 2 }, births.size());
+            VERIFY_ARE_EQUAL(std::string{ "resumed-session" }, births[1]["agent_session_id"].asString());
+            VERIFY_ARE_EQUAL(uint64_t{ 9 }, births[1]["receiver_generation"].asUInt64());
+        });
     }
 
     void TabTests::NativeAgentReceiverReplayIsPageLocalAndOrdered()
