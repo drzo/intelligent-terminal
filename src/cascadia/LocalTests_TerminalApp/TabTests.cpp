@@ -2152,13 +2152,33 @@ namespace TerminalAppLocalTests
             const auto tab = page->_GetFocusedTabImpl();
             page->_SetTabPinned(tab, true);
             VERIFY_IS_FALSE(tab->_headerControl.ShowPinnedIcon());
-            const auto badge = tab->_headerControl.FindName(L"HeaderPinnedIcon").as<FontIcon>();
+            const auto badge = tab->_headerControl.FindName(L"HeaderPinnedIcon").as<PathIcon>();
             VERIFY_ARE_EQUAL(Visibility::Visible, badge.Visibility());
             const auto strip = winrt::get_self<winrt::TerminalApp::implementation::TabStrip>(page->_tabStrip);
             const auto displays = strip->ItemsList().ItemsSource().as<IObservableVector<winrt::TerminalApp::TabStripDisplayItem>>();
             VERIFY_ARE_EQUAL(Visibility::Collapsed, displays.GetAt(0).PinnedIconVisibility());
             page->_tabStrip.IsRailCollapsed(true);
+            page->_tabStrip.UpdateLayout();
             VERIFY_ARE_EQUAL(Visibility::Visible, displays.GetAt(0).PinnedIconVisibility());
+            const auto row = strip->ItemsList().ContainerFromIndex(0).as<ListViewItem>().ContentTemplateRoot().as<StackPanel>().Children().GetAt(0).as<Grid>();
+            const auto collapsedBadge = row.FindName(L"CollapsedPinnedTabIcon").as<PathIcon>();
+            VERIFY_IS_NOT_NULL(badge.Data());
+            VERIFY_IS_NOT_NULL(collapsedBadge.Data());
+            VERIFY_ARE_EQUAL(12.0, badge.Width());
+            VERIFY_ARE_EQUAL(12.0, badge.Height());
+            VERIFY_ARE_EQUAL(9.0, collapsedBadge.Width());
+            VERIFY_ARE_EQUAL(9.0, collapsedBadge.Height());
+            const auto verifyNeedleTip = [](const PathIcon& icon) {
+                const auto geometry = icon.Data().as<winrt::Windows::UI::Xaml::Media::PathGeometry>();
+                VERIFY_IS_TRUE(geometry.Figures().Size() == 1u);
+                const auto segments = geometry.Figures().GetAt(0).Segments();
+                VERIFY_IS_TRUE(segments.Size() == 17u);
+                const auto needleTip = segments.GetAt(7).as<winrt::Windows::UI::Xaml::Media::LineSegment>().Point();
+                VERIFY_IS_TRUE(std::abs(needleTip.X) < 0.001f);
+                VERIFY_IS_TRUE(std::abs(needleTip.Y - 11.9964f) < 0.001f);
+            };
+            verifyNeedleTip(badge);
+            verifyNeedleTip(collapsedBadge);
             const auto name = std::wstring{ winrt::Windows::UI::Xaml::Automation::AutomationProperties::GetName(tab->TabViewItem()) };
             VERIFY_IS_TRUE(name.find(L"Pinned") != std::wstring::npos);
             page->_SetTabPinned(tab, false);
@@ -14973,22 +14993,43 @@ namespace TerminalAppLocalTests
                     const auto neutralMetadata = leading(metadata);
                     const auto neutralHeader = leading(header);
                     const auto neutralIcon = center(liveIcon);
+                    const auto originalTitle = sourceHeader.Title();
                     status.IsPinned(true);
                     status.IsReadOnlyActive(true);
+                    status.IsKeepRunning(true);
                     strip.UpdateLayout();
-                    const auto pin = header.FindName(L"HeaderPinnedIcon").as<FontIcon>();
+                    const auto pin = header.FindName(L"HeaderPinnedIcon").as<PathIcon>();
                     const auto lock = header.FindName(L"HeaderLockIcon").as<FontIcon>();
+                    const auto headless = header.FindName(L"HeaderKeepRunningIcon").as<FontIcon>();
                     VERIFY_ARE_EQUAL(Visibility::Visible, pin.Visibility());
                     VERIFY_ARE_EQUAL(Visibility::Visible, lock.Visibility());
+                    VERIFY_ARE_EQUAL(Visibility::Visible, headless.Visibility());
+                    const auto pinPresenter = pin.Parent().as<Grid>();
+                    const auto titleAndPin = pinPresenter.Parent().as<Grid>();
+                    VERIFY_IS_NOT_NULL(pin.Data());
+                    VERIFY_ARE_EQUAL(12.0, pin.Width());
+                    VERIFY_ARE_EQUAL(12.0, pin.Height());
+                    VERIFY_ARE_EQUAL(1, Grid::GetColumn(pinPresenter));
+                    VERIFY_ARE_EQUAL(1, Grid::GetColumn(titleAndPin));
+                    VERIFY_ARE_EQUAL(2, Grid::GetColumn(headless));
                     const auto adornedOffset = leading(title) - neutralTitle;
                     VERIFY_IS_TRUE(adornedOffset > tolerance);
-                    VERIFY_IS_TRUE(std::abs(adornedOffset - pin.ActualWidth() - pin.Margin().Right -
-                                            lock.ActualWidth() - lock.Margin().Right) <= tolerance);
+                    VERIFY_IS_TRUE(std::abs(adornedOffset - lock.ActualWidth() - lock.Margin().Right) <= tolerance);
+                    VERIFY_IS_TRUE(leading(pin) + tolerance >= leading(title) + title.ActualWidth());
+                    VERIFY_IS_TRUE(leading(headless) + tolerance >= leading(pin) + pin.ActualWidth());
+                    VERIFY_IS_TRUE(titleText.IsTextTrimmed());
                     VERIFY_IS_TRUE(std::abs(leading(header) - neutralHeader) <= tolerance);
                     VERIFY_IS_TRUE(std::abs(leading(metadata) - neutralMetadata) <= tolerance);
                     VERIFY_IS_TRUE(std::abs(center(liveIcon) - neutralIcon) <= tolerance);
+                    strip.SetTabPresentation(live, L"Short title", L"\xE756");
+                    strip.UpdateLayout();
+                    const auto compactGap = leading(pin) - leading(titleText) - titleText.DesiredSize().Width;
+                    VERIFY_IS_TRUE(compactGap >= -tolerance);
+                    VERIFY_IS_TRUE(compactGap <= pin.Margin().Left + tolerance);
+                    strip.SetTabPresentation(live, originalTitle, L"\xE756");
                     status.IsPinned(false);
                     status.IsReadOnlyActive(false);
+                    status.IsKeepRunning(false);
                     strip.UpdateLayout();
                     VERIFY_IS_TRUE(std::abs(leading(title) - neutralTitle) <= tolerance);
                 }
@@ -17299,7 +17340,7 @@ namespace TerminalAppLocalTests
             const auto verifyGlyphs = [&](const winrt::TerminalApp::TabHeaderControl& header) {
                 for (const auto name : { L"HeaderZoomIcon", L"HeaderLockIcon", L"HeaderClosedIcon", L"HeaderBroadcastIcon", L"HeaderKeepRunningIcon", L"HeaderPinnedIcon" })
                 {
-                    const auto glyph = header.as<FrameworkElement>().FindName(name).as<FontIcon>();
+                    const auto glyph = header.as<FrameworkElement>().FindName(name).as<FrameworkElement>();
                     VERIFY_IS_TRUE(glyph.IsLoaded());
                     VERIFY_IS_TRUE(glyph.ActualWidth() > 0);
                     for (DependencyObject element = glyph; element; element = Media::VisualTreeHelper::GetParent(element))
