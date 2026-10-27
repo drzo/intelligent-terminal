@@ -1057,6 +1057,7 @@ namespace winrt::TerminalApp::implementation
         std::unordered_set<winrt::guid> _explicitNativeAgentSessions;
         std::pair<bool, std::optional<std::string>> _RichTabAgentCwdForControl(const Microsoft::Terminal::Control::TermControl& control);
         bool _RichTabCwdDependentFieldsVisible() const;
+        std::vector<std::string> _SelectedRichTabVisibleFields() const;
         winrt::hstring _AgentIconForControl(const Microsoft::Terminal::Control::TermControl& control, const winrt::hstring& profileIcon);
         std::unordered_map<std::string, std::string> _BuildRichTabFirstPartyFields(const Microsoft::Terminal::Control::TermControl& control);
         void _UpdateRichTabFirstPartyFields(const Microsoft::Terminal::Control::TermControl& control);
@@ -1184,6 +1185,7 @@ namespace winrt::TerminalApp::implementation
         };
         std::mutex _richTabAttachmentsMutex;
         std::unordered_map<uintptr_t, RichTabAttachment> _richTabAttachments;
+        std::vector<std::string> _richTabVisibleFields;
         std::unordered_map<std::string, RichTabPresentationState> _richTabPresentations;
         std::unordered_map<std::string, _RichTabAgentInfo> _richTabAgentStatusBySessionId;
         std::unordered_map<winrt::guid, _RichTabAgentInfo> _richTabAgentStatusByPaneId;
