@@ -11478,6 +11478,11 @@ namespace winrt::TerminalApp::implementation
                 if (const auto rootPane = tabImpl->GetRootPane();
                     rootPane && rootPane->FindPaneBySessionId(*paneSessionId))
                 {
+                    const auto retainedControl = rootPane->FindPaneBySessionId(*paneSessionId)->GetTerminalControl();
+                    const bool replayedFork = eventName.empty() && params["fork_operation_id"].isString() &&
+                                              !params["fork_operation_id"].asString().empty() && retainedControl &&
+                                              _manager.AgentSessionEvent(retainedControl.ContentId()) == eventJson;
+                    const bool bindingStarted = sessionStarted || replayedFork;
                     const auto clearExplicitResume = [&]() {
                         _explicitNativeAgentSessions.erase(*paneSessionId);
                         _interactiveResumeSessions.erase(*paneSessionId);
@@ -11560,10 +11565,10 @@ namespace winrt::TerminalApp::implementation
                             }
                         }
                     }
-                    else if ((sessionStarted || promptSubmitted) && !agent.empty())
+                    else if ((bindingStarted || promptSubmitted) && !agent.empty())
                     {
                         const auto sessionId = winrt::to_hstring(agentSessionId);
-                        if (sessionStarted)
+                        if (bindingStarted)
                         {
                             auto marker = _ActiveCliAgentPane{ sessionId };
                             if (const auto active = _activeCliAgentPanes.find(*paneSessionId);
@@ -11612,7 +11617,7 @@ namespace winrt::TerminalApp::implementation
                          agentSessionId.starts_with("sidekick-") ||
                          (agent.empty() && resumeCommandline.empty())))
                     {
-                        if (sessionStarted)
+                        if (bindingStarted)
                         {
                             _richTabEndedSessionByPaneId.erase(*paneSessionId);
                             if (_RichTabCwdDependentFieldsVisible())
@@ -11713,7 +11718,7 @@ namespace winrt::TerminalApp::implementation
                                     ::Microsoft::Terminal::AgentPaneRestore::BuildResumeCommandline(
                                         bindingBackend, winrt::to_hstring(agentSessionId), bindingCwd) });
                             }
-                            if (sessionStarted)
+                            if (bindingStarted)
                             {
                                 _pendingRestoredSessionBindings.erase(*paneSessionId);
                             }
@@ -11739,7 +11744,7 @@ namespace winrt::TerminalApp::implementation
                             _agentPaneLog("OnPaneAgentSessionChanged: ignored prompt session " + agentSessionId + " for already-bound pane " + paneId);
                         }
                     }
-                    if (sessionStarted)
+                    if (bindingStarted)
                     {
                         _richTabEndedSessionByPaneId.erase(*paneSessionId);
                     }

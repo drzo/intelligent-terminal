@@ -394,8 +394,7 @@ namespace winrt::TerminalApp::implementation
         const auto prompt = name == "agent.prompt.submit";
         const auto unbound = name == "agent.session.unbind";
         const auto forked = name == "agent.session.fork";
-        const auto bornBound = name.empty() && event.get("method", "").asString() == "pane_agent_session_changed";
-        if (!ended && !started && !prompt && !unbound && !forked && !bornBound)
+        if (!ended && !started && !prompt && !unbound && !forked)
         {
             return;
         }
@@ -464,16 +463,26 @@ namespace winrt::TerminalApp::implementation
             else
             {
                 const auto native = NativeAgentObservationForContent(contentId);
-                matches = native && native->providerId == L"copilot" &&
-                          !native->location.starts_with("wsl:") &&
-                          (native->agentSessionId == previous || native->qualifiedSessionId == previous);
+                if (native)
+                {
+                    matches = native->providerId == L"copilot" &&
+                              !native->location.starts_with("wsl:") &&
+                              (native->agentSessionId == previous || native->qualifiedSessionId == previous);
+                }
+                else
+                {
+                    // The owning page validates the existing resume binding before this fork-only path.
+                    matches = _nativeAgentSessionEventsEnabled &&
+                              event.get("method", "").asString() == "pane_agent_session_changed";
+                }
             }
             if (!matches)
             {
                 return;
             }
             auto retained = event;
-            retained["params"]["event"] = "agent.session.start";
+            retained["method"] = "pane_agent_session_changed";
+            retained["params"].removeMember("event");
             retained["params"]["fork_operation_id"] = operation;
             _agentBindings.insert_or_assign(
                 contentId,
