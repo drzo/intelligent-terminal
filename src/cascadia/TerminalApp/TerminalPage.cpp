@@ -3144,7 +3144,8 @@ namespace winrt::TerminalApp::implementation
 
     void TerminalPage::_RaiseConnectionStateEvent(std::string_view paneId,
                                                   std::string_view state,
-                                                  std::string_view tabId)
+                                                  std::string_view tabId,
+                                                  std::optional<bool> processStarted)
     {
         if (paneId.empty() || state.empty())
         {
@@ -3158,12 +3159,17 @@ namespace winrt::TerminalApp::implementation
             params["tab_id"] = std::string{ tabId };
         }
         params["state"] = std::string{ state };
+        if (processStarted.has_value())
+        {
+            params["process_started"] = *processStarted;
+        }
         _RaiseProtocolEvent("connection_state", params);
     }
 
     bool TerminalPage::_TryRaiseTerminalEndStateEvent(std::string_view paneId,
                                                       std::string_view state,
-                                                      std::string_view tabId)
+                                                      std::string_view tabId,
+                                                      std::optional<bool> processStarted)
     {
         if (paneId.empty() || (state != "closed" && state != "failed"))
         {
@@ -3202,7 +3208,7 @@ namespace winrt::TerminalApp::implementation
             return false;
         }
 
-        _RaiseConnectionStateEvent(paneId, state, tabId);
+        _RaiseConnectionStateEvent(paneId, state, tabId, processStarted);
         return true;
     }
 
@@ -3843,8 +3849,25 @@ namespace winrt::TerminalApp::implementation
                 return;
             }
             const auto stateStr = control.ConnectionState() == ConnectionState::Failed ? "failed" : "closed";
+            std::optional<bool> processStarted;
+            if (control.ConnectionState() == ConnectionState::Failed)
+            {
+                if (const auto connection = control.Connection().try_as<ConptyConnection>())
+                {
+                    processStarted = connection.ProcessStarted();
+                }
+            }
+            // Failure evidence must reach the owner before removal clears it,
+            // even when teardown beats the queued connection-state callback.
+            if (stateStr == std::string_view{ "failed" })
+            {
+                _TryRaiseTerminalEndStateEvent(paneIdStr, stateStr, _FindTabIdForSessionId(paneIdStr), processStarted);
+            }
             _PublishNativeAgentObservation(control, "removed");
-            _TryRaiseTerminalEndStateEvent(paneIdStr, stateStr, _FindTabIdForSessionId(paneIdStr));
+            if (stateStr == std::string_view{ "closed" })
+            {
+                _TryRaiseTerminalEndStateEvent(paneIdStr, stateStr, _FindTabIdForSessionId(paneIdStr), processStarted);
+            }
             // This pane is going away for good, so its agent binding goes with
             // it — including the failed case that the call above deliberately
             // keeps for panes that merely outlived their CLI.
@@ -7684,19 +7707,17 @@ namespace winrt::TerminalApp::implementation
 
     bool TerminalPage::_CompleteSidebarHistoryActivation(const uint64_t activationSerial, const bool accepted, const winrt::hstring& detail)
     {
+        if (!accepted)
+        {
+            _agentPaneLog("sidebar activation not accepted serial=" + std::to_string(activationSerial) +
+                          " detail=" + (detail.empty() ? std::string{ "unavailable" } : winrt::to_string(detail)));
+        }
         if (_historyActivationSerial != activationSerial || !_AreRecentAgentSessionsVisible())
         {
             return false;
         }
         _tabStrip.HistoryActivating(false);
-        if (accepted)
-        {
-            _tabStrip.HistoryError(L"");
-        }
-        else
-        {
-            _tabStrip.HistoryError(detail.empty() ? RS_(L"VerticalTabsHistoryActivationError") : detail);
-        }
+        _tabStrip.HistoryError(L"");
         return true;
     }
 
@@ -13676,6 +13697,15 @@ namespace winrt::TerminalApp::implementation
                         return;
                     }
 
+                    std::optional<bool> processStarted;
+                    if (stateStr == "failed")
+                    {
+                        if (const auto connection = control.Connection().try_as<ConptyConnection>())
+                        {
+                            processStarted = connection.ProcessStarted();
+                        }
+                    }
+
                     // Resolve the pane id SYNCHRONOUSLY here, while the
                     // control is still alive. If we deferred it into the
                     // dispatched lambda below, a `Closed` event raised as
@@ -13701,7 +13731,7 @@ namespace winrt::TerminalApp::implementation
                     // pane_id so wta's PaneClosed prune can run.
                     strongThis->Dispatcher().RunAsync(
                         winrt::Windows::UI::Core::CoreDispatcherPriority::Normal,
-                        [weakThis, weakTerm, paneIdStr, stateStr, publication]() {
+                        [weakThis, weakTerm, paneIdStr, stateStr, processStarted, publication]() {
                             if (publication && !publication->load(std::memory_order_acquire))
                             {
                                 return;
@@ -13743,7 +13773,7 @@ namespace winrt::TerminalApp::implementation
                             const auto tabIdStr = term2 ? page->_FindTabIdForControl(term2) : std::string{};
                             if (stateStr == "closed" || stateStr == "failed")
                             {
-                                page->_TryRaiseTerminalEndStateEvent(paneIdStr, stateStr, tabIdStr);
+                                page->_TryRaiseTerminalEndStateEvent(paneIdStr, stateStr, tabIdStr, processStarted);
                             }
                             else
                             {
@@ -16748,6 +16778,14 @@ namespace winrt::TerminalApp::implementation
         }
         else
         {
+            if (hasSessionId && !restoredAgent.agent.empty())
+            {
+                // A saved resume creates a new shell lifetime, not a reattachment.
+                // Keep its conversation identity without reusing a failed pane's fence.
+                const auto connectionArgs = newTerminalArgs.Copy().as<NewTerminalArgs>();
+                connectionArgs.SessionId(winrt::guid{});
+                controlSettings = Settings::TerminalSettings::CreateWithNewTerminalArgs(_settings, connectionArgs);
+            }
             connection = _CreateConnectionFromSettings(profile, *controlSettings.DefaultSettings(), hasSessionId);
         }
 

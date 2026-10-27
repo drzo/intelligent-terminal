@@ -780,14 +780,16 @@ namespace winrt::TerminalApp::implementation
         // so only the first producer emits.
         void _RaiseConnectionStateEvent(std::string_view paneId,
                                         std::string_view state,
-                                        std::string_view tabId = {});
+                                        std::string_view tabId = {},
+                                        std::optional<bool> processStarted = std::nullopt);
         // Terminal end states are deduplicated per TermControl lifetime. When
         // `_SetupControl` wires a new control that reuses the same SessionId,
         // it clears any stale tombstone before subscribing that control's
         // events.
         bool _TryRaiseTerminalEndStateEvent(std::string_view paneId,
                                             std::string_view state,
-                                            std::string_view tabId = {});
+                                            std::string_view tabId = {},
+                                            std::optional<bool> processStarted = std::nullopt);
         void _BeginAgentSessionRetirement(bool scopeAll,
                                           std::vector<winrt::hstring> tabIds,
                                           std::string reason,
