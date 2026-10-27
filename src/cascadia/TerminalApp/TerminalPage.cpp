@@ -1784,12 +1784,14 @@ namespace winrt::TerminalApp::implementation
     // Order: the active pane when it is an ordinary terminal pane, then the
     // pane the agent pane was opened from, then any other terminal pane on the
     // tab. Returns nullptr when the tab has no terminal pane at all.
+    // Insertion destinations require visible panes, including their ancestors;
+    // profile/session lookups deliberately keep considering hidden terminals.
     //
     // Deliberately does NOT go through `Pane::GetFocusedProfile()`: that
     // resolves through `GetActivePane()` (`_lastActive`), and the pane we want
     // here is by definition *not* the active one, so it would always come back
     // empty in exactly the case this helper exists for.
-    std::shared_ptr<Pane> TerminalPage::_SourceTerminalPaneForTab(const winrt::com_ptr<Tab>& tab)
+    std::shared_ptr<Pane> TerminalPage::_SourceTerminalPaneForTab(const winrt::com_ptr<Tab>& tab, const bool requireVisible)
     {
         if (!tab)
         {
@@ -1805,7 +1807,8 @@ namespace winrt::TerminalApp::implementation
                    pane->GetContent().try_as<TerminalApp::TerminalPaneContent>() != nullptr;
         };
 
-        if (const auto activePane = tab->GetActivePane(); isSourceCandidate(activePane))
+        const auto activePane = tab->GetActivePane();
+        if (!requireVisible && isSourceCandidate(activePane))
         {
             return activePane;
         }
@@ -1820,7 +1823,12 @@ namespace winrt::TerminalApp::implementation
         rootPane->WalkTree([&](const auto& pane) {
             if (!isSourceCandidate(pane))
             {
-                return;
+                return false;
+            }
+            if (pane == activePane)
+            {
+                sourcePane = pane;
+                return true;
             }
             // `IsSourceOfAgentPane` records the pane the user was working in
             // when the agent pane took focus, so it is the precise answer;
@@ -1829,7 +1837,9 @@ namespace winrt::TerminalApp::implementation
             {
                 sourcePane = pane;
             }
-        });
+            return false;
+        },
+                           requireVisible);
         return sourcePane;
     }
 
@@ -14670,7 +14680,7 @@ namespace winrt::TerminalApp::implementation
             }
             if (const auto activePane = targetTab->GetActivePane(); activePane && activePane->ContainsAgentPane())
             {
-                const auto source = _SourceTerminalPaneForTab(targetTab);
+                const auto source = _SourceTerminalPaneForTab(targetTab, true);
                 if (!source || !source->Id())
                 {
                     return false;
@@ -15700,7 +15710,7 @@ namespace winrt::TerminalApp::implementation
                 }
                 if (!completingTransfer)
                 {
-                    const auto source = _SourceTerminalPaneForTab(activeTab);
+                    const auto source = _SourceTerminalPaneForTab(activeTab, true);
                     if (!source || !source->Id())
                     {
                         return false;

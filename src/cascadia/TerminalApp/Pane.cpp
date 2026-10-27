@@ -589,11 +589,8 @@ std::shared_ptr<Pane> Pane::NextPane(const std::shared_ptr<Pane> targetPane)
     std::shared_ptr<Pane> nextPane = nullptr;
     auto foundTarget = false;
 
-    // A hidden leaf is not in the visual tree — a stashed agent pane is the
-    // only one today — so in-order navigation has to step over it. Landing on
-    // one focuses something the user cannot see, and every subsequent action
-    // that acts on "the active pane" is then aimed at the wrong pane.
-    const auto isNavigable = [](const auto& pane) { return pane->_IsLeaf() && !pane->_hidden; };
+    // Skip entire hidden subtrees, not just leaves marked hidden themselves.
+    const auto isNavigable = [](const auto& pane) { return pane->_IsLeaf(); };
 
     auto foundNext = WalkTree([&](const auto& pane) {
         // If we are a parent pane we don't want to move to one of our children
@@ -622,7 +619,8 @@ std::shared_ptr<Pane> Pane::NextPane(const std::shared_ptr<Pane> targetPane)
         }
 
         return false;
-    });
+    },
+                              true);
 
     // If we found the desired pane just return it
     if (foundNext)
@@ -657,9 +655,7 @@ std::shared_ptr<Pane> Pane::PreviousPane(const std::shared_ptr<Pane> targetPane)
     std::shared_ptr<Pane> lastLeaf = nullptr;
     auto foundTarget = false;
 
-    // See `NextPane`: a hidden leaf is not in the visual tree and must not be
-    // a navigation target.
-    const auto isNavigable = [](const auto& pane) { return pane->_IsLeaf() && !pane->_hidden; };
+    const auto isNavigable = [](const auto& pane) { return pane->_IsLeaf(); };
 
     WalkTree([&](auto pane) {
         if (pane == targetPane)
@@ -679,7 +675,8 @@ std::shared_ptr<Pane> Pane::PreviousPane(const std::shared_ptr<Pane> targetPane)
         }
 
         return false;
-    });
+    },
+             true);
 
     // If we found the target pane then lastLeaf will either be the preceding
     // pane or the last pane in the tree if targetPane is the first leaf.

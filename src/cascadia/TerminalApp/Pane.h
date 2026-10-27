@@ -196,25 +196,34 @@ public:
     //   returns true.
     // Arguments:
     // - f: The function to be applied to each pane.
+    // - skipHidden: Skip hidden panes and their entire subtrees.
     // Return Value:
     // - The value of the function applied on a Pane
     template<typename F>
-    auto WalkTree(F f) -> decltype(f(shared_from_this()))
+    auto WalkTree(F f, const bool skipHidden = false) -> decltype(f(shared_from_this()))
     {
         using R = std::invoke_result_t<F, std::shared_ptr<Pane>>;
         static constexpr auto IsVoid = std::is_void_v<R>;
 
         if constexpr (IsVoid)
         {
+            if (skipHidden && _hidden)
+            {
+                return;
+            }
             f(shared_from_this());
             if (!_IsLeaf())
             {
-                _firstChild->WalkTree(f);
-                _secondChild->WalkTree(f);
+                _firstChild->WalkTree(f, skipHidden);
+                _secondChild->WalkTree(f, skipHidden);
             }
         }
         else
         {
+            if (skipHidden && _hidden)
+            {
+                return R{};
+            }
             if (const auto res = f(shared_from_this()))
             {
                 return res;
@@ -222,11 +231,11 @@ public:
 
             if (!_IsLeaf())
             {
-                if (const auto res = _firstChild->WalkTree(f))
+                if (const auto res = _firstChild->WalkTree(f, skipHidden))
                 {
                     return res;
                 }
-                return _secondChild->WalkTree(f);
+                return _secondChild->WalkTree(f, skipHidden);
             }
 
             return R{};

@@ -773,6 +773,9 @@ namespace TerminalAppLocalTests
         TEST_METHOD(MovePaneRejectsActiveAgent);
         TEST_METHOD(MovePanePreservesNormalPaneMoves);
         TEST_METHOD(AgentPaneFocusRespectsTabBoundary);
+        TEST_METHOD(InOrderFocusSkipsHiddenNormalGroup);
+        TEST_METHOD(MovePaneSkipsHiddenDestinationSubtrees);
+        TEST_METHOD(MovePaneToWindowRejectsHiddenNormalRegion);
         TEST_METHOD(MoveNormalPaneGroupPreservesDestinationAgent);
         TEST_METHOD(MovePaneToAgentFocusedWindowPreservesAgent);
 
@@ -25777,6 +25780,174 @@ namespace TerminalAppLocalTests
                 }
             }
         });
+    }
+
+    void TabTests::InOrderFocusSkipsHiddenNormalGroup()
+    {
+        TestOnUIThread([]() {
+            const auto tab = winrt::make_self<winrt::TerminalApp::implementation::Tab>(
+                std::make_shared<Pane>(winrt::make<TestSettingsPaneContent>(), true));
+            tab->Initialize();
+            const auto cleanup = wil::scope_exit([&]() { tab->Shutdown(); });
+            const auto middle = std::make_shared<Pane>(winrt::make<TestSettingsPaneContent>());
+            tab->SplitPaneAtRoot(SplitDirection::Right, middle, .5f, false);
+            VERIFY_IS_TRUE(tab->FocusPane(*middle->Id()));
+            tab->SplitPane(SplitDirection::Right, .5f, std::make_shared<Pane>(winrt::make<TestSettingsPaneContent>()));
+            const auto last = std::make_shared<Pane>(winrt::make<TestSettingsPaneContent>());
+            tab->SplitPaneAtRoot(SplitDirection::Right, last, .3f, false);
+            const auto root = tab->GetRootPane();
+            const auto first = root->_firstChild->_firstChild;
+            const auto hiddenGroup = root->_firstChild->_secondChild;
+            root->GetRootElement().Measure({ 1000, 1000 });
+            root->GetRootElement().Arrange({ 0, 0, 1000, 1000 });
+
+            VERIFY_IS_TRUE(root->NextPane(hiddenGroup) == last);
+            VERIFY_IS_TRUE(root->PreviousPane(hiddenGroup) == first);
+            tab->_UpdateActivePane(hiddenGroup);
+            tab->TogglePaneVisibility();
+            VERIFY_IS_TRUE(hiddenGroup->IsHidden());
+            VERIFY_IS_FALSE(hiddenGroup->_firstChild->IsHidden());
+            VERIFY_IS_FALSE(hiddenGroup->_secondChild->IsHidden());
+            VERIFY_IS_FALSE(root->FocusPane(hiddenGroup->_firstChild));
+            VERIFY_IS_TRUE(tab->FocusPane(*first->Id()));
+            for (const auto direction : { FocusDirection::NextInOrder, FocusDirection::PreviousInOrder })
+            {
+                VERIFY_IS_TRUE(tab->NavigateFocus(direction));
+                VERIFY_IS_TRUE(tab->GetActivePane() == last);
+                VERIFY_IS_TRUE(tab->NavigateFocus(direction));
+                VERIFY_IS_TRUE(tab->GetActivePane() == first);
+            }
+            VERIFY_IS_TRUE(root->NextPane(root->_firstChild) == last);
+            VERIFY_IS_TRUE(root->PreviousPane(root->_firstChild) == last);
+        });
+    }
+
+    void TabTests::MovePaneSkipsHiddenDestinationSubtrees()
+    {
+        using State = winrt::Microsoft::Terminal::TerminalConnection::ConnectionState;
+        for (const auto grouped : { false, true })
+        {
+            for (const auto alternative : { false, true })
+            {
+                const auto connection = winrt::make_self<TestConnection>(Utils::CreateGuid(), State::Connected);
+                const auto page = _commonSetup(*connection);
+                TestOnUIThread([&]() {
+                    const auto source = page->_GetFocusedTabImpl();
+                    source->SuppressAgentPrewarm();
+                    const auto moved = source->GetActivePane();
+                    const auto sourceRoot = source->GetRootPane();
+                    const auto targetConnection = winrt::make_self<TestConnection>(Utils::CreateGuid(), State::Connected);
+                    const auto target = page->_GetTabImpl(page->_CreateNewTabFromPane(
+                        page->_MakeTerminalPane(NewTerminalArgs{}, nullptr, *targetConnection)));
+                    target->SuppressAgentPrewarm();
+                    page->_tabContent.Measure({ 1000, 1000 });
+                    page->_tabContent.Arrange({ 0, 0, 1000, 1000 });
+                    if (grouped)
+                    {
+                        const auto sibling = winrt::make_self<TestConnection>(Utils::CreateGuid(), State::Connected);
+                        target->SplitPaneAtRoot(SplitDirection::Right, page->_MakeTerminalPane(NewTerminalArgs{}, nullptr, *sibling), .5f, false);
+                    }
+                    if (alternative)
+                    {
+                        const auto sibling = winrt::make_self<TestConnection>(Utils::CreateGuid(), State::Connected);
+                        target->SplitPaneAtRoot(SplitDirection::Right, page->_MakeTerminalPane(NewTerminalArgs{}, nullptr, *sibling), .5f, false);
+                    }
+                    const auto helperConnection = winrt::make_self<TestConnection>(Utils::CreateGuid(), State::Connected);
+                    const auto agent = page->_WrapInAgentPaneContent(page->_MakePane(nullptr, nullptr, *helperConnection));
+                    const auto normal = target->SplitPaneAtRoot(SplitDirection::Down, agent, .3f, false).first;
+                    const auto hidden = alternative ? normal->_firstChild : normal;
+                    const auto visible = alternative ? normal->_secondChild : nullptr;
+                    const auto hiddenSource = target->GetRootPane()->FindPaneBySessionId(targetConnection->SessionId());
+                    target->_UpdateActivePane(hidden);
+                    target->TogglePaneVisibility();
+                    VERIFY_IS_TRUE(hidden->IsHidden());
+                    VERIFY_IS_TRUE(target->FocusPane(*agent->Id()));
+                    target->GetRootPane()->WalkTree([](const auto& pane) { pane->SetSourceOfAgentPane(false); });
+                    hiddenSource->SetSourceOfAgentPane(true);
+                    VERIFY_IS_TRUE(page->_SourceTerminalPaneForTab(target) == hiddenSource);
+                    VERIFY_IS_TRUE(page->_SourceTerminalPaneForTab(target, true) == visible);
+                    if (!alternative)
+                    {
+                        target->EnterZoom();
+                    }
+                    const auto targetRoot = target->GetRootPane();
+                    const auto targetCount = target->GetLeafPaneCount();
+                    page->_selectedTabItem(source->TabViewItem());
+
+                    VERIFY_ARE_EQUAL(alternative, page->_MovePane(MovePaneArgs{ 1, L"" }));
+                    VERIFY_ARE_EQUAL(0u, connection->CloseCount());
+                    VERIFY_ARE_EQUAL(0u, helperConnection->CloseCount());
+                    VERIFY_IS_TRUE(hidden->IsHidden());
+                    VERIFY_IS_TRUE(target->FindAgentPane() == agent);
+                    VERIFY_IS_TRUE(target->GetRootPane() == targetRoot);
+                    if (alternative)
+                    {
+                        VERIFY_IS_TRUE(target->GetRootPane()->FindPaneBySessionId(connection->SessionId()) == moved);
+                        VERIFY_IS_TRUE(target->GetActivePane() == moved);
+                        VERIFY_IS_TRUE(normal->_secondChild->_HasChild(moved));
+                        VERIFY_ARE_EQUAL(targetCount + 1, target->GetLeafPaneCount());
+                    }
+                    else
+                    {
+                        VERIFY_ARE_EQUAL(2u, page->_tabs.Size());
+                        VERIFY_IS_TRUE(page->_GetFocusedTabImpl() == source);
+                        VERIFY_IS_TRUE(source->GetRootPane() == sourceRoot);
+                        VERIFY_IS_TRUE(source->GetActivePane() == moved);
+                        VERIFY_IS_TRUE(target->GetActivePane() == agent);
+                        VERIFY_IS_TRUE(target->IsZoomed());
+                        VERIFY_ARE_EQUAL(targetCount, target->GetLeafPaneCount());
+                    }
+                });
+            }
+        }
+    }
+
+    void TabTests::MovePaneToWindowRejectsHiddenNormalRegion()
+    {
+        using State = winrt::Microsoft::Terminal::TerminalConnection::ConnectionState;
+        for (const auto grouped : { false, true })
+        {
+            auto fixture = _createContentTransferFixture(false, false, false, false);
+            const auto cleanup = wil::scope_exit([&]() {
+                RunOnUIThread([&]() {
+                    _closeContentTransferFixture(*fixture, false);
+                    fixture.reset();
+                });
+            });
+            TestOnUIThread([&]() {
+                const auto destination = fixture->destination;
+                const auto targetIndex = grouped ? 0u : 1u;
+                destination->_SelectTab(targetIndex);
+                const auto target = destination->_GetFocusedTabImpl();
+                const auto helperConnection = winrt::make_self<TestConnection>(Utils::CreateGuid(), State::Connected);
+                const auto agent = destination->_WrapInAgentPaneContent(destination->_MakePane(nullptr, nullptr, *helperConnection));
+                const auto normal = target->SplitPaneAtRoot(SplitDirection::Left, agent, .3f, false).first;
+                target->_UpdateActivePane(normal);
+                target->TogglePaneVisibility();
+                VERIFY_IS_TRUE(normal->IsHidden());
+                VERIFY_IS_TRUE(target->FocusPane(*agent->Id()));
+                target->EnterZoom();
+                destination->_tabContent.UpdateLayout();
+                const auto targetBefore = _snapshotTransferTab(destination, target);
+                winrt::TerminalApp::RequestMoveContentArgs request{ nullptr };
+                const auto token = fixture->source->RequestMoveContent([&](auto&&, const winrt::TerminalApp::RequestMoveContentArgs& args) { request = args; });
+                const auto revoke = wil::scope_exit([&]() { fixture->source->RequestMoveContent(token); });
+                VERIFY_IS_TRUE(fixture->source->_MovePane(MovePaneArgs{ targetIndex, L"transaction-destination" }));
+                VERIFY_IS_NOT_NULL(request);
+                bool reachedInsertion = false;
+                destination->_contentTransferTestHook = [&](TransferStage stage, uint64_t, uint32_t) {
+                    reachedInsertion = reachedInsertion || stage == TransferStage::BeforeSplitInsertion;
+                };
+                VERIFY_IS_FALSE(destination->AttachContent(ActionAndArgs::Deserialize(request.Content()), targetIndex, request.TransferId()));
+                VERIFY_IS_FALSE(reachedInsertion);
+                _verifyTransferTabUnchanged(destination, targetBefore);
+                _verifyTransferTabUnchanged(fixture->source, fixture->original);
+                VERIFY_IS_TRUE(target->GetActivePane() == agent);
+                VERIFY_IS_TRUE(target->IsZoomed());
+                VERIFY_IS_TRUE(normal->IsHidden());
+                VERIFY_ARE_EQUAL(0u, helperConnection->CloseCount());
+            });
+        }
     }
 
     void TabTests::MoveNormalPaneGroupPreservesDestinationAgent()
