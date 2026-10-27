@@ -5,6 +5,9 @@
 #include "../inc/AgentPaneRestore.h"
 #include "Pane.h"
 
+#include <algorithm>
+#include <functional>
+
 using namespace winrt::Windows::Foundation;
 using namespace winrt::Windows::Graphics::Display;
 using namespace winrt::Windows::UI;
@@ -3452,6 +3455,130 @@ bool Pane::IsAgentPane() const noexcept
 void Pane::IsAgentPane(bool value) noexcept
 {
     _isAgentPane = value;
+}
+
+void Pane::MarkArena(const uint32_t arenaId) noexcept
+{
+    if (arenaId != 0)
+    {
+        _arenaId = arenaId;
+    }
+}
+
+uint32_t Pane::ArenaId() const noexcept
+{
+    return _arenaId;
+}
+
+void Pane::SetOwningArena(const uint32_t arenaId) noexcept
+{
+    _owningArenaId = arenaId;
+}
+
+uint32_t Pane::OwningArena() const noexcept
+{
+    return _owningArenaId;
+}
+
+std::wstring Pane::FormatAgentArenaTree()
+{
+    const auto self = shared_from_this();
+    bool numbered = false;
+    uint32_t agents = 0;
+    self->WalkTree([&](const auto& pane) {
+        if (pane->_isAgentPane)
+        {
+            ++agents;
+        }
+        if (pane->_arenaId > 1)
+        {
+            numbered = true;
+        }
+    });
+    if (agents == 0)
+    {
+        return L"";
+    }
+    if (agents > 1)
+    {
+        numbered = true;
+    }
+
+    const auto agentToken = [&](const std::shared_ptr<Pane>& pane) {
+        if (!numbered)
+        {
+            return std::wstring{ L"Agent" };
+        }
+        const auto arena = pane->_owningArenaId == 0 ? 1u : pane->_owningArenaId;
+        return L"Agent-" + std::to_wstring(arena);
+    };
+    const auto arenaToken = [&](const uint32_t arenaId) {
+        if (!numbered)
+        {
+            return std::wstring{ L"Arena" };
+        }
+        const auto id = arenaId == 0 ? 1u : arenaId;
+        return L"Arena-" + std::to_wstring(id);
+    };
+
+    std::function<std::wstring(const std::shared_ptr<Pane>&, bool)> describe;
+    std::function<std::wstring(const std::shared_ptr<Pane>&)> arenaBody;
+    describe = [&](const std::shared_ptr<Pane>& node, const bool nestedArena) -> std::wstring {
+        if (nestedArena || (node->_arenaId != 0 && node != self))
+        {
+            return arenaBody(node);
+        }
+        if (node->_isAgentPane)
+        {
+            return agentToken(node);
+        }
+        if (node->_IsLeaf() || !node->_firstChild || !node->_secondChild)
+        {
+            return L"";
+        }
+        const auto left = describe(node->_firstChild, node->_firstChild->_arenaId != 0);
+        const auto right = describe(node->_secondChild, node->_secondChild->_arenaId != 0);
+        if (left.empty())
+        {
+            return right;
+        }
+        if (right.empty())
+        {
+            return left;
+        }
+        return left + L"/" + right;
+    };
+    arenaBody = [&](const std::shared_ptr<Pane>& node) -> std::wstring {
+        std::vector<std::wstring> parts;
+        const auto push = [&](std::wstring part) {
+            if (!part.empty())
+            {
+                parts.emplace_back(std::move(part));
+            }
+        };
+        if (!node->_IsLeaf() && node->_firstChild && node->_secondChild)
+        {
+            push(describe(node->_firstChild, node->_firstChild->_arenaId != 0));
+            push(describe(node->_secondChild, node->_secondChild->_arenaId != 0));
+        }
+        std::stable_sort(parts.begin(), parts.end(), [](const std::wstring& left, const std::wstring& right) {
+            const auto leftAgent = left.rfind(L"Agent", 0) == 0;
+            const auto rightAgent = right.rfind(L"Agent", 0) == 0;
+            return leftAgent && !rightAgent;
+        });
+        std::wstring inner;
+        for (const auto& part : parts)
+        {
+            if (!inner.empty())
+            {
+                inner.push_back(L'/');
+            }
+            inner.append(part);
+        }
+        return arenaToken(node->_arenaId) + L" [ " + inner + L" ]";
+    };
+
+    return L"[ " + arenaBody(self) + L" ]";
 }
 
 bool Pane::IsSourceOfAgentPane() const noexcept

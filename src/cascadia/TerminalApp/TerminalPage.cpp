@@ -3219,7 +3219,8 @@ namespace winrt::TerminalApp::implementation
     // Under the helper+master architecture, wta-helper processes are
     // ordinary conpty children of TermControl — the standard pane teardown
     // path (Pane::Close → ConptyConnection::Close → conpty pipes closed →
-    // helper exits) is enough. Each tab has at most one agent pane.
+    // helper exits) is enough. The root arena has one primary agent pane.
+    // `Tab::NestAgentArena` can add a second agent inside a nested arena.
     void TerminalPage::_TeardownAgentPane(const winrt::com_ptr<Tab>& tab)
     {
         if (!tab)

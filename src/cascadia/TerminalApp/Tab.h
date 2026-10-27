@@ -133,8 +133,13 @@ namespace winrt::TerminalApp::implementation
         // an agent pane iff its pane tree contains an AgentPaneContent leaf.
         // No separate flag is tracked: tabs are independently agent-aware.
         winrt::TerminalApp::AgentPaneContent FindAgentPaneContent() const;
-        // Returns the Pane node hosting the AgentPaneContent, or nullptr.
+        // Returns the Pane node hosting the root arena's agent, or nullptr.
+        // A nested arena's agent stays in the tree but does not replace this one.
         std::shared_ptr<Pane> FindAgentPane() const;
+        // Turn `[ Arena [ Agent ] ]` into
+        // `[ Arena-1 [ Agent-1/Arena-2 [ Agent-2 ] ] ]` by nesting `nestedAgent`
+        // inside the current shell side. The existing agent stays in arena 1.
+        bool NestAgentArena(const std::shared_ptr<Pane>& nestedAgent);
         bool IsAgentTab() const;
         void SetTabListPositionOperationsRestricted(bool restricted, bool tabMoveRestricted)
         {

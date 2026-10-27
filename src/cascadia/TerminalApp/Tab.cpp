@@ -2981,22 +2981,109 @@ namespace winrt::TerminalApp::implementation
         return _activePane;
     }
 
-    // Returns the Pane node in this tab's pane tree that hosts an
-    // AgentPaneContent leaf, if any. Walks the tree; returns the first
-    // match. A tab "has" an agent pane iff this returns non-null.
+    // Returns the root arena's agent pane. A single unscoped agent is that
+    // pane. Once arenas are numbered, the lowest arena id wins, so a nested
+    // Agent-2 does not replace Agent-1 for the existing per-tab lookups.
     std::shared_ptr<Pane> Tab::FindAgentPane() const
     {
         if (!_rootPane)
         {
             return nullptr;
         }
-        return _rootPane->WalkTree([](const std::shared_ptr<Pane>& p) -> std::shared_ptr<Pane> {
-            if (p->IsAgentPane())
+        const auto rank = [](const std::shared_ptr<Pane>& pane) {
+            const auto arena = pane->OwningArena();
+            return arena == 0 ? 1u : arena;
+        };
+        std::shared_ptr<Pane> found;
+        _rootPane->WalkTree([&](const std::shared_ptr<Pane>& pane) {
+            if (!pane->IsAgentPane())
             {
-                return p;
+                return;
             }
-            return nullptr;
+            if (!found || rank(pane) < rank(found))
+            {
+                found = pane;
+            }
         });
+        return found;
+    }
+
+    // Nest the shell beside the current agent into its own arena and host
+    // `nestedAgent` there:
+    // `[ Arena [ Agent ] ]` -> `[ Arena-1 [ Agent-1/Arena-2 [ Agent-2 ] ] ]`.
+    bool Tab::NestAgentArena(const std::shared_ptr<Pane>& nestedAgent)
+    {
+        ASSERT_UI_THREAD();
+        if (!_rootPane || !nestedAgent || !nestedAgent->IsAgentPane() || _zoomedPane)
+        {
+            return false;
+        }
+        if (_rootPane->WalkTree([&](const auto& pane) { return pane == nestedAgent; }))
+        {
+            return false;
+        }
+
+        uint32_t agents = 0;
+        _rootPane->WalkTree([&](const auto& pane) {
+            if (pane->IsAgentPane())
+            {
+                ++agents;
+            }
+        });
+        if (agents != 1)
+        {
+            return false;
+        }
+
+        const auto agent = FindAgentPane();
+        const auto arena = agent ? _rootPane->_FindParentOfPane(agent) : nullptr;
+        if (!arena)
+        {
+            return false;
+        }
+        const auto body = arena->_firstChild == agent ? arena->_secondChild : arena->_firstChild;
+        if (!body || body->IsAgentPane())
+        {
+            return false;
+        }
+
+        const auto arena1 = arena->ArenaId() == 0 ? 1u : arena->ArenaId();
+        const auto arena2 = arena1 + 1;
+        nestedAgent->WalkTree([&](const auto& pane) {
+            _AttachEventHandlersToPane(pane);
+            if (pane->_IsLeaf())
+            {
+                pane->Id(_nextPaneId);
+                if (const auto& content{ pane->GetContent() })
+                {
+                    _AttachEventHandlersToContent(pane->Id().value(), content);
+                }
+                _nextPaneId++;
+            }
+        });
+        nestedAgent->EnableBroadcast(_tabStatus.IsInputBroadcastActive());
+        nestedAgent->SetOwningArena(arena2);
+
+        const auto bodyId = body->Id();
+        const auto original = body->AttachPane(nestedAgent, SplitDirection::Right, 0.5f, false);
+        if (!original)
+        {
+            return false;
+        }
+        // The shell content moved into a new leaf. That leaf needs focus
+        // handlers; its content handlers are already registered by pane id.
+        _AttachEventHandlersToPane(original);
+        if (original->_IsLeaf() && bodyId)
+        {
+            original->Id(bodyId.value());
+        }
+
+        arena->MarkArena(arena1);
+        body->MarkArena(arena2);
+        agent->SetOwningArena(arena1);
+        _closePaneMenuItem.Visibility(WUX::Visibility::Visible);
+        PaneProjectionChanged.raise();
+        return true;
     }
 
     // Returns the AgentPaneContent leaf hosted in this tab, or nullptr.

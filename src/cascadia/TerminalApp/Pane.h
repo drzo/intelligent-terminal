@@ -174,6 +174,17 @@ public:
 
     bool IsAgentPane() const noexcept;
     void IsAgentPane(bool value) noexcept;
+    // Arena boundaries are split nodes. `0` means this node is not a boundary.
+    // An agent leaf records the arena that owns it in `OwningArena` (`0` until
+    // a nested arena exists, which the single-agent tree treats as arena 1).
+    void MarkArena(uint32_t arenaId) noexcept;
+    uint32_t ArenaId() const noexcept;
+    void SetOwningArena(uint32_t arenaId) noexcept;
+    uint32_t OwningArena() const noexcept;
+    // `[ Arena [ Agent ] ]` for one agent, and
+    // `[ Arena-1 [ Agent-1/Arena-2 [ Agent-2 ] ] ]` once a second arena is nested.
+    // Shell leaves are the arena body and are omitted from the name.
+    std::wstring FormatAgentArenaTree();
     bool IsSourceOfAgentPane() const noexcept;
     void SetSourceOfAgentPane(bool value) noexcept;
     void SetAgentChipVisible(bool value);
@@ -313,6 +324,8 @@ private:
     bool _hidden{ false };
     bool _broadcastEnabled{ false };
     bool _isAgentPane{ false };
+    uint32_t _arenaId{ 0 };
+    uint32_t _owningArenaId{ 0 };
     bool _isSourceOfAgentPane{ false };
     bool _focusBorderEnabled{ true };
 

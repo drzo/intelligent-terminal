@@ -770,6 +770,7 @@ namespace TerminalAppLocalTests
         TEST_METHOD(SplitDirectoryPreservesExplicitAndRestoreArguments);
         TEST_METHOD(SplitDirectoryDuplicatePreservesElevation);
         TEST_METHOD(SplitDirectoryUsesAssistantSourceInsteadOfHelper);
+        TEST_METHOD(NestedAgentArenaHostsInnerAgent);
         TEST_METHOD(BackgroundSplitPreservesAssistantSource);
         TEST_METHOD(SplitDirectoryUsesConnectionLaunchMetadata);
         TEST_METHOD(SplitDirectoryDropdownOnlyInheritsForSplit);
@@ -25874,6 +25875,44 @@ namespace TerminalAppLocalTests
             VERIFY_IS_TRUE(tab->FindAgentPaneContent() == assistant);
             VERIFY_ARE_EQUAL(winrt::hstring{ expected }, tab->GetActiveTerminalControl().Settings().StartingDirectory());
             VERIFY_IS_FALSE(page->_paneAgentSessions.contains(tab->GetActiveTerminalControl().Connection().SessionId()));
+        });
+    }
+
+    void TabTests::NestedAgentArenaHostsInnerAgent()
+    {
+        using State = winrt::Microsoft::Terminal::TerminalConnection::ConnectionState;
+        const auto connection = winrt::make_self<TestConnection>(Utils::CreateGuid(), State::Connected);
+        auto page = _commonSetup(*connection);
+        TestOnUIThread([&]() {
+            const auto tab = page->_GetFocusedTabImpl();
+            const auto helperConnection = winrt::make_self<TestConnection>(winrt::guid{}, State::Connected);
+            const auto helper = page->_WrapInAgentPaneContent(page->_MakePane(nullptr, nullptr, *helperConnection));
+            helper->IsAgentPane(true);
+            VERIFY_IS_TRUE(page->_SplitPane(tab, SplitDirection::Right, .5f, helper));
+            VERIFY_ARE_EQUAL(std::wstring{ L"[ Arena [ Agent ] ]" }, tab->GetRootPane()->FormatAgentArenaTree());
+            VERIFY_ARE_EQUAL(2, tab->GetLeafPaneCount());
+
+            const auto nestedConnection = winrt::make_self<TestConnection>(Utils::CreateGuid(), State::Connected);
+            const auto nested = page->_WrapInAgentPaneContent(page->_MakePane(nullptr, nullptr, *nestedConnection));
+            nested->IsAgentPane(true);
+            VERIFY_IS_TRUE(tab->NestAgentArena(nested));
+            VERIFY_ARE_EQUAL(std::wstring{ L"[ Arena-1 [ Agent-1/Arena-2 [ Agent-2 ] ] ]" }, tab->GetRootPane()->FormatAgentArenaTree());
+            VERIFY_ARE_EQUAL(3, tab->GetLeafPaneCount());
+            VERIFY_IS_TRUE(tab->FindAgentPane() == helper);
+            VERIFY_ARE_EQUAL(1u, helper->OwningArena());
+            VERIFY_ARE_EQUAL(1u, tab->GetRootPane()->ArenaId());
+            VERIFY_ARE_EQUAL(2u, nested->OwningArena());
+            const auto arena2 = tab->GetRootPane()->_FindParentOfPane(nested);
+            VERIFY_IS_NOT_NULL(arena2);
+            VERIFY_ARE_EQUAL(2u, arena2->ArenaId());
+            VERIFY_IS_FALSE(arena2->IsAgentPane());
+
+            const auto rejectedConnection = winrt::make_self<TestConnection>(Utils::CreateGuid(), State::Connected);
+            const auto rejected = page->_WrapInAgentPaneContent(page->_MakePane(nullptr, nullptr, *rejectedConnection));
+            rejected->IsAgentPane(true);
+            auto closeRejected = wil::scope_exit([&]() { rejected->Shutdown(); });
+            VERIFY_IS_FALSE(tab->NestAgentArena(rejected));
+            VERIFY_ARE_EQUAL(std::wstring{ L"[ Arena-1 [ Agent-1/Arena-2 [ Agent-2 ] ] ]" }, tab->GetRootPane()->FormatAgentArenaTree());
         });
     }
 
