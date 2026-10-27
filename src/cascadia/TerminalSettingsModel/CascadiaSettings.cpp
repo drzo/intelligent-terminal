@@ -163,6 +163,7 @@ Model::CascadiaSettings CascadiaSettings::Copy() const
 
         settings->_globals = _globals->Copy();
         settings->_allProfiles = winrt::single_threaded_observable_vector(std::move(allProfiles));
+        settings->_globals->SetAgentProfiles(settings->_allProfiles.GetView());
         settings->_activeProfiles = winrt::single_threaded_observable_vector(std::move(activeProfiles));
 
         // extension packages don't need a deep clone
@@ -824,29 +825,24 @@ Model::Profile CascadiaSettings::GetProfileForArgs(const Model::NewTerminalArgs&
                     };
                     const auto profileId = profile.AgentProfileId();
                     auto identity = Registry::CanonicalNativeAgentProviderId(std::wstring_view{ profileId });
-                    THROW_HR_IF_MSG(E_INVALIDARG, !profileId.empty() && !isBuiltin(identity),
-                                    "Invalid orphaned native agent identity");
+                    THROW_HR_IF_MSG(E_INVALIDARG, !profileId.empty() && !isBuiltin(identity), "Invalid orphaned native agent identity");
                     for (const auto& agent : Registry::BuiltinNativeProfileAgents)
                     {
                         const auto name = std::wstring{ ::Microsoft::Terminal::AgentProfiles::Source } + L":" + std::wstring{ agent.id };
                         const winrt::guid generatedGuid{ Utils::CreateV5Uuid(TERMINAL_PROFILE_NAMESPACE_GUID, std::as_bytes(std::span{ name })) };
                         if (profile.Guid() == generatedGuid)
                         {
-                            THROW_HR_IF_MSG(E_INVALIDARG, !identity.empty() && identity != agent.id,
-                                            "Orphaned native agent identity does not match its generated profile");
+                            THROW_HR_IF_MSG(E_INVALIDARG, !identity.empty() && identity != agent.id, "Orphaned native agent identity does not match its generated profile");
                             identity = agent.id;
                             break;
                         }
                     }
-                    THROW_HR_IF_MSG(E_INVALIDARG, !savedProvider.empty() &&
-                                                     (!isBuiltin(provider) || (!identity.empty() && identity != provider)),
-                                    "Saved native agent identity does not match its profile");
+                    THROW_HR_IF_MSG(E_INVALIDARG, !savedProvider.empty() && (!isBuiltin(provider) || (!identity.empty() && identity != provider)), "Saved native agent identity does not match its profile");
                     if (identity.empty())
                     {
                         identity = provider;
                     }
-                    THROW_HR_IF_MSG(HRESULT_FROM_WIN32(ERROR_FILE_NOT_FOUND), identity.empty(),
-                                    "Orphaned native agent identity is unavailable");
+                    THROW_HR_IF_MSG(HRESULT_FROM_WIN32(ERROR_FILE_NOT_FOUND), identity.empty(), "Orphaned native agent identity is unavailable");
                     std::unordered_map<const Profile*, winrt::com_ptr<Profile>> visited;
                     const auto restored = winrt::get_self<Profile>(profile)->CopyInheritanceGraph(visited);
                     restored->AgentProfileId(winrt::hstring{ identity });
@@ -859,8 +855,7 @@ Model::Profile CascadiaSettings::GetProfileForArgs(const Model::NewTerminalArgs&
                 return profile;
             }
         }
-        THROW_HR_IF_MSG(HRESULT_FROM_WIN32(ERROR_FILE_NOT_FOUND), managedRestore,
-                       "Saved native agent profile is unavailable");
+        THROW_HR_IF_MSG(HRESULT_FROM_WIN32(ERROR_FILE_NOT_FOUND), managedRestore, "Saved native agent profile is unavailable");
 
         if (const auto index = newTerminalArgs.ProfileIndex())
         {

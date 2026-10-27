@@ -9,6 +9,7 @@ import "ActionMap.idl";
 import "NewTabMenuEntry.idl";
 import "CustomModelProvider.idl";
 import "CustomAgent.idl";
+import "Profile.idl";
 
 namespace Microsoft.Terminal.Settings.Model
 {
@@ -208,5 +209,7 @@ namespace Microsoft.Terminal.Settings.Model
 
         INHERITABLE_SETTING(Boolean, RenderAgentMarkdown);
         INHERITABLE_SETTING(IVector<CustomAgent>, CustomAgents);
+        INHERITABLE_SETTING(String, AgentPaneDefaultProfile);
+        Windows.Foundation.Collections.IVectorView<Profile> AgentProfiles { get; };
     }
 }

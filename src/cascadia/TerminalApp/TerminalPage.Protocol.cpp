@@ -12,6 +12,7 @@
 // The ComServer calls .get() on the returned IAsyncOperation to block.
 
 #include "pch.h"
+#include "../inc/AgentProfileCatalog.h"
 #include "ContentManager.h"
 #include "TerminalPage.h"
 #include "SharedWta.h"
@@ -173,6 +174,16 @@ namespace winrt::TerminalApp::implementation
             profiles.Append(info);
         }
         co_return profiles;
+    }
+
+    IAsyncOperation<hstring> TerminalPage::GetResolvedAgentProfiles()
+    {
+        auto strong = get_strong();
+        co_await wil::resume_foreground(Dispatcher());
+        Json::Value result{ Json::objectValue };
+        result["resolvedAgentProfiles"] = ::Microsoft::Terminal::AgentProfiles::ToJson(_settings.AllProfiles());
+        result["agentPane.defaultProfile"] = winrt::to_string(_settings.GlobalSettings().AgentPaneDefaultProfile());
+        co_return winrt::to_hstring(Json::writeString(Json::StreamWriterBuilder{}, result));
     }
 
     IAsyncOperation<Protocol::PaneInfo> TerminalPage::GetProtocolActivePane()

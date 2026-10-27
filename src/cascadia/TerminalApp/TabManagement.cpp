@@ -152,6 +152,7 @@ namespace winrt::TerminalApp::implementation
                     pending.agentSource,
                     pending.agentWslDistro,
                     Tab::AgentOverrideOrigin::Restore);
+                newTabImpl->AgentProfileGuidOverride(pending.agentProfileId);
             }
             _pendingLoadSessions[newTabImpl->StableId()] = std::move(pending);
         }
@@ -737,6 +738,10 @@ namespace winrt::TerminalApp::implementation
 
         winrt::get_self<implementation::AgentPaneContent>(agentContent)
             ->SetAgentRestoreIdentity(_GetAgentPaneIdentity(tab), _GetAgentPaneCustomCommand(tab));
+        winrt::get_self<implementation::AgentPaneContent>(agentContent)
+            ->SetAgentRestoreProfile(_ResolveAgentProfileForTab(tab->get_strong()) ?
+                                         winrt::to_hstring(_ResolveAgentProfileForTab(tab->get_strong()).Guid()) :
+                                         winrt::hstring{});
     }
 
     // Rewrites each shell pane that is running an agent CLI so its persisted
@@ -785,7 +790,10 @@ namespace winrt::TerminalApp::implementation
             {
                 continue;
             }
-            if (binding->second.structuredCustomResume)
+            const auto profile = _settings.GetProfileForArgs(terminalArgs);
+            const bool hasProfileResume = profile.AgentProfileId() == binding->second.agent &&
+                                          !profile.AgentProfileResumeCommand().empty();
+            if (binding->second.structuredCustomResume || hasProfileResume)
             {
                 terminalArgs.NativeAgentProviderId(binding->second.agent);
                 terminalArgs.CustomAgentSessionId(binding->second.sessionId);

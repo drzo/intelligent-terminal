@@ -1,6 +1,10 @@
 # Custom agent profiles and session resume
 
-Status: Implemented for Windows-host custom definitions in user settings.
+Status: Profile-centered configuration supersedes the original global definition
+design below. Agent profiles own CLI, resume, ACP capability, model, and exact
+host/WSL source. Global `agentPane.defaultProfile` and shell-local
+`agentPane.profile` select profile GUIDs; provider IDs remain session-family
+identities. Legacy global definitions project into profiles without eager rewriting.
 See [native agent profiles](../agent-profiles.md#custom-agents) for setup.
 
 ## Goals
@@ -37,9 +41,9 @@ See [native agent profiles](../agent-profiles.md#custom-agents) for setup.
 - `wta sessions activate` already accepts a qualified session identity and an
   owning window. A new public resume subcommand is not required for this work.
 
-## Recommended configuration
+## Original compatibility configuration
 
-Introduce an optional `customAgents` collection. Each entry has a persistent,
+The legacy `customAgents` collection remains readable. Each entry has a persistent,
 explicit ID and independent launch descriptions:
 
 ```json

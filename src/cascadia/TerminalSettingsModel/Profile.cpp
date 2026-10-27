@@ -9,6 +9,7 @@
 #include "TerminalSettingsSerializationHelpers.h"
 #include "AppearanceConfig.h"
 #include "FontConfig.h"
+#include "../inc/CustomAgentUtils.h"
 
 #include "Profile.g.cpp"
 
@@ -201,8 +202,60 @@ void Profile::LayerJson(const Json::Value& json)
     JsonUtils::GetValueForKey(json, LegacyAutoMarkPromptsKey, _AutoMarkPrompts);
     JsonUtils::GetValueForKey(json, LegacyRightClickContextMenuKey, _RightClickContextMenu);
 
+    auto agentJson = json;
+    for (const auto key : { "agentProfile.cli", "agentProfile.resume", "agentProfile.acp" })
+    {
+        if (json.isMember(key) && json[key].isNull())
+        {
+            agentJson.removeMember(key);
+            if (std::string_view{ key } == "agentProfile.cli")
+                _AgentProfileCliCommand.reset();
+            if (std::string_view{ key } == "agentProfile.acp")
+            {
+                _AgentProfileAcpCommand.reset();
+                _AgentProfileAcpEnabled.reset();
+                _AgentProfileAcpModel.reset();
+            }
+            if (std::string_view{ key } == "agentProfile.resume")
+            {
+                _AgentProfileResumeCommand.reset();
+                _AgentProfileSharedSessions.reset();
+            }
+        }
+        else if (json.isMember(key))
+        {
+            const auto& invocation = json[key];
+            THROW_HR_IF_MSG(E_INVALIDARG, !invocation.isObject(), "An agent invocation must be an object");
+            if (std::string_view{ key } == "agentProfile.acp")
+            {
+                if (invocation.isMember("enabled"))
+                    agentJson["agentProfile.acp.enabled"] = invocation["enabled"];
+                if (invocation.isMember("model"))
+                {
+                    if (invocation["model"].isNull())
+                        _AgentProfileAcpModel.reset();
+                    else
+                        agentJson["agentProfile.acp.model"] = invocation["model"];
+                }
+            }
+            if (std::string_view{ key } == "agentProfile.resume" && invocation.isMember("canResumeAcpSessions"))
+                agentJson["agentProfile.resume.canResumeAcpSessions"] = invocation["canResumeAcpSessions"];
+            if (invocation.isMember("command"))
+            {
+                agentJson[key] = invocation["command"].isNull() ? std::string{} :
+                                                                  winrt::to_string(::Microsoft::Terminal::CustomAgents::Format(
+                                                                      ::Microsoft::Terminal::CustomAgents::FromJson(invocation, std::string_view{ key } == "agentProfile.resume")));
+            }
+            else
+            {
+                THROW_HR_IF_MSG(E_INVALIDARG, invocation.isMember("args"), "Agent arguments require an explicit executable");
+                agentJson.removeMember(key);
+            }
+        }
+    }
+
 #define PROFILE_SETTINGS_LAYER_JSON(type, name, jsonKey, ...) \
-    JsonUtils::GetValueForKey(json, jsonKey, _##name);        \
+    JsonUtils::GetValueForKey(agentJson, jsonKey, _##name);   \
     _logSettingIfSet(jsonKey, _##name.has_value());
 
     MTSM_PROFILE_SETTINGS(PROFILE_SETTINGS_LAYER_JSON)
@@ -350,6 +403,33 @@ Json::Value Profile::ToJson() const
 
     MTSM_PROFILE_SETTINGS(PROFILE_SETTINGS_TO_JSON)
 #undef PROFILE_SETTINGS_TO_JSON
+
+    for (const auto key : { "agentProfile.cli", "agentProfile.resume", "agentProfile.acp" })
+    {
+        if (json.isMember(key))
+        {
+            const auto command = json[key].isNull() ? winrt::hstring{} : winrt::to_hstring(json[key].asString());
+            if (command.empty())
+            {
+                json[key] = Json::Value{ Json::objectValue };
+                json[key]["command"] = Json::nullValue;
+            }
+            else
+                json[key] = ::Microsoft::Terminal::CustomAgents::ToJson(
+                    ::Microsoft::Terminal::CustomAgents::Parse(command, std::string_view{ key } == "agentProfile.resume"));
+        }
+    }
+    for (const auto& [flat, object, member] : {
+             std::tuple{ "agentProfile.acp.enabled", "agentProfile.acp", "enabled" },
+             std::tuple{ "agentProfile.acp.model", "agentProfile.acp", "model" },
+             std::tuple{ "agentProfile.resume.canResumeAcpSessions", "agentProfile.resume", "canResumeAcpSessions" } })
+    {
+        if (json.isMember(flat))
+        {
+            json[object][member] = json[flat];
+            json.removeMember(flat);
+        }
+    }
 
     if (auto fontJSON = winrt::get_self<FontConfig>(_FontInfo)->ToJson(); !fontJSON.empty())
     {

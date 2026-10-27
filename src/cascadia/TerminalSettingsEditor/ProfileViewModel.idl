@@ -156,5 +156,19 @@ namespace Microsoft.Terminal.Settings.Editor
         String LaunchCommandline;
         OBSERVABLE_PROJECTED_PROFILE_SETTING(String, AgentProfileModel);
         OBSERVABLE_PROJECTED_PROFILE_SETTING(String, AgentProfileArguments);
+        Boolean IsAgentDefinition;
+        Boolean AgentRunsInWsl;
+        String AgentProfileError { get; };
+        Boolean AgentProfileSharedSessions;
+        void ClearLaunchCommandline();
+        Boolean HasLaunchCommandline { get; };
+        Microsoft.Terminal.Settings.Model.Profile LaunchCommandlineOverrideSource { get; };
+        OBSERVABLE_PROJECTED_PROFILE_SETTING(String, AgentProfileCliCommand);
+        OBSERVABLE_PROJECTED_PROFILE_SETTING(String, AgentProfileResumeCommand);
+        OBSERVABLE_PROJECTED_PROFILE_SETTING(Boolean, AgentProfileAcpEnabled);
+        OBSERVABLE_PROJECTED_PROFILE_SETTING(String, AgentProfileAcpCommand);
+        OBSERVABLE_PROJECTED_PROFILE_SETTING(String, AgentProfileAcpModel);
+        OBSERVABLE_PROJECTED_PROFILE_SETTING(String, AgentProfileWslDistro);
+        OBSERVABLE_PROJECTED_PROFILE_SETTING(String, AgentPaneProfile);
     }
 }

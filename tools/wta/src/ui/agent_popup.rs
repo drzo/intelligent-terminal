@@ -17,6 +17,7 @@ pub struct AgentPopupState<'a> {
     pub pane_focused: bool,
     pub current_id: &'a str,
     pub current_source: &'a crate::agent_source::AgentSource,
+    pub current_profile_id: Option<&'a str>,
 }
 
 pub fn render_popup(frame: &mut Frame, state: AgentPopupState<'_>, input_area: Rect) {
@@ -32,7 +33,10 @@ pub fn render_popup(frame: &mut Frame, state: AgentPopupState<'_>, input_area: R
         .agents
         .iter()
         .map(|agent| {
-            let marker = if agent.id == state.current_id && &agent.source == state.current_source {
+            let marker = if agent.id == state.current_id
+                && &agent.source == state.current_source
+                && agent.profile_id.as_deref() == state.current_profile_id
+            {
                 CURRENT_MARKER
             } else {
                 CURRENT_PAD

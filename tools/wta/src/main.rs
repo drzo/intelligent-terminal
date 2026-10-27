@@ -3,9 +3,10 @@ extern crate rust_i18n;
 
 mod action_links;
 mod agent_check;
-mod agent_lifecycle;
 mod agent_hooks_installer;
+mod agent_lifecycle;
 mod agent_pane_origin;
+mod agent_profiles;
 mod agent_registry;
 mod agent_sessions;
 mod agent_source;
@@ -130,6 +131,7 @@ fn helper_config(cli: Cli) -> helper::config::HelperConfig {
         prompt: cli.prompt,
         agent: cli.agent,
         agent_id: cli.agent_id,
+        agent_profile_id: cli.agent_profile_id,
         agent_source: cli.agent_source,
         agent_wsl_distro: cli.agent_wsl_distro,
         agent_source_cwd: cli.agent_source_cwd,

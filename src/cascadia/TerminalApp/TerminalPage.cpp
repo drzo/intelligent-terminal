@@ -31,6 +31,7 @@
 #include "../inc/NewTabMenuUtils.h"
 #include "../inc/AgentPolicy.h"
 #include "../inc/AgentPaneBackend.h"
+#include "../inc/AgentProfileCatalog.h"
 #include "../inc/AgentSourceUtils.h"
 #include "../inc/AgentYoloPolicy.h"
 #include "../inc/RtlHelper.h"
@@ -1679,6 +1680,16 @@ namespace winrt::TerminalApp::implementation
         const winrt::Microsoft::Terminal::Settings::Model::GlobalAppSettings& globals,
         const std::function<winrt::hstring()>& detectFallback)
     {
+        if (!globals.AgentPaneDefaultProfile().empty())
+        {
+            for (const auto& profile : globals.AgentProfiles())
+                if (til::equals_insensitive_ascii(std::wstring_view{ winrt::to_hstring(profile.Guid()) },
+                                                  std::wstring_view{ globals.AgentPaneDefaultProfile() }))
+                    return ::Microsoft::Terminal::AgentProfiles::IsAcpCandidate(profile) ?
+                               winrt::hstring{ ::Microsoft::Terminal::AgentProfiles::AcpCommand(profile) } :
+                               winrt::hstring{};
+            return {};
+        }
         // Use the policy-aware getter — returns empty if the selected agent
         // is blocked by GPO, ensuring we never launch a disallowed agent.
         const auto acpAgent = globals.EffectiveAcpAgent();
@@ -1931,6 +1942,8 @@ namespace winrt::TerminalApp::implementation
     // the pane against the host instead of the distro it was running in.
     winrt::hstring TerminalPage::_GetAgentPaneIdentity(Tab* const tab) const
     {
+        if (const auto profile = _ResolveAgentProfileForTab(tab->get_strong()))
+            return winrt::hstring{ ::Microsoft::Terminal::AgentProfiles::Backend(profile) };
         if (tab->HasAgentOverride())
         {
             if (tab->AgentSourceOverride() == L"wsl")
@@ -1961,6 +1974,8 @@ namespace winrt::TerminalApp::implementation
     // record nothing here.
     winrt::hstring TerminalPage::_GetAgentPaneCustomCommand(Tab* const tab) const
     {
+        if (const auto profile = _ResolveAgentProfileForTab(tab->get_strong()))
+            return {};
         if (tab->HasAgentOverride())
         {
             if (const auto agent = ::Microsoft::Terminal::CustomAgents::Find(_settings.GlobalSettings(), tab->AgentIdOverride()))
@@ -2034,6 +2049,10 @@ namespace winrt::TerminalApp::implementation
             {
                 tab->SetAgentOverride(winrt::hstring{ fields.agentIdentity }, {}, winrt::hstring{ fields.customCommand }, L"host", {}, Tab::AgentOverrideOrigin::Restore);
             }
+        }
+        if (!fields.agentProfileId.empty())
+        {
+            tab->AgentProfileGuidOverride(winrt::hstring{ fields.agentProfileId });
         }
 
         const auto intoSessionsView = fields.view == ::Microsoft::Terminal::AgentPaneRestore::SessionsView;
@@ -2403,6 +2422,8 @@ namespace winrt::TerminalApp::implementation
         const auto& globals = _settings.GlobalSettings();
         AgentSettingsSnapshot snapshot{
             std::wstring{ globals.AcpAgent() },
+            !_settings.GlobalSettings().AgentPaneDefaultProfile().empty() ?
+                std::wstring{} :
             _IsCustomAgentId(globals.AcpAgent()) ?
                 ::Microsoft::Terminal::CustomAgents::AcpCommand(globals, globals.AcpAgent()) :
                 std::wstring{ globals.AcpCustomCommand() },
@@ -2415,13 +2436,16 @@ namespace winrt::TerminalApp::implementation
         {
             snapshot.profileBackends.emplace_back(
                 profile.Guid(),
-                std::wstring{ profile.AgentPaneBackend() });
+                std::wstring{ profile.AgentPaneProfile().empty() ? profile.AgentPaneBackend() : profile.AgentPaneProfile() });
         }
         snapshot.profileBackends.emplace_back(
             _ProfileDefaultsAgentBackendGuid(),
-            std::wstring{ _settings.ProfileDefaults().AgentPaneBackend() });
+            std::wstring{ _settings.ProfileDefaults().AgentPaneProfile().empty() ? _settings.ProfileDefaults().AgentPaneBackend() : _settings.ProfileDefaults().AgentPaneProfile() });
         snapshot.agentSessionManagementEnabled =
             globals.EffectiveAgentSessionManagementEnabled();
+        snapshot.defaultAgentProfile = std::wstring{ globals.AgentPaneDefaultProfile() };
+        snapshot.agentProfiles = Json::writeString(Json::StreamWriterBuilder{},
+                                                   ::Microsoft::Terminal::AgentProfiles::ToJson(_settings.AllProfiles()));
         return snapshot;
     }
 
@@ -2431,6 +2455,8 @@ namespace winrt::TerminalApp::implementation
         identity["acp_agent"] = winrt::to_string(winrt::hstring{ snapshot.acpAgent });
         identity["acp_custom_command"] = winrt::to_string(winrt::hstring{ snapshot.acpCustomCommand });
         identity["acp_model"] = winrt::to_string(winrt::hstring{ snapshot.acpModel });
+        identity["agent_profile"] = winrt::to_string(snapshot.defaultAgentProfile);
+        identity["agent_profiles"] = snapshot.agentProfiles;
         if (snapshot.customModelLaunch)
         {
             const auto& custom = *snapshot.customModelLaunch;
@@ -2465,7 +2491,9 @@ namespace winrt::TerminalApp::implementation
             previous.acpCustomCommand != current.acpCustomCommand ||
             previous.acpModel != current.acpModel ||
             previous.customModelLaunch != current.customModelLaunch ||
-            previous.profileBackends != current.profileBackends;
+            previous.profileBackends != current.profileBackends ||
+            previous.defaultAgentProfile != current.defaultAgentProfile ||
+            previous.agentProfiles != current.agentProfiles;
         if (!changed)
         {
             return AgentSettingsChangeKind::None;
@@ -2489,7 +2517,9 @@ namespace winrt::TerminalApp::implementation
         // A trusted custom command can only enter the master through its own
         // argv, and a profile backend change can move execution between Host
         // and WSL. Those boundaries still require pane reconstruction.
-        if (previous.acpCustomCommand != current.acpCustomCommand ||
+        if (previous.defaultAgentProfile != current.defaultAgentProfile ||
+            previous.agentProfiles != current.agentProfiles ||
+            previous.acpCustomCommand != current.acpCustomCommand ||
             profileBackendsChanged ||
             !isBuiltinAgent(previous.acpAgent) ||
             !isBuiltinAgent(current.acpAgent))
@@ -2793,6 +2823,42 @@ namespace winrt::TerminalApp::implementation
         const winrt::com_ptr<Tab>& tab,
         const bool forSettingsUpdate)
     {
+        if (const auto profile = _ResolveAgentProfileForTab(tab))
+        {
+            namespace Profiles = ::Microsoft::Terminal::AgentProfiles;
+            AgentPaneSettingsBinding binding;
+            binding.profileId = std::wstring{ winrt::to_hstring(profile.Guid()) };
+            binding.agentId = std::wstring{ profile.AgentProfileId() };
+            binding.agentSource = std::wstring{ profile.AgentProfileSource() };
+            binding.agentWslDistro = std::wstring{ profile.AgentProfileWslDistro() };
+            binding.acpModel = std::wstring{ profile.AgentProfileAcpModel() };
+            binding.followsGlobalAgent = tab && tab->AgentProfileGuidOverride().empty() &&
+                                         (!_ResolveAgentSourceProfile(tab, _settings) ||
+                                          _ResolveAgentSourceProfile(tab, _settings).AgentPaneProfile().empty());
+            binding.launchable = Profiles::IsAcpCandidate(profile);
+            binding.supportsGlobalHostByok = binding.agentSource == L"host" &&
+                                             ::Microsoft::Terminal::Settings::Model::AgentRegistry::SupportsByok(binding.agentId);
+            if (binding.supportsGlobalHostByok)
+            {
+                if (const auto customModel = _CaptureCustomModelLaunchConfiguration(_settings.GlobalSettings()))
+                {
+                    binding.customModelSelection = customModel->selectionId;
+                    binding.acpModel.clear();
+                }
+            }
+            if (binding.launchable)
+                binding.command = Profiles::AcpCommand(profile);
+            return binding;
+        }
+        const auto source = tab ? _ResolveAgentSourceProfile(tab, _settings) : nullptr;
+        const bool legacyOverride = tab && tab->HasAgentOverride() && tab->AgentProfileGuidOverride().empty();
+        if (!legacyOverride && ((tab && !tab->AgentProfileGuidOverride().empty()) ||
+                                (source && !source.AgentPaneProfile().empty()) ||
+                                !_settings.GlobalSettings().AgentPaneDefaultProfile().empty()))
+        {
+            _agentPaneLog("Agent profile reference is unavailable; refusing provider fallback");
+            return {};
+        }
         AgentPaneSettingsBindingRequest request;
         const auto& globals = _settings.GlobalSettings();
         const auto globalAgentCliPath =
@@ -2837,11 +2903,23 @@ namespace winrt::TerminalApp::implementation
         return _ResolveAgentPaneSettingsBinding(request);
     }
 
+    winrt::Microsoft::Terminal::Settings::Model::Profile TerminalPage::_ResolveAgentProfileForTab(const winrt::com_ptr<Tab>& tab) const
+    {
+        namespace Profiles = ::Microsoft::Terminal::AgentProfiles;
+        if (tab && !tab->AgentProfileGuidOverride().empty())
+            return Profiles::Find(_settings, std::wstring_view{ tab->AgentProfileGuidOverride() });
+        if (tab && tab->HasAgentOverride())
+            return nullptr;
+        return Profiles::Selected(_settings, tab ? _ResolveAgentSourceProfile(tab, _settings) : winrt::Microsoft::Terminal::Settings::Model::Profile{ nullptr });
+    }
+
     bool TerminalPage::_IsSameAgentPaneBackend(
         const AgentPaneSettingsBinding& current,
         const AgentPaneSettingsBinding& target) noexcept
     {
-        return current.agentId == target.agentId &&
+        return current.profileId == target.profileId &&
+               current.command == target.command &&
+               current.agentId == target.agentId &&
                current.agentSource == target.agentSource &&
                current.agentWslDistro == target.agentWslDistro;
     }
@@ -2960,6 +3038,7 @@ namespace winrt::TerminalApp::implementation
             AgentPolicyTelemetry::AutoFixPolicyName(AgentPolicy::GetAutoFixPolicy()),
             _isVerticalLayout,
             globals.RenderAgentMarkdown(),
+            ::Microsoft::Terminal::AgentProfiles::ToJson(_settings.AllProfiles()),
         };
     }
 
@@ -3025,8 +3104,9 @@ namespace winrt::TerminalApp::implementation
                                  last.yoloPolicyBlocked != current.yoloPolicyBlocked;
         const bool sessionsLayoutChanged = last.sessionsInSidebar != current.sessionsInSidebar;
         const bool markdownChanged = last.renderAgentMarkdown != current.renderAgentMarkdown;
+        const bool agentProfilesChanged = last.agentProfiles != current.agentProfiles;
 
-        if (!autofixChanged && !autofixPolicyChanged && !delegateChanged && !customModelsChanged && !yoloChanged && !sessionsLayoutChanged && !markdownChanged)
+        if (!autofixChanged && !autofixPolicyChanged && !delegateChanged && !customModelsChanged && !yoloChanged && !sessionsLayoutChanged && !markdownChanged && !agentProfilesChanged)
         {
             _lastAgentRuntimeConfig = current;
             return;
@@ -3062,7 +3142,9 @@ namespace winrt::TerminalApp::implementation
         {
             params["render_agent_markdown"] = current.renderAgentMarkdown;
         }
-        const bool commonChanged = autofixChanged || autofixPolicyChanged || delegateChanged || customModelsChanged || sessionsLayoutChanged || markdownChanged;
+        params["agent_profiles"] = current.agentProfiles;
+        const bool commonChanged = autofixChanged || autofixPolicyChanged || delegateChanged || customModelsChanged || sessionsLayoutChanged || markdownChanged ||
+                                   agentProfilesChanged;
         if (commonChanged)
         {
             _agentPaneLog("emitting agent_config_changed (hot settings update)");
@@ -3365,7 +3447,7 @@ namespace winrt::TerminalApp::implementation
         const bool helperEventReady =
             content &&
             winrt::get_self<implementation::AgentPaneContent>(content)->IsHelperEventReady();
-        if (!control ||
+        if (!target.profileId.empty() || !current.profileId.empty() || !control ||
             !_CanSwitchAgentInPlace(
                 current,
                 target,
@@ -4106,7 +4188,18 @@ namespace winrt::TerminalApp::implementation
         winrt::hstring effectiveAgentWslDistro;
         const bool hasAgentOverride = tab->HasAgentOverride();
         bool hasProfileBackend = false;
-        if (hasAgentOverride)
+        const auto selectedProfileBinding = _ResolveAgentPaneSettingsBindingForTab(tab);
+        const bool hasProfileSelection = !selectedProfileBinding.profileId.empty() ||
+                                         !tab->AgentProfileGuidOverride().empty() ||
+                                         (!hasAgentOverride &&
+                                          (!globals.AgentPaneDefaultProfile().empty() ||
+                                           (sourceProfile && !sourceProfile.AgentPaneProfile().empty())));
+        if (hasProfileSelection && !selectedProfileBinding.launchable)
+        {
+            _agentPaneLog("_AutoCreateHiddenAgentPaneShared: selected agent profile is unavailable");
+            return false;
+        }
+        if (hasAgentOverride && !hasProfileSelection)
         {
             effectiveAgentId = tab->AgentIdOverride();
             effectiveModel = tab->AgentModelOverride();
@@ -4118,7 +4211,7 @@ namespace winrt::TerminalApp::implementation
             }
             agentCliPath = _ResolveAgentCliPathForId(effectiveAgentId, effectiveModel, _GetAgentPaneCustomCommand(tab.get()), effectiveAgentSource == L"wsl");
         }
-        else if (sourceProfile)
+        else if (sourceProfile && !hasProfileSelection)
         {
             const auto configuredValue = sourceProfile.AgentPaneBackend();
             const std::wstring_view configured{ configuredValue };
@@ -4168,7 +4261,7 @@ namespace winrt::TerminalApp::implementation
         // to the global/default agent (the same resolution as the
         // no-override case). The GPO all-agents-blocked case is still caught
         // by the policy check below.
-        if (!hasAgentOverride && !hasProfileBackend)
+        if (!hasAgentOverride && !hasProfileBackend && !hasProfileSelection)
         {
             effectiveAgentId = globals.EffectiveAcpAgent();
             effectiveModel = globals.AcpModel();
@@ -4190,7 +4283,16 @@ namespace winrt::TerminalApp::implementation
                 effectiveAgentId = _DetectAgentCli();
             }
         }
-        if (_IsAgentByokConfigured(effectiveAgentId, globals))
+        if (hasProfileSelection)
+        {
+            effectiveAgentId = winrt::hstring{ selectedProfileBinding.agentId };
+            effectiveModel = winrt::hstring{ selectedProfileBinding.acpModel };
+            effectiveAgentSource = winrt::hstring{ selectedProfileBinding.agentSource };
+            effectiveAgentWslDistro = winrt::hstring{ selectedProfileBinding.agentWslDistro };
+            agentCliPath = winrt::hstring{ selectedProfileBinding.command };
+            hasProfileBackend = true;
+        }
+        if (effectiveAgentSource == L"host" && _IsAgentByokConfigured(effectiveAgentId, globals))
         {
             effectiveModel.clear();
         }
@@ -4286,6 +4388,7 @@ namespace winrt::TerminalApp::implementation
         // master spawns/reuses the right agent CLI for THIS tab.
         appendHelperFlagValue(L"--agent", agentCliPath);
         appendHelperFlagValue(L"--agent-id", effectiveAgentId);
+        appendHelperFlagValue(L"--agent-profile-id", selectedProfileBinding.profileId);
         appendHelperFlagValue(L"--agent-source", effectiveAgentSource);
         appendHelperFlagValue(L"--agent-wsl-distro", effectiveAgentWslDistro);
         if (followsGlobalAcpModel)
@@ -4524,6 +4627,7 @@ namespace winrt::TerminalApp::implementation
                 impl->SetAgentRestoreExecutable(winrt::hstring{ wtaPath });
                 impl->SetAgentRestoreIdentity(_GetAgentPaneIdentity(tab.get()),
                                               _GetAgentPaneCustomCommand(tab.get()));
+                impl->SetAgentRestoreProfile(winrt::hstring{ selectedProfileBinding.profileId });
             }
         }
 
@@ -5158,7 +5262,16 @@ namespace winrt::TerminalApp::implementation
             cloudModelChanged || customModelLaunchChanged;
         const bool globalAgentChanged =
             _lastAgentSettings.acpAgent != current.acpAgent ||
-            _lastAgentSettings.acpCustomCommand != current.acpCustomCommand;
+            _lastAgentSettings.acpCustomCommand != current.acpCustomCommand ||
+            _lastAgentSettings.defaultAgentProfile != current.defaultAgentProfile;
+        Json::Value previousProfiles{ Json::arrayValue };
+        if (!_lastAgentSettings.agentProfiles.empty())
+        {
+            Json::CharReaderBuilder builder;
+            std::istringstream input{ _lastAgentSettings.agentProfiles };
+            std::string errors;
+            THROW_HR_IF(E_UNEXPECTED, !Json::parseFromStream(builder, input, &previousProfiles, &errors));
+        }
 
         std::vector<winrt::guid> changedProfileBackends;
         const auto appendChangedProfile = [&](const winrt::guid& profileGuid) {
@@ -5321,6 +5434,33 @@ namespace winrt::TerminalApp::implementation
                     else
                     {
                         affected = globalAgentChanged || globalModelBindingChanged;
+                    }
+                }
+
+                if (_lastAgentSettings.agentProfiles != current.agentProfiles)
+                {
+                    const auto binding = _ResolveAgentPaneSettingsBindingForTab(tabImpl);
+                    if (!binding.profileId.empty())
+                    {
+                        // Disabling eligibility does not retire an existing conversation.
+                        if (!binding.launchable)
+                            affected = false;
+                        else
+                        {
+                            const auto profileId = winrt::to_string(binding.profileId);
+                            for (const auto& previous : previousProfiles)
+                            {
+                                if (previous["profileId"].asString() != profileId)
+                                    continue;
+                                const auto invocation = ::Microsoft::Terminal::CustomAgents::ToJson(
+                                    ::Microsoft::Terminal::CustomAgents::Parse(binding.command));
+                                affected = affected || previous["acp"] != invocation ||
+                                           previous["source"].asString() != winrt::to_string(binding.agentSource) ||
+                                           previous["wslDistro"].asString() != winrt::to_string(binding.agentWslDistro) ||
+                                           previous["model"].asString() != winrt::to_string(binding.acpModel);
+                                break;
+                            }
+                        }
                     }
                 }
 
@@ -6647,7 +6787,6 @@ namespace winrt::TerminalApp::implementation
             }
             _DismissTabContextMenus();
             _CancelRailSplitterDrag();
-
         }
 
         if (visible)
@@ -7369,8 +7508,8 @@ namespace winrt::TerminalApp::implementation
             const auto& backgroundTab = row["background_tab"];
             const auto background = isLive && backgroundTab.isBool() && backgroundTab.asBool();
             const auto otherWindow = isLive && backgroundTab.isBool() && !backgroundTab.asBool() &&
-                currentWindowId != 0 && ownerWindow.isUInt64() &&
-                ownerWindow.asUInt64() != 0 && ownerWindow.asUInt64() != currentWindowId;
+                                     currentWindowId != 0 && ownerWindow.isUInt64() &&
+                                     ownerWindow.asUInt64() != 0 && ownerWindow.asUInt64() != currentWindowId;
             item.Cwd(winrt::to_hstring(cwd));
             item.PaneSessionId(winrt::to_hstring(row.get("pane_session_id", "").asString()));
             item.AgentId(winrt::to_hstring(providerId));
@@ -9313,10 +9452,8 @@ namespace winrt::TerminalApp::implementation
                     profile.AgentProfileId(), *::Microsoft::Terminal::Settings::Model::AgentPolicy::GetSnapshot());
                 if (::Microsoft::Terminal::CustomAgents::IsId(std::wstring_view{ profile.AgentProfileId() }))
                 {
-                    const auto agent = ::Microsoft::Terminal::CustomAgents::Find(_settings.GlobalSettings(), profile.AgentProfileId());
-                    THROW_HR_IF_MSG(HRESULT_FROM_WIN32(ERROR_NOT_FOUND), !agent || agent.CliCommand().empty(), "The custom agent's interactive CLI command is no longer configured");
-                    settingsInternal->Commandline(winrt::hstring{ ::Microsoft::Terminal::CustomAgents::LaunchCommand(
-                        ::Microsoft::Terminal::CustomAgents::Parse(agent.CliCommand())) });
+                    THROW_HR_IF_MSG(HRESULT_FROM_WIN32(ERROR_NOT_FOUND), profile.AgentProfileCliCommand().empty(), "The custom agent's interactive CLI command is no longer configured");
+                    settingsInternal->Commandline(winrt::hstring{ ::Microsoft::Terminal::AgentProfiles::Command(profile, true) });
                 }
                 else
                 {
@@ -9867,6 +10004,11 @@ namespace winrt::TerminalApp::implementation
                                   runtimeConfig) :
                               Json::Value{ Json::objectValue };
             config["tab_id"] = winrt::to_string(effectiveStatusTabId);
+            config["agent_profiles"] = ::Microsoft::Terminal::AgentProfiles::ToJson(_settings.AllProfiles());
+            if (statusTab)
+            {
+                config["agent_profile_id"] = winrt::to_string(winrt::hstring{ _ResolveAgentPaneSettingsBindingForTab(statusTab).profileId });
+            }
             if (helperNeedsHostCatalog)
             {
                 const auto customModels =
@@ -9900,6 +10042,13 @@ namespace winrt::TerminalApp::implementation
                 content.UpdateAgentStatus(name, version, model, state, backend);
                 if (!helperWasReady)
                 {
+                    Json::Value catalog{ Json::objectValue };
+                    catalog["window_id"] = std::to_string(_WindowProperties.WindowId());
+                    catalog["tab_id"] = winrt::to_string(tabImpl->StableId());
+                    catalog["agent_profiles"] = ::Microsoft::Terminal::AgentProfiles::ToJson(_settings.AllProfiles());
+                    catalog["agent_profile_id"] = winrt::to_string(_ResolveAgentPaneSettingsBindingForTab(tabImpl).profileId);
+                    _RaiseProtocolEvent("agent_config_changed", catalog);
+
                     // The user can open or switch this pane before the helper
                     // subscribes to WT protocol events. Re-send the locally
                     // applied state when the first agent_status proves the
@@ -10153,9 +10302,9 @@ namespace winrt::TerminalApp::implementation
                 const auto globals = _settings.GlobalSettings();
                 const auto position = targetTab->EffectiveAgentPanePosition(globals.AgentPanePosition());
                 const auto firstWindow = globals.FirstWindowPreference();
-                const auto firstWindowName = firstWindow == Settings::Model::FirstWindowPreference::PersistedLayout ? "persistedLayout" :
+                const auto firstWindowName = firstWindow == Settings::Model::FirstWindowPreference::PersistedLayout           ? "persistedLayout" :
                                              firstWindow == Settings::Model::FirstWindowPreference::PersistedLayoutAndContent ? "persistedLayoutAndContent" :
-                                                                                                                     "defaultProfile";
+                                                                                                                                "defaultProfile";
 #if defined(WT_BRANDING_RELEASE)
                 constexpr uint8_t branding = 3;
 #elif defined(WT_BRANDING_PREVIEW)
@@ -10663,6 +10812,32 @@ namespace winrt::TerminalApp::implementation
             return;
         }
 
+        if (params.isMember("agent_profile_id") && params["agent_profile_id"].isString())
+        {
+            namespace Profiles = ::Microsoft::Terminal::AgentProfiles;
+            const auto profileId = winrt::to_hstring(params["agent_profile_id"].asString());
+            const auto profile = Profiles::Find(_settings, profileId);
+            if (!profile || !Profiles::IsAcpCandidate(profile))
+            {
+                _agentPaneLog("OnAgentSwitchRequested: unavailable or policy-blocked agent profile");
+                return;
+            }
+            const auto currentBinding = _ResolveAgentPaneSettingsBindingForTab(tab);
+            if (currentBinding.profileId == std::wstring_view{ profileId } && !tab->HasRestoredAgentOverride())
+            {
+                return;
+            }
+            tab->SetAgentOverride(profile.AgentProfileId(), profile.AgentProfileAcpModel(), {}, profile.AgentProfileSource(), profile.AgentProfileWslDistro());
+            tab->AgentProfileGuidOverride(profileId);
+            const auto targetBinding = _ResolveAgentPaneSettingsBindingForTab(tab);
+            if (const auto content = tab->FindAgentPaneContent())
+            {
+                winrt::get_self<implementation::AgentPaneContent>(content)->SetAgentSessionId({});
+            }
+            _ApplyAgentPaneBindingForTab(tab, currentBinding, targetBinding);
+            return;
+        }
+
         if (source != L"host" && source != L"wsl")
         {
             _agentPaneLog("OnAgentSwitchRequested: unknown agent source");
@@ -11017,10 +11192,17 @@ namespace winrt::TerminalApp::implementation
         const auto agent = std::find_if(allowed.begin(), allowed.end(), [&](const auto& candidate) {
             return Model::AgentRegistry::AgentIdEquals(candidate.id, backend->agentId);
         });
-        if (agent == allowed.end() && (!::Microsoft::Terminal::CustomAgents::IsId(backend->agentId) ||
-                                       backend->source != Model::AgentPaneBackendSource::Host ||
-                                       !Model::AgentPolicy::IsCustomAgentAllowed() ||
-                                       ::Microsoft::Terminal::CustomAgents::AcpCommand(_settings.GlobalSettings(), backend->agentId).empty()))
+        const auto profileId = params["agent_profile_id"].isString() ? winrt::to_hstring(params["agent_profile_id"].asString()) : winrt::hstring{};
+        const auto resumeProfile = ::Microsoft::Terminal::AgentProfiles::Find(_settings, std::wstring_view{ profileId });
+        if (!profileId.empty() && (!resumeProfile || !::Microsoft::Terminal::AgentProfiles::IsAcpCandidate(resumeProfile) ||
+                                   resumeProfile.AgentProfileId() != winrt::to_hstring(agentIdStr) ||
+                                   resumeProfile.AgentProfileSource() != winrt::to_hstring(agentSourceStr) ||
+                                   resumeProfile.AgentProfileWslDistro() != winrt::hstring{ backend->wslDistro }))
+        {
+            _agentPaneLog("OnResumeInNewAgentTabRequested: unavailable or mismatched agent profile");
+            return;
+        }
+        if (profileId.empty() && agent == allowed.end() && (!::Microsoft::Terminal::CustomAgents::IsId(backend->agentId) || backend->source != Model::AgentPaneBackendSource::Host || !Model::AgentPolicy::IsCustomAgentAllowed() || ::Microsoft::Terminal::CustomAgents::AcpCommand(_settings.GlobalSettings(), backend->agentId).empty()))
         {
             _agentPaneLog("OnResumeInNewAgentTabRequested: unknown or policy-blocked agent");
             return;
@@ -11062,6 +11244,7 @@ namespace winrt::TerminalApp::implementation
             winrt::to_hstring(agentModelStr),
             winrt::to_hstring(agentSourceStr),
             winrt::hstring{ backend->wslDistro },
+            profileId,
         };
         const auto clearReservation = wil::scope_exit([&]() {
             _pendingNewTabLoadSession.reset();
@@ -11242,7 +11425,8 @@ namespace winrt::TerminalApp::implementation
         _PaneAgentSession binding{
             winrt::hstring{ sessionId },
             winrt::hstring{ agent },
-            winrt::hstring{ resumeCommandline } };
+            winrt::hstring{ resumeCommandline }
+        };
         binding.structuredCustomResume = custom;
         if (custom)
         {
@@ -11258,8 +11442,8 @@ namespace winrt::TerminalApp::implementation
                     backend && Backend::AgentRegistry::AgentIdEquals(backend->agentId, agent))
                 {
                     binding.backend = winrt::hstring{ backend->source == Backend::AgentPaneBackendSource::Wsl ?
-                                                         Backend::AgentPaneBackend::Wsl(backend->wslDistro, agent) :
-                                                         Backend::AgentPaneBackend::Host(agent) };
+                                                          Backend::AgentPaneBackend::Wsl(backend->wslDistro, agent) :
+                                                          Backend::AgentPaneBackend::Host(agent) };
                 }
             }
             // An explicit owning-shell source wins; a default host shell must not
@@ -11460,7 +11644,7 @@ namespace winrt::TerminalApp::implementation
                         {
                             if (const auto control = pane->GetTerminalControl();
                                 control && manager->RefineNativeAgentLaunchLocation(
-                                    control.ContentId(), winrt::to_hstring(params["agent"].asString()), location))
+                                               control.ContentId(), winrt::to_hstring(params["agent"].asString()), location))
                             {
                                 _PublishNativeAgentObservation(control, "reset");
                                 _RaiseProtocolEvent("agent_event", params);
@@ -11753,8 +11937,8 @@ namespace winrt::TerminalApp::implementation
                                 backend && Backend::AgentRegistry::AgentIdEquals(backend->agentId, winrt::to_hstring(agent)))
                             {
                                 bindingBackend = winrt::hstring{ backend->source == Backend::AgentPaneBackendSource::Wsl ?
-                                                                    Backend::AgentPaneBackend::Wsl(backend->wslDistro, winrt::to_hstring(agent)) :
-                                                                    Backend::AgentPaneBackend::Host(winrt::to_hstring(agent)) };
+                                                                     Backend::AgentPaneBackend::Wsl(backend->wslDistro, winrt::to_hstring(agent)) :
+                                                                     Backend::AgentPaneBackend::Host(winrt::to_hstring(agent)) };
                             }
                             const auto& payload = params["payload"];
                             const auto cwd = params.isMember("cwd") ? params["cwd"] :
@@ -11967,13 +12151,13 @@ namespace winrt::TerminalApp::implementation
             if (const auto actionMap = _settings.ActionMap())
             {
                 const KeyChord chord{
-                        modifiers.IsCtrlPressed(),
-                        modifiers.IsAltPressed(),
-                        modifiers.IsShiftPressed(),
-                        modifiers.IsWinPressed(),
-                        gsl::narrow_cast<int32_t>(vkey),
-                        scanCode,
-                    };
+                    modifiers.IsCtrlPressed(),
+                    modifiers.IsAltPressed(),
+                    modifiers.IsShiftPressed(),
+                    modifiers.IsWinPressed(),
+                    gsl::narrow_cast<int32_t>(vkey),
+                    scanCode,
+                };
                 if (const auto cmd = actionMap.GetActionByKeyChord(chord))
                 {
                     const auto action = cmd.ActionAndArgs();
@@ -12374,7 +12558,8 @@ namespace winrt::TerminalApp::implementation
         if (const auto backend = ::Microsoft::Terminal::Settings::Model::AgentPaneBackend::Parse(std::wstring_view{ backendId }))
         {
             return backend->source == ::Microsoft::Terminal::Settings::Model::AgentPaneBackendSource::Wsl ?
-                       "wsl:" + winrt::to_string(winrt::hstring{ backend->wslDistro }) : "Host";
+                       "wsl:" + winrt::to_string(winrt::hstring{ backend->wslDistro }) :
+                       "Host";
         }
         return {};
     }
@@ -12394,13 +12579,15 @@ namespace winrt::TerminalApp::implementation
     }
 
     bool TerminalPage::_NativeAgentReceiverSnapshotReady(
-        const Json::Value& response, const uint64_t capturedGeneration, const uint64_t currentGeneration)
+        const Json::Value& response,
+        const uint64_t capturedGeneration,
+        const uint64_t currentGeneration)
     {
         return response.isObject() && capturedGeneration != 0 && capturedGeneration == currentGeneration &&
-            response["native_observation_receiver_generation"].isUInt64() &&
-            response["native_observation_receiver_generation"].asUInt64() == capturedGeneration &&
-            response["native_observation_listener_ready"].isBool() &&
-            response["native_observation_listener_ready"].asBool();
+               response["native_observation_receiver_generation"].isUInt64() &&
+               response["native_observation_receiver_generation"].asUInt64() == capturedGeneration &&
+               response["native_observation_listener_ready"].isBool() &&
+               response["native_observation_listener_ready"].asBool();
     }
 
     void TerminalPage::_PreserveNativeAgentIdentity(const TermControl& control)
@@ -12549,7 +12736,8 @@ namespace winrt::TerminalApp::implementation
                 previous->providerId, manager->NativeAgentProviderId(control.ContentId())))
         {
             agentSessionId = previous->receiverGeneration != receiverGeneration && !previous->qualifiedSessionId.empty() ?
-                                 previous->qualifiedSessionId : previous->agentSessionId;
+                                 previous->qualifiedSessionId :
+                                 previous->agentSessionId;
             source = previous->location;
         }
         if (explicitBinding && agentSessionId.empty() && previous)
@@ -12633,7 +12821,7 @@ namespace winrt::TerminalApp::implementation
             params["kind"] = "reset";
             params["tracking_enabled"] = enabled;
             if (paneSessionId && (!enabled ||
-                (_richTabAgentStatusByPaneId.contains(*paneSessionId) && _richTabAgentStatusByPaneId.at(*paneSessionId).modeEpoch)))
+                                  (_richTabAgentStatusByPaneId.contains(*paneSessionId) && _richTabAgentStatusByPaneId.at(*paneSessionId).modeEpoch)))
             {
                 _richTabAgentStatusByPaneId.erase(*paneSessionId);
             }
@@ -13151,9 +13339,9 @@ namespace winrt::TerminalApp::implementation
         const auto receiverGeneration = request.receiverGeneration;
         const auto currentReceiverGeneration = SharedWta::Instance().MasterGeneration();
         const auto receiverMatches = parsed && receiverGeneration == currentReceiverGeneration &&
-            (receiverGeneration == 0 ||
-             (response["native_observation_receiver_generation"].isUInt64() &&
-              response["native_observation_receiver_generation"].asUInt64() == receiverGeneration));
+                                     (receiverGeneration == 0 ||
+                                      (response["native_observation_receiver_generation"].isUInt64() &&
+                                       response["native_observation_receiver_generation"].asUInt64() == receiverGeneration));
         if (generation == page->_agentSnapshotRequestGeneration &&
             receiverGeneration == currentReceiverGeneration && (receiverMatches || !parsed))
         {
@@ -14525,8 +14713,7 @@ namespace winrt::TerminalApp::implementation
         auto state = pane->BuildStartupActions(0, 1, BuildStartupKind::Content);
         state.args.insert(state.args.begin(),
                           ActionAndArgs{ ShortcutAction::SplitPane,
-                                         SplitPaneArgs{ SplitType::Manual, SplitDirection::Right, 0.5f,
-                                                        state.firstPane->GetTerminalArgsForPane(BuildStartupKind::Content) } });
+                                         SplitPaneArgs{ SplitType::Manual, SplitDirection::Right, 0.5f, state.firstPane->GetTerminalArgsForPane(BuildStartupKind::Content) } });
         return std::move(state.args);
     }
 
@@ -14706,7 +14893,7 @@ namespace winrt::TerminalApp::implementation
                     return false;
                 }
                 auto current = wholeTab ? tab->BuildStartupActions(BuildStartupKind::Content) :
-                                         _buildPaneTransferActions(pane);
+                                          _buildPaneTransferActions(pane);
                 if (ActionAndArgs::Serialize(winrt::single_threaded_vector<ActionAndArgs>(std::move(current))) != str)
                 {
                     return false;
@@ -15163,7 +15350,7 @@ namespace winrt::TerminalApp::implementation
         }
         THROW_HR_IF(E_INVALIDARG, !movingSettings && actions.GetAt(0).Action() != ShortcutAction::NewTab);
         const auto firstArgs = movingSettings ? NewTerminalArgs{ nullptr } :
-                                               actions.GetAt(0).Args().as<NewTabArgs>().ContentArgs().as<NewTerminalArgs>();
+                                                actions.GetAt(0).Args().as<NewTabArgs>().ContentArgs().as<NewTerminalArgs>();
         ReceivingContentTransfer transfer;
         transfer.sourceTab = sourceTab;
         transfer.restoringKeptTab = _manager.KeptGroupOwner(winrt::guid{ sourceTab->StableId() }) == source;
@@ -15193,8 +15380,7 @@ namespace winrt::TerminalApp::implementation
         THROW_HR_IF(E_INVALIDARG, sourceControls.empty() && !movingSettings);
         if (targetTab)
         {
-            THROW_HR_IF(E_ILLEGAL_METHOD_CALL, *targetTab == _settingsTab ||
-                                                (!transfer.sourceAgents.empty() && targetTab->FindAgentPane()));
+            THROW_HR_IF(E_ILLEGAL_METHOD_CALL, *targetTab == _settingsTab || (!transfer.sourceAgents.empty() && targetTab->FindAgentPane()));
         }
 
         _receivingContentTransfer = &transfer;
@@ -15450,6 +15636,7 @@ namespace winrt::TerminalApp::implementation
                                              sourceTab->AgentSourceOverride(),
                                              sourceTab->AgentWslDistroOverride(),
                                              sourceTab->GetAgentOverrideOrigin());
+            destinationTab->AgentProfileGuidOverride(sourceTab->AgentProfileGuidOverride());
             destinationTab->AgentPanePositionOverride(sourceTab->AgentPanePositionOverride());
             if (const auto profile = sourceTab->AgentSourceProfileGuid())
             {
@@ -16509,8 +16696,7 @@ namespace winrt::TerminalApp::implementation
         // Do any initialization that needs to apply to _every_ TermControl we
         // create here.
         const auto content = winrt::get_self<ContentManager>(_manager)->CreateAgentCliCore(
-            *settings.DefaultSettings(), settings.UnfocusedSettings().try_as<IControlAppearance>(), connection, nativeAgentProviderId,
-            !nativeAgentProviderId.empty() && settings.DefaultSettings()->UsesManagedAgentCommand() ? "Host" : "");
+            *settings.DefaultSettings(), settings.UnfocusedSettings().try_as<IControlAppearance>(), connection, nativeAgentProviderId, !nativeAgentProviderId.empty() && settings.DefaultSettings()->UsesManagedAgentCommand() ? "Host" : "");
         const TermControl control{ content };
         return _SetupControl(control);
     }
@@ -16775,7 +16961,7 @@ namespace winrt::TerminalApp::implementation
 
                 closeOnFailure.release();
                 _agentPaneLog(_receivingContentTransfer ? "_MakeTerminalPane: prepared transferred agent pane" :
-                                                         "_MakeTerminalPane: adopted transferred agent pane");
+                                                          "_MakeTerminalPane: adopted transferred agent pane");
                 return wrapped;
             }
 
@@ -16822,15 +17008,33 @@ namespace winrt::TerminalApp::implementation
         {
             namespace Custom = ::Microsoft::Terminal::CustomAgents;
             const auto id = newTerminalArgs.NativeAgentProviderId();
-            THROW_HR_IF(E_INVALIDARG, !Custom::IsId(id));
-            // Custom definitions are Windows-only. Never reinterpret a saved
-            // non-host conversation using a same-ID Windows definition.
+            THROW_HR_IF(E_INVALIDARG, !Custom::IsId(id) && !::Microsoft::Terminal::Settings::Model::AgentRegistry::SupportsNativeProfile(id));
+            THROW_HR_IF(E_INVALIDARG, !::Microsoft::Terminal::AgentPaneRestore::IsValidSessionId(newTerminalArgs.CustomAgentSessionId()) || std::wstring_view{ newTerminalArgs.CustomAgentSessionId() }.starts_with(L"-"));
             const auto backend = newTerminalArgs.CustomAgentBackend();
-            THROW_HR_IF(E_INVALIDARG, !backend.empty() && backend != winrt::hstring{ L"host:" + std::wstring{ id } });
             namespace Policy = ::Microsoft::Terminal::Settings::Model::AgentPolicy;
             Policy::Reload();
             ::Microsoft::Terminal::AgentProfiles::CheckLaunchPolicy(id, *Policy::GetSnapshot());
-            const auto command = Custom::ResumeCommand(_settings.GlobalSettings(), id, newTerminalArgs.CustomAgentSessionId());
+            std::wstring command;
+            std::wstring resolvedBackend{ L"host:" + std::wstring{ id } };
+            if (profile.AgentProfileId() == id && !profile.AgentProfileResumeCommand().empty())
+            {
+                namespace Profiles = ::Microsoft::Terminal::AgentProfiles;
+                THROW_HR_IF(E_INVALIDARG, !Profiles::HasValidSource(profile) || (Custom::IsId(id) && profile.AgentProfileCliCommand().empty()));
+                resolvedBackend = Profiles::Backend(profile);
+                THROW_HR_IF(E_INVALIDARG, !backend.empty() && backend != resolvedBackend);
+                auto invocation = Custom::Parse(profile.AgentProfileResumeCommand(), true);
+                for (auto& argument : invocation.args)
+                    if (argument == L"{sessionId}")
+                        argument = newTerminalArgs.CustomAgentSessionId();
+                command = profile.AgentProfileSource() == L"wsl" ? Profiles::WslCommand(invocation, profile.AgentProfileWslDistro()) :
+                                                                   Custom::LaunchCommand(invocation);
+            }
+            else
+            {
+                THROW_HR_IF_MSG(E_INVALIDARG, !Custom::IsId(id), "The selected agent profile no longer has its configured resume invocation");
+                THROW_HR_IF(E_INVALIDARG, !backend.empty() && backend != resolvedBackend);
+                command = Custom::ResumeCommand(_settings.GlobalSettings(), id, newTerminalArgs.CustomAgentSessionId());
+            }
             // Expanding the command must not reselect a command-matching profile
             // (or ProfileDefaults) instead of the profile already resolved above.
             newTerminalArgs.Profile(Utils::GuidToString(profile.Guid()));
@@ -16841,7 +17045,7 @@ namespace winrt::TerminalApp::implementation
             controlSettings = Settings::TerminalSettings::CreateWithNewTerminalArgs(_settings, newTerminalArgs);
             restoredAgent.agent = id;
             restoredAgent.sessionId = newTerminalArgs.CustomAgentSessionId();
-            restoredAgent.backend = L"host:" + std::wstring{ id };
+            restoredAgent.backend = std::move(resolvedBackend);
             restoredAgent.cwd = newTerminalArgs.StartingDirectory();
         }
         if (newTerminalArgs && newTerminalArgs.NativeAgentProviderId().empty() && !restoredAgent.agent.empty())
@@ -18204,15 +18408,15 @@ namespace winrt::TerminalApp::implementation
         si.cb = sizeof(si);
 
         THROW_IF_WIN32_BOOL_FALSE(CreateProcessW(exePath.c_str(),
-                                               cmdline.data(),
-                                               nullptr,
-                                               nullptr,
-                                               FALSE,
-                                               0,
-                                               nullptr,
-                                               nullptr,
-                                               &si,
-                                               &pi));
+                                                 cmdline.data(),
+                                                 nullptr,
+                                                 nullptr,
+                                                 FALSE,
+                                                 0,
+                                                 nullptr,
+                                                 nullptr,
+                                                 &si,
+                                                 &pi));
 
         // TODO: GH#8592 - It may be useful to pop a Toast here in the original
         // Terminal window informing the user that the tab was opened in a new
@@ -18978,8 +19182,7 @@ namespace winrt::TerminalApp::implementation
         const auto splitPaneUpText = RS_(L"SplitPaneUpText");
         const auto splitPaneLeftText = RS_(L"SplitPaneLeftText");
         const auto splitPaneToolTipText = RS_(L"SplitPaneToolTipText");
-        makeItem(RS_(L"SplitPaneText"), L"\xF246",
-                 ActionAndArgs{ ShortcutAction::SplitPane, SplitPaneArgs{ SplitType::Profile } }, splitPaneMenu);
+        makeItem(RS_(L"SplitPaneText"), L"\xF246", ActionAndArgs{ ShortcutAction::SplitPane, SplitPaneArgs{ SplitType::Profile } }, splitPaneMenu);
 
         // GetFocusedProfile can return null if no child of the focused tab
         // was the last control to be focused (e.g. transient focus states).

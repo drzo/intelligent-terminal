@@ -2,6 +2,7 @@
 // Licensed under the MIT license.
 
 #include "pch.h"
+#include "../inc/AgentProfileCatalog.h"
 #include "FreOverlay.h"
 #include "FreAgentEntry.g.cpp"
 #include "FreOverlay.g.cpp"
@@ -311,7 +312,7 @@ namespace winrt::TerminalApp::implementation
         }
         if (selectedId.empty())
         {
-            selectedId = globals.EffectiveAcpAgent();
+            selectedId = globals.AgentPaneDefaultProfile().empty() ? globals.EffectiveAcpAgent() : globals.AgentPaneDefaultProfile();
         }
 
         const auto allowedAgents = Reg::FilteredAcpAgents();
@@ -332,6 +333,12 @@ namespace winrt::TerminalApp::implementation
 
         for (const auto& a : candidates)
         {
+            const auto representedByProfile = std::ranges::any_of(_settings.AllProfiles(), [&](const auto& profile) {
+                return ::Microsoft::Terminal::AgentProfiles::IsAcpCandidate(profile) &&
+                       profile.AgentProfileSource() == L"host" && Reg::AgentIdEquals(profile.AgentProfileId(), a.id);
+            });
+            if (representedByProfile)
+                continue;
             const ::Microsoft::Terminal::AgentAvailability::HostAgentAvailability* status = nullptr;
             if (_hostAgentSnapshot)
             {
@@ -368,6 +375,21 @@ namespace winrt::TerminalApp::implementation
             idx++;
         }
 
+        for (const auto& profile : _settings.AllProfiles())
+        {
+            if (!::Microsoft::Terminal::AgentProfiles::IsAcpCandidate(profile))
+                continue;
+            auto entry = winrt::make<FreAgentEntry>();
+            entry.Id(winrt::to_hstring(profile.Guid()));
+            entry.DisplayLabel(profile.Name());
+            items.Append(entry);
+            if (Reg::AgentIdEquals(entry.Id(), selectedId) ||
+                (globals.AgentPaneDefaultProfile().empty() && profile.AgentProfileSource() == L"host" &&
+                 Reg::AgentIdEquals(profile.AgentProfileId(), selectedId)))
+                selectedIndex = idx;
+            ++idx;
+        }
+
         if (items.Size() > 0)
         {
             AgentComboBox().SelectedIndex(selectedIndex);
@@ -386,6 +408,8 @@ namespace winrt::TerminalApp::implementation
         {
             if (const auto entry = selected.try_as<winrt::TerminalApp::FreAgentEntry>())
             {
+                if (const auto profile = ::Microsoft::Terminal::AgentProfiles::Find(_settings, std::wstring_view{ entry.Id() }))
+                    return profile.AgentProfileId();
                 return entry.Id();
             }
         }
@@ -476,9 +500,7 @@ namespace winrt::TerminalApp::implementation
             // resets the cascade — Initialize is called every time the
             // FRE is shown, and the underlying XAML element is reused.
             using winrt::Windows::UI::Xaml::FlowDirection;
-            RootGrid().FlowDirection(::Microsoft::Terminal::RtlHelper::IsRtlLocale(language)
-                                         ? FlowDirection::RightToLeft
-                                         : FlowDirection::LeftToRight);
+            RootGrid().FlowDirection(::Microsoft::Terminal::RtlHelper::IsRtlLocale(language) ? FlowDirection::RightToLeft : FlowDirection::LeftToRight);
         }
 
         // Set subtitle Run texts (can't use x:Uid for <Run> inside <Hyperlink>)
@@ -542,19 +564,20 @@ namespace winrt::TerminalApp::implementation
         posItems.Append(winrt::box_value(RS_(L"FreOverlay_PanePositionTop")));
 
         const auto currentPos = globals.AgentPanePosition();
-        if (currentPos == L"right") PanePositionComboBox().SelectedIndex(1);
-        else if (currentPos == L"left") PanePositionComboBox().SelectedIndex(2);
-        else if (currentPos == L"top") PanePositionComboBox().SelectedIndex(3);
-        else PanePositionComboBox().SelectedIndex(0); // default: bottom
+        if (currentPos == L"right")
+            PanePositionComboBox().SelectedIndex(1);
+        else if (currentPos == L"left")
+            PanePositionComboBox().SelectedIndex(2);
+        else if (currentPos == L"top")
+            PanePositionComboBox().SelectedIndex(3);
+        else
+            PanePositionComboBox().SelectedIndex(0); // default: bottom
 
         // Map the two persisted settings to the single error-detection choice.
         // EffectiveAutoFixEnabled already accounts for both the auto-fix policy
         // and detection being disabled.
-        const auto detectionMode = !globals.EffectiveAutoErrorDetectionEnabled()
-            ? ErrorDetectionMode::Off
-            : globals.EffectiveAutoFixEnabled()
-            ? ErrorDetectionMode::DetectAndFix
-            : ErrorDetectionMode::Detect;
+        const auto detectionMode = !globals.EffectiveAutoErrorDetectionEnabled() ? ErrorDetectionMode::Off : globals.EffectiveAutoFixEnabled() ? ErrorDetectionMode::DetectAndFix :
+                                                                                                                                                 ErrorDetectionMode::Detect;
         _SetErrorDetectionMode(detectionMode);
         SessionManagementToggle().IsOn(globals.EffectiveAgentSessionManagementEnabled());
 
@@ -605,7 +628,6 @@ namespace winrt::TerminalApp::implementation
         // helpers update it to the current step before moving the ring.
         Automation::AutomationProperties::SetName(
             SavingProgressRing(), RS_(L"FreOverlay_SettingUp"));
-
     }
 
     // ── Error detection mode ────────────────────────────────────────────
@@ -690,9 +712,7 @@ namespace winrt::TerminalApp::implementation
             longestControlWidth +
             cardHorizontalPadding;
 
-        const double viewportWidth = scroller.ViewportWidth() > 0
-            ? scroller.ViewportWidth()
-            : scroller.ActualWidth();
+        const double viewportWidth = scroller.ViewportWidth() > 0 ? scroller.ViewportWidth() : scroller.ActualWidth();
         if (viewportWidth > 0)
         {
             stack.Width(std::min({ desiredWidth, viewportWidth, maximumFormWidth }));
@@ -709,14 +729,14 @@ namespace winrt::TerminalApp::implementation
 
         // Focus the Save button so Enter triggers it on the Settings page.
         Dispatcher().RunAsync(winrt::Windows::UI::Core::CoreDispatcherPriority::Low,
-            [weak = get_weak()]() {
-                if (auto self = weak.get())
-                {
-                    self->_UpdateSettingsFormWidth();
-                    self->_UpdateAgentProbeWarning();
-                    self->SaveButton().Focus(FocusState::Programmatic);
-                }
-            });
+                              [weak = get_weak()]() {
+                                  if (auto self = weak.get())
+                                  {
+                                      self->_UpdateSettingsFormWidth();
+                                      self->_UpdateAgentProbeWarning();
+                                      self->SaveButton().Focus(FocusState::Programmatic);
+                                  }
+                              });
     }
 
     // ── WinGet install helper ───────────────────────────────────────────
@@ -758,10 +778,14 @@ namespace winrt::TerminalApp::implementation
         {
             switch (s)
             {
-            case ConnectResultStatus::Ok: return "Ok";
-            case ConnectResultStatus::CatalogError: return "CatalogError";
-            case ConnectResultStatus::SourceAgreementsNotAccepted: return "SourceAgreementsNotAccepted";
-            default: return "Unknown";
+            case ConnectResultStatus::Ok:
+                return "Ok";
+            case ConnectResultStatus::CatalogError:
+                return "CatalogError";
+            case ConnectResultStatus::SourceAgreementsNotAccepted:
+                return "SourceAgreementsNotAccepted";
+            default:
+                return "Unknown";
             }
         }
 
@@ -769,12 +793,18 @@ namespace winrt::TerminalApp::implementation
         {
             switch (s)
             {
-            case FindPackagesResultStatus::Ok: return "Ok";
-            case FindPackagesResultStatus::BlockedByPolicy: return "BlockedByPolicy";
-            case FindPackagesResultStatus::CatalogError: return "CatalogError";
-            case FindPackagesResultStatus::InvalidOptions: return "InvalidOptions";
-            case FindPackagesResultStatus::InternalError: return "InternalError";
-            default: return "Unknown";
+            case FindPackagesResultStatus::Ok:
+                return "Ok";
+            case FindPackagesResultStatus::BlockedByPolicy:
+                return "BlockedByPolicy";
+            case FindPackagesResultStatus::CatalogError:
+                return "CatalogError";
+            case FindPackagesResultStatus::InvalidOptions:
+                return "InvalidOptions";
+            case FindPackagesResultStatus::InternalError:
+                return "InternalError";
+            default:
+                return "Unknown";
             }
         }
 
@@ -782,18 +812,30 @@ namespace winrt::TerminalApp::implementation
         {
             switch (s)
             {
-            case InstallResultStatus::Ok: return "Ok";
-            case InstallResultStatus::BlockedByPolicy: return "BlockedByPolicy";
-            case InstallResultStatus::CatalogError: return "CatalogError";
-            case InstallResultStatus::InternalError: return "InternalError";
-            case InstallResultStatus::InvalidOptions: return "InvalidOptions";
-            case InstallResultStatus::DownloadError: return "DownloadError";
-            case InstallResultStatus::InstallError: return "InstallError";
-            case InstallResultStatus::ManifestError: return "ManifestError";
-            case InstallResultStatus::NoApplicableInstallers: return "NoApplicableInstallers";
-            case InstallResultStatus::NoApplicableUpgrade: return "NoApplicableUpgrade";
-            case InstallResultStatus::PackageAgreementsNotAccepted: return "PackageAgreementsNotAccepted";
-            default: return "Unknown";
+            case InstallResultStatus::Ok:
+                return "Ok";
+            case InstallResultStatus::BlockedByPolicy:
+                return "BlockedByPolicy";
+            case InstallResultStatus::CatalogError:
+                return "CatalogError";
+            case InstallResultStatus::InternalError:
+                return "InternalError";
+            case InstallResultStatus::InvalidOptions:
+                return "InvalidOptions";
+            case InstallResultStatus::DownloadError:
+                return "DownloadError";
+            case InstallResultStatus::InstallError:
+                return "InstallError";
+            case InstallResultStatus::ManifestError:
+                return "ManifestError";
+            case InstallResultStatus::NoApplicableInstallers:
+                return "NoApplicableInstallers";
+            case InstallResultStatus::NoApplicableUpgrade:
+                return "NoApplicableUpgrade";
+            case InstallResultStatus::PackageAgreementsNotAccepted:
+                return "PackageAgreementsNotAccepted";
+            default:
+                return "Unknown";
             }
         }
 
@@ -850,8 +892,8 @@ namespace winrt::TerminalApp::implementation
                 // Defensive caps. Per-file cap protects against a single
                 // verbose-MSI log eating our disk; total cap is the
                 // ceiling across all files in this capture.
-                constexpr std::uintmax_t kPerFileCapBytes = 25ULL * 1024ULL * 1024ULL;  // 25 MB
-                constexpr std::uintmax_t kTotalCapBytes = 50ULL * 1024ULL * 1024ULL;    // 50 MB
+                constexpr std::uintmax_t kPerFileCapBytes = 25ULL * 1024ULL * 1024ULL; // 25 MB
+                constexpr std::uintmax_t kTotalCapBytes = 50ULL * 1024ULL * 1024ULL; // 50 MB
 
                 wchar_t localAppData[MAX_PATH]{};
                 const DWORD lenWritten =
@@ -1077,10 +1119,9 @@ namespace winrt::TerminalApp::implementation
                 // here — treat the catalog-error case as Network and
                 // anything else (SourceAgreementsNotAccepted, future
                 // statuses) as Generic.
-                co_return finish(connectResult.Status() == ConnectResultStatus::CatalogError
-                                     ? Kind::Network
-                                     : Kind::Generic,
-                                 hr, installerErr);
+                co_return finish(connectResult.Status() == ConnectResultStatus::CatalogError ? Kind::Network : Kind::Generic,
+                                 hr,
+                                 installerErr);
             }
 
             // ── 3. Find the package by exact ID ──
@@ -1101,10 +1142,9 @@ namespace winrt::TerminalApp::implementation
                     "[FRE] winget FindPackages failed: {} (status={})",
                     FindStatusName(findResult.Status()),
                     static_cast<int>(findResult.Status())));
-                co_return finish(findResult.Status() == FindPackagesResultStatus::BlockedByPolicy
-                                     ? Kind::BlockedByPolicy
-                                     : Kind::Generic,
-                                 hr, installerErr);
+                co_return finish(findResult.Status() == FindPackagesResultStatus::BlockedByPolicy ? Kind::BlockedByPolicy : Kind::Generic,
+                                 hr,
+                                 installerErr);
             }
             if (findResult.Matches().Size() == 0)
             {
@@ -1130,8 +1170,8 @@ namespace winrt::TerminalApp::implementation
             // ~3x safety margin); at the 5 min mark we log a heads-up
             // so anyone tailing the log can tell "still running" apart
             // from "deadlocked".
-            constexpr DWORD kInstallSoftWarnMs = 5 * 60 * 1000;  // 5 min
-            constexpr DWORD kInstallHardCapMs = 20 * 60 * 1000;  // 20 min
+            constexpr DWORD kInstallSoftWarnMs = 5 * 60 * 1000; // 5 min
+            constexpr DWORD kInstallHardCapMs = 20 * 60 * 1000; // 20 min
             const auto startTick = GetTickCount64();
             bool warnedSoft = false;
             while (installOp.Status() == winrt::Windows::Foundation::AsyncStatus::Started)
@@ -1185,9 +1225,7 @@ namespace winrt::TerminalApp::implementation
                     // VPN" message — anything else (hash/cert/disk/AV)
                     // falls back to Generic so we don't send the user
                     // chasing the wrong problem.
-                    kind = _IsNetworkLikeHResult(hr)
-                               ? Kind::Network
-                               : Kind::Generic;
+                    kind = _IsNetworkLikeHResult(hr) ? Kind::Network : Kind::Generic;
                     break;
                 case InstallResultStatus::InstallError:
                     kind = Kind::InstallerFailed;
@@ -1631,10 +1669,16 @@ namespace winrt::TerminalApp::implementation
             }
         }
         namespace Reg = ::Microsoft::Terminal::Settings::Model::AgentRegistry;
+        auto selectedProfile = ::Microsoft::Terminal::AgentProfiles::Find(_settings, std::wstring_view{ displayedAgentId });
+        const auto setupAgentId = selectedProfile ?
+                                      (selectedProfile.AgentProfileSource() == L"host" && !::Microsoft::Terminal::CustomAgents::IsId(selectedProfile.AgentProfileId()) ?
+                                           selectedProfile.AgentProfileId() :
+                                           winrt::hstring{}) :
+                                      displayedAgentId;
         const auto allowedAgents = Reg::FilteredAcpAgents();
         const auto agentDecision = ::Microsoft::Terminal::AgentAvailability::DecideFreAgentSelection(
             allowedAgents,
-            std::wstring_view{ displayedAgentId },
+            std::wstring_view{ setupAgentId },
             std::wstring_view{ _settings.GlobalSettings().EffectiveAcpAgent() },
             _agentSelectionExplicitlyChanged);
 
@@ -1645,15 +1689,28 @@ namespace winrt::TerminalApp::implementation
         if (_settings)
         {
             const auto& globals = _settings.GlobalSettings();
-            if (agentDecision.persistSelection)
+            if (selectedProfile && ::Microsoft::Terminal::AgentProfiles::IsAcpCandidate(selectedProfile))
             {
-                globals.AcpAgent(displayedAgentId);
-                namespace Reg = ::Microsoft::Terminal::Settings::Model::AgentRegistry;
-                if (Reg::SupportsDelegate(displayedAgentId) &&
-                    (Reg::AgentIdEquals(Reg::CliExecutable(displayedAgentId), displayedAgentId) ||
-                     ::Microsoft::Terminal::AgentAvailability::IsAgentCliInstalled(displayedAgentId)))
+                globals.AgentPaneDefaultProfile(winrt::to_hstring(selectedProfile.Guid()));
+            }
+            if (agentDecision.persistSelection || (!selectedProfile && !agentDecision.setupAgentId.empty()))
+            {
+                if (!selectedProfile)
                 {
-                    globals.DelegateAgent(displayedAgentId);
+                    selectedProfile = _settings.CreateNewProfile();
+                    selectedProfile.Name(displayedAgentId);
+                    selectedProfile.AgentProfileId(displayedAgentId);
+                    selectedProfile.AgentProfileAcpEnabled(true);
+                    selectedProfile.Commandline(winrt::hstring{ Reg::CliExecutable(displayedAgentId) });
+                    globals.AgentPaneDefaultProfile(winrt::to_hstring(selectedProfile.Guid()));
+                }
+                globals.AcpAgent(setupAgentId);
+                namespace Reg = ::Microsoft::Terminal::Settings::Model::AgentRegistry;
+                if (Reg::SupportsDelegate(setupAgentId) &&
+                    (Reg::AgentIdEquals(Reg::CliExecutable(setupAgentId), setupAgentId) ||
+                     ::Microsoft::Terminal::AgentAvailability::IsAgentCliInstalled(setupAgentId)))
+                {
+                    globals.DelegateAgent(setupAgentId);
                 }
             }
             globals.AgentPaneYoloMode(AutomaticApprovalToggle().IsOn());
@@ -1669,10 +1726,18 @@ namespace winrt::TerminalApp::implementation
             const auto posIdx = PanePositionComboBox().SelectedIndex();
             switch (posIdx)
             {
-            case 1: globals.AgentPanePosition(L"right"); break;
-            case 2: globals.AgentPanePosition(L"left"); break;
-            case 3: globals.AgentPanePosition(L"top"); break;
-            default: globals.AgentPanePosition(L"bottom"); break;
+            case 1:
+                globals.AgentPanePosition(L"right");
+                break;
+            case 2:
+                globals.AgentPanePosition(L"left");
+                break;
+            case 3:
+                globals.AgentPanePosition(L"top");
+                break;
+            default:
+                globals.AgentPanePosition(L"bottom");
+                break;
             }
         }
 
@@ -1698,12 +1763,7 @@ namespace winrt::TerminalApp::implementation
             _hostAgentSnapshot,
             std::wstring_view{ agentId });
 
-        _agentPaneLog("[FRE] Save: agent=" + winrt::to_string(agentId)
-            + " needsNode=" + (needsNode ? "y" : "n")
-            + " detect=" + (errorDetectionEnabled ? "on" : "off")
-            + " autoFix=" + (autoFixEnabled ? "on" : "off")
-            + " automaticApproval=" + (AutomaticApprovalToggle().IsOn() ? "on" : "off")
-            + " hooks=" + (SessionManagementToggle().IsOn() ? "on" : "off"));
+        _agentPaneLog("[FRE] Save: agent=" + winrt::to_string(agentId) + " needsNode=" + (needsNode ? "y" : "n") + " detect=" + (errorDetectionEnabled ? "on" : "off") + " autoFix=" + (autoFixEnabled ? "on" : "off") + " automaticApproval=" + (AutomaticApprovalToggle().IsOn() ? "on" : "off") + " hooks=" + (SessionManagementToggle().IsOn() ? "on" : "off"));
 
         // If any bootstrap step needs winget, make sure winget itself is
         // available before kicking off the install — otherwise the user
@@ -1730,7 +1790,6 @@ namespace winrt::TerminalApp::implementation
                 _ShowProblem(FreProblemKind::WingetMissing);
                 co_return;
             }
-
         }
         if (needsNode)
         {
@@ -1740,7 +1799,8 @@ namespace winrt::TerminalApp::implementation
             // thread before touching XAML state.
             co_await winrt::resume_foreground(dispatcher);
             auto self = weak.get();
-            if (!self) co_return;
+            if (!self)
+                co_return;
             const auto kind = static_cast<FreWingetFailureKind>(kindInt);
             _agentPaneLog("[FRE] Node.js install: " +
                           std::string(kind == FreWingetFailureKind::Success ? "ok" : "FAILED"));
@@ -2013,16 +2073,15 @@ namespace winrt::TerminalApp::implementation
         // hooks; the unshown failure stays enabled and is retried on next Save.
         if (hooksFailed || shellIntegFailed)
         {
-            const auto problemKind = shellIntegEpBlocked ? FreProblemKind::ShellIntegrationExecutionPolicy
-                                                        : shellIntegFailed ? FreProblemKind::ShellIntegration
-                                                                           : FreProblemKind::Hooks;
-            _agentPaneLog("[FRE] Showing problem: "
-                + std::string(problemKind == FreProblemKind::ShellIntegrationExecutionPolicy ? "ShellIntegrationExecutionPolicy" :
-                              problemKind == FreProblemKind::ShellIntegration ? "ShellIntegration" :
-                                                                               "Hooks"));
+            const auto problemKind = shellIntegEpBlocked ? FreProblemKind::ShellIntegrationExecutionPolicy : shellIntegFailed ? FreProblemKind::ShellIntegration :
+                                                                                                                                FreProblemKind::Hooks;
+            _agentPaneLog("[FRE] Showing problem: " + std::string(problemKind == FreProblemKind::ShellIntegrationExecutionPolicy ? "ShellIntegrationExecutionPolicy" :
+                                                                  problemKind == FreProblemKind::ShellIntegration                ? "ShellIntegration" :
+                                                                                                                                   "Hooks"));
             co_await winrt::resume_foreground(dispatcher);
             auto self = weak.get();
-            if (!self) co_return;
+            if (!self)
+                co_return;
 
             _ShowProblem(problemKind);
             co_return;
@@ -2032,7 +2091,8 @@ namespace winrt::TerminalApp::implementation
         co_await winrt::resume_foreground(dispatcher);
         {
             auto self = weak.get();
-            if (!self) co_return;
+            if (!self)
+                co_return;
 
             _agentPaneLog("[FRE] Completed — raising Completed event");
             _autoInstallCopilotAfterCompletion = agentId == L"copilot";
@@ -2149,9 +2209,15 @@ namespace winrt::TerminalApp::implementation
                 winrt::Windows::UI::Core::CoreDispatcherPriority::Low,
                 [weak = get_weak()]() {
                     auto self = weak.get();
-                    if (!self) { return; }
+                    if (!self)
+                    {
+                        return;
+                    }
                     auto o = self->SavingOverlay();
-                    if (!o || o.Visibility() != Visibility::Visible) { return; }
+                    if (!o || o.Visibility() != Visibility::Visible)
+                    {
+                        return;
+                    }
                     if (auto r = self->SavingProgressRing())
                     {
                         r.Focus(FocusState::Programmatic);

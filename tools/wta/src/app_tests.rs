@@ -2730,7 +2730,8 @@ fn session_activation_retry_after_window_move_keeps_original_receipt() {
         activation_id: original_activation_id,
         status_only: false,
         ..
-    } = master_rx.try_recv().unwrap() else {
+    } = master_rx.try_recv().unwrap()
+    else {
         panic!("expected an initial activation");
     };
     app.handle_event(AppEvent::TabRenamed {
@@ -13505,11 +13506,13 @@ fn render_agent_picker_lists_available_agents() {
             id: "copilot".into(),
             display_name: "GitHub Copilot".into(),
             source: crate::agent_source::AgentSource::Host,
+            profile_id: None,
         },
         AvailableAgent {
             id: "claude".into(),
             display_name: "Claude Test Agent".into(),
             source: crate::agent_source::AgentSource::Host,
+            profile_id: None,
         },
     ];
     app.current_tab_mut().agent_picker_open = true;
@@ -13522,11 +13525,69 @@ fn render_agent_picker_lists_available_agents() {
 }
 
 #[test]
+fn agent_profile_catalog_keeps_distros_and_configurations_distinct() {
+    let mut app = test_app();
+    app.owner_tab_id = Some("tab-profile".into());
+    app.window_id = Some("window-profile".into());
+    let profiles = serde_json::json!([
+        {
+            "profileId": "{11111111-1111-1111-1111-111111111111}",
+            "id": "claude", "name": "Claude Windows",
+            "source": "host", "wslDistro": "", "acpEnabled": true
+        },
+        {
+            "profileId": "{22222222-2222-2222-2222-222222222222}",
+            "id": "claude", "name": "Claude Ubuntu",
+            "source": "wsl", "wslDistro": "Ubuntu", "acpEnabled": true
+        },
+        {
+            "profileId": "{33333333-3333-3333-3333-333333333333}",
+            "id": "claude", "name": "Claude disabled",
+            "source": "host", "wslDistro": "", "acpEnabled": false
+        }
+    ]);
+    app.handle_event(AppEvent::WtEvent {
+        method: "agent_config_changed".into(),
+        pane_id: String::new(),
+        tab_id: None,
+        params: serde_json::json!({
+            "window_id": "another-window",
+            "tab_id": "tab-profile",
+            "agent_profiles": profiles,
+        }),
+    });
+    assert!(app.profile_agents.is_none());
+    app.handle_event(AppEvent::WtEvent {
+        method: "agent_config_changed".into(),
+        pane_id: String::new(),
+        tab_id: None,
+        params: serde_json::json!({
+            "window_id": "window-profile",
+            "tab_id": "tab-profile",
+            "agent_profiles": profiles,
+            "agent_profile_id": "{22222222-2222-2222-2222-222222222222}"
+        }),
+    });
+    assert_eq!(app.available_agents.len(), 2);
+    assert_ne!(
+        app.available_agents[0].profile_id,
+        app.available_agents[1].profile_id
+    );
+    app.request_agent_source_picker();
+    assert_eq!(app.current_tab().agent_picker_selected, 1);
+    assert_eq!(
+        app.current_agent_profile_id.as_deref(),
+        Some("{22222222-2222-2222-2222-222222222222}")
+    );
+}
+
+#[test]
 fn slash_agent_accepts_base_display_name_with_source_suffix() {
     let available_agents = vec![AvailableAgent {
         id: "copilot".into(),
         display_name: "GitHub Copilot — Windows".into(),
         source: crate::agent_source::AgentSource::Host,
+        profile_id: None,
     }];
 
     let selected = App::find_host_agent_for_command(

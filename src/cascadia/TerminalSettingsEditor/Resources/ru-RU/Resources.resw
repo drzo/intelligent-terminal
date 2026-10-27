@@ -2841,7 +2841,7 @@
     <comment>Header for the setting that specifies which AI agent powers the agent pane.</comment>
   </data>
   <data name="AIAgents_AcpAgent.HelpText" xml:space="preserve">
-    <value>Выберите агента, используемого в панели агента. Любой совместимый агент ACP будет обнаружен автоматически.</value>
+    <value>Выберите профиль агента, разрешённый для использования на панели агентов. Настройте запуск, возобновление и поддержку ACP в этом профиле.</value>
     <comment>Supplementary description for the agent pane setting. {Locked="ACP"}</comment>
   </data>
   <data name="AIAgents_AcpModel.Header" xml:space="preserve">
@@ -3111,4 +3111,14 @@ Alt+Shift+/ ввести запрос; Alt+Shift+B запустить без н�
   <data name="AIAgents_CustomCli.Header" xml:space="preserve"><value>Интерактивная команда CLI (необязательно)</value><comment>{Locked="CLI"} Providing this command generates an interactive terminal profile for this custom agent.</comment></data>
   <data name="AIAgents_CustomResume.Header" xml:space="preserve"><value>Команда возобновления (необязательно; используйте {sessionId})</value><comment>{Locked="{sessionId}"} Requires an interactive CLI command. The placeholder must be exactly one complete argument.</comment></data>
   <data name="AIAgents_CustomInvalid" xml:space="preserve"><value>Проверьте кавычки и укажите команду ACP или CLI. Для возобновления нужна команда CLI и ровно один отдельный аргумент {sessionId}.</value><comment>{Locked="ACP"} {Locked="CLI"} {Locked="{sessionId}"} Validation error for custom agent startup and resume commands.</comment></data>
+  <data name="Profile_AgentDefinition.Header" xml:space="preserve"><value>Использовать как профиль агента</value><comment>Switch that adds agent capabilities to this terminal profile.</comment></data>
+  <data name="Profile_AgentDefinition.HelpText" xml:space="preserve"><value>Настройте здесь интерактивный запуск, возобновление сеанса и необязательную поддержку панели помощника. Команды содержат исполняемый файл и буквальные аргументы, а не скрипты оболочки.</value><comment>Explains the profile-owned agent configuration.</comment></data>
+  <data name="Profile_AgentWsl.Header" xml:space="preserve"><value>Запускать в WSL</value><comment>{Locked="WSL"} Switch choosing the execution environment of this agent profile.</comment></data>
+  <data name="Profile_AgentWsl.HelpText" xml:space="preserve"><value>Выполнять команды агента этого профиля в указанном дистрибутиве WSL, но никогда в Windows.</value><comment>{Locked="WSL"} {Locked="Windows"} Applies to interactive startup, resume, and ACP commands.</comment></data>
+  <data name="Profile_AgentWslDistro.Header" xml:space="preserve"><value>Дистрибутив WSL</value><comment>{Locked="WSL"} Exact installed distribution name, for example Ubuntu.</comment></data>
+  <data name="Profile_AcpEnabled.Header" xml:space="preserve"><value>Разрешить использование на панели агентов</value><comment>Switch exposing this profile in the agent pane's agent picker.</comment></data>
+  <data name="Profile_AcpEnabled.HelpText" xml:space="preserve"><value>Сделать этот профиль доступным на панели агентов. Требуется команда запуска ACP; для встроенных агентов предусмотрена команда по умолчанию. Включение этого параметра не запускает агента и не предоставляет разрешения.</value><comment>{Locked="ACP"} Distinguish availability from execution and authorization.</comment></data>
+  <data name="Profile_AgentResumeShared.Header" xml:space="preserve"><value>Возобновление через CLI принимает идентификаторы сеансов ACP</value><comment>{Locked="CLI"} {Locked="ACP"} Explicit capability toggle for providers whose native and ACP session identifiers are compatible.</comment></data>
+  <data name="Profile_AgentResumeShared.HelpText" xml:space="preserve"><value>Включайте этот параметр только в том случае, если интерактивная команда возобновления этого агента принимает те же идентификаторы сеансов, что и его сервер ACP. В противном случае оставьте его выключенным.</value><comment>{Locked="ACP"} Do not infer identifier compatibility from session listing or resume support.</comment></data>
+  <data name="Profile_AgentPaneDefaultFormat" xml:space="preserve"><value>По умолчанию ({0})</value><comment>{Locked="{0}"} Label for following the global agent-pane profile selection. The selected profile display name replaces {0}.</comment></data>
 </root>

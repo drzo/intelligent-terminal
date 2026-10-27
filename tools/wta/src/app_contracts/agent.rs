@@ -5,4 +5,5 @@ pub struct AvailableAgent {
     pub id: String,
     pub display_name: String,
     pub source: AgentSource,
+    pub profile_id: Option<String>,
 }

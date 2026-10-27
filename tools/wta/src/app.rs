@@ -1440,6 +1440,7 @@ pub struct App {
     pub state: ConnectionState,
     /// The agent ID we're trying to connect to (set at preflight/FRE time).
     pub current_agent_id: String,
+    pub current_agent_profile_id: Option<String>,
     /// Highest host-issued rebind generation observed by this helper.
     last_agent_rebind_generation: u64,
     last_agent_rebind_window_id: Option<String>,
@@ -1462,6 +1463,7 @@ pub struct App {
     host_agent_allowlist_present: bool,
     /// Installed subset of the host-allowed agents, refreshed by `/agent`.
     pub available_agents: Vec<AvailableAgent>,
+    profile_agents: Option<Vec<AvailableAgent>>,
     agent_source_probe_generation: u64,
     /// True when preflight detected an issue and is showing Setup screen.
     /// Prevents AgentError from overriding the preflight Setup.
@@ -1849,6 +1851,8 @@ impl App {
             allowed_agent_ids: Vec::new(),
             host_agent_allowlist_present: false,
             available_agents: Vec::new(),
+            profile_agents: None,
+            current_agent_profile_id: None,
             agent_source_probe_generation: 0,
             preflight_setup_active: false,
             agent_name: String::new(),
@@ -2033,8 +2037,8 @@ impl App {
             return;
         }
         self.pending_acp_start = false;
-        let retry_startup = self.pending_startup_retry.take()
-            == Some(self.agent_binding_generation);
+        let retry_startup =
+            self.pending_startup_retry.take() == Some(self.agent_binding_generation);
         let post_login_auth = self.needs_post_login_authenticate;
         self.needs_post_login_authenticate = false;
         let requested_auth = self
@@ -2153,6 +2157,7 @@ impl App {
                     let event_tx_for_pipe = event_tx.clone();
                     let proposal_channels = Arc::clone(&self.proposal_channels);
                     self.agent_transport_retirement_pending = true;
+                    let agent_profile_id = self.current_agent_profile_id.clone();
                     tokio::task::spawn_local(async move {
                         match crate::protocol::acp::client::run_acp_client_over_pipe(
                             pipe_name,
@@ -2160,6 +2165,7 @@ impl App {
                             custom_model_selection,
                             cloud_models,
                             agent_id_opt,
+                            agent_profile_id,
                             agent_source,
                             source_cwd,
                             owner_tab_opt,
@@ -2652,6 +2658,10 @@ impl App {
     }
 
     fn refresh_available_agents(&mut self) {
+        if let Some(profiles) = &self.profile_agents {
+            self.available_agents.clone_from(profiles);
+            return;
+        }
         self.available_agents = crate::agent_registry::KNOWN_AGENTS
             .iter()
             .filter(|profile| {
@@ -2671,6 +2681,7 @@ impl App {
                     id: profile.id.to_string(),
                     display_name: format!("{} — {}", profile.display_name, source.display_suffix()),
                     source,
+                    profile_id: None,
                 }
             })
             .collect();
@@ -2678,6 +2689,15 @@ impl App {
 
     fn request_agent_source_picker(&mut self) {
         self.refresh_available_agents();
+        if self.profile_agents.is_some() {
+            let selected = self
+                .available_agents
+                .iter()
+                .position(|agent| agent.profile_id == self.current_agent_profile_id)
+                .unwrap_or(0);
+            self.open_agent_picker(selected);
+            return;
+        }
         self.agent_source_probe_generation = self.agent_source_probe_generation.wrapping_add(1);
         let generation = self.agent_source_probe_generation;
         let Some(event_tx) = self.event_tx.clone() else {
@@ -2720,6 +2740,7 @@ impl App {
                                         source.display_suffix()
                                     ),
                                     source,
+                                    profile_id: None,
                                 }
                             })
                     }
@@ -2812,7 +2833,10 @@ impl App {
         if self.queue_blocks_session_change() {
             return;
         }
-        if agent.id == self.current_agent_id && agent.source == self.current_agent_source {
+        if agent.id == self.current_agent_id
+            && agent.source == self.current_agent_source
+            && agent.profile_id == self.current_agent_profile_id
+        {
             return;
         }
         let Some(tab_id) = self.owner_tab_id.as_deref() else {
@@ -2823,12 +2847,14 @@ impl App {
             self.push_agent_switch_unavailable();
             return;
         };
-        send_wt_protocol_event(build_switch_agent_event(
+        let event = build_switch_agent_event(
             window_id,
             tab_id,
             &agent.id,
             &agent.source,
-        ));
+            agent.profile_id.as_deref(),
+        );
+        send_wt_protocol_event(event);
     }
 
     fn push_agent_switch_unavailable(&mut self) {
@@ -4003,7 +4029,8 @@ impl App {
         };
         let tab_id = self.active_tab_key().to_string();
         if let Some(pending) = self.pending_session_activations.values().find(|pending| {
-            pending.delivery_tab_id == tab_id && matches!(&pending.request,
+            pending.delivery_tab_id == tab_id
+                && matches!(&pending.request,
                 crate::protocol::acp::client::MasterExtRequest::SessionActivate {
                     identity: pending_identity, ..
                 } if pending_identity == &identity)
@@ -4069,7 +4096,6 @@ impl App {
                 ],
             });
         }
-
     }
 
     fn reconcile_session_activations(&self) {
@@ -6718,6 +6744,7 @@ impl App {
             pane_focused: self.pane_focused,
             current_id: &self.current_agent_id,
             current_source: &self.current_agent_source,
+            current_profile_id: self.current_agent_profile_id.as_deref(),
         })
     }
 
@@ -8065,6 +8092,7 @@ fn build_switch_agent_event(
     tab_id: &str,
     agent_id: &str,
     source: &crate::agent_source::AgentSource,
+    profile_id: Option<&str>,
 ) -> String {
     serde_json::json!({
         "type": "event",
@@ -8075,6 +8103,7 @@ fn build_switch_agent_event(
             "agent_id": agent_id,
             "agent_source": source.kind(),
             "wsl_distro": source.distro(),
+            "agent_profile_id": profile_id,
         }
     })
     .to_string()

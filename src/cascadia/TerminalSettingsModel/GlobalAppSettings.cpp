@@ -606,7 +606,21 @@ void GlobalAppSettings::LogSettingChanges(std::set<std::string>& changes, const 
 
 winrt::hstring GlobalAppSettings::EffectiveAcpAgent() const
 {
-    const auto agent = AcpAgent();
+    auto agent = AcpAgent();
+    if (!AgentPaneDefaultProfile().empty())
+    {
+        agent = {};
+        for (const auto& profile : _agentProfiles)
+        {
+            if (til::equals_insensitive_ascii(std::wstring_view{ winrt::to_hstring(profile.Guid()) },
+                                              std::wstring_view{ AgentPaneDefaultProfile() }) &&
+                !profile.Deleted() && profile.AgentProfileAcpEnabled())
+            {
+                agent = profile.AgentProfileId();
+                break;
+            }
+        }
+    }
     if (agent.empty())
     {
         return agent;
@@ -750,7 +764,7 @@ bool GlobalAppSettings::ClearAgentPaneYoloModeIfPolicyBlocked()
 bool GlobalAppSettings::ClearAgentPaneYoloModeIfUnavailableDefault()
 {
     if (!AgentYoloPolicy::IsAutomaticProviderKnownUnsupported(
-            std::wstring_view{ AcpAgent() }) ||
+            std::wstring_view{ EffectiveAcpAgent() }) ||
         !AgentPaneYoloMode())
     {
         return false;

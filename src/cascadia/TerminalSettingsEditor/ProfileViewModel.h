@@ -99,6 +99,18 @@ namespace winrt::Microsoft::Terminal::Settings::Editor::implementation
         bool IsAgentProfilePolicyBlocked() const;
         hstring LaunchCommandline() const;
         void LaunchCommandline(const hstring& value);
+        bool IsAgentDefinition() const { return !_profile.AgentProfileId().empty(); }
+        void IsAgentDefinition(bool value);
+        bool AgentRunsInWsl() const { return _profile.AgentProfileSource() == L"wsl"; }
+        void AgentRunsInWsl(bool value);
+        hstring AgentProfileError() const;
+        OBSERVABLE_PROJECTED_SETTING(_profile, AgentProfileSharedSessions);
+        void ClearLaunchCommandline();
+        bool HasLaunchCommandline() const { return _profile.HasAgentProfileCliCommand() || _profile.HasCommandline(); }
+        Model::Profile LaunchCommandlineOverrideSource() const
+        {
+            return _profile.AgentProfileCliCommand().empty() ? _profile.CommandlineOverrideSource() : _profile.AgentProfileCliCommandOverrideSource();
+        }
 
         // general profile knowledge
         winrt::guid OriginalProfileGuid() const noexcept;
@@ -142,6 +154,13 @@ namespace winrt::Microsoft::Terminal::Settings::Editor::implementation
         OBSERVABLE_PROJECTED_SETTING(_profile, StartingDirectory);
         OBSERVABLE_PROJECTED_SETTING(_profile, AgentProfileModel);
         OBSERVABLE_PROJECTED_SETTING(_profile, AgentProfileArguments);
+        OBSERVABLE_PROJECTED_SETTING(_profile, AgentProfileCliCommand);
+        OBSERVABLE_PROJECTED_SETTING(_profile, AgentProfileResumeCommand);
+        OBSERVABLE_PROJECTED_SETTING(_profile, AgentProfileAcpEnabled);
+        OBSERVABLE_PROJECTED_SETTING(_profile, AgentProfileAcpCommand);
+        OBSERVABLE_PROJECTED_SETTING(_profile, AgentProfileAcpModel);
+        OBSERVABLE_PROJECTED_SETTING(_profile, AgentProfileWslDistro);
+        OBSERVABLE_PROJECTED_SETTING(_profile, AgentPaneProfile);
         OBSERVABLE_PROJECTED_SETTING(_profile, AgentPaneBackend);
         OBSERVABLE_PROJECTED_SETTING(_profile, CommandPaletteAgent);
         OBSERVABLE_PROJECTED_SETTING(_profile, AntialiasingMode);
@@ -177,6 +196,7 @@ namespace winrt::Microsoft::Terminal::Settings::Editor::implementation
 
     private:
         Model::Profile _profile;
+        hstring _agentDefinitionId;
         winrt::guid _originalProfileGuid{};
         winrt::hstring _lastBgImagePath;
         winrt::hstring _lastStartingDirectoryPath;

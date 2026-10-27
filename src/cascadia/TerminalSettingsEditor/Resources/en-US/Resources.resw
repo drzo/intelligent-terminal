@@ -752,7 +752,7 @@ In this context, "agent" refers to an AI agent (e.g. Copilot, Claude, Gemini), n
     <comment>Header for the setting that specifies which AI agent powers the agent pane.</comment>
   </data>
   <data name="AIAgents_AcpAgent.HelpText" xml:space="preserve">
-    <value>Choose the agent used in the agent pane. Any compatible ACP agent will be detected.</value>
+    <value>Choose an agent profile enabled for the agent pane. Configure startup, resume, and ACP support in that profile.</value>
     <comment>Supplementary description for the agent pane setting. {Locked="ACP"}</comment>
   </data>
   <data name="AIAgents_AcpModel.Header" xml:space="preserve">
@@ -3123,4 +3123,14 @@ In this context, "agent" refers to an AI agent (e.g. Copilot, Claude, Gemini), n
   <data name="AIAgents_CustomCli.Header" xml:space="preserve"><value>Interactive CLI command (optional)</value><comment>{Locked="CLI"} Providing this command generates an interactive terminal profile for this custom agent.</comment></data>
   <data name="AIAgents_CustomResume.Header" xml:space="preserve"><value>Resume command (optional; use {sessionId})</value><comment>{Locked="{sessionId}"} Requires an interactive CLI command. The placeholder must be exactly one complete argument.</comment></data>
   <data name="AIAgents_CustomInvalid" xml:space="preserve"><value>Check the command quoting. Specify an ACP or CLI command. Resume requires a CLI command and exactly one {sessionId} argument.</value><comment>{Locked="ACP"} {Locked="CLI"} {Locked="{sessionId}"} Validation error for custom agent startup and resume commands.</comment></data>
+  <data name="Profile_AgentDefinition.Header" xml:space="preserve"><value>Use as an agent profile</value><comment>Switch that adds agent capabilities to this terminal profile.</comment></data>
+  <data name="Profile_AgentDefinition.HelpText" xml:space="preserve"><value>Configure interactive startup, session resume, and optional assistant-pane support here. Commands contain an executable and literal arguments, not shell scripts.</value><comment>Explains the profile-owned agent configuration.</comment></data>
+  <data name="Profile_AgentPaneDefaultFormat" xml:space="preserve"><value>Default ({0})</value><comment>{Locked="{0}"} Label for following the global agent-pane profile selection. The selected profile display name replaces {0}.</comment></data>
+  <data name="Profile_AgentWsl.Header" xml:space="preserve"><value>Run in WSL</value><comment>{Locked="WSL"} Switch choosing the execution environment of this agent profile.</comment></data>
+  <data name="Profile_AgentWsl.HelpText" xml:space="preserve"><value>Run this profile's agent commands inside the specified WSL distribution, never on Windows.</value><comment>{Locked="WSL"} {Locked="Windows"} Applies to interactive startup, resume, and ACP commands.</comment></data>
+  <data name="Profile_AgentWslDistro.Header" xml:space="preserve"><value>WSL distribution</value><comment>{Locked="WSL"} Exact installed distribution name, for example Ubuntu.</comment></data>
+  <data name="Profile_AcpEnabled.Header" xml:space="preserve"><value>Allow use in the agent pane</value><comment>Switch exposing this profile in the agent pane's agent picker.</comment></data>
+  <data name="Profile_AcpEnabled.HelpText" xml:space="preserve"><value>Make this profile available in the agent pane. Requires an ACP startup command; built-in agents provide a default. Enabling this does not start the agent or grant permissions.</value><comment>{Locked="ACP"} Distinguish availability from execution and authorization.</comment></data>
+  <data name="Profile_AgentResumeShared.Header" xml:space="preserve"><value>CLI resume accepts ACP session IDs</value><comment>{Locked="CLI"} {Locked="ACP"} Explicit capability toggle for providers whose native and ACP session identifiers are compatible.</comment></data>
+  <data name="Profile_AgentResumeShared.HelpText" xml:space="preserve"><value>Enable only if this agent's interactive resume command accepts the same session IDs as its ACP server. Otherwise keep this off.</value><comment>{Locked="ACP"} Do not infer identifier compatibility from session listing or resume support.</comment></data>
 </root>

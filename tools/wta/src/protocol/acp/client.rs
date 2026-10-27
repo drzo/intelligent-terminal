@@ -3031,6 +3031,7 @@ pub async fn run_acp_client_over_pipe(
     // (it never executes a command string sent over the pipe). `None` →
     // master uses its `--agent` default (the legacy single-agent behavior).
     agent_id: Option<String>,
+    agent_profile_id: Option<String>,
     agent_source: crate::agent_source::AgentSource,
     source_cwd: Option<String>,
     owner_tab_id: Option<String>,
@@ -3358,6 +3359,7 @@ pub async fn run_acp_client_over_pipe(
                 // to the default anyway. Sending `None` makes that fallback
                 // silent (master applies its own `--agent` default).
                 agent_id: usage_family_id.clone(),
+                agent_profile_id: agent_profile_id.clone(),
                 model: acp_model_override.clone().filter(|s| !s.trim().is_empty()),
                 provider_binding: Some(
                     custom_model_selection

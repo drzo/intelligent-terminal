@@ -750,7 +750,7 @@
     <comment>Header for the setting that specifies which AI agent powers the agent pane.</comment>
   </data>
   <data name="AIAgents_AcpAgent.HelpText" xml:space="preserve">
-    <value>اختر الوكيل المستخدم في لوحة الوكيل. سيتم اكتشاف أي وكيل متوافق مع ACP.</value>
+    <value>اختر ملف تعريف وكيل مُمكّنًا للاستخدام في لوحة الوكيل. يمكنك تكوين بدء التشغيل والاستئناف ودعم ACP في ملف التعريف هذا.</value>
     <comment>Supplementary description for the agent pane setting. {Locked="ACP"}</comment>
   </data>
   <data name="AIAgents_AcpModel.Header" xml:space="preserve">
@@ -3118,4 +3118,14 @@ Alt+Shift+/ إدخال طلب؛ Alt+Shift+B التشغيل دون طلب أول�
   <data name="AIAgents_CustomCli.Header" xml:space="preserve"><value>أمر CLI التفاعلي (اختياري)</value><comment>{Locked="CLI"} Providing this command generates an interactive terminal profile for this custom agent.</comment></data>
   <data name="AIAgents_CustomResume.Header" xml:space="preserve"><value>أمر الاستئناف (اختياري؛ استخدم {sessionId})</value><comment>{Locked="{sessionId}"} Requires an interactive CLI command. The placeholder must be exactly one complete argument.</comment></data>
   <data name="AIAgents_CustomInvalid" xml:space="preserve"><value>تحقق من علامات الاقتباس وحدد أمر ACP أو CLI. يتطلب الاستئناف أمر CLI ووسيطة كاملة واحدة بالضبط هي {sessionId}.</value><comment>{Locked="ACP"} {Locked="CLI"} {Locked="{sessionId}"} Validation error for custom agent startup and resume commands.</comment></data>
+  <data name="Profile_AgentDefinition.Header" xml:space="preserve"><value>استخدام كملف تعريف وكيل</value><comment>Switch that adds agent capabilities to this terminal profile.</comment></data>
+  <data name="Profile_AgentDefinition.HelpText" xml:space="preserve"><value>يمكنك هنا تكوين بدء التشغيل التفاعلي واستئناف الجلسة والدعم الاختياري للوحة المساعد. تحتوي الأوامر على ملف تنفيذي ووسيطات حرفية، وليست برامج نصية للصدفة.</value><comment>Explains the profile-owned agent configuration.</comment></data>
+  <data name="Profile_AgentWsl.Header" xml:space="preserve"><value>التشغيل في WSL</value><comment>{Locked="WSL"} Switch choosing the execution environment of this agent profile.</comment></data>
+  <data name="Profile_AgentWsl.HelpText" xml:space="preserve"><value>تشغيل أوامر الوكيل لملف التعريف هذا داخل توزيعة WSL المحددة، وليس على Windows مطلقًا.</value><comment>{Locked="WSL"} {Locked="Windows"} Applies to interactive startup, resume, and ACP commands.</comment></data>
+  <data name="Profile_AgentWslDistro.Header" xml:space="preserve"><value>توزيعة WSL</value><comment>{Locked="WSL"} Exact installed distribution name, for example Ubuntu.</comment></data>
+  <data name="Profile_AcpEnabled.Header" xml:space="preserve"><value>السماح بالاستخدام في لوحة الوكيل</value><comment>Switch exposing this profile in the agent pane's agent picker.</comment></data>
+  <data name="Profile_AcpEnabled.HelpText" xml:space="preserve"><value>إتاحة ملف التعريف هذا في لوحة الوكيل. يتطلب ذلك أمر بدء تشغيل ACP؛ ويوفر الوكلاء المضمنون أمرًا افتراضيًا. لا يؤدي تمكين هذا الخيار إلى بدء تشغيل الوكيل أو منحه أذونات.</value><comment>{Locked="ACP"} Distinguish availability from execution and authorization.</comment></data>
+  <data name="Profile_AgentResumeShared.Header" xml:space="preserve"><value>الاستئناف عبر CLI يقبل معرّفات جلسات ACP</value><comment>{Locked="CLI"} {Locked="ACP"} Explicit capability toggle for providers whose native and ACP session identifiers are compatible.</comment></data>
+  <data name="Profile_AgentResumeShared.HelpText" xml:space="preserve"><value>لا تُمكّن هذا الخيار إلا إذا كان أمر الاستئناف التفاعلي لهذا الوكيل يقبل معرّفات الجلسات نفسها التي يستخدمها خادم ACP الخاص به. وإلا، فأبقِ هذا الخيار معطّلًا.</value><comment>{Locked="ACP"} Do not infer identifier compatibility from session listing or resume support.</comment></data>
+  <data name="Profile_AgentPaneDefaultFormat" xml:space="preserve"><value>افتراضي ({0})</value><comment>{Locked="{0}"} Label for following the global agent-pane profile selection. The selected profile display name replaces {0}.</comment></data>
 </root>

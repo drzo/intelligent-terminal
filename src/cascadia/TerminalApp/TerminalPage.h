@@ -264,6 +264,7 @@ namespace winrt::TerminalApp::implementation
         Windows::Foundation::IReference<uint32_t> FocusedTabIndex() const;
         Windows::Foundation::IAsyncOperation<Microsoft::Terminal::Protocol::PaneInfo> GetProtocolActivePane();
         Windows::Foundation::IAsyncOperation<Windows::Foundation::Collections::IVector<Microsoft::Terminal::Protocol::ProfileInfo>> GetProtocolProfiles();
+        Windows::Foundation::IAsyncOperation<hstring> GetResolvedAgentProfiles();
         Windows::Foundation::IAsyncOperation<Windows::Foundation::Collections::IVector<Microsoft::Terminal::Protocol::TabInfo>> GetProtocolTabs();
         Windows::Foundation::IAsyncOperation<Windows::Foundation::Collections::IVector<Microsoft::Terminal::Protocol::PaneInfo>> GetProtocolPanes(uint32_t tabIdFilter);
         Windows::Foundation::IAsyncOperation<Microsoft::Terminal::Protocol::PaneOutput> ReadProtocolPaneOutput(winrt::guid sessionId, hstring source, int32_t maxLines);
@@ -525,6 +526,8 @@ namespace winrt::TerminalApp::implementation
             std::optional<::Microsoft::Terminal::CustomModels::LaunchConfiguration> customModelLaunch;
             std::vector<std::pair<winrt::guid, std::wstring>> profileBackends;
             bool agentSessionManagementEnabled{ true };
+            std::wstring defaultAgentProfile;
+            std::string agentProfiles;
         };
         AgentSettingsSnapshot _lastAgentSettings{};
         bool _agentSettingsSnapshotInitialized{ false };
@@ -568,6 +571,8 @@ namespace winrt::TerminalApp::implementation
             bool followsGlobalAcpModel{ false };
             bool launchable{ false };
             bool supportsGlobalHostByok{ false };
+            std::wstring profileId;
+            std::wstring command;
         };
         struct AgentPaneRecreationOptions
         {
@@ -601,6 +606,7 @@ namespace winrt::TerminalApp::implementation
             std::string autofixPolicyState{ "unknown" };
             bool sessionsInSidebar{ false };
             bool renderAgentMarkdown{ true };
+            Json::Value agentProfiles{ Json::arrayValue };
         };
         AgentRuntimeConfigSnapshot _lastAgentRuntimeConfig{};
         bool _agentRuntimeConfigInitialized{ false };
@@ -663,6 +669,7 @@ namespace winrt::TerminalApp::implementation
             winrt::hstring agentModel;
             winrt::hstring agentSource;
             winrt::hstring agentWslDistro;
+            winrt::hstring agentProfileId;
         };
         std::optional<_PendingLoadSession> _pendingNewTabLoadSession;
         std::unordered_map<winrt::hstring, _PendingLoadSession> _pendingLoadSessions;
@@ -732,6 +739,7 @@ namespace winrt::TerminalApp::implementation
         AgentPaneSettingsBinding _ResolveAgentPaneSettingsBindingForTab(
             const winrt::com_ptr<Tab>& tab,
             bool forSettingsUpdate = false);
+        winrt::Microsoft::Terminal::Settings::Model::Profile _ResolveAgentProfileForTab(const winrt::com_ptr<Tab>& tab) const;
         static bool _IsSameAgentPaneBackend(
             const AgentPaneSettingsBinding& current,
             const AgentPaneSettingsBinding& target) noexcept;
@@ -1576,8 +1584,7 @@ namespace winrt::TerminalApp::implementation
                           const winrt::com_ptr<Tab>& sourceTab,
                           const std::shared_ptr<Pane>& sourcePane,
                           const std::optional<winrt::Windows::Foundation::Point>& dragPoint = std::nullopt);
-        bool _AttachTransferredContent(TerminalPage& source, const winrt::com_ptr<Tab>& sourceTab, const std::shared_ptr<Pane>& sourcePane,
-                                       Windows::Foundation::Collections::IVector<Microsoft::Terminal::Settings::Model::ActionAndArgs> actions, uint32_t tabIndex);
+        bool _AttachTransferredContent(TerminalPage& source, const winrt::com_ptr<Tab>& sourceTab, const std::shared_ptr<Pane>& sourcePane, Windows::Foundation::Collections::IVector<Microsoft::Terminal::Settings::Model::ActionAndArgs> actions, uint32_t tabIndex);
         struct ReceivingContentTransfer
         {
             winrt::com_ptr<Tab> sourceTab;

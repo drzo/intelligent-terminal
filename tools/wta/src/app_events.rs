@@ -3238,6 +3238,47 @@ impl App {
                         && !owner_window.is_empty()
                         && target_window == owner_window;
 
+                    if let Some(catalog) = params.get("agent_profiles") {
+                        let settings = serde_json::json!({ "resolvedAgentProfiles": catalog });
+                        match crate::agent_profiles::catalog(&settings) {
+                            Ok(Some(profiles)) => {
+                                let mut entries = Vec::new();
+                                for profile in
+                                    profiles.into_iter().filter(|profile| profile.acp_enabled)
+                                {
+                                    match profile.execution_source() {
+                                        Ok(source) => {
+                                            entries.push(crate::app_contracts::AvailableAgent {
+                                                id: profile.id,
+                                                display_name: profile.name,
+                                                source,
+                                                profile_id: Some(profile.profile_id),
+                                            })
+                                        }
+                                        Err(error) => {
+                                            tracing::error!(%error, "invalid agent profile execution source")
+                                        }
+                                    }
+                                }
+                                self.profile_agents = Some(entries);
+                                self.refresh_available_agents();
+                            }
+                            Ok(None) => {}
+                            Err(error) => {
+                                tracing::error!(%error, "invalid Terminal agent profile catalog")
+                            }
+                        }
+                    }
+                    if targets_owner_binding {
+                        if let Some(profile_id) = params
+                            .get("agent_profile_id")
+                            .and_then(|value| value.as_str())
+                        {
+                            self.current_agent_profile_id =
+                                (!profile_id.is_empty()).then(|| profile_id.to_string());
+                        }
+                    }
+
                     if let Some(value) = params.get("render_agent_markdown") {
                         match value.as_bool() {
                             Some(enabled) => {

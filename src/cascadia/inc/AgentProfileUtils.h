@@ -6,6 +6,7 @@
 #include "AgentPaneRestore.h"
 #include "AgentRegistry.h"
 #include "CustomAgentUtils.h"
+#include "WslDistroName.h"
 #include <filesystem>
 #include <map>
 #include <shellapi.h>
@@ -14,6 +15,30 @@
 namespace Microsoft::Terminal::AgentProfiles
 {
     inline constexpr std::wstring_view Source{ L"IntelligentTerminal.AgentProfiles" };
+
+    inline std::wstring WslCommand(const CustomAgents::Invocation& invocation, const std::wstring_view distro)
+    {
+        THROW_HR_IF_MSG(E_INVALIDARG, !WslDistroName::IsSafe(distro), "A WSL agent profile requires a valid distribution");
+        CustomAgents::Validate(invocation);
+        const auto literal = [](const std::wstring_view value) {
+            std::wstring result{ L"'" };
+            for (const auto ch : value)
+                result.append(ch == L'\'' ? L"'\\''" : std::wstring{ ch });
+            result.push_back(L'\'');
+            return result;
+        };
+        std::wstring script{ L"exec " };
+        script.append(literal(invocation.command));
+        for (const auto& arg : invocation.args)
+        {
+            script.push_back(L' ');
+            script.append(literal(arg));
+        }
+        std::wstring system;
+        THROW_IF_FAILED(wil::GetSystemDirectoryW<std::wstring>(system));
+        return CustomAgents::Format({ system + L"\\wsl.exe",
+                                      { L"--distribution", std::wstring{ distro }, L"--exec", L"sh", L"-lc", std::move(script) } });
+    }
 
     inline std::wstring NativePath()
     {
@@ -178,13 +203,15 @@ namespace Microsoft::Terminal::AgentProfiles
             {
                 const auto valid =
                     (id == L"claude" && (permissionMode == L"acceptEdits" || permissionMode == L"auto" ||
-                                        permissionMode == L"bypassPermissions" || permissionMode == L"manual" ||
-                                        permissionMode == L"dontAsk" || permissionMode == L"plan")) ||
+                                         permissionMode == L"bypassPermissions" || permissionMode == L"manual" ||
+                                         permissionMode == L"dontAsk" || permissionMode == L"plan")) ||
                     (id == L"codex" && (permissionMode == L"untrusted" || permissionMode == L"on-request" || permissionMode == L"never")) ||
                     (id == L"gemini" && (permissionMode == L"default" || permissionMode == L"auto_edit" || permissionMode == L"yolo" || permissionMode == L"plan")) ||
                     (id == L"antigravity" && (permissionMode == L"accept-edits" || permissionMode == L"plan"));
                 THROW_HR_IF(E_INVALIDARG, validate && !valid);
-                const auto flag = id == L"claude" ? L"--permission-mode" : id == L"codex" ? L"--ask-for-approval" : id == L"antigravity" ? L"--mode" : L"--approval-mode";
+                const auto flag = id == L"claude" ? L"--permission-mode" : id == L"codex"   ? L"--ask-for-approval" :
+                                                                       id == L"antigravity" ? L"--mode" :
+                                                                                              L"--approval-mode";
                 values.insert(values.begin(), { flag, std::wstring{ permissionMode } });
             }
         }
@@ -197,9 +224,7 @@ namespace Microsoft::Terminal::AgentProfiles
         if (validate)
         {
             // ConPTY expands environment references before CreateProcess; keep validated argv unchanged.
-            THROW_HR_IF_MSG(E_INVALIDARG, executable.find(L'%') != std::wstring_view::npos ||
-                                            std::ranges::any_of(values, [](const auto& value) { return value.find(L'%') != std::wstring::npos; }),
-                           "Environment references are not supported in managed native agent commands");
+            THROW_HR_IF_MSG(E_INVALIDARG, executable.find(L'%') != std::wstring_view::npos || std::ranges::any_of(values, [](const auto& value) { return value.find(L'%') != std::wstring::npos; }), "Environment references are not supported in managed native agent commands");
         }
         const auto batch = til::equals_insensitive_ascii(std::filesystem::path{ executable }.extension().native(), L".cmd");
         if (batch && validate)
@@ -238,6 +263,12 @@ namespace Microsoft::Terminal::AgentProfiles
     template<typename Profile>
     bool IsManaged(Profile&& profile)
     {
+        if (!profile.AgentProfileId().empty() && !profile.AgentProfileCliCommand().empty())
+        {
+            const auto source = profile.CommandlineOverrideSource();
+            return profile.HasAgentProfileCliCommand() ||
+                   (!profile.HasCommandline() && (!source || source.Origin() == winrt::Microsoft::Terminal::Settings::Model::OriginTag::Generated));
+        }
         if ((!Settings::Model::AgentRegistry::SupportsNativeProfile(std::wstring_view{ profile.AgentProfileId() }) &&
              !CustomAgents::IsId(std::wstring_view{ profile.AgentProfileId() })) ||
             profile.HasCommandline())
@@ -251,6 +282,24 @@ namespace Microsoft::Terminal::AgentProfiles
     template<typename Profile>
     std::wstring Command(const Profile& profile, const bool requireExecutable = false, const std::wstring_view path = NativePath())
     {
+        if (!profile.AgentProfileCliCommand().empty())
+        {
+            const auto invocation = CustomAgents::Parse(profile.AgentProfileCliCommand());
+            if (profile.AgentProfileSource() == L"wsl")
+            {
+                return WslCommand(invocation, profile.AgentProfileWslDistro());
+            }
+            return requireExecutable ? CustomAgents::LaunchCommand(invocation) : CustomAgents::Format(invocation);
+        }
+        if (profile.AgentProfileSource() == L"wsl")
+        {
+            const auto id = profile.AgentProfileId();
+            if (Settings::Model::AgentRegistry::SupportsNativeProfile(id))
+                return WslCommand(CustomAgents::Parse(BuildCommand(
+                                      Settings::Model::AgentRegistry::CliExecutable(id), id, profile.AgentProfileModel(), profile.AgentProfilePermissionMode(), profile.AgentProfileArguments())),
+                                  profile.AgentProfileWslDistro());
+            return std::wstring{ profile.Commandline() };
+        }
         if (CustomAgents::IsId(std::wstring_view{ profile.AgentProfileId() }))
         {
             return std::wstring{ profile.Commandline() };
@@ -275,7 +324,6 @@ namespace Microsoft::Terminal::AgentProfiles
             // Orphaned profiles must remain editable without an installed CLI.
             executable = std::wstring{ Settings::Model::AgentRegistry::CliExecutable(std::wstring_view{ profile.AgentProfileId() }) } + L".exe";
         }
-        return BuildCommand(executable.native(), profile.AgentProfileId(), profile.AgentProfileModel(),
-                            profile.AgentProfilePermissionMode(), profile.AgentProfileArguments(), requireExecutable);
+        return BuildCommand(executable.native(), profile.AgentProfileId(), profile.AgentProfileModel(), profile.AgentProfilePermissionMode(), profile.AgentProfileArguments(), requireExecutable);
     }
 }

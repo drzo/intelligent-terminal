@@ -728,7 +728,7 @@
     <value>Агент</value>
     <comment>Header for the setting that specifies which AI agent powers the agent pane.</comment>
   </data><data name="AIAgents_AcpAgent.HelpText" xml:space="preserve">
-    <value>Изаберите агента који се користи у панелу агента. Сваки компатибилан ACP агент биће аутоматски откривен.</value>
+    <value>Изаберите профил агента омогућен за панел агената. У том профилу подесите покретање, наставак и ACP подршку.</value>
     <comment>Supplementary description for the agent pane setting. {Locked="ACP"}</comment>
   </data><data name="AIAgents_AcpModel.Header" xml:space="preserve">
     <value>Модел</value>
@@ -3115,4 +3115,14 @@ Alt+Shift+/ унесите упит; Alt+Shift+B покрените без по�
   <data name="AIAgents_CustomCli.Header" xml:space="preserve"><value>Интерактивна CLI команда (опционо)</value><comment>{Locked="CLI"} Providing this command generates an interactive terminal profile for this custom agent.</comment></data>
   <data name="AIAgents_CustomResume.Header" xml:space="preserve"><value>Команда за наставак (опционо; користите {sessionId})</value><comment>{Locked="{sessionId}"} Requires an interactive CLI command. The placeholder must be exactly one complete argument.</comment></data>
   <data name="AIAgents_CustomInvalid" xml:space="preserve"><value>Проверите наводнике и наведите ACP или CLI команду. За наставак су потребни CLI команда и тачно један цео аргумент {sessionId}.</value><comment>{Locked="ACP"} {Locked="CLI"} {Locked="{sessionId}"} Validation error for custom agent startup and resume commands.</comment></data>
+  <data name="Profile_AgentDefinition.Header" xml:space="preserve"><value>Користи као профил агента</value><comment>Switch that adds agent capabilities to this terminal profile.</comment></data>
+  <data name="Profile_AgentDefinition.HelpText" xml:space="preserve"><value>Овде подесите интерактивно покретање, наставак сесије и опциону подршку за панел помоћника. Команде садрже извршну датотеку и дословне аргументе, а не скрипте љуске.</value><comment>Explains the profile-owned agent configuration.</comment></data>
+  <data name="Profile_AgentWsl.Header" xml:space="preserve"><value>Покрени у WSL-у</value><comment>{Locked="WSL"} Switch choosing the execution environment of this agent profile.</comment></data>
+  <data name="Profile_AgentWsl.HelpText" xml:space="preserve"><value>Покрећите команде агента овог профила унутар наведене WSL дистрибуције, никада у систему Windows.</value><comment>{Locked="WSL"} {Locked="Windows"} Applies to interactive startup, resume, and ACP commands.</comment></data>
+  <data name="Profile_AgentWslDistro.Header" xml:space="preserve"><value>WSL дистрибуција</value><comment>{Locked="WSL"} Exact installed distribution name, for example Ubuntu.</comment></data>
+  <data name="Profile_AcpEnabled.Header" xml:space="preserve"><value>Дозволи коришћење у панелу агената</value><comment>Switch exposing this profile in the agent pane's agent picker.</comment></data>
+  <data name="Profile_AcpEnabled.HelpText" xml:space="preserve"><value>Учините овај профил доступним у панелу агената. Потребна је ACP команда за покретање; уграђени агенти пружају подразумевану команду. Укључивање ове опције не покреће агента нити додељује дозволе.</value><comment>{Locked="ACP"} Distinguish availability from execution and authorization.</comment></data>
+  <data name="Profile_AgentResumeShared.Header" xml:space="preserve"><value>Наставак преко CLI-ја прихвата идентификаторе ACP сесија</value><comment>{Locked="CLI"} {Locked="ACP"} Explicit capability toggle for providers whose native and ACP session identifiers are compatible.</comment></data>
+  <data name="Profile_AgentResumeShared.HelpText" xml:space="preserve"><value>Укључите ову опцију само ако интерактивна команда за наставак овог агента прихвата исте идентификаторе сесија као његов ACP сервер. У супротном је оставите искључену.</value><comment>{Locked="ACP"} Do not infer identifier compatibility from session listing or resume support.</comment></data>
+  <data name="Profile_AgentPaneDefaultFormat" xml:space="preserve"><value>Подразумевани ({0})</value><comment>{Locked="{0}"} Label for following the global agent-pane profile selection. The selected profile display name replaces {0}.</comment></data>
 </root>

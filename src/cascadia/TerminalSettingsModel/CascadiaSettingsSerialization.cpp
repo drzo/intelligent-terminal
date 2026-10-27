@@ -233,9 +233,7 @@ void SettingsLoader::GenerateProfiles()
     generateProfiles(WslDistroGenerator{});
     generateProfiles(AzureCloudShellGenerator{});
     generateProfiles(VisualStudioGenerator{});
-    generateProfiles(AgentProfileGenerator{ userSettings.globals->HasCustomAgents() ?
-                                                userSettings.globals->CustomAgents() :
-                                                inboxSettings.globals->CustomAgents() });
+    generateProfiles(AgentProfileGenerator{ userSettings.globals.as<Model::GlobalAppSettings>() });
     if constexpr (Feature_DynamicSSHProfiles::IsEnabled())
     {
         sshProfilesGenerated = generateProfiles(SshHostGenerator{});
@@ -1539,6 +1537,7 @@ CascadiaSettings::CascadiaSettings(SettingsLoader&& loader) :
     _globals = loader.userSettings.globals;
     _baseLayerProfile = loader.userSettings.baseLayerProfile;
     _allProfiles = winrt::single_threaded_observable_vector(std::move(allProfiles));
+    _globals->SetAgentProfiles(_allProfiles.GetView());
     _activeProfiles = winrt::single_threaded_observable_vector(std::move(activeProfiles));
     _warnings = winrt::single_threaded_vector(std::move(warnings));
     _themesChangeLog = std::move(loader.userSettings.themesChangeLog);

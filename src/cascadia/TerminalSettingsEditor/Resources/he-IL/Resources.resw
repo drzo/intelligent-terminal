@@ -750,7 +750,7 @@
     <comment>Header for the setting that specifies which AI agent powers the agent pane.</comment>
   </data>
   <data name="AIAgents_AcpAgent.HelpText" xml:space="preserve">
-    <value>בחר את הסוכן המשמש בחלונית הסוכן. כל סוכן תואם ACP יזוהה.</value>
+    <value>בחר פרופיל סוכן שזמין לשימוש בחלונית הסוכנים. הגדר בפרופיל זה את ההפעלה, החידוש והתמיכה ב-ACP.</value>
     <comment>Supplementary description for the agent pane setting. {Locked="ACP"}</comment>
   </data>
   <data name="AIAgents_AcpModel.Header" xml:space="preserve">
@@ -3118,4 +3118,14 @@ Alt+Shift+/ הזן הנחיה; Alt+Shift+B הפעל ללא הנחיה התחלת
   <data name="AIAgents_CustomCli.Header" xml:space="preserve"><value>פקודת CLI אינטראקטיבית (אופציונלי)</value><comment>{Locked="CLI"} Providing this command generates an interactive terminal profile for this custom agent.</comment></data>
   <data name="AIAgents_CustomResume.Header" xml:space="preserve"><value>פקודת חידוש (אופציונלי; יש להשתמש ב-{sessionId})</value><comment>{Locked="{sessionId}"} Requires an interactive CLI command. The placeholder must be exactly one complete argument.</comment></data>
   <data name="AIAgents_CustomInvalid" xml:space="preserve"><value>יש לבדוק את המרכאות ולציין פקודת ACP או CLI. חידוש דורש פקודת CLI וארגומנט שלם אחד בדיוק מסוג {sessionId}.</value><comment>{Locked="ACP"} {Locked="CLI"} {Locked="{sessionId}"} Validation error for custom agent startup and resume commands.</comment></data>
+  <data name="Profile_AgentDefinition.Header" xml:space="preserve"><value>שימוש כפרופיל סוכן</value><comment>Switch that adds agent capabilities to this terminal profile.</comment></data>
+  <data name="Profile_AgentDefinition.HelpText" xml:space="preserve"><value>כאן ניתן להגדיר הפעלה אינטראקטיבית, חידוש הפעלה ותמיכה אופציונלית בחלונית העוזר. הפקודות מכילות קובץ הפעלה וארגומנטים מילוליים, ולא סקריפטים של המעטפת.</value><comment>Explains the profile-owned agent configuration.</comment></data>
+  <data name="Profile_AgentWsl.Header" xml:space="preserve"><value>הפעלה ב-WSL</value><comment>{Locked="WSL"} Switch choosing the execution environment of this agent profile.</comment></data>
+  <data name="Profile_AgentWsl.HelpText" xml:space="preserve"><value>הפעלת פקודות הסוכן של פרופיל זה בתוך הפצת WSL שצוינה, ולעולם לא ב-Windows.</value><comment>{Locked="WSL"} {Locked="Windows"} Applies to interactive startup, resume, and ACP commands.</comment></data>
+  <data name="Profile_AgentWslDistro.Header" xml:space="preserve"><value>הפצת WSL</value><comment>{Locked="WSL"} Exact installed distribution name, for example Ubuntu.</comment></data>
+  <data name="Profile_AcpEnabled.Header" xml:space="preserve"><value>אפשר שימוש בחלונית הסוכנים</value><comment>Switch exposing this profile in the agent pane's agent picker.</comment></data>
+  <data name="Profile_AcpEnabled.HelpText" xml:space="preserve"><value>הפיכת פרופיל זה לזמין בחלונית הסוכנים. נדרשת פקודת הפעלה של ACP; סוכנים מובנים מספקים פקודת ברירת מחדל. הפעלת אפשרות זו אינה מפעילה את הסוכן ואינה מעניקה הרשאות.</value><comment>{Locked="ACP"} Distinguish availability from execution and authorization.</comment></data>
+  <data name="Profile_AgentResumeShared.Header" xml:space="preserve"><value>חידוש באמצעות CLI מקבל מזהי הפעלה של ACP</value><comment>{Locked="CLI"} {Locked="ACP"} Explicit capability toggle for providers whose native and ACP session identifiers are compatible.</comment></data>
+  <data name="Profile_AgentResumeShared.HelpText" xml:space="preserve"><value>יש להפעיל אפשרות זו רק אם פקודת החידוש האינטראקטיבית של סוכן זה מקבלת את אותם מזהי הפעלה שבהם משתמש שרת ה-ACP שלו. אחרת, יש להשאיר אפשרות זו כבויה.</value><comment>{Locked="ACP"} Do not infer identifier compatibility from session listing or resume support.</comment></data>
+  <data name="Profile_AgentPaneDefaultFormat" xml:space="preserve"><value>ברירת מחדל ({0})</value><comment>{Locked="{0}"} Label for following the global agent-pane profile selection. The selected profile display name replaces {0}.</comment></data>
 </root>

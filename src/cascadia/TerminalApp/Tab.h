@@ -196,6 +196,9 @@ namespace winrt::TerminalApp::implementation
         const winrt::hstring& AgentCustomCommandOverride() const noexcept { return _agentCustomCommandOverride; }
         const winrt::hstring& AgentSourceOverride() const noexcept { return _agentSourceOverride; }
         const winrt::hstring& AgentWslDistroOverride() const noexcept { return _agentWslDistroOverride; }
+        WINRT_PROPERTY(winrt::hstring, AgentProfileGuidOverride);
+
+    public:
         std::optional<winrt::guid> AgentSourceProfileGuid() const noexcept { return _agentSourceProfileGuid; }
         void AgentSourceProfileGuid(const winrt::guid& value) noexcept { _agentSourceProfileGuid = value; }
         bool HasAgentOverride() const noexcept { return !_agentIdOverride.empty(); }
@@ -217,6 +220,7 @@ namespace winrt::TerminalApp::implementation
             _agentSourceOverride = source;
             _agentWslDistroOverride = wslDistro;
             _agentOverrideOrigin = origin;
+            AgentProfileGuidOverride({});
         }
         void ClearAgentOverride() noexcept
         {
@@ -226,6 +230,7 @@ namespace winrt::TerminalApp::implementation
             _agentSourceOverride = {};
             _agentWslDistroOverride = {};
             _agentOverrideOrigin = AgentOverrideOrigin::User;
+            AgentProfileGuidOverride({});
         }
 
         // Stable per-tab identifier (GUID string). Survives tab reordering

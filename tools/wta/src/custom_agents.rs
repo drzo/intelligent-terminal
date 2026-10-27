@@ -59,7 +59,7 @@ pub(crate) fn activation_identity(
 }
 
 impl Invocation {
-    fn validate(&self, resume: bool) -> Result<()> {
+    pub(crate) fn validate(&self, resume: bool) -> Result<()> {
         ensure!(
             !self.command.trim().is_empty()
                 && !self.command.contains(['\0', '\r', '\n'])
@@ -203,12 +203,46 @@ fn definitions(settings: &serde_json::Value) -> Result<Vec<CustomAgent>> {
 }
 
 pub(crate) fn from_settings(settings: &serde_json::Value, id: &str) -> Result<Option<CustomAgent>> {
+    from_settings_for_source(settings, id, &crate::agent_source::AgentSource::Host)
+}
+
+pub(crate) fn from_settings_for_source(
+    settings: &serde_json::Value,
+    id: &str,
+    source: &crate::agent_source::AgentSource,
+) -> Result<Option<CustomAgent>> {
+    if settings.get("resolvedAgentProfiles").is_some() {
+        return crate::agent_profiles::for_provider(settings, id, source)?
+            .map(|profile| {
+                let agent = CustomAgent {
+                    id: profile.id,
+                    _name: profile.name,
+                    acp: profile.acp,
+                    cli: profile.cli,
+                    resume: profile.resume,
+                };
+                agent.validate()?;
+                Ok(agent)
+            })
+            .transpose();
+    }
+    ensure!(
+        matches!(source, crate::agent_source::AgentSource::Host),
+        "legacy custom agents have no WSL source binding"
+    );
     Ok(definitions(settings)?
         .into_iter()
         .find(|agent| agent.id.eq_ignore_ascii_case(id)))
 }
 
 pub(crate) fn history_commands(settings: &serde_json::Value) -> Result<Vec<(String, String)>> {
+    if let Some(profiles) = crate::agent_profiles::catalog(settings)? {
+        return Ok(profiles
+            .into_iter()
+            .filter(|profile| is_custom_id(&profile.id) && profile.source == "host")
+            .filter_map(|profile| profile.acp.map(|acp| (profile.id, acp.commandline())))
+            .collect());
+    }
     let agents = definitions(settings)?;
     let mut ids: std::collections::HashSet<_> = agents
         .iter()

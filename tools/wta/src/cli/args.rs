@@ -36,6 +36,9 @@ pub(crate) struct Cli {
     /// `--agent-id` explicitly.
     #[arg(long)]
     pub(crate) agent_id: Option<String>,
+    /// Profile identity resolved by Terminal; commands are never trusted from the helper.
+    #[arg(long, hide = true)]
+    pub(crate) agent_profile_id: Option<String>,
 
     /// Per-tab ACP execution source (`host` or `wsl`). Hidden because
     /// TerminalPage owns source compatibility checks.
@@ -495,6 +498,9 @@ pub(crate) enum Command {
     ProbeAgentSources {
         #[arg(long)]
         wsl_distro: String,
+        /// Discover native interactive CLIs rather than ACP prerequisites.
+        #[arg(long)]
+        native_cli: bool,
     },
     /// List built-in ACP agents that WTA can launch on the Windows host.
     /// Used by FRE, Settings, and automatic agent selection so those surfaces

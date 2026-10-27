@@ -104,5 +104,14 @@ namespace Microsoft.Terminal.Settings.Model
         INHERITABLE_PROFILE_SETTING(String, AgentProfilePermissionMode);
         INHERITABLE_PROFILE_SETTING(String, AgentProfileArguments);
         INHERITABLE_PROFILE_SETTING(String, DefaultSplitProfile);
+        INHERITABLE_PROFILE_SETTING(String, AgentProfileCliCommand);
+        INHERITABLE_PROFILE_SETTING(String, AgentProfileResumeCommand);
+        INHERITABLE_PROFILE_SETTING(Boolean, AgentProfileSharedSessions);
+        INHERITABLE_PROFILE_SETTING(Boolean, AgentProfileAcpEnabled);
+        INHERITABLE_PROFILE_SETTING(String, AgentProfileAcpCommand);
+        INHERITABLE_PROFILE_SETTING(String, AgentProfileAcpModel);
+        INHERITABLE_PROFILE_SETTING(String, AgentProfileSource);
+        INHERITABLE_PROFILE_SETTING(String, AgentProfileWslDistro);
+        INHERITABLE_PROFILE_SETTING(String, AgentPaneProfile);
     }
 }

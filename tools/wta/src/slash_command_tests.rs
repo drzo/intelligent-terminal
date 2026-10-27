@@ -1392,6 +1392,7 @@ fn switch_agent_event_is_scoped_to_window_and_tab() {
         &crate::agent_source::AgentSource::Wsl {
             distro: "Ubuntu".to_string(),
         },
+        None,
     );
     let event: serde_json::Value = serde_json::from_str(&payload).expect("valid event json");
     assert_eq!(event["method"], "switch_agent");
@@ -1408,16 +1409,19 @@ fn seed_completion_agents(app: &mut App) {
             id: "copilot".into(),
             display_name: "GitHub Copilot".into(),
             source: crate::agent_source::AgentSource::Host,
+            profile_id: None,
         },
         AvailableAgent {
             id: "codex".into(),
             display_name: "Codex".into(),
             source: crate::agent_source::AgentSource::Host,
+            profile_id: None,
         },
         AvailableAgent {
             id: "gemini".into(),
             display_name: "Gemini".into(),
             source: crate::agent_source::AgentSource::Host,
+            profile_id: None,
         },
     ];
 }

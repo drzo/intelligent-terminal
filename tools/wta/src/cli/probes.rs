@@ -197,19 +197,24 @@ pub(crate) fn run_host_agents() -> Result<()> {
     Ok(())
 }
 
-pub(crate) async fn run_agent_sources(wsl_distro: &str) -> Result<()> {
+pub(crate) async fn run_agent_sources(wsl_distro: &str, native_cli: bool) -> Result<()> {
     let distro = wsl_distro.trim();
     anyhow::ensure!(!distro.is_empty(), "--wsl-distro must not be empty");
 
     use futures::StreamExt as _;
     let agents = futures::stream::iter(crate::agent_registry::KNOWN_AGENTS)
         .map(|profile| async move {
-            crate::agent_check::wsl_agent_available(distro, profile.id)
-                .await
-                .then_some(AgentSourceProbeEntry {
-                    id: profile.id,
-                    display_name: profile.display_name,
-                })
+            let available = if native_cli {
+                crate::agent_check::find_wsl_exe(distro, profile.cli_executable)
+                    .await
+                    .is_some()
+            } else {
+                crate::agent_check::wsl_agent_available(distro, profile.id).await
+            };
+            available.then_some(AgentSourceProbeEntry {
+                id: profile.id,
+                display_name: profile.display_name,
+            })
         })
         .buffer_unordered(crate::agent_registry::KNOWN_AGENTS.len())
         .filter_map(async move |entry| entry)

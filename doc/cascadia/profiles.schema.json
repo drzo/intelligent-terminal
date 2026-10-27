@@ -2424,10 +2424,15 @@
       "description": "Properties that affect the entire window, regardless of the profile settings.",
       "type": "object",
       "properties": {
+        "agentPane.defaultProfile": {
+          "description": "GUID of the agent profile selected for the agent pane. Empty preserves the legacy acpAgent selection. The selected profile must enable ACP.",
+          "type": ["string", "null"],
+          "pattern": "^(|\\{[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}\\})$"
+        },
         "customAgents": {
           "type": "array",
           "items": { "$ref": "#/$defs/CustomAgent" },
-          "description": "Custom agents with stable IDs and independent Windows-host ACP, interactive CLI, and resume invocations. Defining cli generates a native profile. Resume args require exactly one complete {sessionId} argument.",
+          "description": "Legacy Windows-host custom agent definitions, projected into editable agent profiles. Prefer profile-owned agentProfile.cli, agentProfile.resume and agentProfile.acp for new configurations.",
           "default": []
         },
         "alwaysOnTop": {
@@ -3276,7 +3281,7 @@
           ]
         },
         "agentProfile.id": {
-          "description": "Built-in or configured custom native interactive agent launched by this profile. Empty disables managed agent launching.",
+          "description": "Stable provider identity for this agent profile, independent of its profile GUID and display name. Empty makes this an ordinary shell profile.",
           "type": ["string", "null"],
           "anyOf": [
             { "enum": ["", "copilot", "claude", "codex", "gemini", "opencode", "antigravity", null] },
@@ -3286,6 +3291,60 @@
         "agentProfile.model": {
           "description": "Native CLI model identifier. Empty leaves the agent's own configuration unchanged. Applies only when commandline has no explicit override.",
           "type": ["string", "null"]
+        },
+        "agentProfile.cli": {
+          "description": "Interactive startup executable and literal arguments, independent of the ACP server command. An explicit null command suppresses an inherited invocation.",
+          "type": ["object", "null"],
+          "properties": {
+            "command": { "type": ["string", "null"], "minLength": 1 },
+            "args": { "type": "array", "items": { "type": "string" } }
+          },
+          "dependentRequired": { "args": ["command"] },
+          "additionalProperties": false
+        },
+        "agentProfile.resume": {
+          "description": "Independent CLI resume invocation. Requires interactive startup and exactly one complete {sessionId} argument. ACP load and CLI session IDs are not assumed interchangeable.",
+          "type": ["object", "null"],
+          "properties": {
+            "command": { "type": ["string", "null"], "minLength": 1 },
+            "args": {
+              "type": "array",
+              "items": { "type": "string", "pattern": "^(\\{sessionId\\}|[^{}]*)$" },
+              "contains": { "const": "{sessionId}" },
+              "minContains": 1,
+              "maxContains": 1
+            },
+            "canResumeAcpSessions": { "type": "boolean", "default": false }
+          },
+          "dependentRequired": { "args": ["command"] },
+          "additionalProperties": false
+        },
+        "agentProfile.acp": {
+          "description": "Optional ACP server capability. Enabling makes this profile eligible for agent-pane selection, subject to policy; it does not grant permissions. Built-in providers may omit command to use their registered ACP invocation.",
+          "type": ["object", "null"],
+          "properties": {
+            "enabled": { "type": "boolean", "default": false },
+            "command": { "type": ["string", "null"], "minLength": 1 },
+            "args": { "type": "array", "items": { "type": "string" } },
+            "model": { "type": ["string", "null"], "default": "" }
+          },
+          "dependentRequired": { "args": ["command"] },
+          "additionalProperties": false
+        },
+        "agentProfile.source": {
+          "description": "Execution environment of this profile's CLI, resume and ACP commands. WSL profiles never fall back to host executables.",
+          "type": ["string", "null"],
+          "enum": ["host", "wsl", null],
+          "default": "host"
+        },
+        "agentProfile.wslDistro": {
+          "description": "Exact WSL distribution used when agentProfile.source is wsl. Required for WSL profiles; must be empty for host profiles.",
+          "type": ["string", "null"]
+        },
+        "agentPane.profile": {
+          "description": "GUID of the enabled agent profile used by this shell profile's agent pane. Empty follows agentPane.defaultProfile. Missing explicit references never fall back to another source.",
+          "type": ["string", "null"],
+          "pattern": "^(|\\{[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}\\})$"
         },
         "agentProfile.permissionMode": {
           "description": "Provider-specific native permission mode. Empty leaves the agent's own configuration unchanged. Applies only when commandline has no explicit override. Unsupported modes fail explicitly; these are not Windows file permissions.",

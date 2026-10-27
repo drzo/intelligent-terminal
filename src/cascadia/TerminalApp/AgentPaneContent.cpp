@@ -439,6 +439,7 @@ namespace winrt::TerminalApp::implementation
         fields.sessionId = _agentSessionId;
         fields.view = _isSessionsView ? ::Microsoft::Terminal::AgentPaneRestore::SessionsView : ::Microsoft::Terminal::AgentPaneRestore::ChatView;
         fields.agentIdentity = _agentRestoreIdentity;
+        fields.agentProfileId = _agentRestoreProfileId;
         fields.customCommand = _agentRestoreCustomCommand;
         fields.yoloControlOwner = _yoloControlOwner;
         terminalArgs.Commandline(winrt::hstring{ ::Microsoft::Terminal::AgentPaneRestore::BuildPaneCommandline(_wtaExecutablePath, fields) });

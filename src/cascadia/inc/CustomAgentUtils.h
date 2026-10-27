@@ -28,10 +28,7 @@ namespace Microsoft::Terminal::CustomAgents
 
     inline void Validate(const Invocation& invocation, const bool resume = false)
     {
-        THROW_HR_IF_MSG(E_INVALIDARG, invocation.command.find_first_not_of(L" \t") == std::wstring::npos ||
-                                         invocation.command.find(L'\0') != std::wstring::npos ||
-                                         invocation.command.find_first_of(L"\r\n") != std::wstring::npos ||
-                                         invocation.command.find(L"{sessionId}") != std::wstring::npos, "Invalid custom agent executable");
+        THROW_HR_IF_MSG(E_INVALIDARG, invocation.command.find_first_not_of(L" \t") == std::wstring::npos || invocation.command.find(L'\0') != std::wstring::npos || invocation.command.find_first_of(L"\r\n") != std::wstring::npos || invocation.command.find(L"{sessionId}") != std::wstring::npos, "Invalid custom agent executable");
         size_t sessionIds = 0;
         for (const auto& argument : invocation.args)
         {
@@ -195,6 +192,29 @@ namespace Microsoft::Terminal::CustomAgents
     auto Find(const Globals& globals, const std::wstring_view id)
     {
         using Agent = decltype(globals.CustomAgents().GetAt(0));
+        if (!id.starts_with(L"custom:"))
+            return Agent{ nullptr };
+        Agent selected{ nullptr };
+        size_t matches = 0;
+        for (const auto& profile : globals.AgentProfiles())
+        {
+            if (profile.Deleted() || profile.AgentProfileSource() != L"host" ||
+                !Settings::Model::AgentRegistry::AgentIdEquals(profile.AgentProfileId(), id))
+                continue;
+            Agent candidate{ profile.AgentProfileId(), profile.Name() };
+            candidate.AcpCommand(profile.AgentProfileAcpEnabled() ? profile.AgentProfileAcpCommand() : winrt::hstring{});
+            candidate.CliCommand(profile.AgentProfileCliCommand());
+            candidate.ResumeCommand(profile.AgentProfileResumeCommand());
+            candidate.CanResumeAcpSessions(profile.AgentProfileSharedSessions());
+            if (til::equals_insensitive_ascii(std::wstring_view{ winrt::to_hstring(profile.Guid()) },
+                                              std::wstring_view{ globals.AgentPaneDefaultProfile() }))
+                return candidate;
+            selected = candidate;
+            ++matches;
+        }
+        THROW_HR_IF_MSG(E_INVALIDARG, matches > 1, "The custom agent has multiple profiles; select an exact profile");
+        if (selected)
+            return selected;
         for (const auto& agent : globals.CustomAgents())
         {
             if (Settings::Model::AgentRegistry::AgentIdEquals(agent.Id(), id))

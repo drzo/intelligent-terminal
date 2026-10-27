@@ -954,7 +954,24 @@ try
     const std::filesystem::path settingsPath{
         std::wstring_view{ winrt::Microsoft::Terminal::Settings::Model::CascadiaSettings::SettingsPath() }
     };
-    *json = _bstr(til::io::read_file_as_utf8_string_if_exists(settingsPath));
+    const auto content = til::io::read_file_as_utf8_string_if_exists(settingsPath);
+    Json::Value settings;
+    std::string errors;
+    const std::unique_ptr<Json::CharReader> reader{ Json::CharReaderBuilder{}.newCharReader() };
+    RETURN_HR_IF_MSG(E_INVALIDARG, !reader->parse(content.data(), content.data() + content.size(), &settings, &errors), "Cannot parse Terminal settings");
+    if (s_emperor)
+    {
+        const auto pages = s_emperor->GetProtocolPages();
+        if (!pages.empty())
+        {
+            const auto resolved = winrt::to_string(pages.front().GetResolvedAgentProfiles().get());
+            Json::Value catalog;
+            RETURN_HR_IF(E_INVALIDARG, !reader->parse(resolved.data(), resolved.data() + resolved.size(), &catalog, &errors));
+            settings["resolvedAgentProfiles"] = std::move(catalog["resolvedAgentProfiles"]);
+            settings["agentPane.defaultProfile"] = std::move(catalog["agentPane.defaultProfile"]);
+        }
+    }
+    *json = _bstr(Json::writeString(Json::StreamWriterBuilder{}, settings));
     return S_OK;
 }
 CATCH_RETURN()

@@ -36,6 +36,7 @@
 #include "../inc/AgentRegistry.h"
 #include "../inc/CustomModelProviderUtils.h"
 #include "../inc/AgentProfileUtils.h"
+#include "../inc/AgentProfileCatalog.h"
 #include "../inc/ProfileSplitPolicy.h"
 #include "JsonTestClass.h"
 #include <cstring>
@@ -59,6 +60,11 @@ namespace SettingsModelUnitTests
         // Round-trip tests
         TEST_METHOD(CustomAcpAgentRoundtrips);
         TEST_METHOD(AgentProfileSettingsRoundtrip);
+        TEST_METHOD(AgentProfileCapabilitiesRoundtrip);
+        TEST_METHOD(AgentProfileCapabilitiesInheritanceAndClearing);
+        TEST_METHOD(AgentProfileSelectionAndCopy);
+        TEST_METHOD(AgentProfileWslInvocation);
+        TEST_METHOD(AgentProfileAcpModelArguments);
         TEST_METHOD(AgentProfileAntigravitySettingsRoundtrip);
         TEST_METHOD(AgentProfileCommandQuoting);
         TEST_METHOD(AgentProfileNativeCommands);
@@ -412,7 +418,8 @@ namespace SettingsModelUnitTests
             "acpAgent": "CUSTOM:WORK",
             "acpCustomCommand": "work.exe --new",
             "acpCustomCommands": ["work.exe --old", "other.exe --stdio"]
-        })"), OriginTag::User);
+        })"),
+                           OriginTag::User);
         VERIFY_ARE_EQUAL(std::wstring{ L"work.exe --new" }, Custom::AcpCommand(*globals, L"custom:work"));
         VERIFY_ARE_EQUAL(std::wstring{ L"other.exe --stdio" }, Custom::AcpCommand(*globals, L"custom:other"));
         globals->AcpAgent(L"custom:other");
@@ -422,7 +429,8 @@ namespace SettingsModelUnitTests
         globals->AcpAgent(L"custom:work");
         globals->LayerJson(VerifyParseSucceeded(R"({
             "customAgents": [{"id":"custom:work","acp":{"command":"structured.exe"}}]
-        })"), OriginTag::User);
+        })"),
+                           OriginTag::User);
         VERIFY_ARE_EQUAL(std::wstring{ L"\"structured.exe\"" }, Custom::AcpCommand(*globals, L"custom:work"));
     }
 
@@ -464,7 +472,11 @@ namespace SettingsModelUnitTests
         layered->AddLeastImportantParent(*generated);
         VERIFY_IS_TRUE(::Microsoft::Terminal::AgentProfiles::IsManaged(*layered));
         VERIFY_ARE_EQUAL(winrt::hstring{ L"Renamed" }, (*generated)->Name());
-        VERIFY_IS_TRUE(std::ranges::none_of(first, [](const auto& profile) { return profile->AgentProfileId() == L"custom:acp-only"; }));
+        const auto acpOnly = find(first, L"custom:acp-only");
+        VERIFY_IS_TRUE(acpOnly != first.end());
+        VERIFY_IS_TRUE((*acpOnly)->Hidden());
+        VERIFY_IS_TRUE((*acpOnly)->AgentProfileCliCommand().empty());
+        VERIFY_IS_FALSE((*acpOnly)->AgentProfileAcpCommand().empty());
         globals->CustomAgents().GetAt(0).Name(L"New name");
         globals->CustomAgents().GetAt(0).CliCommand(L"new-work.exe");
         std::vector<winrt::com_ptr<implementation::Profile>> second;
@@ -538,7 +550,10 @@ namespace SettingsModelUnitTests
                "$capture = @{ args = @($args); nativeArgs = [Environment]::GetCommandLineArgs(); commandLine = [Environment]::CommandLine }\n"
                "[IO.File]::WriteAllText((Join-Path $PSScriptRoot 'args.json'), (ConvertTo-Json -Compress -InputObject $capture))\n"
                "exit 0\n";
-        for (const auto unsupported : { L"", L"a\"b", LR"(quote " and ' & | ! ^)", L"C:\\path dir\\", L"C:\\path dir\\\\", L"C:\\path" L"\t" L"dir\\", L"C:\\path\u00a0dir\\" })
+        for (const auto unsupported : { L"", L"a\"b", LR"(quote " and ' & | ! ^)", L"C:\\path dir\\", L"C:\\path dir\\\\", L"C:\\path"
+                                                                                                                           L"\t"
+                                                                                                                           L"dir\\",
+                                        L"C:\\path\u00a0dir\\" })
         {
             const Custom::Invocation invalid{ shim.native(), { unsupported } };
             HRESULT result = S_OK;
@@ -559,7 +574,8 @@ namespace SettingsModelUnitTests
         globals->LayerJson(VerifyParseSucceeded(R"({"customAgents":[
             {"id":"custom:batch","cli":{"command":"agent.cmd","args":[""]}},
             {"id":"custom:native","cli":{"command":"agent.exe","args":["--pattern","|"]}}
-        ]})"), OriginTag::User);
+        ]})"),
+                           OriginTag::User);
         std::vector<winrt::com_ptr<implementation::Profile>> profiles;
         AgentProfileGenerator{ globals->CustomAgents() }.GenerateProfiles(profiles);
         for (const auto id : { L"custom:batch", L"custom:native" })
@@ -653,8 +669,7 @@ namespace SettingsModelUnitTests
         VERIFY_IS_TRUE(copy.CustomAgentBackend().empty());
         WindowLayout layout;
         copy.CustomAgentBackend(L"wsl:Ubuntu:custom:work");
-        layout.TabLayout(winrt::single_threaded_vector<ActionAndArgs>({
-            ActionAndArgs{ ShortcutAction::NewTab, NewTabArgs{ copy } } }));
+        layout.TabLayout(winrt::single_threaded_vector<ActionAndArgs>({ ActionAndArgs{ ShortcutAction::NewTab, NewTabArgs{ copy } } }));
         const auto restoredLayout = WindowLayout::FromJson(WindowLayout::ToJson(layout));
         const auto restored = restoredLayout.TabLayout().GetAt(0).Args().as<NewTabArgs>().ContentArgs().as<NewTerminalArgs>();
         VERIFY_ARE_EQUAL(winrt::hstring{ L"wsl:Ubuntu:custom:work" }, restored.CustomAgentBackend());
@@ -703,11 +718,103 @@ namespace SettingsModelUnitTests
         VERIFY_ARE_EQUAL(winrt::hstring{ L"claude" }, parent->AgentProfileId());
     }
 
+    void CustomAgentAndPolicyTests::AgentProfileCapabilitiesRoundtrip()
+    {
+        const auto parent = implementation::Profile::FromJson(VerifyParseSucceeded(R"({
+            "agentProfile.id": "custom:work",
+            "agentProfile.source": "wsl",
+            "agentProfile.wslDistro": "Ubuntu",
+            "agentProfile.cli": {"command":"/opt/my agent","args":["","literal $HOME"]},
+            "agentProfile.resume": {"command":"/opt/my agent","args":["resume","{sessionId}"],"canResumeAcpSessions":true},
+            "agentProfile.acp": {"enabled":true,"command":"/opt/acp","args":["--stdio"],"model":"work-model"}
+        })"));
+        const auto serialized = parent->ToJson();
+        VERIFY_IS_TRUE(serialized["agentProfile.acp"]["enabled"].asBool());
+        VERIFY_ARE_EQUAL(std::string{ "work-model" }, serialized["agentProfile.acp"]["model"].asString());
+        VERIFY_ARE_EQUAL(std::string{}, serialized["agentProfile.cli"]["args"][0].asString());
+        VERIFY_IS_FALSE(serialized.isMember("agentProfile.acp.enabled"));
+        const auto restored = implementation::Profile::FromJson(serialized);
+        VERIFY_ARE_EQUAL(parent->AgentProfileCliCommand(), restored->AgentProfileCliCommand());
+        VERIFY_ARE_EQUAL(parent->AgentProfileResumeCommand(), restored->AgentProfileResumeCommand());
+        VERIFY_IS_TRUE(restored->AgentProfileSharedSessions());
+        VERIFY_IS_TRUE(::Microsoft::Terminal::AgentProfiles::HasValidSource(*restored));
+    }
+
+    void CustomAgentAndPolicyTests::AgentProfileCapabilitiesInheritanceAndClearing()
+    {
+        const auto parent = implementation::Profile::FromJson(VerifyParseSucceeded(R"({
+            "agentProfile.acp": {"command":"parent.exe","enabled":true,"model":"parent-model"},
+            "agentProfile.resume": {"command":"parent.exe","args":["{sessionId}"]}
+        })"));
+        const auto child = winrt::make_self<implementation::Profile>();
+        child->AddLeastImportantParent(parent);
+        child->LayerJson(VerifyParseSucceeded(R"({"agentProfile.acp":{"enabled":false}})"));
+        VERIFY_ARE_EQUAL(parent->AgentProfileAcpCommand(), child->AgentProfileAcpCommand());
+        VERIFY_IS_FALSE(child->AgentProfileAcpEnabled());
+        child->LayerJson(VerifyParseSucceeded(R"({"agentProfile.resume":{"command":null}})"));
+        VERIFY_IS_TRUE(child->AgentProfileResumeCommand().empty());
+        const auto restored = implementation::Profile::FromJson(child->ToJson());
+        restored->AddLeastImportantParent(parent);
+        VERIFY_IS_TRUE(restored->AgentProfileResumeCommand().empty());
+        restored->LayerJson(VerifyParseSucceeded(R"({"agentProfile.acp":null})"));
+        VERIFY_IS_TRUE(restored->AgentProfileAcpEnabled());
+        VERIFY_ARE_EQUAL(parent->AgentProfileAcpModel(), restored->AgentProfileAcpModel());
+        restored->LayerJson(VerifyParseSucceeded(R"({"agentProfile.acp":{"model":"child-model"}})"));
+        restored->LayerJson(VerifyParseSucceeded(R"({"agentProfile.acp":{"model":null}})"));
+        VERIFY_ARE_EQUAL(parent->AgentProfileAcpModel(), restored->AgentProfileAcpModel());
+        VERIFY_ARE_EQUAL(parent->AgentProfileAcpCommand(), restored->AgentProfileAcpCommand());
+    }
+
+    void CustomAgentAndPolicyTests::AgentProfileSelectionAndCopy()
+    {
+        const auto settings = MakeSettings({});
+        const auto profile = settings->AllProfiles().GetAt(0);
+        profile.AgentProfileId(L"custom:work");
+        profile.AgentProfileAcpEnabled(true);
+        profile.AgentProfileAcpCommand(L"work.exe --stdio");
+        const auto id = winrt::to_hstring(profile.Guid());
+        settings->GlobalSettings().AgentPaneDefaultProfile(id);
+        VERIFY_ARE_EQUAL(winrt::hstring{ L"custom:work" }, settings->GlobalSettings().EffectiveAcpAgent());
+        const auto copied = settings->Copy();
+        copied.AllProfiles().GetAt(0).AgentProfileAcpEnabled(false);
+        VERIFY_IS_TRUE(copied.GlobalSettings().EffectiveAcpAgent().empty());
+        VERIFY_ARE_EQUAL(winrt::hstring{ L"custom:work" }, settings->GlobalSettings().EffectiveAcpAgent());
+        VERIFY_IS_TRUE(::Microsoft::Terminal::AgentProfiles::IsAcpCandidate(profile));
+        profile.AgentProfileAcpEnabled(false);
+        const auto catalog = ::Microsoft::Terminal::AgentProfiles::ToJson(settings->AllProfiles());
+        VERIFY_IS_FALSE(catalog[0]["acpEnabled"].asBool());
+        VERIFY_IS_TRUE(catalog[0]["acp"].isObject());
+    }
+
+    void CustomAgentAndPolicyTests::AgentProfileWslInvocation()
+    {
+        namespace Profiles = ::Microsoft::Terminal::AgentProfiles;
+        const auto command = Profiles::WslCommand({ L"/opt/my agent", { L"", L"literal $HOME", L"it's" } }, L"Ubuntu");
+        int argc = 0;
+        const wil::unique_hlocal_ptr<PWSTR[]> argv{ CommandLineToArgvW(command.c_str(), &argc) };
+        VERIFY_ARE_EQUAL(7, argc);
+        VERIFY_ARE_EQUAL(std::wstring{ L"Ubuntu" }, std::wstring{ argv.get()[2] });
+        VERIFY_ARE_EQUAL(std::wstring{ L"exec '/opt/my agent' '' 'literal $HOME' 'it'\\''s'" }, std::wstring{ argv.get()[6] });
+        VERIFY_THROWS(Profiles::WslCommand({ L"agent", {} }, L"Ubuntu;exec"), wil::ResultException);
+    }
+
+    void CustomAgentAndPolicyTests::AgentProfileAcpModelArguments()
+    {
+        const auto profile = implementation::Profile::FromJson(VerifyParseSucceeded(R"({
+            "agentProfile.id":"copilot",
+            "agentProfile.acp":{"enabled":true,"model":"model name --flag"}
+        })"));
+        const auto command = ::Microsoft::Terminal::AgentProfiles::AcpCommand(*profile);
+        const auto invocation = ::Microsoft::Terminal::CustomAgents::Parse(command);
+        VERIFY_ARE_EQUAL(size_t{ 4 }, invocation.args.size());
+        VERIFY_ARE_EQUAL(std::wstring{ L"--model" }, invocation.args[2]);
+        VERIFY_ARE_EQUAL(std::wstring{ L"model name --flag" }, invocation.args[3]);
+    }
+
     void CustomAgentAndPolicyTests::AgentProfileCommandQuoting()
     {
         const auto command = ::Microsoft::Terminal::AgentProfiles::BuildCommand(
-            LR"(C:\Program Files\Claude\claude.exe)", L"claude", LR"(model "name"\)", L"plan",
-            LR"(--add-dir "C:\source tree")");
+            LR"(C:\Program Files\Claude\claude.exe)", L"claude", LR"(model "name"\)", L"plan", LR"(--add-dir "C:\source tree")");
         int argc = 0;
         wil::unique_hlocal_ptr<PWSTR[]> argv{ ::CommandLineToArgvW(command.c_str(), &argc) };
         VERIFY_IS_NOT_NULL(argv.get());
@@ -775,9 +882,7 @@ namespace SettingsModelUnitTests
     void CustomAgentAndPolicyTests::AgentProfileArgumentValidation()
     {
         namespace Agents = ::Microsoft::Terminal::AgentProfiles;
-        for (const auto arguments : { L"--model other", L"--config approval_policy=never", L"-capproval_policy=never",
-                                     L"--permission-mode=auto", L"--allow-all", L"--acp", L"login",
-                                     L"--resume", L"--add-dir --model", L"--version=other" })
+        for (const auto arguments : { L"--model other", L"--config approval_policy=never", L"-capproval_policy=never", L"--permission-mode=auto", L"--allow-all", L"--acp", L"login", L"--resume", L"--add-dir --model", L"--version=other" })
         {
             VERIFY_THROWS(Agents::BuildCommand(L"C:\\claude.exe", L"claude", {}, {}, arguments), wil::ResultException);
         }
@@ -789,17 +894,14 @@ namespace SettingsModelUnitTests
         VERIFY_THROWS(Agents::BuildCommand(L"C:\\claude.cmd", L"claude", L"embedded\"quote", {}, {}), wil::ResultException);
         VERIFY_THROWS(Agents::BuildCommand(L"C:\\agent.exe", L"custom:claude", {}, {}, {}), wil::ResultException);
         const auto antigravity = Agents::ParseArguments(Agents::BuildCommand(
-            L"C:\\agy.exe", L"antigravity", L"chosen-model", L"plan",
-            LR"(--conversation "session id" --add-dir "C:\source tree" --prompt-interactive "Explain this project" --continue)"));
+            L"C:\\agy.exe", L"antigravity", L"chosen-model", L"plan", LR"(--conversation "session id" --add-dir "C:\source tree" --prompt-interactive "Explain this project" --continue)"));
         VERIFY_ARE_EQUAL(size_t{ 12 }, antigravity.size());
         VERIFY_ARE_EQUAL(std::wstring{ L"--mode" }, antigravity[3]);
         VERIFY_ARE_EQUAL(std::wstring{ L"plan" }, antigravity[4]);
         VERIFY_ARE_EQUAL(std::wstring{ L"session id" }, antigravity[6]);
         VERIFY_ARE_EQUAL(std::wstring{ L"C:\\source tree" }, antigravity[8]);
         VERIFY_ARE_EQUAL(std::wstring{ L"Explain this project" }, antigravity[10]);
-        for (const auto arguments : { L"--conversation", L"--conversation=--model", L"--resume session",
-                                     L"--mode plan", L"--dangerously-skip-permissions", L"--print prompt",
-                                     L"--model other", L"--add-dir --model" })
+        for (const auto arguments : { L"--conversation", L"--conversation=--model", L"--resume session", L"--mode plan", L"--dangerously-skip-permissions", L"--print prompt", L"--model other", L"--add-dir --model" })
         {
             VERIFY_THROWS(Agents::BuildCommand(L"C:\\agy.exe", L"antigravity", {}, {}, arguments), wil::ResultException);
         }
@@ -1026,8 +1128,7 @@ namespace SettingsModelUnitTests
         auto command = Agents::BuildCommand(shim.native(), L"claude", L"model with spaces", L"plan", LR"(--add-dir "C:\source & (tree)\\")");
         STARTUPINFOW startup{ sizeof(startup) };
         wil::unique_process_information process;
-        THROW_IF_WIN32_BOOL_FALSE(CreateProcessW(nullptr, command.data(), nullptr, nullptr, false, CREATE_NO_WINDOW,
-                                                nullptr, root.c_str(), &startup, &process));
+        THROW_IF_WIN32_BOOL_FALSE(CreateProcessW(nullptr, command.data(), nullptr, nullptr, false, CREATE_NO_WINDOW, nullptr, root.c_str(), &startup, &process));
         const auto stop = wil::scope_exit([&]() {
             if (WaitForSingleObject(process.hProcess, 0) == WAIT_TIMEOUT)
             {
@@ -1464,7 +1565,6 @@ namespace SettingsModelUnitTests
         VERIFY_IS_TRUE(serialized.find("models.example") != std::string::npos);
     }
 
-
     void CustomAgentAndPolicyTests::CustomModelProviderEditorMergePreservesUnsupported()
     {
         namespace CustomModels = ::Microsoft::Terminal::CustomModels;
@@ -1519,7 +1619,8 @@ namespace SettingsModelUnitTests
         provider.Models().Append(CustomModel{ L"model-b", L"model-b" });
 
         VERIFY_ARE_EQUAL(
-            winrt::hstring{ L"Friendly Model (model-a)\n" L"model-b" },
+            winrt::hstring{ L"Friendly Model (model-a)\n"
+                            L"model-b" },
             CustomModels::FormatModelDisplayText(provider));
 
         const auto providers = std::array{ provider };
@@ -1779,8 +1880,8 @@ namespace SettingsModelUnitTests
         // value to false, matching the AutoFix policy-gate pattern above.
         const auto settings = MakeSettings(R"("agentPane.yoloMode": true)");
         SetPolicy(MakePolicy(/*allowedAgents*/ std::nullopt,
-                              /*customAgents*/ AgentPolicy::PolicyState::NotConfigured,
-                              /*yoloMode*/ AgentPolicy::PolicyState::Blocked));
+                             /*customAgents*/ AgentPolicy::PolicyState::NotConfigured,
+                             /*yoloMode*/ AgentPolicy::PolicyState::Blocked));
         VERIFY_IS_FALSE(settings->GlobalSettings().EffectiveAgentPaneYoloMode());
         // The raw (non-effective) setting still reflects the user's choice —
         // only the effective/gated accessor is policy-clamped.
@@ -1791,8 +1892,8 @@ namespace SettingsModelUnitTests
     {
         const auto settings = MakeSettings(R"("agentPane.yoloMode": true)");
         SetPolicy(MakePolicy(/*allowedAgents*/ std::nullopt,
-                              /*customAgents*/ AgentPolicy::PolicyState::NotConfigured,
-                              /*yoloMode*/ AgentPolicy::PolicyState::Blocked));
+                             /*customAgents*/ AgentPolicy::PolicyState::NotConfigured,
+                             /*yoloMode*/ AgentPolicy::PolicyState::Blocked));
 
         const auto globals = settings->GlobalSettings();
         const auto impl = winrt::get_self<implementation::GlobalAppSettings>(globals);

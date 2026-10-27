@@ -187,7 +187,10 @@ pub(crate) async fn run(command: Command, json_mode: bool) -> Result<()> {
         } => {
             probes::run_models(&agent, agent_id.as_deref(), retry_startup).await
         }
-        Command::ProbeAgentSources { wsl_distro } => probes::run_agent_sources(&wsl_distro).await,
+        Command::ProbeAgentSources {
+            wsl_distro,
+            native_cli,
+        } => probes::run_agent_sources(&wsl_distro, native_cli).await,
         Command::ProbeHostAgents => probes::run_host_agents(),
         Command::ProbeProfileAgents => native_agent::probe(),
         Command::LaunchAgent {

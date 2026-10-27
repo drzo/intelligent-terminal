@@ -44,7 +44,7 @@ Author(s):
     X(winrt::Microsoft::UI::Xaml::Controls::TabViewWidthMode, TabWidthMode, "tabWidthMode", winrt::Microsoft::UI::Xaml::Controls::TabViewWidthMode::Equal)                                            \
     X(Model::TabLayout, TabLayout, "tabLayout", Model::TabLayout::Vertical)                                                                                                                           \
     X(int32_t, TabLayoutVerticalWidth, "tabLayoutVerticalWidth", 220)                                                                                                                                 \
-    X(bool, SidebarShowAgentsOnly, "sidebarShowAgentsOnly", false)                                                                                                                                   \
+    X(bool, SidebarShowAgentsOnly, "sidebarShowAgentsOnly", false)                                                                                                                                    \
     X(bool, SidebarShowRecentAgentSessions, "sidebarShowRecentAgentSessions", true)                                                                                                                   \
     X(bool, UseAcrylicInTabRow, "useAcrylicInTabRow", false)                                                                                                                                          \
     X(bool, ShowTabsInTitlebar, "showTabsInTitlebar", true)                                                                                                                                           \
@@ -76,30 +76,31 @@ Author(s):
     X(winrt::Windows::Foundation::Collections::IVector<Model::NewTabMenuEntry>, NewTabMenu, "newTabMenu", winrt::single_threaded_vector<Model::NewTabMenuEntry>({ Model::RemainingProfilesEntry{} })) \
     X(bool, AllowHeadless, "compatibility.allowHeadless", false)                                                                                                                                      \
     X(hstring, SearchWebDefaultQueryUrl, "searchWebDefaultQueryUrl", L"https://www.bing.com/search?q=%22%s%22")                                                                                       \
-    X(bool, ShowTabsFullscreen, "showTabsFullscreen", false)                                                                                                                                            \
-    X(hstring, AcpAgent, "acpAgent", L"copilot")                                                                                                                                                        \
-    X(hstring, AcpModel, "acpModel", L"")                                                                                                                                                               \
-    X(hstring, CustomModelSelection, "customModelSelection", L"")                                                                                                                                       \
-    X(winrt::Windows::Foundation::Collections::IVector<Model::CustomModelProvider>, CustomModelProviders, "customModelProviders", winrt::single_threaded_vector<Model::CustomModelProvider>())             \
-    X(hstring, DelegateAgent, "delegateAgent", L"copilot")                                                                                                                                              \
-    X(hstring, DelegateModel, "delegateModel", L"")                                                                                                                                                    \
-    X(bool, AutoErrorDetectionEnabled, "autoErrorDetectionEnabled", true)                                                                                                                               \
-    X(bool, AutoFixEnabled, "autoFixEnabled", false)                                                                                                                                                    \
-    X(bool, AgentSessionManagementEnabled, "agentSessionManagementEnabled", true)                                                                                                                       \
-    X(bool, ShowTokenUsageAndCost, "showTokenUsageAndCost", true)                                                                                                                                       \
-    X(bool, RenderAgentMarkdown, "renderAgentMarkdown", true)                                                                                                                                           \
-    X(hstring, AcpCustomCommand, "acpCustomCommand", L"")                                                                                                                                              \
+    X(bool, ShowTabsFullscreen, "showTabsFullscreen", false)                                                                                                                                          \
+    X(hstring, AgentPaneDefaultProfile, "agentPane.defaultProfile", L"")                                                                                                                              \
+    X(hstring, AcpAgent, "acpAgent", L"copilot")                                                                                                                                                      \
+    X(hstring, AcpModel, "acpModel", L"")                                                                                                                                                             \
+    X(hstring, CustomModelSelection, "customModelSelection", L"")                                                                                                                                     \
+    X(winrt::Windows::Foundation::Collections::IVector<Model::CustomModelProvider>, CustomModelProviders, "customModelProviders", winrt::single_threaded_vector<Model::CustomModelProvider>())        \
+    X(hstring, DelegateAgent, "delegateAgent", L"copilot")                                                                                                                                            \
+    X(hstring, DelegateModel, "delegateModel", L"")                                                                                                                                                   \
+    X(bool, AutoErrorDetectionEnabled, "autoErrorDetectionEnabled", true)                                                                                                                             \
+    X(bool, AutoFixEnabled, "autoFixEnabled", false)                                                                                                                                                  \
+    X(bool, AgentSessionManagementEnabled, "agentSessionManagementEnabled", true)                                                                                                                     \
+    X(bool, ShowTokenUsageAndCost, "showTokenUsageAndCost", true)                                                                                                                                     \
+    X(bool, RenderAgentMarkdown, "renderAgentMarkdown", true)                                                                                                                                         \
+    X(hstring, AcpCustomCommand, "acpCustomCommand", L"")                                                                                                                                             \
     X(winrt::Windows::Foundation::Collections::IVector<Model::CustomAgent>, CustomAgents, "customAgents", winrt::single_threaded_vector<Model::CustomAgent>())                                        \
-    X(winrt::Windows::Foundation::Collections::IVector<winrt::hstring>, AcpCustomCommands, "acpCustomCommands", winrt::single_threaded_vector<winrt::hstring>())                                         \
-    X(hstring, DelegateCustomCommand, "delegateCustomCommand", L"")                                                                                                                                    \
-    X(winrt::Windows::Foundation::Collections::IVector<winrt::hstring>, DelegateCustomCommands, "delegateCustomCommands", winrt::single_threaded_vector<winrt::hstring>())                               \
-    X(hstring, AgentPanePosition, "agentPanePosition", L"bottom")                                                                                                                                       \
-    X(bool, AgentPaneYoloMode, "agentPane.yoloMode", false)                                                                                                                                             \
-    X(bool, AiCoordinatorEnabled, "aiIntegration.coordinator.enabled", false)                                                                                                                          \
-    X(hstring, AiCoordinatorCommandline, "aiIntegration.coordinator.commandline", L"wta")                                                                                                                     \
-    X(hstring, AiCoordinatorProfile, "aiIntegration.coordinator.profile", L"{fd19208a-412b-4857-8a2d-9ca592b4b16e}")                                                                                   \
-    X(hstring, AiConfirmationReadOps, "aiIntegration.confirmation.readOperations", L"auto")                                                                                                             \
-    X(hstring, AiConfirmationCreateOps, "aiIntegration.confirmation.createOperations", L"auto")                                                                                                         \
+    X(winrt::Windows::Foundation::Collections::IVector<winrt::hstring>, AcpCustomCommands, "acpCustomCommands", winrt::single_threaded_vector<winrt::hstring>())                                      \
+    X(hstring, DelegateCustomCommand, "delegateCustomCommand", L"")                                                                                                                                   \
+    X(winrt::Windows::Foundation::Collections::IVector<winrt::hstring>, DelegateCustomCommands, "delegateCustomCommands", winrt::single_threaded_vector<winrt::hstring>())                            \
+    X(hstring, AgentPanePosition, "agentPanePosition", L"bottom")                                                                                                                                     \
+    X(bool, AgentPaneYoloMode, "agentPane.yoloMode", false)                                                                                                                                           \
+    X(bool, AiCoordinatorEnabled, "aiIntegration.coordinator.enabled", false)                                                                                                                         \
+    X(hstring, AiCoordinatorCommandline, "aiIntegration.coordinator.commandline", L"wta")                                                                                                             \
+    X(hstring, AiCoordinatorProfile, "aiIntegration.coordinator.profile", L"{fd19208a-412b-4857-8a2d-9ca592b4b16e}")                                                                                  \
+    X(hstring, AiConfirmationReadOps, "aiIntegration.confirmation.readOperations", L"auto")                                                                                                           \
+    X(hstring, AiConfirmationCreateOps, "aiIntegration.confirmation.createOperations", L"auto")                                                                                                       \
     X(hstring, AiConfirmationInputOps, "aiIntegration.confirmation.inputOperations", L"auto")
 
 // Also add these settings to:
@@ -117,10 +118,19 @@ Author(s):
     X(Microsoft::Terminal::Control::ScrollbarState, ScrollState, "scrollbarState", Microsoft::Terminal::Control::ScrollbarState::Visible)                      \
     X(Microsoft::Terminal::Control::TextAntialiasingMode, AntialiasingMode, "antialiasingMode", Microsoft::Terminal::Control::TextAntialiasingMode::Grayscale) \
     X(hstring, StartingDirectory, "startingDirectory")                                                                                                         \
-    X(hstring, AgentProfileId, "agentProfile.id", L"")                                                                                                          \
-    X(hstring, AgentProfileModel, "agentProfile.model", L"")                                                                                                    \
-    X(hstring, AgentProfilePermissionMode, "agentProfile.permissionMode", L"")                                                                                  \
-    X(hstring, AgentProfileArguments, "agentProfile.arguments", L"")                                                                                            \
+    X(hstring, AgentProfileId, "agentProfile.id", L"")                                                                                                         \
+    X(hstring, AgentProfileModel, "agentProfile.model", L"")                                                                                                   \
+    X(hstring, AgentProfilePermissionMode, "agentProfile.permissionMode", L"")                                                                                 \
+    X(hstring, AgentProfileArguments, "agentProfile.arguments", L"")                                                                                           \
+    X(hstring, AgentProfileCliCommand, "agentProfile.cli", L"")                                                                                                \
+    X(hstring, AgentProfileResumeCommand, "agentProfile.resume", L"")                                                                                          \
+    X(bool, AgentProfileSharedSessions, "agentProfile.resume.canResumeAcpSessions", false)                                                                     \
+    X(bool, AgentProfileAcpEnabled, "agentProfile.acp.enabled", false)                                                                                         \
+    X(hstring, AgentProfileAcpCommand, "agentProfile.acp", L"")                                                                                                \
+    X(hstring, AgentProfileAcpModel, "agentProfile.acp.model", L"")                                                                                            \
+    X(hstring, AgentProfileSource, "agentProfile.source", L"host")                                                                                             \
+    X(hstring, AgentProfileWslDistro, "agentProfile.wslDistro", L"")                                                                                           \
+    X(hstring, AgentPaneProfile, "agentPane.profile", L"")                                                                                                     \
     X(hstring, DefaultSplitProfile, "defaultSplitProfile", L"")                                                                                                \
     X(hstring, AgentPaneBackend, "agentPaneBackend", L"")                                                                                                      \
     X(hstring, CommandPaletteAgent, "commandPaletteAgent", L"")                                                                                                \

@@ -1,4 +1,4 @@
-<!--
+﻿<!--
     Copyright (c) Microsoft Corporation. All rights reserved. Licensed under
     the MIT License. See LICENSE in the project root for license information.
 -->
@@ -56,10 +56,10 @@
             <!--  Commandline  -->
             <local:SettingContainer x:Name="Commandline"
                                     x:Uid="Profile_Commandline"
-                                    ClearSettingValue="{x:Bind Profile.ClearCommandline}"
+                                    ClearSettingValue="{x:Bind Profile.ClearLaunchCommandline}"
                                     CurrentValue="{x:Bind Profile.LaunchCommandline, Mode=OneWay}"
-                                    HasSettingValue="{x:Bind Profile.HasCommandline, Mode=OneWay}"
-                                    SettingOverrideSource="{x:Bind Profile.CommandlineOverrideSource, Mode=OneWay}"
+                                    HasSettingValue="{x:Bind Profile.HasLaunchCommandline, Mode=OneWay}"
+                                    SettingOverrideSource="{x:Bind Profile.LaunchCommandlineOverrideSource, Mode=OneWay}"
                                     Style="{StaticResource ExpanderSettingContainerStyle}"
                                     Visibility="{x:Bind mtu:Converters.InvertedBooleanToVisibility(Profile.IsBaseLayer), Mode=OneWay}">
                 <StackPanel>
@@ -73,6 +73,46 @@
                             Style="{StaticResource BrowseButtonStyle}" />
                 </StackPanel>
             </local:SettingContainer>
+
+            <local:SettingContainer x:Uid="Profile_AgentDefinition"
+                                    Visibility="{x:Bind mtu:Converters.InvertedBooleanToVisibility(Profile.IsBaseLayer), Mode=OneWay}">
+                <ToggleSwitch IsOn="{x:Bind Profile.IsAgentDefinition, Mode=TwoWay}" />
+            </local:SettingContainer>
+
+            <StackPanel Visibility="{x:Bind Profile.IsAgentDefinition, Mode=OneWay}">
+                <local:SettingContainer x:Uid="AIAgents_CustomResume">
+                    <TextBox IsSpellCheckEnabled="False"
+                             Style="{StaticResource TextBoxSettingStyle}"
+                             Text="{x:Bind Profile.AgentProfileResumeCommand, Mode=TwoWay}" />
+                </local:SettingContainer>
+                <local:SettingContainer x:Uid="Profile_AgentResumeShared">
+                    <ToggleSwitch IsOn="{x:Bind Profile.AgentProfileSharedSessions, Mode=TwoWay}" />
+                </local:SettingContainer>
+                <local:SettingContainer x:Uid="Profile_AgentWsl">
+                    <ToggleSwitch IsOn="{x:Bind Profile.AgentRunsInWsl, Mode=TwoWay}" />
+                </local:SettingContainer>
+                <local:SettingContainer x:Uid="Profile_AgentWslDistro"
+                                        Visibility="{x:Bind Profile.AgentRunsInWsl, Mode=OneWay}">
+                    <TextBox IsSpellCheckEnabled="False"
+                             Style="{StaticResource TextBoxSettingStyle}"
+                             Text="{x:Bind Profile.AgentProfileWslDistro, Mode=TwoWay}" />
+                </local:SettingContainer>
+                <local:SettingContainer x:Uid="Profile_AcpEnabled">
+                    <ToggleSwitch IsOn="{x:Bind Profile.AgentProfileAcpEnabled, Mode=TwoWay}" />
+                </local:SettingContainer>
+                <local:SettingContainer x:Uid="AIAgents_CustomAcp">
+                    <TextBox IsSpellCheckEnabled="False"
+                             Style="{StaticResource TextBoxSettingStyle}"
+                             Text="{x:Bind Profile.AgentProfileAcpCommand, Mode=TwoWay}" />
+                </local:SettingContainer>
+                <local:SettingContainer x:Uid="AIAgents_AcpModel">
+                    <TextBox IsSpellCheckEnabled="False"
+                             Style="{StaticResource TextBoxSettingStyle}"
+                             Text="{x:Bind Profile.AgentProfileAcpModel, Mode=TwoWay}" />
+                </local:SettingContainer>
+                <TextBlock Text="{x:Bind Profile.AgentProfileError, Mode=OneWay}"
+                           TextWrapping="Wrap" />
+            </StackPanel>
 
             <TextBlock x:Uid="Profile_AgentPolicyBlocked"
                        Style="{StaticResource DisclaimerStyle}"
@@ -135,12 +175,12 @@
             <local:SettingContainer x:Name="AgentPaneBackend"
                                     x:Uid="Profile_AgentPaneBackend"
                                     x:Load="false"
-                                    ClearSettingValue="{x:Bind Profile.ClearAgentPaneBackend}"
+                                    ClearSettingValue="{x:Bind Profile.ClearAgentPaneProfile}"
                                     CurrentValue="{x:Bind Profile.CurrentAgentPaneBackend, Mode=OneWay}"
                                     CurrentValueAccessibleName="{x:Bind Profile.CurrentAgentPaneBackend.DisplayLabel, Mode=OneWay}"
                                     CurrentValueTemplate="{StaticResource ProfileAgentEntryTemplate}"
-                                    HasSettingValue="{x:Bind Profile.HasAgentPaneBackend, Mode=OneWay}"
-                                    SettingOverrideSource="{x:Bind Profile.AgentPaneBackendOverrideSource, Mode=OneWay}"
+                                    HasSettingValue="{x:Bind Profile.HasAgentPaneProfile, Mode=OneWay}"
+                                    SettingOverrideSource="{x:Bind Profile.AgentPaneProfileOverrideSource, Mode=OneWay}"
                                     Style="{StaticResource ExpanderSettingContainerStyle}">
                 <ComboBox ItemTemplate="{StaticResource ProfileAgentEntryTemplate}"
                           ItemsSource="{x:Bind Profile.AgentPaneBackendList, Mode=OneWay}"

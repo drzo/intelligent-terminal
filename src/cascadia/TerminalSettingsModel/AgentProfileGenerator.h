@@ -18,6 +18,14 @@ namespace winrt::Microsoft::Terminal::Settings::Model
             _customAgents{ std::move(customAgents) }
         {
         }
+        explicit AgentProfileGenerator(const Model::GlobalAppSettings& globals) :
+            _customAgents{ globals.CustomAgents() },
+            _legacyAcpCommands{ globals.AcpCustomCommands() },
+            _legacySelectedId{ globals.AcpAgent() },
+            _legacySelectedCommand{ globals.AcpCustomCommand() },
+            _legacyModel{ globals.AcpModel() }
+        {
+        }
 
         class DiscoveryCache
         {
@@ -37,5 +45,9 @@ namespace winrt::Microsoft::Terminal::Settings::Model
 
     private:
         winrt::Windows::Foundation::Collections::IVector<Model::CustomAgent> _customAgents;
+        winrt::Windows::Foundation::Collections::IVector<winrt::hstring> _legacyAcpCommands{ nullptr };
+        winrt::hstring _legacySelectedId;
+        winrt::hstring _legacySelectedCommand;
+        winrt::hstring _legacyModel;
     };
 }

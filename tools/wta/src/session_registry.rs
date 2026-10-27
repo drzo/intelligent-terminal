@@ -139,6 +139,7 @@ pub struct WtaMeta {
     /// request is not trusted for agent-specific permission behavior; the
     /// helper uses `resolved_agent_id` returned by the master.
     pub agent_id: Option<String>,
+    pub agent_profile_id: Option<String>,
     /// Canonical agent id selected by the master after allowlist validation
     /// and fallback resolution. Returned only in the initialize response so
     /// helper-side agent-specific behavior never trusts its own request.
@@ -199,6 +200,7 @@ impl WtaMeta {
             && blank(&self.control_client)
             && blank(&self.agent_cmd)
             && blank(&self.agent_id)
+            && blank(&self.agent_profile_id)
             && blank(&self.resolved_agent_id)
             && blank(&self.resolved_model_source)
             && blank(&self.model)
@@ -254,6 +256,7 @@ pub fn extract_wta_meta(meta: &mut Option<acp::schema::v1::Meta>) -> WtaMeta {
         control_client: str_field("control_client"),
         agent_cmd: str_field("agent_cmd"),
         agent_id: str_field("agent_id"),
+        agent_profile_id: str_field("agent_profile_id"),
         resolved_agent_id: str_field("resolved_agent_id"),
         resolved_model_source: str_field("resolved_model_source"),
         model: str_field("model"),
@@ -299,6 +302,7 @@ pub fn inject_wta_meta(meta: &mut Option<acp::schema::v1::Meta>, wta: &WtaMeta) 
     put("control_client", &wta.control_client);
     put("agent_cmd", &wta.agent_cmd);
     put("agent_id", &wta.agent_id);
+    put("agent_profile_id", &wta.agent_profile_id);
     put("resolved_agent_id", &wta.resolved_agent_id);
     put("resolved_model_source", &wta.resolved_model_source);
     put("model", &wta.model);
@@ -10419,7 +10423,10 @@ mod tests {
                 .clone(),
         );
         let parsed = extract_wta_meta(&mut meta);
-        assert!(meta.is_none(), "private retry intent must not reach the agent");
+        assert!(
+            meta.is_none(),
+            "private retry intent must not reach the agent"
+        );
         inject_wta_meta(&mut meta, &parsed);
         assert_eq!(
             meta.as_ref().unwrap()["wta"]["startup_intent"],
@@ -10482,6 +10489,7 @@ mod tests {
                 control_client: Some(" ".to_string()),
                 agent_cmd: Some(String::new()),
                 agent_id: Some("\t".to_string()),
+                agent_profile_id: Some(" ".to_string()),
                 resolved_agent_id: Some(" ".to_string()),
                 resolved_model_source: Some(" ".to_string()),
                 model: Some(" ".to_string()),
@@ -10528,6 +10536,7 @@ mod tests {
                 control_client: Some(" ".to_string()),
                 agent_cmd: Some(String::new()),
                 agent_id: Some("\t".to_string()),
+                agent_profile_id: Some(" ".to_string()),
                 resolved_agent_id: Some(" ".to_string()),
                 resolved_model_source: Some(" ".to_string()),
                 model: Some(" ".to_string()),

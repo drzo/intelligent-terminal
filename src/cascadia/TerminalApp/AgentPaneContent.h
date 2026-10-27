@@ -77,6 +77,11 @@ namespace winrt::TerminalApp::implementation
             _agentRestoreCustomCommand = customCommand;
         }
 
+        void SetAgentRestoreProfile(const winrt::hstring& profileId) noexcept
+        {
+            _agentRestoreProfileId = profileId;
+        }
+
         // The agent that owned `_agentSessionId` when it was recorded. Always
         // written together with a non-empty session id.
         void SetAgentSessionOwner(const winrt::hstring& agentIdentity) noexcept
@@ -98,6 +103,7 @@ namespace winrt::TerminalApp::implementation
             _agentSessionId = source._agentSessionId;
             _agentSessionOwner = source._agentSessionOwner;
             _agentRestoreIdentity = source._agentRestoreIdentity;
+            _agentRestoreProfileId = source._agentRestoreProfileId;
             _agentRestoreCustomCommand = source._agentRestoreCustomCommand;
             _wtaExecutablePath = source._wtaExecutablePath;
         }
@@ -237,6 +243,7 @@ namespace winrt::TerminalApp::implementation
         winrt::hstring _agentSessionOwner{};
         winrt::hstring _yoloControlOwner{};
         winrt::hstring _agentRestoreIdentity{};
+        winrt::hstring _agentRestoreProfileId{};
         winrt::hstring _agentRestoreCustomCommand{};
         winrt::hstring _wtaExecutablePath{};
 

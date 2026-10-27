@@ -1975,8 +1975,10 @@ impl HistoryRefreshState {
     }
 
     fn retry_due(&self) -> bool {
-        !self.startup_exhausted && self.next_refresh_at
-            .is_none_or(|at| at <= tokio::time::Instant::now())
+        !self.startup_exhausted
+            && self
+                .next_refresh_at
+                .is_none_or(|at| at <= tokio::time::Instant::now())
     }
 }
 
@@ -3397,9 +3399,8 @@ impl HelperHandler {
             None => false,
         };
         if requested_control && wta_meta.startup_intent.is_some() {
-            return Err(acp::Error::invalid_request().data(
-                "history control clients cannot request agent startup",
-            ));
+            return Err(acp::Error::invalid_request()
+                .data("history control clients cannot request agent startup"));
         }
         if wta_meta
             .startup_intent
@@ -3465,7 +3466,9 @@ impl HelperHandler {
             agent_id,
             source: agent_source,
             explicit_selection,
-        } = if wta_meta
+        } = if wta_meta.agent_profile_id.is_some() {
+            resolve_agent_profile_selection(&self.state, &wta_meta).await?
+        } else if wta_meta
             .agent_id
             .as_deref()
             .is_some_and(crate::custom_agents::is_custom_id)
@@ -3473,14 +3476,14 @@ impl HelperHandler {
             resolve_custom_agent_selection(&self.state, &wta_meta, self.helper_id).await?
         } else {
             resolve_agent_selection(
-            &self.state.default_agent_cmd,
-            self.state.default_agent_id.as_deref(),
-            self.state.allowed_agent_ids.as_ref(),
-            wta_meta.agent_id.as_deref(),
-            wta_meta.model.as_deref(),
-            wta_meta.agent_source.as_deref(),
-            wta_meta.wsl_distro.as_deref(),
-            self.helper_id,
+                &self.state.default_agent_cmd,
+                self.state.default_agent_id.as_deref(),
+                self.state.allowed_agent_ids.as_ref(),
+                wta_meta.agent_id.as_deref(),
+                wta_meta.model.as_deref(),
+                wta_meta.agent_source.as_deref(),
+                wta_meta.wsl_distro.as_deref(),
+                self.helper_id,
             )?
         };
         tracing::info!(
@@ -3490,7 +3493,7 @@ impl HelperHandler {
             helper_id = ?self.helper_id,
             protocol_version = ?args.protocol_version,
             requested_agent_id = ?wta_meta.agent_id,
-            resolved_agent_cmd = if agent_id.as_deref().is_some_and(crate::custom_agents::is_custom_id) { "<custom>" } else { agent_cmd.as_str() },
+            resolved_agent_cmd = if wta_meta.agent_profile_id.is_some() || agent_id.as_deref().is_some_and(crate::custom_agents::is_custom_id) { "<profile>" } else { agent_cmd.as_str() },
             resolved_agent_id = ?agent_id,
             resolved_agent_source = %agent_source,
             "resolving agent CLI for helper"
@@ -3539,7 +3542,9 @@ impl HelperHandler {
                 .startup_registry
                 .retry(&key)
                 .await
-                .map_err(|error| helper_initialize_error(HelperInitializeFailure::AgentStartup, &error))?;
+                .map_err(|error| {
+                    helper_initialize_error(HelperInitializeFailure::AgentStartup, &error)
+                })?;
         }
         let agent = self
             .get_or_initialize_agent(|| {
@@ -5511,6 +5516,71 @@ fn resolve_agent_selection(
     })
 }
 
+async fn resolve_agent_profile_selection(
+    state: &MasterStateInner,
+    metadata: &crate::session_registry::WtaMeta,
+) -> acp::Result<ResolvedAgentSelection> {
+    let resolve = async {
+        let wt = state
+            .wt
+            .as_ref()
+            .context("Terminal profile service is unavailable")?;
+        let settings = wt.request("get_settings", serde_json::Value::Null).await?;
+        let profile = crate::agent_profiles::resolve(
+            &settings,
+            metadata
+                .agent_profile_id
+                .as_deref()
+                .context("agent profile identity is missing")?,
+        )?;
+        anyhow::ensure!(
+            profile.acp_enabled,
+            "the selected profile is disabled for the agent pane"
+        );
+        if crate::custom_agents::is_custom_id(&profile.id) {
+            crate::cli::native_agent::policy::check_custom(false)?;
+        } else {
+            anyhow::ensure!(
+                state
+                    .allowed_agent_ids
+                    .as_ref()
+                    .is_none_or(|ids| ids.contains(&profile.id)),
+                "the selected profile's agent is blocked by policy"
+            );
+        }
+        if let Some(id) = metadata.agent_id.as_deref() {
+            anyhow::ensure!(
+                id.eq_ignore_ascii_case(&profile.id),
+                "agent profile provider does not match the requested provider"
+            );
+        }
+        let source = profile.execution_source()?;
+        let requested_source = crate::agent_source::AgentSource::from_wire(
+            metadata.agent_source.as_deref(),
+            metadata.wsl_distro.as_deref(),
+        )?;
+        anyhow::ensure!(
+            source == requested_source,
+            "agent profile execution source does not match the requested source"
+        );
+        let command = profile
+            .acp
+            .context("the selected profile has no ACP command")?
+            .commandline();
+        Ok(ResolvedAgentSelection {
+            command,
+            agent_id: Some(profile.id),
+            source,
+            explicit_selection: ExplicitAgentSelection::Accepted,
+        })
+    }
+    .await;
+    resolve.map_err(|error: anyhow::Error| {
+        tracing::warn!(target: "master", %error, "agent profile selection failed");
+        acp::Error::invalid_params().data(error.to_string())
+    })
+}
+
 async fn resolve_custom_agent_selection(
     state: &MasterStateInner,
     metadata: &crate::session_registry::WtaMeta,
@@ -5840,16 +5910,14 @@ where
                 }
                 let result = match startup.begin() {
                     Ok(()) => match initialize(Arc::clone(&cell)).await {
-                        Ok(agent) => {
-                            match startup.succeeded() {
-                                Ok(()) => Ok(agent),
-                                Err(error) => {
-                                    agent.conn.shutdown();
-                                    retire_agent_history(&agent).await;
-                                    Err(error)
-                                }
+                        Ok(agent) => match startup.succeeded() {
+                            Ok(()) => Ok(agent),
+                            Err(error) => {
+                                agent.conn.shutdown();
+                                retire_agent_history(&agent).await;
+                                Err(error)
                             }
-                        }
+                        },
                         Err(error) => Err(startup.failed(error)),
                     },
                     Err(error) => Err(error),
@@ -5904,7 +5972,8 @@ async fn get_or_spawn_agent(
     supplied_cloud_models: Vec<crate::app::AcpModelInfo>,
 ) -> Result<Arc<AgentCli>> {
     let key = agent_cmd_key_with_provider(agent_cmd, agent_id, source, &provider_binding);
-    let admission_key = agent_admission_key_with_provider(agent_cmd, agent_id, source, &provider_binding);
+    let admission_key =
+        agent_admission_key_with_provider(agent_cmd, agent_id, source, &provider_binding);
     let initialization_key = key.clone();
     let agent = acquire_agent_from_pool_with_admission(state, &key, &admission_key, move |cell| {
         let key = initialization_key.clone();
@@ -6059,19 +6128,20 @@ async fn spawn_one_agent(
     };
     let telemetry_model_source =
         provider_binding.telemetry_model_source(&resolved_agent_id, source);
-    let prepared = match crate::agent_lifecycle::providers::prepare(agent_cmd, agent_id, source).await {
-        Ok(prepared) => prepared,
-        Err(error) => {
-        crate::telemetry::log_agent_cold_start_complete(
-            &resolved_agent_id,
-            source_kind,
-            cold_start_started.elapsed().as_secs_f64() * 1000.0,
-            false,
-            "DependencyInstallFailed",
-        );
-            return Err(error).context(crate::agent_lifecycle::StartupPhase::Preparation);
-        }
-    };
+    let prepared =
+        match crate::agent_lifecycle::providers::prepare(agent_cmd, agent_id, source).await {
+            Ok(prepared) => prepared,
+            Err(error) => {
+                crate::telemetry::log_agent_cold_start_complete(
+                    &resolved_agent_id,
+                    source_kind,
+                    cold_start_started.elapsed().as_secs_f64() * 1000.0,
+                    false,
+                    "DependencyInstallFailed",
+                );
+                return Err(error).context(crate::agent_lifecycle::StartupPhase::Preparation);
+            }
+        };
     let startup_error = |error: anyhow::Error, phase| {
         let error = error.context(phase);
         if prepared.outcome == crate::agent_lifecycle::providers::PreparationOutcome::Ready {
@@ -6097,7 +6167,10 @@ async fn spawn_one_agent(
                 false,
                 "SpawnFailed",
             );
-            return Err(startup_error(error, crate::agent_lifecycle::StartupPhase::Spawn));
+            return Err(startup_error(
+                error,
+                crate::agent_lifecycle::StartupPhase::Spawn,
+            ));
         }
     };
     tracing::info!(
@@ -6291,7 +6364,10 @@ async fn spawn_one_agent(
                 format_startup_stderr(&stderr)
             ));
             let error = crate::agent_lifecycle::StartupDetails::attach(error, &stderr);
-            return Err(startup_error(error, crate::agent_lifecycle::StartupPhase::Initialize));
+            return Err(startup_error(
+                error,
+                crate::agent_lifecycle::StartupPhase::Initialize,
+            ));
         }
         Err(_) => {
             let stderr = stderr_log
@@ -6330,7 +6406,8 @@ async fn spawn_one_agent(
         let state = Arc::clone(state);
         let cell = Arc::clone(cell);
         let key = key.clone();
-        let admission_key = agent_admission_key_with_provider(agent_cmd, agent_id, source, provider_binding);
+        let admission_key =
+            agent_admission_key_with_provider(agent_cmd, agent_id, source, provider_binding);
         tokio::task::spawn_local(async move {
             let status = wait_for_agent_exit(&state, &key, &admission_key, &mut child).await;
             tracing::error!(
@@ -8323,7 +8400,11 @@ fn request_host_history_refresh(state: &Arc<MasterStateInner>) {
 
 async fn retry_failed_host_history_discovery(state: &Arc<MasterStateInner>) {
     use std::sync::atomic::Ordering;
-    let stopped: Vec<_> = state.history_discovery_retries.lock().await.iter()
+    let stopped: Vec<_> = state
+        .history_discovery_retries
+        .lock()
+        .await
+        .iter()
         .filter(|(_, retry)| retry.startup_exhausted)
         .map(|(key, _)| key.clone())
         .collect();
@@ -8894,10 +8975,29 @@ async fn execute_session_activation(
         return response;
     };
     let provider_id = cli_source.canonical_provider_id();
+    let resume_source = match &row.location {
+        crate::agent_sessions::SessionLocation::Host => {
+            Some(crate::agent_source::AgentSource::Host)
+        }
+        crate::agent_sessions::SessionLocation::Wsl { distro } => {
+            Some(crate::agent_source::AgentSource::Wsl {
+                distro: distro.clone(),
+            })
+        }
+        crate::agent_sessions::SessionLocation::Unknown => None,
+    };
+    let mut resume_profile_id = None;
     let custom = if let Some(id) = provider_id
         .as_deref()
         .filter(|id| crate::custom_agents::is_custom_id(id))
     {
+        let Some(resume_source) = &resume_source else {
+            return respond!(
+                "not_resumable",
+                false,
+                Some("The selected custom session location is unknown.".into())
+            );
+        };
         if let Err(error) = crate::cli::native_agent::policy::check_custom(false) {
             return failed("not_resumable", error);
         }
@@ -8912,7 +9012,12 @@ async fn execute_session_activation(
             Ok(settings) => settings,
             Err(error) => return failed("not_resumable", error),
         };
-        match crate::custom_agents::from_settings(&settings, id) {
+        match crate::agent_profiles::for_provider(&settings, id, &resume_source) {
+            Ok(Some(profile)) => resume_profile_id = Some(profile.profile_id),
+            Ok(None) => {}
+            Err(error) => return failed("not_resumable", error),
+        }
+        match crate::custom_agents::from_settings_for_source(&settings, id, &resume_source) {
             Ok(Some(agent)) => Some(agent),
             Ok(None) => {
                 let mut response = respond!(
@@ -8929,13 +9034,6 @@ async fn execute_session_activation(
     } else {
         None
     };
-    if custom.is_some() && !matches!(row.location, crate::agent_sessions::SessionLocation::Host) {
-        return respond!(
-            "not_resumable",
-            false,
-            Some("Custom session resume currently requires the Windows host source.".into())
-        );
-    }
     let profile = provider_id
         .as_deref()
         .filter(|id| !crate::custom_agents::is_custom_id(id))
@@ -9039,6 +9137,7 @@ async fn execute_session_activation(
                     "agent_id": provider_id,
                     "agent_source": agent_source,
                     "wsl_distro": wsl_distro.unwrap_or_default(),
+                    "agent_profile_id": resume_profile_id,
                 }
             });
             crate::wt_protocol_events::send(event.to_string());
@@ -9062,11 +9161,21 @@ async fn execute_session_activation(
                     Some("The selected session has an invalid CLI resume identifier.".to_string())
                 );
             }
+            if provider_id == crate::agent_registry::ANTIGRAVITY_AGENT_ID
+                && matches!(&row.location, crate::agent_sessions::SessionLocation::Wsl { distro }
+                    if !crate::agent_source::is_safe_wsl_distro_name(distro))
+            {
+                return respond!(
+                    "resume_cli",
+                    false,
+                    Some("The selected session has an invalid WSL source.".to_string())
+                );
+            }
             if custom.is_none()
                 && state
-                .allowed_agent_ids
-                .as_ref()
-                .is_some_and(|allowed| !allowed.contains(&provider_id))
+                    .allowed_agent_ids
+                    .as_ref()
+                    .is_some_and(|allowed| !allowed.contains(&provider_id))
             {
                 return respond!(
                     "resume_cli",
@@ -9079,43 +9188,60 @@ async fn execute_session_activation(
                     return failed("resume_cli", error);
                 }
             }
+            let configured_profile = if custom.is_none() {
+                if let Some(source) = &resume_source {
+                    let settings = match wt.request("get_settings", serde_json::Value::Null).await {
+                        Ok(settings) => settings,
+                        Err(error) => return failed("resume_cli", error),
+                    };
+                    match crate::agent_profiles::for_provider(&settings, &provider_id, source) {
+                        Ok(profile) => profile,
+                        Err(error) => return failed("resume_cli", error),
+                    }
+                } else {
+                    None
+                }
+            } else {
+                None
+            };
+            if let Some(profile) = &configured_profile {
+                resume_profile_id = Some(profile.profile_id.clone());
+            }
+            let resume_invocation = custom
+                .as_ref()
+                .and_then(|agent| agent.resume.as_ref())
+                .or_else(|| {
+                    configured_profile
+                        .as_ref()
+                        .and_then(|profile| profile.resume.as_ref())
+                });
+            if let Some(resume) = resume_invocation {
+                if !crate::agent_sessions::is_safe_cli_resume_id(row.session_id.0.as_ref()) {
+                    return respond!(
+                        "resume_cli",
+                        false,
+                        Some("The selected session has an invalid CLI resume identifier.".into())
+                    );
+                }
+                if row.origin == Some(SessionOrigin::AgentPane) && !resume.can_resume_acp_sessions {
+                    return respond!("resume_cli", false, Some("This profile does not declare compatible ACP and CLI session identifiers.".into()));
+                }
+            }
             let runtimes =
                 crate::coordinator::default_delegate_agent_runtimes(Some(&provider_id), None, None);
             let runtime = &runtimes[0];
             let commandline = match &row.location {
                 crate::agent_sessions::SessionLocation::Host => {
-                    if let Some(agent) = &custom {
-                        match &agent.resume {
-                            Some(resume) => resume.resume_commandline(&row.session_id.to_string()),
-                            None => Err(anyhow!("The custom agent has no CLI resume command.")),
-                        }
+                    if let Some(resume) = resume_invocation {
+                        resume.resume_commandline(&row.session_id.to_string())
                     } else {
-                    crate::coordinator::build_delegate_resume_commandline(
-                        runtime,
-                        &row.session_id.to_string(),
-                    )
-                }
+                        crate::coordinator::build_delegate_resume_commandline(
+                            runtime,
+                            &row.session_id.to_string(),
+                        )
+                    }
                 }
                 crate::agent_sessions::SessionLocation::Wsl { distro } => {
-                    if custom.is_some() {
-                        return respond!(
-                            "resume_cli",
-                            false,
-                            Some(
-                                "Custom CLI resume currently requires the Windows host source."
-                                    .into()
-                            )
-                        );
-                    }
-                    if provider_id == crate::agent_registry::ANTIGRAVITY_AGENT_ID
-                        && !crate::agent_source::is_safe_wsl_distro_name(distro)
-                    {
-                        return respond!(
-                            "resume_cli",
-                            false,
-                            Some("The selected session has an invalid WSL source.".to_string())
-                        );
-                    }
                     if distro.trim().is_empty() || !row.cwd.to_string_lossy().starts_with('/') {
                         return respond!(
                             "resume_cli",
@@ -9123,10 +9249,25 @@ async fn execute_session_activation(
                             Some("The selected WSL session has no valid distro or working directory.".to_string())
                         );
                     }
-                    crate::coordinator::build_wsl_delegate_resume_commandline(
-                        runtime,
-                        &row.session_id.to_string(),
-                    )
+                    if let Some(resume) = resume_invocation {
+                        let args = resume.args.iter().map(|arg| {
+                            if arg == "{sessionId}" {
+                                row.session_id.to_string()
+                            } else {
+                                arg.clone()
+                            }
+                        });
+                        Ok(std::iter::once(resume.command.as_str().to_owned())
+                            .chain(args)
+                            .map(|arg| crate::coordinator::sh_quote(&arg))
+                            .collect::<Vec<_>>()
+                            .join(" "))
+                    } else {
+                        crate::coordinator::build_wsl_delegate_resume_commandline(
+                            runtime,
+                            &row.session_id.to_string(),
+                        )
+                    }
                     .map(|command| {
                         format!(
                             "wsl.exe -d {} --cd {} -- bash -lc {}",
@@ -9156,9 +9297,12 @@ async fn execute_session_activation(
                 "background": true,
                 "native_agent_provider_id": provider_id,
             });
-            if custom.is_some() {
+            if resume_invocation.is_some() {
                 params["custom_agent_session_id"] =
                     serde_json::Value::String(row.session_id.to_string());
+            }
+            if let Some(profile_id) = &resume_profile_id {
+                params["profile"] = serde_json::Value::String(profile_id.clone());
             }
             if matches!(row.location, crate::agent_sessions::SessionLocation::Host)
                 && !row.cwd.as_os_str().is_empty()

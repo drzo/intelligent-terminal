@@ -12,6 +12,7 @@
 #include "../inc/AgentPaneBackend.h"
 #include "../inc/AgentRegistry.h"
 #include "../inc/AgentProfileUtils.h"
+#include "../inc/AgentProfileCatalog.h"
 #include "../inc/ShellIntegrationProfileGate.h"
 #include "../inc/WslShellIntegration.h"
 #include "../inc/WtaProcess.h"
@@ -58,16 +59,15 @@ namespace winrt::Microsoft::Terminal::Settings::Editor::implementation
 
     hstring ProfileViewModel::LaunchCommandline() const
     {
-        if (::Microsoft::Terminal::AgentProfiles::IsManaged(_profile) &&
-            ::Microsoft::Terminal::CustomAgents::IsId(std::wstring_view{ _profile.AgentProfileId() }))
-        {
-            if (const auto agent = ::Microsoft::Terminal::CustomAgents::Find(_appSettings.GlobalSettings(), _profile.AgentProfileId());
-                agent && !agent.CliCommand().empty())
-            {
-                return hstring{ ::Microsoft::Terminal::CustomAgents::Format(
-                    ::Microsoft::Terminal::CustomAgents::Parse(agent.CliCommand())) };
-            }
-        }
+        if (!_profile.AgentProfileCliCommand().empty() && ::Microsoft::Terminal::AgentProfiles::IsManaged(_profile))
+            return _profile.AgentProfileCliCommand();
+        if (IsManagedAgentProfile() && _profile.AgentProfileSource() == L"wsl")
+            return hstring{ ::Microsoft::Terminal::AgentProfiles::BuildCommand(
+                ::Microsoft::Terminal::Settings::Model::AgentRegistry::CliExecutable(_profile.AgentProfileId()),
+                _profile.AgentProfileId(),
+                _profile.AgentProfileModel(),
+                _profile.AgentProfilePermissionMode(),
+                _profile.AgentProfileArguments()) };
         return IsManagedAgentProfile() ?
                    hstring{ ::Microsoft::Terminal::AgentProfiles::Command(_profile) } :
                    Commandline();
@@ -75,7 +75,8 @@ namespace winrt::Microsoft::Terminal::Settings::Editor::implementation
 
     bool ProfileViewModel::IsManagedAgentProfile() const
     {
-        return ::Microsoft::Terminal::AgentProfiles::IsManaged(_profile) &&
+        return _profile.AgentProfileCliCommand().empty() &&
+               ::Microsoft::Terminal::AgentProfiles::IsManaged(_profile) &&
                ::Microsoft::Terminal::Settings::Model::AgentRegistry::SupportsNativeProfile(
                    std::wstring_view{ _profile.AgentProfileId() });
     }
@@ -95,11 +96,79 @@ namespace winrt::Microsoft::Terminal::Settings::Editor::implementation
     {
         if (value != LaunchCommandline())
         {
+            if (IsAgentDefinition())
+            {
+                AgentProfileCliCommand(value);
+                return;
+            }
             _profile.Commandline(value);
             _NotifyChanges(L"HasCommandline", L"Commandline");
         }
     }
 
+    void ProfileViewModel::ClearLaunchCommandline()
+    {
+        _profile.ClearAgentProfileCliCommand();
+        _profile.ClearCommandline();
+        _NotifyChanges(L"LaunchCommandline", L"HasCommandline", L"HasLaunchCommandline", L"LaunchCommandlineOverrideSource", L"Commandline", L"IsManagedAgentProfile");
+    }
+
+    void ProfileViewModel::IsAgentDefinition(const bool value)
+    {
+        if (value == IsAgentDefinition())
+            return;
+        if (value)
+        {
+            if (_agentDefinitionId.empty())
+            {
+                const auto guid = winrt::to_hstring(_profile.Guid());
+                _agentDefinitionId = L"custom:" + std::wstring{ guid.begin() + 1, guid.end() - 1 };
+            }
+            _profile.AgentProfileId(_agentDefinitionId);
+        }
+        else
+        {
+            _agentDefinitionId = _profile.AgentProfileId();
+            _profile.AgentProfileId(L"");
+            _profile.AgentProfileAcpEnabled(false);
+        }
+        _NotifyChanges(L"IsAgentDefinition", L"IsAgentProfile", L"IsManagedAgentProfile", L"AgentProfileError", L"AgentProfileAcpEnabled", L"LaunchCommandline");
+    }
+
+    void ProfileViewModel::AgentRunsInWsl(const bool value)
+    {
+        _profile.AgentProfileSource(value ? L"wsl" : L"host");
+        if (!value)
+            _profile.AgentProfileWslDistro(L"");
+        _NotifyChanges(L"AgentRunsInWsl", L"AgentProfileWslDistro", L"AgentProfileError", L"LaunchCommandline");
+    }
+
+    hstring ProfileViewModel::AgentProfileError() const
+    {
+        if (!IsAgentDefinition())
+            return {};
+        try
+        {
+            THROW_HR_IF(E_INVALIDARG, !::Microsoft::Terminal::AgentProfiles::HasValidSource(_profile));
+            const auto custom = ::Microsoft::Terminal::CustomAgents::IsId(_profile.AgentProfileId());
+            THROW_HR_IF(E_INVALIDARG, custom && _profile.AgentProfileCliCommand().empty() && _profile.AgentProfileAcpCommand().empty());
+            for (const auto& command : { _profile.AgentProfileCliCommand(), _profile.AgentProfileAcpCommand() })
+                if (!command.empty())
+                    ::Microsoft::Terminal::CustomAgents::Parse(command);
+            if (!_profile.AgentProfileResumeCommand().empty())
+            {
+                THROW_HR_IF(E_INVALIDARG, custom && _profile.AgentProfileCliCommand().empty());
+                ::Microsoft::Terminal::CustomAgents::Parse(_profile.AgentProfileResumeCommand(), true);
+            }
+            THROW_HR_IF(E_INVALIDARG, custom && _profile.AgentProfileAcpEnabled() && _profile.AgentProfileAcpCommand().empty());
+        }
+        catch (...)
+        {
+            LOG_CAUGHT_EXCEPTION();
+            return RS_(L"AIAgents_CustomInvalid");
+        }
+        return {};
+    }
     static void _RebuildAgentBackendList(
         const Windows::Foundation::Collections::IObservableVector<Editor::AgentEntry>& list,
         const std::wstring_view globalId,
@@ -232,7 +301,7 @@ namespace winrt::Microsoft::Terminal::Settings::Editor::implementation
                 // NOTE: this is similar to what is done with BackgroundImagePath above
                 _NotifyChanges(L"UseParentProcessDirectory", L"CurrentStartingDirectoryPreview");
             }
-            else if (viewModelProperty == L"AgentPaneBackend")
+            else if (viewModelProperty == L"AgentPaneBackend" || viewModelProperty == L"AgentPaneProfile")
             {
                 _NotifyChanges(L"CurrentAgentPaneBackend");
             }
@@ -243,6 +312,14 @@ namespace winrt::Microsoft::Terminal::Settings::Editor::implementation
             else if (viewModelProperty == L"AgentProfileModel" || viewModelProperty == L"AgentProfileArguments")
             {
                 _NotifyChanges(L"LaunchCommandline");
+            }
+            else if (viewModelProperty == L"AgentProfileCliCommand" ||
+                     viewModelProperty == L"AgentProfileResumeCommand" ||
+                     viewModelProperty == L"AgentProfileAcpCommand" ||
+                     viewModelProperty == L"AgentProfileAcpEnabled" ||
+                     viewModelProperty == L"AgentProfileWslDistro")
+            {
+                _NotifyChanges(L"AgentProfileError", L"LaunchCommandline", L"HasLaunchCommandline", L"LaunchCommandlineOverrideSource", L"IsManagedAgentProfile");
             }
             else if (viewModelProperty == L"Commandline")
             {
@@ -350,7 +427,7 @@ namespace winrt::Microsoft::Terminal::Settings::Editor::implementation
 
     Editor::AgentEntry ProfileViewModel::CurrentAgentPaneBackend()
     {
-        auto selected = AgentPaneBackend();
+        auto selected = AgentPaneProfile().empty() ? AgentPaneBackend() : AgentPaneProfile();
         const auto globalId = _appSettings.GlobalSettings().EffectiveAcpAgent();
         if (!globalId.empty() &&
             selected == winrt::hstring{ ::Microsoft::Terminal::Settings::Model::AgentPaneBackend::Host(std::wstring_view{ globalId }) })
@@ -370,9 +447,10 @@ namespace winrt::Microsoft::Terminal::Settings::Editor::implementation
 
     void ProfileViewModel::CurrentAgentPaneBackend(const Editor::AgentEntry& value)
     {
-        if (value && AgentPaneBackend() != value.Id())
+        if (value && AgentPaneProfile() != value.Id())
         {
-            AgentPaneBackend(value.Id());
+            AgentPaneProfile(value.Id());
+            _profile.ClearAgentPaneBackend();
             _NotifyChanges(L"CurrentAgentPaneBackend");
         }
     }
@@ -416,14 +494,25 @@ namespace winrt::Microsoft::Terminal::Settings::Editor::implementation
     {
         namespace Registry = ::Microsoft::Terminal::Settings::Model::AgentRegistry;
         const auto& globals = _appSettings.GlobalSettings();
-        _RebuildAgentBackendList(
-            _agentPaneBackendList,
-            std::wstring_view{ globals.EffectiveAcpAgent() },
-            std::wstring_view{ AgentPaneBackend() },
-            _availableHostAgents,
-            _availableWslDistro,
-            _availableWslAgents,
-            Registry::FilteredAcpAgents());
+        _agentPaneBackendList.Clear();
+        const auto defaultProfile = ::Microsoft::Terminal::AgentProfiles::Find(
+            _appSettings, std::wstring_view{ globals.AgentPaneDefaultProfile() });
+        const auto defaultName = defaultProfile ? defaultProfile.Name() : _AgentDisplayName(globals.EffectiveAcpAgent());
+        _agentPaneBackendList.Append(winrt::make<implementation::AgentEntry>(
+            L"", winrt::hstring{ RS_fmt(L"Profile_AgentPaneDefaultFormat", std::wstring_view{ defaultName }) }, true));
+        bool selectedPresent = AgentPaneProfile().empty();
+        for (const auto& profile : _appSettings.AllProfiles())
+        {
+            if (::Microsoft::Terminal::AgentProfiles::IsAcpCandidate(profile))
+            {
+                const auto id = winrt::to_hstring(profile.Guid());
+                _agentPaneBackendList.Append(winrt::make<implementation::AgentEntry>(id, profile.Name(), true));
+                selectedPresent = selectedPresent || id == AgentPaneProfile();
+            }
+        }
+        if (!selectedPresent)
+            _agentPaneBackendList.Append(winrt::make<implementation::AgentEntry>(
+                AgentPaneProfile(), AgentPaneProfile() + RS_(L"Profile_AgentPaneBackend_UnavailableSuffix"), true));
         _RebuildAgentBackendList(
             _commandPaletteAgentList,
             std::wstring_view{ globals.EffectiveDelegateAgent() },

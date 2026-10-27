@@ -88,6 +88,8 @@ namespace winrt::Microsoft::Terminal::Settings::Model::implementation
         void ResolveMediaResources(const Model::MediaResourceResolver& resolver);
 
         winrt::hstring SourceBasePath;
+        Windows::Foundation::Collections::IVectorView<Model::Profile> AgentProfiles() const noexcept { return _agentProfiles; }
+        void SetAgentProfiles(Windows::Foundation::Collections::IVectorView<Model::Profile> profiles) { _agentProfiles = std::move(profiles); }
 
         // ── Policy-aware effective getters ───────────────────────────────
         // These return the user setting value after applying GPO policy
@@ -129,6 +131,7 @@ namespace winrt::Microsoft::Terminal::Settings::Model::implementation
 #undef GLOBAL_SETTINGS_INITIALIZE
 
     private:
+        Windows::Foundation::Collections::IVectorView<Model::Profile> _agentProfiles{ winrt::single_threaded_vector<Model::Profile>().GetView() };
 #ifdef NDEBUG
         static constexpr bool debugFeaturesDefault{ false };
 #else

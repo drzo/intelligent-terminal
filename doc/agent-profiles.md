@@ -8,8 +8,10 @@ or panes, and selected with `wt -p`, just like a shell profile.
 
 The supported providers are GitHub Copilot, Claude, Codex, Gemini, OpenCode,
 and Google Antigravity.
-WSL installations are not automatically discovered. Configured custom agents
-with an explicit interactive command also generate profiles, as described below.
+Installed WSL agents are discovered as separate distro-bound profiles, for example
+Claude on Windows, Claude (Ubuntu), and Claude (Debian). Their profile GUIDs and
+execution environments remain distinct. Custom profiles are configured alongside
+discovered profiles, as described below.
 Native profile discovery uses this dedicated provider list, not the broader
 ACP or delegation provider registry.
 Discovery does not install software, sign in, or start an ACP server. Native CLI
@@ -31,8 +33,9 @@ original colors.
 
 A managed profile starts the native interactive CLI directly in a normal
 ConPTY. Native executables are launched by Terminal; npm `.cmd` shims use the
-Windows system `cmd.exe` with AutoRun and delayed expansion disabled. Neither
-discovery nor profile launch runs WTA. Input, output, environment, working
+Windows system `cmd.exe` with AutoRun and delayed expansion disabled. Interactive
+profile launch does not connect through WTA. WSL availability checks use WTA's executable
+probe, not an ACP initialization. Input, output, environment, working
 directory, and process lifetime follow the ordinary Terminal connection path.
 This does not draw a chat interface or connect the CLI through the ACP master.
 
@@ -101,10 +104,10 @@ CLI's default mode. Native CLIs can change approvals through their own
 configuration and interactive controls, so a startup-only launcher cannot
 guarantee the policy throughout the session. Settings displays this restriction.
 
-The command-line field is directly editable, just like a shell profile. Saving
-an explicit `commandline` runs that command unchanged by the agent command
-builder; structured model, permission, and additional-argument settings no
-longer apply and are hidden in Settings. Reset the command-line setting to
+The command-line field is directly editable. For an agent profile, saving it
+writes `agentProfile.cli`; native model, permission, and additional-argument
+settings no longer apply to that explicit invocation. Existing explicit
+`commandline` overrides are also preserved. Reset the command-line setting to
 restore generated native commands and the structured controls. Simply opening
 Settings or leaving the displayed command unchanged does not create an override.
 Copying a generated profile retains its structured settings; copying an edited
@@ -118,42 +121,68 @@ security boundary.
 
 ## Custom agents
 
-In **Settings > AI agents**, add or edit a custom agent and provide its
-interactive CLI command to enable a generated terminal profile. ACP startup
-remains a separate, optional command: Terminal never removes `--acp` or other
-arguments to guess an interactive invocation. A CLI-only definition creates a
-profile without selecting an unusable ACP backend. Editing an existing legacy
-custom ACP entry promotes that entry without changing its provider ID.
-Legacy entries whose executable-derived IDs contain spaces or non-ASCII
-characters remain editable as ACP-only commands; add a new custom definition
-to configure their interactive startup and resume commands. The editor generates
-the stable ID internally and does not display it.
-Existing custom delegation commands remain independent.
+In **Settings > Profiles**, create or edit a profile and turn on **Use as an agent
+profile**. Configure interactive startup, optional CLI resume, and optional ACP
+capability there. **Settings > AI agents** selects an enabled profile instead of
+maintaining a second custom-agent command editor.
 
-The corresponding global setting is:
+Interactive startup and ACP startup are independent: Terminal never removes
+`--acp` or guesses an interactive invocation from an ACP command. ACP-only profiles
+are supported without an interactive command. Enable **Allow in the agent pane**
+to make a profile available in the pane's agent picker. Disabling this option
+does not retire a running conversation or remove its history.
+
+The profile GUID selects a configuration; `agentProfile.id` identifies its provider
+and session family. Settings generates custom provider IDs internally. Keep both
+identities stable when renaming profiles or changing commands. Commands contain
+an executable and literal arguments; the editor uses Windows command-line quoting
+to edit that invocation.
+
+For example:
 
 ```json
 {
-    "customAgents": [
-        {
-            "id": "custom:work-agent",
+    "agentPane.defaultProfile": "{11111111-1111-1111-1111-111111111111}",
+    "profiles": {
+      "list": [{
+            "guid": "{11111111-1111-1111-1111-111111111111}",
             "name": "Work Agent",
-            "acp": { "command": "adapter.exe", "args": ["--stdio"] },
-            "cli": { "command": "work.exe", "args": ["--config", "C:\\work\\agent.json"] },
-            "resume": { "command": "work.exe", "args": ["resume", "{sessionId}"] }
-        }
-    ]
+            "agentProfile.id": "custom:work-agent",
+            "agentProfile.source": "host",
+            "agentProfile.acp": {
+                "enabled": true,
+                "command": "adapter.exe",
+                "args": ["--stdio"],
+                "model": ""
+            },
+            "agentProfile.cli": { "command": "work.exe", "args": ["--config", "C:\\work\\agent.json"] },
+            "agentProfile.resume": {
+                "command": "work.exe",
+                "args": ["resume", "{sessionId}"],
+                "canResumeAcpSessions": false
+            }
+      }]
+    }
 }
 ```
 
-Specify at least `acp` or `cli`. The `id` must start with `custom:` followed by
-ASCII letters, digits, `.`, `_`, or `-`; IDs are unique without regard to case.
-Keep it unchanged when editing a name or command, since generated profile GUIDs
-and session ownership use it. New entries in Settings receive a persistent ID.
-Different definitions can use the same executable without sharing identity.
-Configuration changes are not delayed by the built-in discovery cache.
+A shell profile can set `agentPane.profile` to an agent profile GUID; empty follows
+the global `agentPane.defaultProfile`. Profile selection is strict: an unavailable
+profile does not silently become a host agent or another distribution. For WSL,
+set `agentProfile.source` to `wsl` and `agentProfile.wslDistro` to the exact
+distribution name. CLI, resume, and ACP commands all run there.
 
-Custom agents with an ACP command participate in automatic session-history
+The legacy `customAgents`, `acpCustomCommands`, and `acpCustomCommand` settings
+remain readable and project into profiles. Editing those profiles writes profile
+overrides; loading settings does not eagerly rewrite the old definitions. Legacy
+ACP/delegation selections remain fallback inputs until a profile GUID is selected.
+Delegation configuration is otherwise unchanged.
+
+FRE uses these same profiles, retains installation templates for missing built-in
+agents, and preserves its shell integration, login, hooks and error-detection steps.
+Custom and WSL profile selections do not invoke Windows built-in installers.
+
+Host custom profiles with an ACP command participate in automatic session-history
 discovery at WTA startup and on explicit history refresh, even when another agent
 is selected in the agent pane. `AllowCustomAgents` policy applies before discovery.
 The provider must support ACP `session/list` and expose the desired CLI history
@@ -196,6 +225,10 @@ settings are unchanged; higher-priority MachinePolicy and UserPolicy still apply
 The resume invocation is independent of the startup invocation; repeat any
 configuration arguments it needs. IDs must satisfy the CLI-resume safe-token
 contract; leading option tokens, whitespace, and shell syntax are rejected.
+If older history identifies only a provider and source shared by several profiles,
+resume rejects the ambiguity instead of guessing a command. ACP-only profiles
+remain selectable without a fabricated interactive CLI.
+
 Custom profile controls do not invent built-in model, permission, or additional
 argument flags. Configure those directly in the custom invocations.
 
@@ -204,9 +237,9 @@ that provider's ACP `session/load`; native CLI sessions use its configured
 resume invocation. Listing sessions does not prove ACP load support, and a
 failed ACP load never silently falls back to a different agent or CLI.
 `resume.canResumeAcpSessions` defaults to `false`; it declares shared storage
-but does not change Windows-host agent-pane routing. This initial custom
-invocation support is Windows-host-only, including resume; WSL custom resume
-is rejected explicitly.
+but does not change agent-pane routing. Custom WSL startup and resume use the
+profile's exact distribution and literal arguments. Automatic custom ACP history
+discovery currently covers host profiles only.
 
 For an explicit native resume, use:
 
@@ -216,17 +249,18 @@ wt new-tab --native-agent-provider custom:work-agent --custom-agent-session SESS
 
 This conversation ID is separate from Terminal's `--sessionId` buffer identity.
 Saved native layouts retain the provider, known conversation ID, and execution
-source, then resolve the current command and policy on restore. A saved non-host
-custom source is rejected before resolving a Windows invocation; it is never
-reinterpreted as a host conversation with the same ID. Older host layouts without
+source, then resolve the current profile command and policy on restore. A saved
+WSL custom source requires the matching profile; it is never reinterpreted as a
+host conversation with the same ID. Elevated handoff of custom WSL resumes is not
+supported and fails without dropping the source identity. Older host layouts without
 explicit source metadata remain compatible. Without a known conversation
 ID, reopening a custom profile only starts its CLI. Custom hooks and arbitrary
 history-file scanners are not added. Removing a definition leaves existing
 history intact but prevents new resumes through that missing definition.
-Master resolves invocations by ID from the current user `settings.json` through
-the host's existing settings service; helpers and history rows never supply
-trusted launch commands. Store structured custom definitions in user settings,
-not settings fragments.
+Master resolves invocations by profile GUID from Terminal's effective inherited
+settings through the host settings service; helpers and history rows never
+supply trusted launch commands. Legacy provider-only history must identify a
+unique profile in the same execution source.
 
 `AllowCustomAgents` governs custom profiles instead of the built-in
 `AllowedAgents` list. Managed custom launches and CLI resumes also honor

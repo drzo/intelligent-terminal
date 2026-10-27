@@ -1079,7 +1079,10 @@ fn provider_binding_isolated_pool_keys_do_not_expose_configuration() {
         *generation = 1;
     }
     assert_ne!(custom.pool_key(), restarted.pool_key());
-    assert_eq!(custom.admission_binding_key(), restarted.admission_binding_key());
+    assert_eq!(
+        custom.admission_binding_key(),
+        restarted.admission_binding_key()
+    );
     let admission_key = custom.admission_binding_key();
     assert!(!admission_key.contains("secret"));
     assert!(!admission_key.contains("model-a"));
@@ -1140,7 +1143,8 @@ async fn discovery_rejects_failure_from_before_external_retry() {
                 Err::<Arc<AgentCli>, _>(failure.into())
             }
         },
-    ).await;
+    )
+    .await;
     assert!(!result);
     let retries = state.history_discovery_retries.lock().await;
     assert_eq!(retries[&key].retry_epoch, 1);
@@ -1195,6 +1199,55 @@ async fn custom_selection_resolves_only_trusted_settings_commands() {
         3,
         "a rejected source must not query settings"
     );
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn profile_selection_uses_trusted_catalog_and_exact_source() {
+    let profile_id = "{11111111-1111-1111-1111-111111111111}";
+    let disabled_id = "{22222222-2222-2222-2222-222222222222}";
+    let mock = Arc::new(MockWtChannel::responding(serde_json::json!({
+        "resolvedAgentProfiles": [
+            {
+                "profileId": profile_id, "id": "copilot", "name": "Copilot Ubuntu",
+                "source": "wsl", "wslDistro": "Ubuntu", "acpEnabled": true,
+                "acp": {"command": "/opt/trusted/adapter", "args": ["--stdio"]}
+            },
+            {
+                "profileId": disabled_id, "id": "copilot", "name": "Disabled",
+                "source": "host", "wslDistro": "", "acpEnabled": false,
+                "acp": {"command": "disabled.exe"}
+            }
+        ]
+    })));
+    let state = make_state_with_wt(mock);
+    let mut metadata = crate::session_registry::WtaMeta {
+        agent_profile_id: Some(profile_id.into()),
+        agent_id: Some("copilot".into()),
+        agent_source: Some("wsl".into()),
+        wsl_distro: Some("Ubuntu".into()),
+        agent_cmd: Some("untrusted.exe".into()),
+        ..Default::default()
+    };
+    let resolved = resolve_agent_profile_selection(&state, &metadata)
+        .await
+        .unwrap();
+    assert_eq!(resolved.command, "/opt/trusted/adapter --stdio");
+    assert_eq!(
+        resolved.source,
+        crate::agent_source::AgentSource::Wsl {
+            distro: "Ubuntu".into()
+        }
+    );
+    metadata.wsl_distro = Some("Debian".into());
+    assert!(resolve_agent_profile_selection(&state, &metadata)
+        .await
+        .is_err());
+    metadata.agent_profile_id = Some(disabled_id.into());
+    metadata.agent_source = Some("host".into());
+    metadata.wsl_distro = None;
+    assert!(resolve_agent_profile_selection(&state, &metadata)
+        .await
+        .is_err());
 }
 
 #[tokio::test(flavor = "current_thread")]
@@ -12149,7 +12202,9 @@ async fn sidebar_activation_host_shim_capabilities_are_explicit_and_replayed() {
                 crate::session_registry::parse_session_activate_response(&response.0).unwrap();
             assert_eq!(receipt.action, "resume_cli");
             assert_eq!(receipt.accepted, companion, "{cli:?}: {receipt:?}");
-            let calls = mock.calls();
+            let all_calls = mock.calls();
+            assert_eq!(all_calls[0].0, "get_settings");
+            let calls = &all_calls[1..];
             if companion {
                 assert_eq!(calls.len(), 2);
                 assert_eq!(calls[0].0, "create_tab");
@@ -12184,7 +12239,7 @@ async fn sidebar_activation_host_shim_capabilities_are_explicit_and_replayed() {
                 crate::session_registry::parse_session_activate_response(&replay.0).unwrap(),
                 receipt
             );
-            assert_eq!(mock.calls(), calls);
+            assert_eq!(mock.calls(), all_calls);
         }
     }
 }
@@ -12250,6 +12305,7 @@ async fn sidebar_activation_explicit_live_unknown_origin_resumes_current_window_
             supported_cases += 1;
             assert!(response.accepted, "{cli:?} {status:?}: {response:?}");
             let expected_calls = vec![
+                ("get_settings".to_string(), serde_json::Value::Null),
                 (
                     "create_tab".to_string(),
                     serde_json::json!({
@@ -12370,7 +12426,9 @@ async fn sidebar_activation_resume_quotes_session_and_wsl_distro_through_registe
             assert_eq!(response.action, "resume_cli");
             supported_cases += 1;
             assert!(response.accepted, "{cli:?} {location:?}: {response:?}");
-            let calls = mock.calls();
+            let all_calls = mock.calls();
+            assert_eq!(all_calls[0].0, "get_settings");
+            let calls = &all_calls[1..];
             assert_eq!(calls.len(), 2);
             assert_eq!(calls[0].0, "create_tab");
             assert_eq!(calls[0].1["commandline"], expected);
@@ -12706,7 +12764,9 @@ async fn sidebar_activation_external_history_does_not_require_ownership_verifica
             .await;
             assert!(response.accepted, "{response:?}");
             assert_eq!(response.action, "resume_cli");
-            let calls = mock.calls();
+            let all_calls = mock.calls();
+            assert_eq!(all_calls[0].0, "get_settings");
+            let calls = &all_calls[1..];
             assert_eq!(calls.len(), 2);
             assert_eq!(calls[0].0, "create_tab");
             assert_eq!(calls[0].1["window_id"], 42);
@@ -12780,7 +12840,9 @@ async fn sidebar_activation_native_hook_unset_origin_resumes_without_reclassifyi
     let response = crate::session_registry::parse_session_activate_response(&response.0).unwrap();
     assert!(response.accepted, "{response:?}");
     assert_eq!(response.action, "resume_cli");
-    let calls = mock.calls();
+    let all_calls = mock.calls();
+    assert_eq!(all_calls[0].0, "get_settings");
+    let calls = &all_calls[1..];
     assert_eq!(calls.len(), 2);
     assert_eq!(calls[0].0, "create_tab");
     assert_eq!(calls[0].1["window_id"], 42);
@@ -12797,7 +12859,7 @@ async fn sidebar_activation_native_hook_unset_origin_resumes_without_reclassifyi
         Some("resumed-native-pane")
     );
     handle_session_activate(&state, &params).await.unwrap();
-    assert_eq!(mock.calls(), calls);
+    assert_eq!(mock.calls(), all_calls);
 }
 
 #[tokio::test]
@@ -12874,6 +12936,79 @@ async fn sidebar_activation_custom_agent_uses_configured_resume_and_preserves_id
                 state.registry.lookup_identity(&identity).await.unwrap(),
                 row
             );
+        }
+    }
+}
+
+#[tokio::test]
+async fn sidebar_activation_profile_resume_preserves_provider_and_execution_source() {
+    use crate::agent_sessions::{CliSource, SessionLocation, SessionOrigin};
+    use crate::session_registry::{SessionActivateParams, SessionIdentity, SessionInfo};
+
+    for provider in ["copilot", "custom:work"] {
+        for wsl in [false, true] {
+            let profile_id = "{11111111-1111-1111-1111-111111111111}";
+            let mock = Arc::new(MockWtChannel::responding(serde_json::json!({
+                "resolvedAgentProfiles": [{
+                    "profileId": profile_id, "id": provider, "name": "Work",
+                    "source": if wsl { "wsl" } else { "host" },
+                    "wslDistro": if wsl { "Ubuntu" } else { "" },
+                    "acpEnabled": false,
+                    "cli": {"command": "interactive-tool.exe"},
+                    "resume": {"command": "resume-tool.exe", "args": ["--label", "literal $HOME", "{sessionId}"]}
+                }],
+                "session_id": "resumed-pane"
+            })));
+            let state = make_state_with_wt(mock.clone());
+            let mut row = SessionInfo::new(
+                SessionId::new("session-123"),
+                if wsl { "/home/work" } else { "C:\\work" }.into(),
+            );
+            row.provider_id = Some(provider.into());
+            row.cli_source = Some(CliSource::parse(Some(provider)));
+            row.location = if wsl {
+                SessionLocation::Wsl {
+                    distro: "Ubuntu".into(),
+                }
+            } else {
+                SessionLocation::Host
+            };
+            row.origin = Some(SessionOrigin::Unknown);
+            let identity = SessionIdentity::from_info(&row);
+            state.registry.upsert(row).await;
+            let response = execute_session_activation(
+                &state,
+                &SessionActivateParams {
+                    identity,
+                    window_id: 42,
+                    activation_id: format!("{provider}-{wsl}"),
+                },
+            )
+            .await;
+            assert!(response.accepted, "{response:?}");
+            let calls = mock.calls();
+            let (_, params) = calls
+                .iter()
+                .find(|(method, _)| method == "create_tab")
+                .unwrap();
+            assert_eq!(params["profile"], profile_id);
+            assert_eq!(params["native_agent_provider_id"], provider);
+            assert_eq!(params["custom_agent_session_id"], "session-123");
+            let command = params["commandline"].as_str().unwrap();
+            if wsl {
+                let tokens = crate::coordinator::split_windows_commandline(command);
+                assert_eq!(tokens[2], "Ubuntu");
+                assert_eq!(tokens[4], "/home/work");
+                assert_eq!(
+                    tokens.last().unwrap(),
+                    "'resume-tool.exe' '--label' 'literal $HOME' 'session-123'"
+                );
+            } else {
+                assert_eq!(
+                    command,
+                    "resume-tool.exe --label \"literal $HOME\" session-123"
+                );
+            }
         }
     }
 }
@@ -13084,7 +13219,9 @@ async fn sidebar_cli_resume_binds_created_pane_for_agent_filtering() {
         "AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE"
     );
 
-    let calls = mock.calls();
+    let all_calls = mock.calls();
+    assert_eq!(all_calls[0].0, "get_settings");
+    let calls = &all_calls[1..];
     assert_eq!(calls.len(), 2);
     assert_eq!(calls[0].0, "create_tab");
     assert_eq!(calls[0].1["background"], true);
@@ -13103,7 +13240,7 @@ async fn sidebar_cli_resume_binds_created_pane_for_agent_filtering() {
         response,
         crate::session_registry::parse_session_activate_response(&replay.0).unwrap()
     );
-    assert_eq!(mock.calls().len(), 2);
+    assert_eq!(mock.calls(), all_calls);
 }
 
 #[tokio::test(flavor = "current_thread")]
@@ -13575,7 +13712,7 @@ async fn sidebar_cli_resume_reports_creation_and_focus_failures() {
                 crate::session_registry::SessionActivationState::Complete
             }
         );
-        assert_eq!(mock.calls().len(), call_count);
+        assert_eq!(mock.calls().len(), call_count + 1);
         if response.state == crate::session_registry::SessionActivationState::Unknown {
             let mut retry = params.clone();
             retry.activation_id = "new-id-same-conversation".to_string();
@@ -13587,7 +13724,7 @@ async fn sidebar_cli_resume_reports_creation_and_focus_failures() {
                 crate::session_registry::SessionActivationState::Unknown
             );
             assert!(!receipt.accepted);
-            assert_eq!(mock.calls().len(), call_count);
+            assert_eq!(mock.calls().len(), call_count + 1);
             assert!(handle_session_activation_status(&state, &retry)
                 .await
                 .is_ok());
@@ -13616,7 +13753,7 @@ async fn sidebar_cli_resume_reports_creation_and_focus_failures() {
         let row = state.registry.lookup_identity(&identity).await.unwrap();
         if call_count == 2 {
             assert_eq!(
-                mock.calls()[1].1["session_id"],
+                mock.calls()[2].1["session_id"],
                 "AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE"
             );
             assert_eq!(
@@ -13641,7 +13778,7 @@ async fn sidebar_cli_resume_reports_creation_and_focus_failures() {
             response,
             crate::session_registry::parse_session_activate_response(&replay.0).unwrap()
         );
-        assert_eq!(mock.calls().len(), call_count);
+        assert_eq!(mock.calls().len(), call_count + 1);
     }
 }
 
@@ -13708,7 +13845,9 @@ async fn sidebar_antigravity_resume_preserves_interface_and_source() {
                 assert!(event["params"]["wsl_distro"].is_string());
             } else {
                 assert_eq!(response.action, "resume_cli");
-                let calls = mock.calls();
+                let all_calls = mock.calls();
+                assert_eq!(all_calls[0].0, "get_settings");
+                let calls = &all_calls[1..];
                 assert_eq!(calls[0].0, "create_tab");
                 let command = calls[0].1["commandline"].as_str().unwrap();
                 if location.is_wsl() {
@@ -13896,6 +14035,9 @@ async fn sidebar_cli_resume_accepts_a_matching_hook_binding_without_resetting_ac
             method: &str,
             params: serde_json::Value,
         ) -> anyhow::Result<serde_json::Value> {
+            if method == "get_settings" {
+                return Ok(serde_json::json!({}));
+            }
             if method == "create_tab" {
                 assert_eq!(params["window_id"], 42);
                 self.entered.notify_one();
@@ -15509,7 +15651,9 @@ async fn sidebar_history_discovery_isolates_failed_and_unsupported_agents() {
             let state = make_state();
             let failed =
                 add_sidebar_listing_agent(&state, CliSource::Claude, &["kept-history"]).await;
-            assert!(refresh_host_history_agents(&state, &native_history_launches(&["claude"])).await);
+            assert!(
+                refresh_host_history_agents(&state, &native_history_launches(&["claude"])).await
+            );
             failed.conn.shutdown();
             *failed.history_refresh.gate.lock().await = HistoryRefreshState::default();
             add_sidebar_listing_agent(&state, CliSource::Copilot, &["healthy-history"]).await;
@@ -15528,7 +15672,13 @@ async fn sidebar_history_discovery_isolates_failed_and_unsupported_agents() {
                 .list = None;
             add_test_agent_to_pool(&state, &unsupported).await;
 
-            assert!(!refresh_host_history_agents(&state, &native_history_launches(&["claude", "copilot", "gemini"])).await);
+            assert!(
+                !refresh_host_history_agents(
+                    &state,
+                    &native_history_launches(&["claude", "copilot", "gemini"])
+                )
+                .await
+            );
             assert!(
                 refresh_host_history_agents(&state, &native_history_launches(&["gemini"])).await,
                 "unsupported session listing is not a load failure"
@@ -15701,11 +15851,23 @@ async fn dedicated_history_startup_stops_after_three_failures_and_accepts_explic
     for _ in 0..3 {
         assert!(query.poll(Some(&target), &cancelled, false).await.is_err());
     }
-    assert!(state.startup_registry.lock(&key).await.unwrap().begin().is_err());
+    assert!(state
+        .startup_registry
+        .lock(&key)
+        .await
+        .unwrap()
+        .begin()
+        .is_err());
     assert!(query.poll(Some(&target), &cancelled, false).await.is_err());
     state.startup_registry.retry(&key).await.unwrap();
     assert!(query.poll(Some(&target), &cancelled, false).await.is_err());
-    state.startup_registry.lock(&key).await.unwrap().begin().unwrap();
+    state
+        .startup_registry
+        .lock(&key)
+        .await
+        .unwrap()
+        .begin()
+        .unwrap();
 }
 
 #[tokio::test(start_paused = true)]
@@ -15747,15 +15909,13 @@ async fn sidebar_history_stops_scheduling_an_exhausted_startup_target() {
                 !state.history_discovery_retries.lock().await[&key].retry_due(),
                 "a saturated startup budget must not remain on the background retry timer"
             );
-            for trigger in [HistoryRefreshTrigger::Periodic, HistoryRefreshTrigger::Immediate] {
+            for trigger in [
+                HistoryRefreshTrigger::Periodic,
+                HistoryRefreshTrigger::Immediate,
+            ] {
                 assert!(
-                    !refresh_host_history_agents_with(
-                        &state,
-                        &["copilot"],
-                        trigger,
-                        &initialize,
-                    )
-                    .await
+                    !refresh_host_history_agents_with(&state, &["copilot"], trigger, &initialize,)
+                        .await
                 );
             }
             assert_eq!(calls.load(Ordering::SeqCst), 3);

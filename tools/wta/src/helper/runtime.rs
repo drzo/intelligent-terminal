@@ -750,6 +750,7 @@ async fn run_acp_app(
                 let cloud_models_for_client = cloud_models.clone();
                 // Pass per-tab agent identity through the initialize handshake.
                 let agent_id = config.agent_id.clone();
+                let agent_profile_id = config.agent_profile_id.clone();
                 let agent_source_for_client = agent_source.clone();
                 let source_cwd = agent_source_cwd.clone();
                 let owner_tab = config.owner_tab_id.clone();
@@ -763,6 +764,7 @@ async fn run_acp_app(
                         custom_model_selection,
                         cloud_models_for_client,
                         agent_id,
+                        agent_profile_id,
                         agent_source_for_client,
                         source_cwd,
                         owner_tab,
@@ -861,6 +863,7 @@ async fn run_acp_app(
             app_state.autofix_policy_state = config.autofix_policy_state;
             app_state.render_agent_markdown = !config.no_agent_markdown;
             app_state.set_proposal_channels(Arc::clone(&proposal_channels));
+            app_state.current_agent_profile_id = config.agent_profile_id.clone();
             app_state.set_allowed_agent_ids(config.allowed_agent_ids.clone());
             app_state.set_initial_yolo_control_owner(
                 config.initial_load_session_id.as_deref(),
@@ -960,8 +963,13 @@ async fn run_acp_app(
             // selection + auth flow and doesn't need the preflight wizard.
             if config.setup.is_none() && !start_in_initial_auth {
                 let agent_id = canonical_agent_id.as_str();
-                let preflight_result =
-                    app::preflight_agent_in_source(agent_id, &agent_source).await;
+                let preflight_result = if config.agent_profile_id.is_some() {
+                    // A profile may supply a different ACP executable than the
+                    // provider's native CLI. Let ACP startup validate that command.
+                    app::PreflightResult::passed_for_custom_agent(agent_id)
+                } else {
+                    app::preflight_agent_in_source(agent_id, &agent_source).await
+                };
                 tracing::info!(
                     target: "preflight",
                     agent_id = %preflight_result.agent_id,

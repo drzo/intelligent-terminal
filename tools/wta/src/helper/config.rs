@@ -3,6 +3,7 @@ pub(crate) struct HelperConfig {
     pub(crate) prompt: Option<String>,
     pub(crate) agent: String,
     pub(crate) agent_id: Option<String>,
+    pub(crate) agent_profile_id: Option<String>,
     pub(crate) agent_source: Option<String>,
     pub(crate) agent_wsl_distro: Option<String>,
     pub(crate) agent_source_cwd: Option<String>,
