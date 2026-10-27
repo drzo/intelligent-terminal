@@ -14275,6 +14275,7 @@ namespace TerminalAppLocalTests
                     const auto neutralMetadata = leading(metadata);
                     const auto neutralHeader = leading(header);
                     const auto neutralIcon = center(liveIcon);
+                    const auto originalTitle = sourceHeader.Title();
                     status.IsPinned(true);
                     status.IsReadOnlyActive(true);
                     status.IsKeepRunning(true);
@@ -14307,7 +14308,7 @@ namespace TerminalAppLocalTests
                     const auto compactGap = leading(pin) - leading(titleText) - titleText.DesiredSize().Width;
                     VERIFY_IS_TRUE(compactGap >= -tolerance);
                     VERIFY_IS_TRUE(compactGap <= pin.Margin().Left + tolerance);
-                    strip.SetTabPresentation(live, sourceHeader.Title(), L"\xE756");
+                    strip.SetTabPresentation(live, originalTitle, L"\xE756");
                     status.IsPinned(false);
                     status.IsReadOnlyActive(false);
                     status.IsKeepRunning(false);
@@ -16619,7 +16620,7 @@ namespace TerminalAppLocalTests
             const auto verifyGlyphs = [&](const winrt::TerminalApp::TabHeaderControl& header) {
                 for (const auto name : { L"HeaderZoomIcon", L"HeaderLockIcon", L"HeaderClosedIcon", L"HeaderBroadcastIcon", L"HeaderKeepRunningIcon", L"HeaderPinnedIcon" })
                 {
-                    const auto glyph = header.as<FrameworkElement>().FindName(name).as<FontIcon>();
+                    const auto glyph = header.as<FrameworkElement>().FindName(name).as<FrameworkElement>();
                     VERIFY_IS_TRUE(glyph.IsLoaded());
                     VERIFY_IS_TRUE(glyph.ActualWidth() > 0);
                     for (DependencyObject element = glyph; element; element = Media::VisualTreeHelper::GetParent(element))
