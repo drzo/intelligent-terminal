@@ -394,7 +394,8 @@ namespace winrt::TerminalApp::implementation
         const auto prompt = name == "agent.prompt.submit";
         const auto unbound = name == "agent.session.unbind";
         const auto forked = name == "agent.session.fork";
-        if (!ended && !started && !prompt && !unbound && !forked)
+        const auto bornBound = name.empty() && event.get("method", "").asString() == "pane_agent_session_changed";
+        if (!ended && !started && !prompt && !unbound && !forked && !bornBound)
         {
             return;
         }

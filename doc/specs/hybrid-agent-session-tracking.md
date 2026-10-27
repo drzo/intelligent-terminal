@@ -16,6 +16,8 @@ identity. Terminal compares its retained pane binding, updates the resume and
 layout identity, and acknowledges the operation. Only that acknowledgement
 lets WTA atomically detach the original as history and bind the fork to the
 same pane. Duplicate, closed-pane, or superseded operations cannot reclaim a pane.
+Hook-free resume registrations retain the original binding in both the page
+and shared content manager before a SessionStart hook is available.
 Normal hook activity and hook-free born-bound activity keep their existing
 precedence. This fallback does not infer WSL or ACP agent-pane ownership.
 

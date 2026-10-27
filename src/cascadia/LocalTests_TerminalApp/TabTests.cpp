@@ -672,6 +672,7 @@ namespace TerminalAppLocalTests
         TEST_METHOD(PersistedLayoutAgentSessionsReceiveRestorePaths);
         TEST_METHOD(PaneAgentSessionBindingRequiresPaneIdentity);
         TEST_METHOD(CopilotForkRebindsPaneWithoutPrompt);
+        TEST_METHOD(CopilotForkAfterHookFreeResumeRetainsOriginalBinding);
         TEST_METHOD(CopilotForkRejectsSupersededOwner);
         TEST_METHOD(AgentPaneRestoreDoesNotRequireAgentSession);
         TEST_METHOD(PaneAgentSessionEndClearsAgentBinding);
@@ -1821,6 +1822,61 @@ namespace TerminalAppLocalTests
                 VERIFY_ARE_EQUAL(winrt::to_hstring(fork), page->_activeCliAgentPanes.at(paneId).sessionId);
             });
         }
+    }
+
+    void TabTests::CopilotForkAfterHookFreeResumeRetainsOriginalBinding()
+    {
+        const auto page = _commonSetup();
+        TestOnUIThread([&]() {
+            const std::string original{ "11111111-1111-4111-8111-111111111111" };
+            const std::string fork{ "22222222-2222-4222-8222-222222222222" };
+            const auto control = page->_GetFocusedTabImpl()->GetRootPane()->GetTerminalControl();
+            const auto paneId = control.Connection().SessionId();
+            Json::Value born;
+            born["method"] = "pane_agent_session_changed";
+            born["params"]["pane_id"] = _formatPaneId(paneId);
+            born["params"]["agent"] = "copilot";
+            born["params"]["agent_session_id"] = original;
+            const auto birth = winrt::to_hstring(Json::writeString(Json::StreamWriterBuilder{}, born));
+
+            page->_settings.GlobalSettings().AgentSessionManagementEnabled(false);
+            page->_SyncNativeAgentStatusMode();
+            page->_manager.OnPaneAgentSessionChanged(birth);
+            VERIFY_IS_TRUE(page->_manager.AgentSessionEvent(control.ContentId()).empty());
+
+            page->_settings.GlobalSettings().AgentSessionManagementEnabled(true);
+            page->_SyncNativeAgentStatusMode();
+            auto unrelated = born;
+            unrelated["method"] = "unrelated_event";
+            page->_manager.OnPaneAgentSessionChanged(winrt::to_hstring(Json::writeString(Json::StreamWriterBuilder{}, unrelated)));
+            VERIFY_IS_TRUE(page->_manager.AgentSessionEvent(control.ContentId()).empty());
+
+            page->_manager.OnPaneAgentSessionChanged(birth);
+            page->OnPaneAgentSessionChanged(birth);
+            VERIFY_ARE_EQUAL(winrt::to_hstring(original), page->_paneAgentSessions.at(paneId).sessionId);
+            VERIFY_IS_TRUE(winrt::to_string(page->_manager.AgentSessionEvent(control.ContentId())).find(original) != std::string::npos);
+
+            bool acknowledged = false;
+            const auto token = page->ProtocolVtSequenceReceived([&](auto&&, const winrt::hstring& payload) {
+                Json::Value event;
+                Json::CharReaderBuilder reader;
+                std::istringstream stream{ winrt::to_string(payload) };
+                std::string errors;
+                if (Json::parseFromStream(reader, stream, &event, &errors) &&
+                    event["method"].asString() == "agent_session_forked")
+                {
+                    acknowledged = event["params"]["previous_agent_session_id"].asString() == original &&
+                                   event["params"]["agent_session_id"].asString() == fork;
+                }
+            });
+            const auto revoke = wil::scope_exit([&]() { page->ProtocolVtSequenceReceived(token); });
+            const auto request = _copilotForkEvent(paneId, original, fork);
+            page->_manager.OnPaneAgentSessionChanged(request);
+            page->OnPaneAgentSessionChanged(request);
+            VERIFY_IS_TRUE(acknowledged);
+            VERIFY_ARE_EQUAL(winrt::to_hstring(fork), page->_paneAgentSessions.at(paneId).sessionId);
+            VERIFY_IS_TRUE(winrt::to_string(page->_manager.AgentSessionEvent(control.ContentId())).find(fork) != std::string::npos);
+        });
     }
 
     void TabTests::CopilotForkRejectsSupersededOwner()
