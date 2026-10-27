@@ -172,6 +172,7 @@ public:
 
     bool ContainsReadOnly() const;
 
+    bool ContainsAgentPane() const noexcept;
     bool IsAgentPane() const noexcept;
     void IsAgentPane(bool value) noexcept;
     bool IsSourceOfAgentPane() const noexcept;
@@ -348,6 +349,7 @@ private:
     bool _Resize(const winrt::Microsoft::Terminal::Settings::Model::ResizeDirection& direction);
 
     std::shared_ptr<Pane> _FindParentOfPane(const std::shared_ptr<Pane> pane);
+    std::shared_ptr<Pane> _FindVisibleLeaf(std::optional<uint32_t> id = std::nullopt);
     std::pair<PanePoint, PanePoint> _GetOffsetsForPane(const PanePoint parentOffset) const;
     bool _IsAdjacent(const PanePoint firstOffset, const PanePoint secondOffset, const winrt::Microsoft::Terminal::Settings::Model::FocusDirection& direction) const;
     PaneNeighborSearch _FindNeighborForPane(const winrt::Microsoft::Terminal::Settings::Model::FocusDirection& direction,

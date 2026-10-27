@@ -14632,7 +14632,7 @@ namespace winrt::TerminalApp::implementation
             return false;
         }
 
-        if (const auto pane = focusedTab->GetActivePane(); pane && pane->IsAgentPane())
+        if (const auto pane = focusedTab->GetActivePane(); pane && pane->ContainsAgentPane())
         {
             return false;
         }
@@ -14667,6 +14667,19 @@ namespace winrt::TerminalApp::implementation
             if (!targetTab)
             {
                 return false;
+            }
+            if (const auto activePane = targetTab->GetActivePane(); activePane && activePane->ContainsAgentPane())
+            {
+                const auto source = _SourceTerminalPaneForTab(targetTab);
+                if (!source || !source->Id())
+                {
+                    return false;
+                }
+                if (targetTab->IsZoomed())
+                {
+                    targetTab->ExitZoom();
+                }
+                targetTab->PreparePaneFocus(*source->Id());
             }
             auto pane = focusedTab->DetachPane();
             targetTab->AttachPane(pane);
@@ -15676,7 +15689,7 @@ namespace winrt::TerminalApp::implementation
         // Content transfers still use the existing fixed-panel completion path.
         if (const auto activePane = activeTab->GetActivePane())
         {
-            if (activePane->IsAgentPane())
+            if (activePane->ContainsAgentPane())
             {
                 const auto content = activePane->GetContent().try_as<winrt::TerminalApp::AgentPaneContent>();
                 const bool completingTransfer = content &&
@@ -15688,7 +15701,7 @@ namespace winrt::TerminalApp::implementation
                 if (!completingTransfer)
                 {
                     const auto source = _SourceTerminalPaneForTab(activeTab);
-                    if (_receivingContentTransfer || !source || !source->Id())
+                    if (!source || !source->Id())
                     {
                         return false;
                     }
