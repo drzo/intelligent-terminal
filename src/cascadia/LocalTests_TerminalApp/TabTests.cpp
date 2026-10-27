@@ -566,6 +566,14 @@ namespace TerminalAppLocalTests
         TEST_METHOD(VerticalTabProgressPercentUsesLocaleFormatting);
         TEST_METHOD(AgentBillingUsesLocaleCurrencyFormatting);
         TEST_METHOD(SessionRegistryStatusDeltaUpdatesCaches);
+        TEST_METHOD(SessionRegistryAttentionBellUsesOrdinaryLifecycle);
+        TEST_METHOD(SessionRegistryAttentionBellRoutesToOwningPane);
+        TEST_METHOD(AgentSnapshotAttentionBellOnlyNotifiesTransitions);
+        TEST_METHOD(AttentionBellPreservesTerminalNotifications);
+        TEST_METHOD(SessionCompletionUnreadFollowsTabFocus);
+        TEST_METHOD(SessionCompletionClearsWhenActivePaneRegainsFocus);
+        TEST_METHOD(SessionCompletionSnapshotsPreserveReadState);
+        TEST_METHOD(SessionCompletionHistoryPreservesCanonicalStatusAndRows);
         TEST_METHOD(FailedAgentStatusRefreshDoesNotRestoreStaleCwds);
         TEST_METHOD(UnknownAgentSessionDoesNotReusePreviousCwd);
         TEST_METHOD(LatestBuiltinAgentReportWinsForPane);
@@ -9485,6 +9493,437 @@ namespace TerminalAppLocalTests
             VERIFY_IS_FALSE(updated.IsHistorical());
 
             VERIFY_IS_FALSE(page->_ApplyAgentSessionStatusDelta("session-a", "", "claude", std::nullopt, "FutureStatus"));
+        });
+    }
+
+    void TabTests::SessionRegistryAttentionBellUsesOrdinaryLifecycle()
+    {
+        const auto connection = winrt::make_self<TestConnection>(
+            winrt::guid{ L"63711111-2222-3333-4444-555555555555" },
+            winrt::Microsoft::Terminal::TerminalConnection::ConnectionState::Connected);
+        auto page = _commonSetup(*connection);
+        const auto cleanup = wil::scope_exit([&]() { RunOnUIThread([&]() { page = nullptr; }); });
+        TestOnUIThread([&]() {
+            const auto tab = page->_GetFocusedTabImpl();
+            const auto paneId = winrt::to_string(::Microsoft::Console::Utils::GuidToPlainString(connection->SessionId()));
+            const auto report = [&](const uint64_t activity, const std::string_view status) {
+                VERIFY_IS_TRUE(page->_ApplyAgentSessionStatusDelta("bell-session", paneId, "copilot", activity, status));
+            };
+            tab->Focus(FocusState::Unfocused);
+            report(1000, "Working");
+            VERIFY_IS_FALSE(tab->_tabStatus.BellIndicator());
+            report(2000, "Attention");
+            VERIFY_IS_TRUE(tab->_tabStatus.BellIndicator());
+            VERIFY_IS_FALSE(tab->_bellIndicatorTimer && tab->_bellIndicatorTimer.IsEnabled());
+
+            report(3000, "Working");
+            VERIFY_IS_TRUE(tab->_tabStatus.BellIndicator());
+            tab->Focus(FocusState::Programmatic);
+            VERIFY_IS_FALSE(tab->_tabStatus.BellIndicator());
+
+            report(4000, "Attention");
+            VERIFY_IS_TRUE(tab->_tabStatus.BellIndicator());
+            VERIFY_IS_TRUE(tab->_bellIndicatorTimer.IsEnabled());
+            tab->_BellIndicatorTimerTick(nullptr, nullptr);
+            VERIFY_IS_FALSE(tab->_tabStatus.BellIndicator());
+            VERIFY_IS_FALSE(tab->_bellIndicatorTimer.IsEnabled());
+
+            report(5000, "Attention");
+            VERIFY_IS_FALSE(tab->_tabStatus.BellIndicator());
+            VERIFY_IS_FALSE(tab->_bellIndicatorTimer.IsEnabled());
+            report(6000, "Working");
+            report(5500, "Attention");
+            VERIFY_IS_FALSE(tab->_tabStatus.BellIndicator());
+            VERIFY_IS_TRUE(page->_ApplyAgentSessionStatusDelta("bell-session", paneId, "custom:wrapper", 7000, "Attention"));
+            VERIFY_IS_FALSE(tab->_tabStatus.BellIndicator());
+
+            report(7000, "Attention");
+            VERIFY_IS_TRUE(tab->_tabStatus.BellIndicator());
+            tab->_BellIndicatorTimerTick(nullptr, nullptr);
+        });
+    }
+
+    void TabTests::SessionRegistryAttentionBellRoutesToOwningPane()
+    {
+        using State = winrt::Microsoft::Terminal::TerminalConnection::ConnectionState;
+        const auto first = winrt::make_self<TestConnection>(
+            winrt::guid{ L"63721111-2222-3333-4444-555555555555" }, State::Connected);
+        const auto second = winrt::make_self<TestConnection>(
+            winrt::guid{ L"63731111-2222-3333-4444-555555555555" }, State::Connected);
+        const auto third = winrt::make_self<TestConnection>(
+            winrt::guid{ L"63741111-2222-3333-4444-555555555555" }, State::Connected);
+        auto page = _commonSetup(*first, nullptr, std::nullopt, true);
+        const auto cleanup = wil::scope_exit([&]() { RunOnUIThread([&]() { page = nullptr; }); });
+        TestOnUIThread([&]() {
+            const auto owner = page->_GetFocusedTabImpl();
+            VERIFY_IS_TRUE(page->_SplitPane(owner, SplitDirection::Right, 0.5f, page->_MakeTerminalPane(NewTerminalArgs{}, nullptr, *second)));
+            VERIFY_IS_NOT_NULL(page->_CreateNewTabFromPane(page->_MakeTerminalPane(NewTerminalArgs{}, nullptr, *third)));
+            const auto focused = page->_GetFocusedTabImpl();
+            VERIFY_IS_TRUE(owner != focused);
+            const auto paneId = winrt::to_string(::Microsoft::Console::Utils::GuidToPlainString(first->SessionId()));
+            VERIFY_IS_TRUE(page->_ApplyAgentSessionStatusDelta("owner-session", paneId, "copilot", 1000, "Working"));
+            VERIFY_IS_TRUE(page->_ApplyAgentSessionStatusDelta("owner-session", paneId, "copilot", 2000, "Attention"));
+            VERIFY_IS_TRUE(owner->_tabStatus.BellIndicator());
+            VERIFY_IS_FALSE(owner->_bellIndicatorTimer && owner->_bellIndicatorTimer.IsEnabled());
+            VERIFY_IS_FALSE(focused->_tabStatus.BellIndicator());
+
+            VERIFY_IS_TRUE(page->_ApplyAgentSessionStatusDelta("owner-session", paneId, "copilot", 2500, "Working"));
+            VERIFY_IS_TRUE(page->_ApplyAgentSessionStatusDelta("replacement-session", paneId, "copilot", 4000, "Working"));
+            owner->ShowBellIndicator(false);
+            VERIFY_IS_TRUE(page->_ApplyAgentSessionStatusDelta("owner-session", paneId, "copilot", 3500, "Attention"));
+            VERIFY_IS_FALSE(owner->_tabStatus.BellIndicator());
+            VERIFY_ARE_EQUAL(std::string{ "replacement-session" }, page->_richTabAgentStatusByPaneId.at(first->SessionId()).sessionId);
+
+            VERIFY_IS_TRUE(page->_ApplyAgentSessionStatusDelta("unbound-session", "", "copilot", 5000, "Attention"));
+            VERIFY_IS_TRUE(page->_ApplyAgentSessionStatusDelta("other-window-session", "63751111-2222-3333-4444-555555555555", "copilot", 5000, "Attention"));
+            VERIFY_IS_FALSE(owner->_tabStatus.BellIndicator());
+            VERIFY_IS_FALSE(focused->_tabStatus.BellIndicator());
+        });
+    }
+
+    void TabTests::AgentSnapshotAttentionBellOnlyNotifiesTransitions()
+    {
+        using Page = winrt::TerminalApp::implementation::TerminalPage;
+        const auto connection = winrt::make_self<TestConnection>(
+            winrt::guid{ L"63761111-2222-3333-4444-555555555555" },
+            winrt::Microsoft::Terminal::TerminalConnection::ConnectionState::Connected);
+        auto page = _commonSetup(*connection, nullptr, std::nullopt, true);
+        const auto cleanup = wil::scope_exit([&]() { RunOnUIThread([&]() { page = nullptr; }); });
+        TestOnUIThread([&]() {
+            const auto tab = page->_GetFocusedTabImpl();
+            tab->Focus(FocusState::Unfocused);
+            const auto paneId = winrt::to_string(::Microsoft::Console::Utils::GuidToPlainString(connection->SessionId()));
+            const auto receiver = winrt::TerminalApp::implementation::SharedWta::Instance().MasterGeneration();
+            Json::Value response;
+            response["sessions"] = Json::arrayValue;
+            response["native_observation_receiver_generation"] = Json::UInt64{ receiver };
+            response["native_observation_listener_ready"] = false;
+            Json::Value row;
+            row["pane_id"] = paneId;
+            row["agent_session_id"] = "snapshot-bell-session";
+            row["provider_id"] = "copilot";
+            row["status"] = "Attention";
+            response["pane_statuses"].append(row);
+            const auto complete = [&](const bool stale = false) {
+                ::Microsoft::Terminal::WtaProcess::CaptureResult capture;
+                capture.completed = true;
+                capture.exitCode = 0;
+                const Page::_AgentSnapshotRequest request{
+                    ++page->_agentSnapshotRequestGeneration, receiver, std::nullopt, {}
+                };
+                if (stale)
+                {
+                    ++page->_agentSnapshotRequestGeneration;
+                }
+                page->_agentSnapshotRefreshInFlight = true;
+                page->_CompleteAgentSnapshot(
+                    request, capture, response,
+                    Page::_BuildAgentStatusSnapshot(Page::_ParsePaneAgentStatuses(response), page->_richTabAgentStatusByPaneId), true);
+            };
+            complete(true);
+            VERIFY_IS_FALSE(tab->_tabStatus.BellIndicator());
+            complete();
+            VERIFY_IS_TRUE(tab->_tabStatus.BellIndicator());
+            VERIFY_IS_FALSE(tab->_bellIndicatorTimer && tab->_bellIndicatorTimer.IsEnabled());
+            tab->ShowBellIndicator(false);
+            complete();
+            VERIFY_IS_FALSE(tab->_tabStatus.BellIndicator());
+            VERIFY_IS_TRUE(page->_ApplyAgentSessionStatusDelta("snapshot-bell-session", paneId, "copilot", 1000, "Attention"));
+            VERIFY_IS_FALSE(tab->_tabStatus.BellIndicator());
+
+            response["pane_statuses"][0]["status"] = "Working";
+            complete();
+            response["pane_statuses"][0]["status"] = "Attention";
+            complete();
+            VERIFY_IS_TRUE(tab->_tabStatus.BellIndicator());
+        });
+    }
+
+    void TabTests::AttentionBellPreservesTerminalNotifications()
+    {
+        winrt::com_ptr<TestSettingsPaneContent> first;
+        winrt::com_ptr<TestSettingsPaneContent> second;
+        winrt::com_ptr<winrt::TerminalApp::implementation::Tab> tab;
+        uint32_t notifications = 0;
+        IPaneContent lastSource{ nullptr };
+        const auto cleanup = wil::scope_exit([&]() {
+            RunOnUIThread([&]() {
+                tab = nullptr;
+                first = nullptr;
+                second = nullptr;
+                lastSource = nullptr;
+            });
+        });
+        TestOnUIThread([&]() {
+            first = winrt::make_self<TestSettingsPaneContent>();
+            second = winrt::make_self<TestSettingsPaneContent>();
+            tab = winrt::make_self<winrt::TerminalApp::implementation::Tab>(
+                std::make_shared<Pane>(
+                    std::make_shared<Pane>(first.as<IPaneContent>()),
+                    std::make_shared<Pane>(second.as<IPaneContent>()),
+                    SplitState::Vertical,
+                    0.5f));
+            tab->Initialize();
+            tab->Focus(FocusState::Unfocused);
+            tab->TabToastNotificationRequested([&](auto&&, auto&&, const IPaneContent& source) {
+                ++notifications;
+                lastSource = source;
+            });
+            tab->RaiseBellIndicator();
+            VERIFY_IS_TRUE(tab->_tabStatus.BellIndicator());
+            VERIFY_ARE_EQUAL(0u, notifications);
+        });
+        const auto bell = [&](const winrt::com_ptr<TestSettingsPaneContent>& source, const bool notify, const uint32_t expected) {
+            const auto processed = std::make_shared<::details::Event>();
+            TestOnUIThread([&]() {
+                source->BellRequested.raise(
+                    source.as<IPaneContent>(),
+                    winrt::make<winrt::TerminalApp::implementation::BellEventArgs>(false, notify));
+                // Drain the normal-priority bell handler before checking deduplication.
+                tab->TabViewItem().Dispatcher().RunAsync(CoreDispatcherPriority::Low, [processed]() { processed->Set(); });
+            });
+            VERIFY_ARE_EQUAL(static_cast<DWORD>(WAIT_OBJECT_0), WaitForSingleObject(processed->m_handle, 10000));
+            TestOnUIThread([&]() { VERIFY_ARE_EQUAL(expected, notifications); });
+        };
+
+        bell(second, true, 1);
+        TestOnUIThread([&]() { VERIFY_IS_TRUE(lastSource == second.as<IPaneContent>()); });
+        bell(first, true, 1);
+        TestOnUIThread([&]() {
+            tab->Focus(FocusState::Programmatic);
+            tab->Focus(FocusState::Unfocused);
+            tab->RaiseBellIndicator();
+        });
+        bell(first, true, 2);
+
+        TestOnUIThread([&]() {
+            tab->Focus(FocusState::Programmatic);
+            tab->RaiseBellIndicator();
+        });
+        bell(second, true, 3);
+        TestOnUIThread([&]() {
+            tab->_BellIndicatorTimerTick(nullptr, nullptr);
+            VERIFY_IS_FALSE(tab->_tabStatus.BellIndicator());
+            tab->RaiseBellIndicator();
+        });
+        bell(first, true, 4);
+
+        TestOnUIThread([&]() {
+            tab->_BellIndicatorTimerTick(nullptr, nullptr);
+            tab->Focus(FocusState::Unfocused);
+        });
+        bell(first, false, 4);
+        bell(second, true, 4);
+    }
+
+    void TabTests::SessionCompletionUnreadFollowsTabFocus()
+    {
+        using State = winrt::Microsoft::Terminal::TerminalConnection::ConnectionState;
+        const auto first = winrt::make_self<TestConnection>(
+            winrt::guid{ L"64111111-2222-3333-4444-555555555555" }, State::Connected);
+        const auto second = winrt::make_self<TestConnection>(
+            winrt::guid{ L"64211111-2222-3333-4444-555555555555" }, State::Connected);
+        auto page = _commonSetup(*first, nullptr, std::nullopt, true);
+        const auto cleanup = wil::scope_exit([&]() { RunOnUIThread([&]() { page = nullptr; }); });
+        TestOnUIThread([&]() {
+            const auto owner = page->_GetFocusedTabImpl();
+            const auto control = owner->GetActiveTerminalControl();
+            const auto paneId = winrt::to_string(::Microsoft::Console::Utils::GuidToPlainString(first->SessionId()));
+            const auto other = page->_CreateNewTabFromPane(page->_MakeTerminalPane(NewTerminalArgs{}, nullptr, *second));
+            VERIFY_IS_NOT_NULL(other);
+            page->_GetTabImpl(other)->SuppressAgentPrewarm();
+            VERIFY_IS_FALSE(owner->IsFocused());
+            const auto report = [&](const std::string_view session, const uint64_t activity, const std::string_view status) {
+                VERIFY_IS_TRUE(page->_ApplyAgentSessionStatusDelta(session, paneId, "copilot", activity, status));
+                return page->_BuildRichTabFirstPartyFields(control).at("agentStatusId");
+            };
+            VERIFY_ARE_EQUAL(std::string{ "Idle" }, report("completion-session", 1000, "Idle"));
+            owner->ShowBellIndicator(true);
+            VERIFY_ARE_EQUAL(std::string{ "Working" }, report("completion-session", 2000, "Working"));
+            VERIFY_ARE_EQUAL(std::string{ "Complete" }, report("completion-session", 3000, "Idle"));
+            VERIFY_IS_TRUE(owner->_tabStatus.BellIndicator());
+            VERIFY_ARE_EQUAL(std::string{ "Idle" }, page->_richTabAgentStatusByPaneId.at(first->SessionId()).status);
+            VERIFY_ARE_EQUAL(std::string{ "Idle" }, page->_richTabAgentStatusBySessionId.at("completion-session").status);
+            VERIFY_ARE_EQUAL(std::string{ "Complete" }, report("completion-session", 4000, "Idle"));
+
+            owner->Focus(FocusState::Programmatic);
+            VERIFY_ARE_EQUAL(std::string{ "Idle" }, page->_BuildRichTabFirstPartyFields(control).at("agentStatusId"));
+            VERIFY_IS_FALSE(owner->_tabStatus.BellIndicator());
+            VERIFY_ARE_EQUAL(std::string{ "Idle" }, report("completion-session", 5000, "Idle"));
+            VERIFY_ARE_EQUAL(std::string{ "Working" }, report("completion-session", 6000, "Working"));
+            VERIFY_ARE_EQUAL(std::string{ "Idle" }, report("completion-session", 7000, "Idle"));
+
+            owner->Focus(FocusState::Unfocused);
+            VERIFY_ARE_EQUAL(std::string{ "Attention" }, report("completion-session", 8000, "Attention"));
+            VERIFY_ARE_EQUAL(std::string{ "Complete" }, report("completion-session", 9000, "Idle"));
+            const auto split = winrt::make_self<TestConnection>(
+                winrt::guid{ L"64311111-2222-3333-4444-555555555555" }, State::Connected);
+            VERIFY_IS_TRUE(page->_SplitPane(owner, SplitDirection::Right, 0.5f, page->_MakeTerminalPane(NewTerminalArgs{}, nullptr, *split)));
+            VERIFY_ARE_EQUAL(std::string{ "Complete" }, page->_BuildRichTabFirstPartyFields(control).at("agentStatusId"));
+            const auto splitId = winrt::to_string(::Microsoft::Console::Utils::GuidToPlainString(split->SessionId()));
+            VERIFY_IS_TRUE(page->_ApplyAgentSessionStatusDelta("split-session", splitId, "copilot", 1000, "Working"));
+            VERIFY_IS_TRUE(page->_ApplyAgentSessionStatusDelta("split-session", splitId, "copilot", 2000, "Idle"));
+            const auto manager = winrt::get_self<winrt::TerminalApp::implementation::ContentManager>(page->_manager);
+            VERIFY_IS_TRUE(manager->HasUnreadAgentCompletion(split->SessionId(), "split-session", "copilot"));
+            owner->Focus(FocusState::Programmatic);
+            VERIFY_IS_FALSE(manager->HasUnreadAgentCompletion(first->SessionId(), "completion-session", "copilot"));
+            VERIFY_IS_FALSE(manager->HasUnreadAgentCompletion(split->SessionId(), "split-session", "copilot"));
+
+            owner->Focus(FocusState::Unfocused);
+            VERIFY_ARE_EQUAL(std::string{ "Working" }, report("completion-session", 10000, "Working"));
+            VERIFY_ARE_EQUAL(std::string{ "Working" }, report("completion-session", 9500, "Idle"));
+            VERIFY_ARE_EQUAL(std::string{ "Complete" }, report("completion-session", 11000, "Idle"));
+            VERIFY_ARE_EQUAL(std::string{ "Working" }, report("completion-session", 12000, "Working"));
+            VERIFY_ARE_EQUAL(std::string{ "Error" }, report("completion-session", 13000, "Error"));
+            VERIFY_ARE_EQUAL(std::string{ "Idle" }, report("completion-session", 14000, "Idle"));
+            VERIFY_ARE_EQUAL(std::string{ "Working" }, report("completion-session", 15000, "Working"));
+            VERIFY_ARE_EQUAL(std::string{ "Complete" }, report("completion-session", 16000, "Idle"));
+            VERIFY_ARE_EQUAL(std::string{ "Idle" }, report("replacement-session", 17000, "Idle"));
+            VERIFY_IS_FALSE(manager->HasUnreadAgentCompletion(first->SessionId(), "completion-session", "copilot"));
+        });
+    }
+
+    void TabTests::SessionCompletionClearsWhenActivePaneRegainsFocus()
+    {
+        const auto connection = winrt::make_self<TestConnection>(
+            winrt::guid{ L"64811111-2222-3333-4444-555555555555" },
+            winrt::Microsoft::Terminal::TerminalConnection::ConnectionState::Connected);
+        auto page = _commonSetup(*connection, nullptr, std::nullopt, true);
+        const auto cleanup = wil::scope_exit([&]() { RunOnUIThread([&]() { page = nullptr; }); });
+        TestOnUIThread([&]() {
+            const auto tab = page->_GetFocusedTabImpl();
+            const auto pane = tab->GetActivePane();
+            const auto control = tab->GetActiveTerminalControl();
+            const auto paneId = winrt::to_string(::Microsoft::Console::Utils::GuidToPlainString(connection->SessionId()));
+            const auto report = [&](const uint64_t activity, const std::string_view status) {
+                VERIFY_IS_TRUE(page->_ApplyAgentSessionStatusDelta("pane-focus-completion", paneId, "copilot", activity, status));
+                return page->_BuildRichTabFirstPartyFields(control).at("agentStatusId");
+            };
+
+            pane->LostFocus.raise(pane);
+            VERIFY_IS_FALSE(tab->IsFocused());
+            VERIFY_ARE_EQUAL(std::string{ "Working" }, report(1000, "Working"));
+            VERIFY_ARE_EQUAL(std::string{ "Complete" }, report(2000, "Idle"));
+            VERIFY_ARE_EQUAL(std::string{ "Idle" }, page->_richTabAgentStatusByPaneId.at(connection->SessionId()).status);
+
+            uint32_t activePaneChanges = 0;
+            const auto token = tab->ActivePaneChanged([&](auto&&, auto&&) { ++activePaneChanges; });
+            const auto revoke = wil::scope_exit([&]() { tab->ActivePaneChanged(token); });
+            pane->GotFocus.raise(pane, FocusState::Pointer);
+            VERIFY_IS_TRUE(tab->IsFocused());
+            VERIFY_IS_TRUE(tab->GetActivePane() == pane);
+            VERIFY_ARE_EQUAL(0u, activePaneChanges);
+            VERIFY_ARE_EQUAL(std::string{ "Idle" }, page->_BuildRichTabFirstPartyFields(control).at("agentStatusId"));
+            VERIFY_ARE_EQUAL(std::string{ "Idle" }, report(3000, "Idle"));
+        });
+    }
+
+    void TabTests::SessionCompletionSnapshotsPreserveReadState()
+    {
+        using Page = winrt::TerminalApp::implementation::TerminalPage;
+        using State = winrt::Microsoft::Terminal::TerminalConnection::ConnectionState;
+        const auto first = winrt::make_self<TestConnection>(
+            winrt::guid{ L"64411111-2222-3333-4444-555555555555" }, State::Connected);
+        const auto second = winrt::make_self<TestConnection>(
+            winrt::guid{ L"64511111-2222-3333-4444-555555555555" }, State::Connected);
+        auto page = _commonSetup(*first, nullptr, std::nullopt, true);
+        const auto cleanup = wil::scope_exit([&]() { RunOnUIThread([&]() { page = nullptr; }); });
+        TestOnUIThread([&]() {
+            const auto owner = page->_GetFocusedTabImpl();
+            const auto control = owner->GetActiveTerminalControl();
+            const auto other = page->_CreateNewTabFromPane(page->_MakeTerminalPane(NewTerminalArgs{}, nullptr, *second));
+            VERIFY_IS_NOT_NULL(other);
+            page->_GetTabImpl(other)->SuppressAgentPrewarm();
+            const auto receiver = winrt::TerminalApp::implementation::SharedWta::Instance().MasterGeneration();
+            Json::Value response;
+            response["sessions"] = Json::arrayValue;
+            response["native_observation_receiver_generation"] = Json::UInt64{ receiver };
+            response["native_observation_listener_ready"] = false;
+            Json::Value row;
+            row["pane_id"] = winrt::to_string(::Microsoft::Console::Utils::GuidToPlainString(first->SessionId()));
+            row["agent_session_id"] = "snapshot-completion";
+            row["provider_id"] = "copilot";
+            response["pane_statuses"].append(row);
+            const auto complete = [&](const std::string_view status, const bool stale = false) {
+                response["pane_statuses"][0]["status"] = std::string{ status };
+                ::Microsoft::Terminal::WtaProcess::CaptureResult capture;
+                capture.completed = true;
+                capture.exitCode = 0;
+                const Page::_AgentSnapshotRequest request{
+                    ++page->_agentSnapshotRequestGeneration, receiver, std::nullopt, {}
+                };
+                if (stale)
+                {
+                    ++page->_agentSnapshotRequestGeneration;
+                }
+                page->_agentSnapshotRefreshInFlight = true;
+                page->_CompleteAgentSnapshot(
+                    request, capture, response,
+                    Page::_BuildAgentStatusSnapshot(Page::_ParsePaneAgentStatuses(response), page->_richTabAgentStatusByPaneId), true);
+                return page->_BuildRichTabFirstPartyFields(control).at("agentStatusId");
+            };
+            VERIFY_ARE_EQUAL(std::string{ "Idle" }, complete("Idle"));
+            VERIFY_ARE_EQUAL(std::string{ "Working" }, complete("Working"));
+            VERIFY_ARE_EQUAL(std::string{ "Working" }, complete("Idle", true));
+            VERIFY_ARE_EQUAL(std::string{ "Complete" }, complete("Idle"));
+            VERIFY_ARE_EQUAL(std::string{ "Complete" }, complete("Idle"));
+            owner->Focus(FocusState::Programmatic);
+            VERIFY_ARE_EQUAL(std::string{ "Idle" }, complete("Idle"));
+            VERIFY_ARE_EQUAL(std::string{ "Idle" }, complete("Idle"));
+            VERIFY_ARE_EQUAL(std::string{ "Idle" }, page->_richTabAgentStatusBySessionId.at("snapshot-completion").status);
+        });
+    }
+
+    void TabTests::SessionCompletionHistoryPreservesCanonicalStatusAndRows()
+    {
+        using Page = winrt::TerminalApp::implementation::TerminalPage;
+        bool unread = true;
+        HistoryTestView view;
+        TestOnUIThread([&]() {
+            const auto strip = winrt::get_self<winrt::TerminalApp::implementation::TabStrip>(view.strip);
+            strip->SetAgentCompletionResolver([&](const auto& item) {
+                return unread && item.SessionId() == L"history-completion";
+            });
+            const auto makeRow = [&]() {
+                auto item = winrt::make<winrt::TerminalApp::implementation::TabStripHistoryItem>();
+                item.SessionId(L"history-completion");
+                item.PaneSessionId(L"64611111-2222-3333-4444-555555555555");
+                item.AgentId(L"copilot");
+                item.Title(L"Completion test");
+                item.Status(L"Idle");
+                item.IsLive(true);
+                item.StatusText(Page::_SidebarHistoryStatusText("Idle"));
+                return item;
+            };
+            strip->CommitHistorySnapshot({ makeRow() });
+            VERIFY_ARE_EQUAL(1u, view.strip.HistoryItems().Size());
+            const auto visible = view.strip.HistoryItems().GetAt(0);
+            VERIFY_ARE_EQUAL(winrt::hstring{ L"Idle" }, visible.Status());
+            VERIFY_ARE_EQUAL(Page::_SidebarHistoryStatusText("Complete"), visible.StatusLabelText());
+            VERIFY_IS_TRUE(visible.IsLive());
+            VERIFY_IS_FALSE(visible.IsHistorical());
+            const auto completedStyle = visible.StatusTextStyle();
+            strip->CommitHistorySnapshot({ makeRow() });
+            VERIFY_IS_TRUE(view.strip.HistoryItems().GetAt(0) == visible);
+            VERIFY_IS_FALSE(strip->_historySnapshot[0] == visible);
+
+            unread = false;
+            strip->RefreshHistoryAgentCompletions();
+            VERIFY_IS_TRUE(view.strip.HistoryItems().GetAt(0) == visible);
+            VERIFY_ARE_EQUAL(Page::_SidebarHistoryStatusText("Idle"), visible.StatusLabelText());
+            VERIFY_ARE_EQUAL(Page::_SidebarHistoryStatusText("Idle"), strip->_historySnapshot[0].StatusLabelText());
+            VERIFY_IS_TRUE(visible.StatusTextStyle() == completedStyle);
+            VERIFY_ARE_EQUAL(winrt::hstring{ L"Idle" }, visible.Status());
+
+            unread = true;
+            strip->RefreshHistoryAgentCompletions();
+            const auto native = winrt::get_self<winrt::TerminalApp::implementation::TabStripHistoryItem>(visible);
+            native->UpdateHeadlessState(true);
+            VERIFY_ARE_EQUAL(Page::_SidebarHistoryStatusText("Complete"), visible.StatusLabelText());
+            VERIFY_IS_TRUE(strip->ApplyHistoryStatusDelta(
+                L"history-completion", visible.PaneSessionId(), L"Working", Page::_SidebarHistoryStatusText("Working")));
+            VERIFY_ARE_EQUAL(Page::_SidebarHistoryStatusText("Working"), visible.StatusLabelText());
+            VERIFY_ARE_EQUAL(winrt::hstring{ L"Working" }, visible.Status());
         });
     }
 
@@ -23782,7 +24221,7 @@ namespace TerminalAppLocalTests
         const std::wstring cwd{ L"C:\\Active" };
         for (const auto theme : { ElementTheme::Light, ElementTheme::Dark })
         {
-            for (const auto status : { "Working", "Attention", "Error", "Idle", "InUse", "Ended" })
+            for (const auto status : { "Working", "Complete", "Attention", "Error", "Idle", "InUse", "Ended" })
             {
                 winrt::hstring statusText;
                 std::optional<Presentation> presentation;

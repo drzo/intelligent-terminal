@@ -441,6 +441,7 @@ namespace winrt::TerminalApp::implementation
             {
                 ShowBellIndicator(false);
             }
+            Focused.raise();
         }
     }
 
@@ -555,11 +556,26 @@ namespace winrt::TerminalApp::implementation
     {
         ASSERT_UI_THREAD();
 
+        if (!show)
+        {
+            _terminalBellActive = false;
+        }
         if (_tabStatus.BellIndicator() != show)
         {
             _tabStatus.BellIndicator(show);
             _UpdateIconVisibility();
             PropertyChanged.raise(*this, WUX::Data::PropertyChangedEventArgs{ L"Icon" });
+        }
+    }
+
+    void Tab::RaiseBellIndicator()
+    {
+        ASSERT_UI_THREAD();
+
+        ShowBellIndicator(true);
+        if (_focusState != WUX::FocusState::Unfocused)
+        {
+            ActivateBellIndicatorTimer();
         }
     }
 
@@ -1493,24 +1509,15 @@ namespace winrt::TerminalApp::implementation
                         tab->TabRaiseVisualBell.raise();
                     }
 
-                    // Send a desktop toast notification if requested, but only if
-                    // the pane isn't already in the belled state. This prevents
-                    // sending repeated toasts for repeated BEL characters.
-                    if (bellArgs.SendNotification() && !tab->_tabStatus.BellIndicator())
+                    // Attention can light the indicator without a terminal BEL.
+                    // Only terminal BELs consume notification deduplication.
+                    const auto terminalBellActive = std::exchange(tab->_terminalBellActive, true);
+                    if (bellArgs.SendNotification() && !terminalBellActive)
                     {
                         tab->TabToastNotificationRequested.raise(tab->Title(), L"", sender);
                     }
 
-                    // Show the bell indicator in the tab header
-                    tab->ShowBellIndicator(true);
-
-                    // If this tab is focused, activate the bell indicator timer, which will
-                    // remove the bell indicator once it fires
-                    // (otherwise, the indicator is removed when the tab gets focus)
-                    if (tab->_focusState != WUX::FocusState::Unfocused)
-                    {
-                        tab->ActivateBellIndicatorTimer();
-                    }
+                    tab->RaiseBellIndicator();
                 }
             });
 
@@ -1903,6 +1910,7 @@ namespace winrt::TerminalApp::implementation
                 {
                     tab->ShowBellIndicator(false);
                 }
+                tab->Focused.raise();
             }
         });
 

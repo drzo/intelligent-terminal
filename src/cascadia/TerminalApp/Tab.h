@@ -29,6 +29,7 @@ namespace winrt::TerminalApp::implementation
         winrt::TerminalApp::IPaneContent GetActiveContent() const;
 
         void Focus(winrt::Windows::UI::Xaml::FocusState focusState);
+        bool IsFocused() const noexcept { return _focused(); }
 
         void Scroll(const int delta);
 
@@ -54,6 +55,7 @@ namespace winrt::TerminalApp::implementation
         void HideIcon(const bool hide);
 
         void ShowBellIndicator(const bool show);
+        void RaiseBellIndicator();
         void ActivateBellIndicatorTimer();
 
         float CalcSnappedDimension(const bool widthOrHeight, const float dimension) const;
@@ -262,6 +264,7 @@ namespace winrt::TerminalApp::implementation
         void CloseButtonVisibility(Microsoft::Terminal::Settings::Model::TabCloseButtonVisibility visible);
 
         til::event<winrt::delegate<void()>> RequestFocusActiveControl;
+        til::event<winrt::delegate<>> Focused;
         til::typed_event<TerminalApp::Tab, winrt::Microsoft::Terminal::Settings::Model::TabLayout> TabLayoutChangeRequested;
         til::event<winrt::delegate<>> KeepRunningEnabledByUser;
         til::event<winrt::delegate<bool>> PinRequested;
@@ -413,6 +416,7 @@ namespace winrt::TerminalApp::implementation
         void _Setup();
 
         SafeDispatcherTimer _bellIndicatorTimer;
+        bool _terminalBellActive{ false };
         void _BellIndicatorTimerTick(const Windows::Foundation::IInspectable& sender, const Windows::Foundation::IInspectable& e);
 
         void _UpdateHeaderControlMaxWidth();
