@@ -54,6 +54,8 @@ namespace TerminalAppUnitTests
         TEST_METHOD(BrokerClearsSuccessfulSnapshotAfterProviderFailure);
         TEST_METHOD(BrokerKeepsAgentStatusPairedWithSnapshotDuringRefresh);
         TEST_METHOD(BrokerClearsSnapshotAndSkipsExecutionWhenAllFieldsDeselected);
+        TEST_METHOD(BrokerKeepsVisibleFieldsIndependentAcrossWindows);
+        TEST_METHOD(BrokerCollectsSharedSessionFieldsForBothWindows);
         TEST_METHOD(ResolveGitUsesExplicitPathAndDetectsMissingExecutable);
         TEST_METHOD(GitStatusProviderHandlesMissingGitGracefully);
         TEST_METHOD(GitStatusProviderUsesDisplayedDirectoryForGit);
@@ -588,6 +590,111 @@ namespace TerminalAppUnitTests
         VERIFY_ARE_EQUAL(
             std::wstring{ L"\u5206\u652F: \u4E3B\u5206\u652F, \u66F4\u6539: ~12 +200 -35" },
             presentation->accessibilityText);
+    }
+
+    void RichTabProviderTests::BrokerKeepsVisibleFieldsIndependentAcrossWindows()
+    {
+        Registration provider;
+        provider.manifest.id = "test.window-fields";
+        provider.manifest.fields = {
+            { "repository", "Repository", FieldType::String, true },
+            { "branch", "Branch", FieldType::String, true },
+        };
+        provider.enabled = true;
+
+        ProviderBroker broker{ std::nullopt };
+        broker._providers = { provider };
+        std::vector<std::wstring> firstWindow;
+        std::vector<std::wstring> secondWindow;
+        for (const auto& [attachment, sessionId, updates] :
+             { std::tuple<ProviderBroker::AttachmentId, std::string, std::vector<std::wstring>*>{
+                   1, "window-one", &firstWindow },
+               { 2, "window-two", &secondWindow } })
+        {
+            auto& session = broker._sessions[sessionId];
+            session.context.sessionId = sessionId;
+            session.sessionIncarnation = attachment;
+            Snapshot snapshot;
+            snapshot.fields.emplace("repository", std::string{ "project" });
+            snapshot.fields.emplace("branch", std::string{ "main" });
+            session.providers[provider.manifest.id].snapshot = std::move(snapshot);
+            session.callbacks.emplace(attachment, [updates](const BrokerUpdate& update) {
+                updates->emplace_back(update.presentation ? update.presentation->text : L"");
+            });
+            broker._attachmentSessions.emplace(attachment, sessionId);
+        }
+
+        broker.SetVisibleFields(1, provider.manifest.id, { "repository" });
+        broker.SetVisibleFields(2, provider.manifest.id, { "branch" });
+        VERIFY_ARE_EQUAL(std::wstring{ L"project" }, firstWindow.back());
+        VERIFY_ARE_EQUAL(std::wstring{ L"main" }, secondWindow.back());
+
+        broker.SetVisibleFields(1, provider.manifest.id, {});
+        VERIFY_IS_TRUE(firstWindow.back().empty());
+        VERIFY_ARE_EQUAL(std::wstring{ L"main" }, secondWindow.back());
+
+        std::vector<std::wstring> newTab;
+        const auto newAttachment = broker.Attach(
+            { "window-one-new-tab" },
+            [&](const BrokerUpdate& update) {
+                newTab.emplace_back(update.presentation ? update.presentation->text : L"");
+            },
+            { { provider.manifest.id, { "repository" } } });
+        Snapshot newSnapshot;
+        newSnapshot.fields.emplace("repository", std::string{ "project" });
+        newSnapshot.fields.emplace("branch", std::string{ "main" });
+        broker._sessions.at("window-one-new-tab").providers[provider.manifest.id].snapshot = std::move(newSnapshot);
+        broker.SetFieldDisplayNames(provider.manifest.id, { { "repository", "Repository" } });
+        VERIFY_ARE_EQUAL(std::wstring{ L"project" }, newTab.back());
+        VERIFY_ARE_EQUAL(std::wstring{ L"main" }, secondWindow.back());
+        broker.Detach(newAttachment);
+    }
+
+    void RichTabProviderTests::BrokerCollectsSharedSessionFieldsForBothWindows()
+    {
+        Registration provider;
+        provider.manifest.id = "test.shared-session";
+        provider.manifest.fields = {
+            { "repository", "Repository", FieldType::String, true },
+            { "branch", "Branch", FieldType::String, true },
+        };
+        provider.enabled = true;
+
+        ProviderBroker broker{ std::nullopt };
+        broker._providers = { provider };
+        auto& session = broker._sessions["shared-session"];
+        session.context.sessionId = "shared-session";
+        session.sessionIncarnation = 1;
+        Snapshot snapshot;
+        snapshot.fields.emplace("repository", std::string{ "project" });
+        snapshot.fields.emplace("branch", std::string{ "main" });
+        session.providers[provider.manifest.id].snapshot = std::move(snapshot);
+        std::vector<std::wstring> firstWindow;
+        std::vector<std::wstring> secondWindow;
+        session.callbacks.emplace(1, [&](const BrokerUpdate& update) {
+            firstWindow.emplace_back(update.presentation ? update.presentation->text : L"");
+        });
+        session.callbacks.emplace(2, [&](const BrokerUpdate& update) {
+            secondWindow.emplace_back(update.presentation ? update.presentation->text : L"");
+        });
+        broker._attachmentSessions.emplace(1, session.context.sessionId);
+        broker._attachmentSessions.emplace(2, session.context.sessionId);
+
+        broker.SetVisibleFields(1, provider.manifest.id, {});
+        VERIFY_IS_TRUE(firstWindow.back().empty());
+        VERIFY_ARE_EQUAL(std::wstring{ L"project\nmain" }, secondWindow.back());
+        broker.SetVisibleFields(1, provider.manifest.id, { "repository" });
+        broker.SetVisibleFields(2, provider.manifest.id, { "branch" });
+        VERIFY_ARE_EQUAL(std::wstring{ L"project" }, firstWindow.back());
+        VERIFY_ARE_EQUAL(std::wstring{ L"main" }, secondWindow.back());
+        const auto bothFields = broker._VisibleFieldsForSession(session, provider);
+        VERIFY_ARE_EQUAL(size_t{ 2 }, bothFields.size());
+
+        broker.Detach(1);
+        const auto remainingFields = broker._VisibleFieldsForSession(session, provider);
+        VERIFY_ARE_EQUAL(size_t{ 1 }, remainingFields.size());
+        VERIFY_ARE_EQUAL(std::string{ "branch" }, remainingFields.front());
+        VERIFY_ARE_EQUAL(std::wstring{ L"main" }, secondWindow.back());
     }
 
     void RichTabProviderTests::BrokerClearsSuccessfulSnapshotAfterProviderFailure()

@@ -848,43 +848,33 @@ namespace winrt::TerminalApp::implementation
                 _tabStrip.RichTabBranchVisible(contains("branch"));
                 _tabStrip.RichTabChangesVisible(contains("changes"));
             }
+            _richTabVisibleFields = _SelectedRichTabVisibleFields();
             _LogSidebarRowFieldsTelemetry("Launch");
-            _tabStrip.VisibleFieldsChanged([weakThis{ get_weak() }](const auto& sender, auto&&) {
-                std::vector<std::string> fields;
-                fields.reserve(2);
-                if (sender.RichTabAgentStatusVisible())
-                {
-                    fields.emplace_back("agentStatus");
-                }
-                if (sender.RichTabWorkingDirectoryVisible())
-                {
-                    fields.emplace_back("workingDirectory");
-                }
-                if (sender.RichTabRepositoryVisible())
-                {
-                    fields.emplace_back("repository");
-                }
-                if (sender.RichTabBranchVisible())
-                {
-                    fields.emplace_back("branch");
-                }
-                if (sender.RichTabChangesVisible())
-                {
-                    fields.emplace_back("changes");
-                }
-                auto& broker = ::Microsoft::Terminal::RichTab::Provider::ProviderBroker::Instance();
-                const auto previous = broker.VisibleFields("com.microsoft.intelligent-terminal.git-status");
-                const auto changed = !previous || *previous != fields;
-                broker.SetVisibleFields(
-                    "com.microsoft.intelligent-terminal.git-status",
-                    std::move(fields));
+            _tabStrip.VisibleFieldsChanged([weakThis{ get_weak() }](const auto&, auto&&) {
                 if (const auto page = weakThis.get())
                 {
+                    const auto fields = page->_SelectedRichTabVisibleFields();
+                    const auto changed = page->_richTabVisibleFields != fields;
+                    page->_richTabVisibleFields = fields;
+                    auto& broker = ::Microsoft::Terminal::RichTab::Provider::ProviderBroker::Instance();
+                    std::vector<::Microsoft::Terminal::RichTab::Provider::ProviderBroker::AttachmentId> attachments;
+                    {
+                        std::lock_guard lock{ page->_richTabAttachmentsMutex };
+                        attachments.reserve(page->_richTabAttachments.size());
+                        for (const auto& [_, attachment] : page->_richTabAttachments)
+                        {
+                            attachments.emplace_back(attachment.id);
+                        }
+                    }
+                    for (const auto attachment : attachments)
+                    {
+                        broker.SetVisibleFields(attachment, "com.microsoft.intelligent-terminal.git-status", fields);
+                    }
                     if (changed)
                     {
                         page->_LogSidebarRowFieldsTelemetry("UserChange");
                     }
-                    if (sender.RichTabAgentStatusVisible() || page->_RichTabCwdDependentFieldsVisible())
+                    if (page->_tabStrip.RichTabAgentStatusVisible() || page->_RichTabCwdDependentFieldsVisible())
                     {
                         page->_RequestAgentSnapshotRefresh();
                     }
@@ -2372,18 +2362,17 @@ namespace winrt::TerminalApp::implementation
     {
         if constexpr (Feature_RichTabProviders::IsEnabled())
         {
-            const auto fields = ::Microsoft::Terminal::RichTab::Provider::ProviderBroker::Instance().VisibleFields(
-                "com.microsoft.intelligent-terminal.git-status");
-            if (!fields)
+            if (!::Microsoft::Terminal::RichTab::Provider::ProviderBroker::Instance().VisibleFields(
+                    "com.microsoft.intelligent-terminal.git-status"))
             {
                 _agentPaneLog("SidebarRowFieldsChanged: Rich Tab provider selection unavailable");
                 return;
             }
-
+            const auto fields = _SelectedRichTabVisibleFields();
             std::string fieldNames;
             for (const auto field : { "agentStatus", "workingDirectory", "repository", "branch", "changes" })
             {
-                if (std::find(fields->begin(), fields->end(), field) != fields->end())
+                if (std::find(fields.begin(), fields.end(), field) != fields.end())
                 {
                     if (!fieldNames.empty())
                     {
@@ -12185,6 +12174,9 @@ namespace winrt::TerminalApp::implementation
         }
 
         auto firstPartyFields = _BuildRichTabFirstPartyFields(control);
+        ::Microsoft::Terminal::RichTab::Provider::ProviderBroker::VisibleFieldMap visibleFields;
+        visibleFields.emplace("com.microsoft.intelligent-terminal.git-status",
+                              std::unordered_set<std::string>{ _richTabVisibleFields.begin(), _richTabVisibleFields.end() });
         const auto attachment = broker.Attach(
             {
                 sessionId,
@@ -12205,7 +12197,8 @@ namespace winrt::TerminalApp::implementation
                             }
                         });
                 }
-            });
+            },
+            std::move(visibleFields));
         if (attachment != 0)
         {
             std::lock_guard lock{ _richTabAttachmentsMutex };
@@ -12831,6 +12824,24 @@ namespace winrt::TerminalApp::implementation
                _tabStrip.RichTabRepositoryVisible() ||
                _tabStrip.RichTabBranchVisible() ||
                _tabStrip.RichTabChangesVisible();
+    }
+
+    std::vector<std::string> TerminalPage::_SelectedRichTabVisibleFields() const
+    {
+        std::vector<std::string> fields;
+        for (const auto& [visible, name] : {
+                 std::pair{ _tabStrip.RichTabAgentStatusVisible(), "agentStatus" },
+                 std::pair{ _tabStrip.RichTabWorkingDirectoryVisible(), "workingDirectory" },
+                 std::pair{ _tabStrip.RichTabRepositoryVisible(), "repository" },
+                 std::pair{ _tabStrip.RichTabBranchVisible(), "branch" },
+                 std::pair{ _tabStrip.RichTabChangesVisible(), "changes" } })
+        {
+            if (visible)
+            {
+                fields.emplace_back(name);
+            }
+        }
+        return fields;
     }
 
     void TerminalPage::_UpdateAgentCompletions()
