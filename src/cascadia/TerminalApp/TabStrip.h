@@ -413,7 +413,7 @@ namespace winrt::TerminalApp::implementation
         winrt::Windows::UI::Xaml::Controls::ProgressRing HistoryLoadingIndicator() { return _historyElement(L"HistoryLoadingIndicator").try_as<winrt::Windows::UI::Xaml::Controls::ProgressRing>(); }
         winrt::Windows::UI::Xaml::Controls::TextBlock HistoryMessage() { return _historyElement(L"HistoryMessage").try_as<winrt::Windows::UI::Xaml::Controls::TextBlock>(); }
         void HistoryActive(bool value);
-        bool HistoryLoading() const noexcept { return _historyLoading; }
+        bool HistoryLoading() const noexcept { return _historyLoadPending && _historyItems.Size() == 0; }
         void HistoryLoading(bool value);
         bool HistoryActivating() const noexcept { return _historyActivating; }
         void HistoryActivating(bool value);
@@ -607,7 +607,7 @@ namespace winrt::TerminalApp::implementation
         bool _agentFilterTelemetryPending{ false };
         bool _historySnapshotReady{ false };
         friend class ::TerminalAppLocalTests::TabTests;
-        bool _historyLoading{ false };
+        bool _historyLoadPending{ false };
         bool _historyActivating{ false };
         bool _syncingHistorySearchState{ false };
         winrt::hstring _historySearchQuery;

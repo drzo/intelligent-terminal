@@ -7063,7 +7063,7 @@ namespace winrt::TerminalApp::implementation
             _historyNextRefresh = {};
             _tabStrip.HistoryError(L"");
             winrt::get_self<implementation::TabStrip>(_tabStrip)->HistoryRefreshError(L"");
-            _tabStrip.HistoryLoading(!winrt::get_self<implementation::TabStrip>(_tabStrip)->HasHistoryItems());
+            _tabStrip.HistoryLoading(true);
         }
         else
         {
@@ -7581,7 +7581,7 @@ namespace winrt::TerminalApp::implementation
             _historyRetryDelay = std::chrono::seconds{ 0 };
             _historyNextRefresh = {};
         }
-        _tabStrip.HistoryLoading((snapshot.state == State::Loading || snapshot.state == State::Timeout || snapshot.state == State::MasterUnavailable) && !strip->HasHistoryItems());
+        _tabStrip.HistoryLoading(snapshot.state == State::Loading || snapshot.state == State::Timeout || snapshot.state == State::MasterUnavailable);
         strip->TryCompleteAgentFilterTelemetry();
         if (_historyRefreshPending)
         {
