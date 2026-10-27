@@ -22910,9 +22910,49 @@ namespace TerminalAppLocalTests
 
     void TabTests::SidebarUpdateBatchRecoversAfterFailure()
     {
+        struct FailingTabs :
+            winrt::implements<FailingTabs, IObservableVector<winrt::TerminalApp::Tab>, IVector<winrt::TerminalApp::Tab>, IVectorView<winrt::TerminalApp::Tab>, IIterable<winrt::TerminalApp::Tab>>,
+            winrt::observable_vector_base<FailingTabs, winrt::TerminalApp::Tab>
+        {
+            std::vector<winrt::TerminalApp::Tab> values;
+            const bool* flushing = nullptr;
+            bool failNextRead = false;
+            uint32_t failures = 0;
+
+            auto& get_container() noexcept { return values; }
+            const auto& get_container() const noexcept { return values; }
+
+            winrt::TerminalApp::Tab GetAt(const uint32_t index)
+            {
+                if (flushing && *flushing && std::exchange(failNextRead, false))
+                {
+                    ++failures;
+                    throw winrt::hresult_error{ E_FAIL };
+                }
+                return values.at(index);
+            }
+        };
+
         const auto page = _commonSetup(nullptr, nullptr, std::nullopt, true);
+        const auto failingTabs = winrt::make_self<FailingTabs>();
+        IObservableVector<winrt::TerminalApp::Tab> originalTabs{ nullptr };
+        const auto restoreTabs = wil::scope_exit([&]() {
+            RunOnUIThread([&]() {
+                if (originalTabs)
+                {
+                    page->_tabs = originalTabs;
+                }
+            });
+        });
         TestOnUIThread([&]() {
             using Page = winrt::TerminalApp::implementation::TerminalPage;
+            originalTabs = page->_tabs;
+            for (const auto& tab : originalTabs)
+            {
+                failingTabs->values.push_back(tab);
+            }
+            page->_tabs = *failingTabs;
+            failingTabs->flushing = &page->_flushingSidebarUpdates;
             const auto fail = [&]() {
                 Page::SidebarUpdateBatch batch{ *page };
                 page->_tabSearchActive = true;
@@ -22926,15 +22966,24 @@ namespace TerminalAppLocalTests
             VERIFY_ARE_EQUAL(0u, page->_sidebarUpdateBatchDepth);
             VERIFY_IS_TRUE(page->_pendingSidebarUpdates);
             VERIFY_IS_TRUE(page->_sidebarUpdateFlushQueued);
+            // Fail the queued projection itself, not just the batch body.
+            failingTabs->failNextRead = true;
         });
 
         _waitForContentTransferReviewUI([&]() {
             const auto strip = winrt::get_self<winrt::TerminalApp::implementation::TabStrip>(page->_tabStrip);
             const auto display = strip->DisplayItemForTab(page->_GetFocusedTabImpl()->TabViewItem());
-            return !page->_pendingSidebarUpdates && !page->_sidebarUpdateFlushQueued &&
+            return failingTabs->failures == 1 && !page->_pendingSidebarUpdates &&
+                   !page->_sidebarUpdateFlushQueued && !page->_flushingSidebarUpdates &&
                    display.SearchText() == L"aborted";
         });
         TestOnUIThread([&]() {
+            VERIFY_ARE_EQUAL(1u, failingTabs->failures);
+            VERIFY_ARE_EQUAL(0u, page->_sidebarUpdateBatchDepth);
+            VERIFY_IS_FALSE(page->_pendingSidebarUpdates);
+            VERIFY_IS_FALSE(page->_sidebarUpdateFlushQueued);
+            VERIFY_IS_FALSE(page->_flushingSidebarUpdates);
+            page->_tabs = originalTabs;
             page->_tabSearchQuery = L"recovered";
             page->_ApplyTabListProjection();
             const auto strip = winrt::get_self<winrt::TerminalApp::implementation::TabStrip>(page->_tabStrip);

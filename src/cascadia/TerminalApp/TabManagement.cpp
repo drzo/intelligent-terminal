@@ -2223,9 +2223,8 @@ namespace winrt::TerminalApp::implementation
             THROW_HR_IF(E_ABORT, !dispatcher.TryEnqueue(DispatcherQueuePriority::Low, [weakThis = get_weak()]() {
                 if (const auto page = weakThis.get())
                 {
-                    auto reset = wil::scope_exit([&]() noexcept {
-                        page->_sidebarUpdateFlushQueued = false;
-                    });
+                    // Release this callback's ownership before a failed flush queues a retry.
+                    page->_sidebarUpdateFlushQueued = false;
                     try
                     {
                         page->_FlushSidebarUpdates();
