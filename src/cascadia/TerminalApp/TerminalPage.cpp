@@ -4115,6 +4115,36 @@ namespace winrt::TerminalApp::implementation
         {
             return false;
         }
+        // `/assistant` runs while the parent agent pane is focused, so the
+        // active control is that helper. Shell checks and the new helper's
+        // directory have to come from the terminal pane instead.
+        auto shellTerminal = tab->GetActiveTerminalControl();
+        if (nestedAssistant)
+        {
+            if (const auto root = tab->GetRootPane())
+            {
+                decltype(shellTerminal) shell{ nullptr };
+                root->WalkTree([&](const std::shared_ptr<Pane>& pane) {
+                    if (pane->IsAgentPane())
+                    {
+                        return;
+                    }
+                    const auto control = pane->GetTerminalControl();
+                    if (!control)
+                    {
+                        return;
+                    }
+                    if (!shell || pane->IsSourceOfAgentPane())
+                    {
+                        shell = control;
+                    }
+                });
+                if (shell)
+                {
+                    shellTerminal = shell;
+                }
+            }
+        }
         // A nested assistant is a visible second helper, never a pre-warm.
         if (nestedAssistant)
         {
@@ -4138,11 +4168,23 @@ namespace winrt::TerminalApp::implementation
         if (nestedAssistant)
         {
             // NestAgentArena hosts exactly one additional agent beside the
-            // current shell. A zoomed tab has no stable split to nest into.
-            if (existingAgents != 1 || tab->IsZoomed())
+            // current shell. Leave zoom first so the shell, the parent
+            // agent, and the nested assistant can all be on screen.
+            if (existingAgents != 1)
             {
-                _agentPaneLog("_AutoCreateHiddenAgentPaneShared: nested assistant requires one unzoomed agent pane");
+                _agentPaneLog("_AutoCreateHiddenAgentPaneShared: nested assistant requires one agent pane");
                 return false;
+            }
+            if (tab->IsZoomed())
+            {
+                // The zoomed shell is the element in the window. Detach it
+                // before leaving zoom so it can be parented back into the
+                // three-pane split.
+                if (_GetFocusedTabImpl() == tab)
+                {
+                    _tabContent.Children().Clear();
+                }
+                tab->ExitZoom();
             }
             if (const auto primary = tab->FindAgentPane(); primary && primary->IsHidden())
             {
@@ -4228,7 +4270,7 @@ namespace winrt::TerminalApp::implementation
                 }
                 if (backend->source == ::Microsoft::Terminal::Settings::Model::AgentPaneBackendSource::Wsl)
                 {
-                    const auto shellName = tab->GetActiveTerminalControl().ShellName();
+                    const auto shellName = shellTerminal ? shellTerminal.ShellName() : winrt::hstring{};
                     const auto expectedShell = winrt::hstring{ L"wsl:" + backend->wslDistro };
                     if (!shellName.empty() && shellName != expectedShell)
                     {
@@ -4522,22 +4564,22 @@ namespace winrt::TerminalApp::implementation
         //   c) Profile's configured starting directory
         //   d) User's home directory
         //
-        // Use `tab->GetActiveTerminalControl()` rather than the page's
-        // `_GetActiveControl()`: for `openInBackground=true` new tabs the
-        // tab being pre-warmed is NOT the focused one, so reading from the
-        // page-focused control would pick up the foreground tab's cwd and
-        // the helper would start in the wrong directory (autofix and
-        // agent context would attribute to the wrong project). Reading
-        // directly from `tab` resolves to whichever pane is active on
-        // this specific tab. For a WSL agent, that source cwd may be POSIX and
+        // Use this tab's terminal rather than the page's `_GetActiveControl()`:
+        // for `openInBackground=true` new tabs the tab being pre-warmed is NOT
+        // the focused one, so reading from the page-focused control would pick
+        // up the foreground tab's cwd and the helper would start in the wrong
+        // directory (autofix and agent context would attribute to the wrong
+        // project). A nested assistant reads the shell pane, because the
+        // parent agent is the focused control when `/assistant` runs. For a
+        // WSL agent, that source cwd may be POSIX and
         // must not become the Windows wta-helper process's starting directory.
         // The pane cwd must also win over the window cwd for agent context: deferred
         // pre-warm runs after startup actions restore that property to the
         // launcher directory, which is System32 for an AUMID activation.
         winrt::hstring paneDirectory;
-        if (const auto activeControl = tab->GetActiveTerminalControl())
+        if (shellTerminal)
         {
-            paneDirectory = activeControl.WorkingDirectory();
+            paneDirectory = shellTerminal.WorkingDirectory();
         }
         const auto windowDirectory = _WindowProperties.VirtualWorkingDirectory();
         winrt::hstring profileDirectory;
@@ -4631,17 +4673,44 @@ namespace winrt::TerminalApp::implementation
             // `[ Arena-1 [ Agent-1/Arena-2 [ Agent-2 ] ] ]`: the shell and
             // the new assistant share the inner arena, and the parent agent
             // stays the outer one. All three leaves remain visible.
+            // Pane creation can re-enter XAML. Leave zoom and bring the
+            // parent agent back immediately before the split, so the tab
+            // shows the shell, the parent agent, and the nested assistant.
+            if (tab->IsZoomed())
+            {
+                if (_GetFocusedTabImpl() == tab)
+                {
+                    _tabContent.Children().Clear();
+                }
+                tab->ExitZoom();
+            }
+            if (const auto primary = tab->FindAgentPane(); primary && primary->IsHidden())
+            {
+                const auto direction = _AgentPanePositionToSplitDirection(
+                    tab->EffectiveAgentPanePosition(_settings.GlobalSettings().AgentPanePosition()));
+                if (!tab->RestoreStashedAgentPane(direction))
+                {
+                    _agentPaneLog("_AutoCreateHiddenAgentPaneShared: nested assistant could not restore the parent agent pane");
+                    return false;
+                }
+            }
             if (!tab->NestAgentArena(newPane))
             {
                 _agentPaneLog("_AutoCreateHiddenAgentPaneShared: NestAgentArena failed");
                 return false;
             }
-            // The helper process starts only after this pane's first
-            // LayoutUpdated. Run that pass now so the nested assistant is
-            // alive while all three panes are on screen.
-            if (const auto root = newPane->GetRootElement())
+            // The pane is in the tree. A later layout failure must not shut
+            // that split back down.
+            closeOnFailure.release();
+            // Measure the whole split, not only the new leaf. The shell, the
+            // parent agent, and the nested assistant then receive one layout
+            // pass, which is what starts the nested helper.
+            if (const auto rootPane = tab->GetRootPane())
             {
-                root.UpdateLayout();
+                if (const auto tabRoot = rootPane->GetRootElement())
+                {
+                    tabRoot.UpdateLayout();
+                }
             }
         }
         else

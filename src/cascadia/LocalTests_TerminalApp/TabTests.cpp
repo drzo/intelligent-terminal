@@ -25891,11 +25891,27 @@ namespace TerminalAppLocalTests
             VERIFY_IS_TRUE(page->_SplitPane(tab, SplitDirection::Right, .5f, helper));
             VERIFY_ARE_EQUAL(std::wstring{ L"[ Arena [ Agent ] ]" }, tab->GetRootPane()->FormatAgentArenaTree());
             VERIFY_ARE_EQUAL(2, tab->GetLeafPaneCount());
+            tab->StashAgentPane();
+            VERIFY_IS_TRUE(helper->IsHidden());
 
             const auto nestedConnection = winrt::make_self<TestConnection>(Utils::CreateGuid(), State::Connected);
             const auto nested = page->_WrapInAgentPaneContent(page->_MakePane(nullptr, nullptr, *nestedConnection));
             nested->IsAgentPane(true);
+            // Zoom the shell, not the agent. EnterZoom ignores an agent pane,
+            // so a zoomed shell is the case that would hide the other two.
+            const auto shellBeforeNest = tab->GetRootPane()->WalkTree([&](const std::shared_ptr<Pane>& pane) -> std::shared_ptr<Pane> {
+                return pane->_IsLeaf() && !pane->IsAgentPane() ? pane : nullptr;
+            });
+            VERIFY_IS_NOT_NULL(shellBeforeNest);
+            VERIFY_IS_TRUE(shellBeforeNest->Id().has_value());
+            VERIFY_IS_TRUE(tab->FocusPane(shellBeforeNest->Id().value()));
+            tab->EnterZoom();
+            VERIFY_IS_TRUE(tab->IsZoomed());
             VERIFY_IS_TRUE(tab->NestAgentArena(nested));
+            VERIFY_IS_FALSE(tab->IsZoomed());
+            VERIFY_IS_TRUE(tab->Content() == tab->GetRootPane()->GetRootElement());
+            uint32_t contentIndex = 0;
+            VERIFY_IS_TRUE(page->_tabContent.Children().IndexOf(tab->Content(), contentIndex));
             VERIFY_ARE_EQUAL(std::wstring{ L"[ Arena-1 [ Agent-1/Arena-2 [ Agent-2 ] ] ]" }, tab->GetRootPane()->FormatAgentArenaTree());
             VERIFY_ARE_EQUAL(3, tab->GetLeafPaneCount());
             VERIFY_IS_TRUE(tab->FindAgentPane() == helper);
@@ -25906,6 +25922,31 @@ namespace TerminalAppLocalTests
             VERIFY_IS_NOT_NULL(arena2);
             VERIFY_ARE_EQUAL(2u, arena2->ArenaId());
             VERIFY_IS_FALSE(arena2->IsAgentPane());
+            // A hidden pane detaches one border and leaves a single child in
+            // the grid. Both borders staying attached means the shell, the
+            // parent agent, and the nested assistant are all on screen. The
+            // splitter overlay can make the child count larger than two.
+            const auto bothPanesHosted = [](const std::shared_ptr<Pane>& split) {
+                return static_cast<bool>(split->_borderFirst.Child()) &&
+                       static_cast<bool>(split->_borderSecond.Child());
+            };
+            VERIFY_IS_TRUE(bothPanesHosted(tab->GetRootPane()));
+            VERIFY_IS_TRUE(bothPanesHosted(arena2));
+            const auto splitTracks = [](const std::shared_ptr<Pane>& split) {
+                const auto grid = split->GetRootElement();
+                return grid.ColumnDefinitions().Size() + grid.RowDefinitions().Size();
+            };
+            VERIFY_IS_TRUE(splitTracks(tab->GetRootPane()) >= 2u);
+            VERIFY_IS_TRUE(splitTracks(arena2) >= 2u);
+            const auto shell = tab->GetRootPane()->WalkTree([&](const std::shared_ptr<Pane>& pane) -> std::shared_ptr<Pane> {
+                return pane->_IsLeaf() && !pane->IsAgentPane() ? pane : nullptr;
+            });
+            VERIFY_IS_NOT_NULL(shell);
+            VERIFY_ARE_EQUAL(connection->SessionId(), shell->GetSessionId());
+            VERIFY_IS_FALSE(shell->IsHidden());
+            VERIFY_IS_FALSE(helper->IsHidden());
+            VERIFY_IS_FALSE(nested->IsHidden());
+            VERIFY_IS_FALSE(tab->HasHiddenPane());
 
             const auto rejectedConnection = winrt::make_self<TestConnection>(Utils::CreateGuid(), State::Connected);
             const auto rejected = page->_WrapInAgentPaneContent(page->_MakePane(nullptr, nullptr, *rejectedConnection));

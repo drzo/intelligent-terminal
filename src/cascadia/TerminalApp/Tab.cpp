@@ -3014,9 +3014,16 @@ namespace winrt::TerminalApp::implementation
     bool Tab::NestAgentArena(const std::shared_ptr<Pane>& nestedAgent)
     {
         ASSERT_UI_THREAD();
-        if (!_rootPane || !nestedAgent || !nestedAgent->IsAgentPane() || _zoomedPane)
+        if (!_rootPane || !nestedAgent || !nestedAgent->IsAgentPane())
         {
             return false;
+        }
+        // A zoomed shell is the only element in the tab. Leave zoom before
+        // attaching the assistant so the shell, the parent agent, and the
+        // nested assistant are on screen together.
+        if (_zoomedPane)
+        {
+            ExitZoom();
         }
         if (_rootPane->WalkTree([&](const auto& pane) { return pane == nestedAgent; }))
         {
@@ -3040,6 +3047,17 @@ namespace winrt::TerminalApp::implementation
         if (!arena)
         {
             return false;
+        }
+        // A stashed parent is detached, and zoom restore can leave that grid
+        // on a single track. RestorePane puts the parent and the shell back
+        // into two tracks before the shell is split.
+        const auto arenaGrid = arena->GetRootElement();
+        const auto arenaTracks = arenaGrid ?
+                                     arenaGrid.ColumnDefinitions().Size() + arenaGrid.RowDefinitions().Size() :
+                                     0u;
+        if (agent->IsHidden() || arenaTracks < 2)
+        {
+            arena->RestorePane(agent);
         }
         const auto body = arena->_firstChild == agent ? arena->_secondChild : arena->_firstChild;
         if (!body || body->IsAgentPane())
@@ -3082,6 +3100,14 @@ namespace winrt::TerminalApp::implementation
         body->MarkArena(arena2);
         agent->SetOwningArena(arena1);
         _closePaneMenuItem.Visibility(WUX::Visibility::Visible);
+        // The tab must show this root. A zoomed shell is a different element,
+        // and the three panes live under the root.
+        const auto rootElement = _rootPane->GetRootElement();
+        if (Content() != rootElement)
+        {
+            Content(nullptr);
+            Content(rootElement);
+        }
         PaneProjectionChanged.raise();
         return true;
     }
