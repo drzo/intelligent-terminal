@@ -11,6 +11,9 @@ const MCP_PROTOCOL_VERSION: &str = "2025-06-18";
 const SUPPORTED_MCP_PROTOCOL_VERSIONS: &[&str] =
     &["2024-11-05", "2025-03-26", MCP_PROTOCOL_VERSION];
 const USER_INPUT_TOOL_NAME: &str = "request_user_input";
+pub const NESTED_ASSISTANT_TOOL_NAME: &str = "open_nested_assistant";
+pub const NESTED_ASSISTANT_HELPER_REQUEST_METHOD: &str =
+    "_intellterm.wta/open_nested_assistant";
 pub const SERVER_NAME_PREFIX: &str = "intellterm_";
 pub const SERVER_ID_HEX_LEN: usize = 16;
 pub const HELPER_REQUEST_METHOD: &str = "_intellterm.wta/request_terminal_actions";
@@ -42,11 +45,12 @@ pub(crate) fn server_identity(
 pub(crate) enum SessionMcpTool {
     TerminalAction(super::action_proposal::schema::McpActionTool),
     UserInput,
+    NestedAssistant,
 }
 
 impl SessionMcpTool {
     #[cfg(test)]
-    pub(crate) const ALL: [Self; 4] = [
+    pub(crate) const ALL: [Self; 5] = [
         Self::TerminalAction(
             super::action_proposal::schema::McpActionTool::RunCommandInCurrentShell,
         ),
@@ -55,12 +59,14 @@ impl SessionMcpTool {
             super::action_proposal::schema::McpActionTool::DelegateTaskInNewWorkspace,
         ),
         Self::UserInput,
+        Self::NestedAssistant,
     ];
 
     pub(crate) fn name(self) -> &'static str {
         match self {
             Self::TerminalAction(tool) => tool.tool_name(),
             Self::UserInput => USER_INPUT_TOOL_NAME,
+            Self::NestedAssistant => NESTED_ASSISTANT_TOOL_NAME,
         }
     }
 
@@ -86,6 +92,8 @@ impl SessionMcpTool {
             })?;
         if name == USER_INPUT_TOOL_NAME {
             Some(Self::UserInput)
+        } else if name == NESTED_ASSISTANT_TOOL_NAME {
+            Some(Self::NestedAssistant)
         } else {
             super::action_proposal::schema::McpActionTool::from_tool_name(name)
                 .map(Self::TerminalAction)
@@ -135,16 +143,24 @@ pub fn cancel_user_input_helper_method_matches(method: &str) -> bool {
         == CANCEL_USER_INPUT_HELPER_REQUEST_METHOD.trim_start_matches('_')
 }
 
-pub async fn dispatch<A, ActionFuture, U, UserInputFuture>(
+pub fn nested_assistant_helper_method_matches(method: &str) -> bool {
+    method.trim_start_matches('_')
+        == NESTED_ASSISTANT_HELPER_REQUEST_METHOD.trim_start_matches('_')
+}
+
+pub async fn dispatch<A, ActionFuture, U, UserInputFuture, N, NestedFuture>(
     request: Value,
     submit_action: A,
     request_user_input: U,
+    open_nested_assistant: N,
 ) -> Option<Value>
 where
     A: FnOnce(super::action_proposal::schema::McpActionTool, Value) -> ActionFuture,
     ActionFuture: Future<Output = anyhow::Result<ProposalValidationResponse>>,
     U: FnOnce(Value) -> UserInputFuture,
     UserInputFuture: Future<Output = anyhow::Result<UserInputResponse>>,
+    N: FnOnce(Value) -> NestedFuture,
+    NestedFuture: Future<Output = anyhow::Result<bool>>,
 {
     let id = request.get("id").cloned();
     let method = request.get("method").and_then(Value::as_str).unwrap_or("");
@@ -210,6 +226,15 @@ where
                     }
                 }
             }));
+            tools.push(json!({
+                "name": NESTED_ASSISTANT_TOOL_NAME,
+                "description": "Open a nested assistant pane for this agent pane. Intelligent Terminal splits the tab so the terminal, this agent, and the nested assistant are all visible. Takes no arguments. A tab that already has a nested assistant is left unchanged.",
+                "inputSchema": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "properties": {}
+                }
+            }));
             json!({ "tools": tools })
         }
         "tools/call" => {
@@ -232,6 +257,9 @@ where
                 }
                 Some(USER_INPUT_TOOL_NAME) => {
                     user_input_result(request_user_input(arguments).await)
+                }
+                Some(NESTED_ASSISTANT_TOOL_NAME) => {
+                    nested_assistant_result(open_nested_assistant(arguments).await)
                 }
                 _ => return Some(error_response(id, -32602, "unknown tool")),
             }
@@ -282,6 +310,46 @@ fn terminal_action_result(response: anyhow::Result<ProposalValidationResponse>) 
             "content": [{
                 "type": "text",
                 "text": format!("Terminal action request unavailable: {error:#}")
+            }],
+            "structuredContent": {
+                "status": "unavailable",
+                "reason": format!("{error:#}"),
+                "retryable": false
+            },
+            "isError": true
+        }),
+    }
+}
+
+fn nested_assistant_result(response: anyhow::Result<bool>) -> Value {
+    match response {
+        Ok(true) => json!({
+            "content": [{
+                "type": "text",
+                "text": "Nested assistant pane requested. The terminal, this agent, and the nested assistant are split in this tab. End the turn without additional text."
+            }],
+            "structuredContent": {
+                "status": "accepted",
+                "retryable": false
+            },
+            "isError": false
+        }),
+        Ok(false) => json!({
+            "content": [{
+                "type": "text",
+                "text": "Nested assistant pane was not opened. The tab needs one visible agent pane and cannot already host a nested assistant."
+            }],
+            "structuredContent": {
+                "status": "rejected",
+                "reason": "The tab cannot host another assistant pane.",
+                "retryable": false
+            },
+            "isError": true
+        }),
+        Err(error) => json!({
+            "content": [{
+                "type": "text",
+                "text": format!("Nested assistant request unavailable: {error:#}")
             }],
             "structuredContent": {
                 "status": "unavailable",
@@ -344,6 +412,7 @@ mod tests {
             json!({"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}),
             |_, _| async { unreachable!() },
             |_| async { unreachable!() },
+            |_| async { unreachable!() },
         )
         .await
         .unwrap();
@@ -360,7 +429,8 @@ mod tests {
                 "run_command_in_current_shell",
                 "create_workspace",
                 "delegate_task_in_new_workspace",
-                USER_INPUT_TOOL_NAME
+                USER_INPUT_TOOL_NAME,
+                NESTED_ASSISTANT_TOOL_NAME
             ]
         );
         // The superseded single-tool name is neither advertised nor accepted;
@@ -414,6 +484,7 @@ mod tests {
                 }),
                 |_, _| async { unreachable!("removed tools must not be dispatched") },
                 |_| async { unreachable!() },
+                |_| async { unreachable!() },
             )
             .await
             .unwrap();
@@ -457,6 +528,7 @@ mod tests {
                 }
             },
             |_| async { unreachable!() },
+            |_| async { unreachable!() },
         )
         .await
         .unwrap();
@@ -490,6 +562,7 @@ mod tests {
             json!({"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}),
             |_, _| async { unreachable!() },
             |_| async { unreachable!() },
+            |_| async { unreachable!() },
         )
         .await
         .unwrap();
@@ -514,6 +587,7 @@ mod tests {
         let response = dispatch(
             request,
             |_, _| async { unreachable!() },
+            |_| async { unreachable!() },
             |_| async { unreachable!() },
         )
         .await
@@ -546,6 +620,7 @@ mod tests {
                     selected_index: Some(1),
                 })
             },
+            |_| async { unreachable!() },
         )
         .await
         .unwrap();
@@ -561,6 +636,39 @@ mod tests {
                 .pointer("/result/structuredContent/selected_index")
                 .and_then(Value::as_u64),
             Some(1)
+        );
+    }
+
+    #[tokio::test]
+    async fn open_nested_assistant_forwards_an_empty_request() {
+        let response = dispatch(
+            json!({
+                "jsonrpc":"2.0",
+                "id":1,
+                "method":"tools/call",
+                "params":{"name":"open_nested_assistant","arguments":{}}
+            }),
+            |_, _| async { unreachable!() },
+            |_| async { unreachable!() },
+            |arguments| async move {
+                assert_eq!(arguments, json!({}));
+                Ok(true)
+            },
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(
+            response
+                .pointer("/result/structuredContent/status")
+                .and_then(Value::as_str),
+            Some("accepted")
+        );
+        assert_eq!(
+            response
+                .pointer("/result/isError")
+                .and_then(Value::as_bool),
+            Some(false)
         );
     }
 }

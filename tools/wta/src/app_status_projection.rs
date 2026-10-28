@@ -189,6 +189,37 @@ impl App {
             send_bar_event(&tab.autofix.bar_snapshot, Some(target_tab));
         }
     }
+
+    /// Ask Windows Terminal to host a nested assistant for this agent pane.
+    /// One snapshot carries the request; later projections omit it so the
+    /// terminal does not open another helper on every status echo.
+    pub fn project_open_nested_assistant(&self) -> bool {
+        let target_tab = self.active_tab_key().to_string();
+        // The nested helper's owner id is the parent tab id plus this suffix.
+        // It must not ask for another assistant; that projection would not
+        // belong to a real tab.
+        if target_tab.ends_with("::assistant") {
+            return false;
+        }
+        let Some(tab) = self.tab_sessions.get(&target_tab) else {
+            tracing::warn!(
+                target: "project_tab_state",
+                tab_id = %target_tab,
+                "no tab_session for nested assistant request"
+            );
+            return false;
+        };
+        let projected_session_id = tab.resumable_session_id();
+        let yolo_control_owner = projected_session_id
+            .as_deref()
+            .and_then(|session_id| self.yolo_state.lock().unwrap().owner(session_id));
+        let mut evt = build_agent_state_changed_event(&target_tab, tab, yolo_control_owner);
+        if let Some(params) = evt.get_mut("params") {
+            params["open_nested_assistant"] = serde_json::json!(true);
+        }
+        send_wt_protocol_event(evt.to_string());
+        true
+    }
 }
 
 pub(super) fn build_agent_state_changed_event(

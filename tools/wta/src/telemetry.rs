@@ -477,6 +477,8 @@ fn sanitize_session_mcp_tool_name(tool_name: &str) -> &'static str {
 
     if tool_name == SessionMcpTool::UserInput.name() {
         SessionMcpTool::UserInput.name()
+    } else if tool_name == SessionMcpTool::NestedAssistant.name() {
+        SessionMcpTool::NestedAssistant.name()
     } else {
         McpActionTool::from_tool_name(tool_name)
             .map(SessionMcpTool::TerminalAction)

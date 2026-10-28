@@ -4108,20 +4108,56 @@ namespace winrt::TerminalApp::implementation
                                                         std::wstring_view initialPanePosition,
                                                         float initialPaneSize,
                                                         bool focusPane,
-                                                        std::wstring_view initialYoloControlOwner)
+                                                        std::wstring_view initialYoloControlOwner,
+                                                        bool nestedAssistant)
     {
         if (!tab || !tab->GetActiveTerminalControl())
         {
             return false;
+        }
+        // A nested assistant is a visible second helper, never a pre-warm.
+        if (nestedAssistant)
+        {
+            autoStash = false;
         }
         if (autoStash && tab->AgentPrewarmSuppressed())
         {
             _agentPaneLog("_AutoCreateHiddenAgentPaneShared: prewarm suppressed after explicit close");
             return false;
         }
+        uint32_t existingAgents = 0;
+        if (const auto root = tab->GetRootPane())
+        {
+            root->WalkTree([&](const auto& pane) {
+                if (pane->IsAgentPane())
+                {
+                    ++existingAgents;
+                }
+            });
+        }
+        if (nestedAssistant)
+        {
+            // NestAgentArena hosts exactly one additional agent beside the
+            // current shell. A zoomed tab has no stable split to nest into.
+            if (existingAgents != 1 || tab->IsZoomed())
+            {
+                _agentPaneLog("_AutoCreateHiddenAgentPaneShared: nested assistant requires one unzoomed agent pane");
+                return false;
+            }
+            if (const auto primary = tab->FindAgentPane(); primary && primary->IsHidden())
+            {
+                const auto direction = _AgentPanePositionToSplitDirection(
+                    tab->EffectiveAgentPanePosition(_settings.GlobalSettings().AgentPanePosition()));
+                if (!tab->RestoreStashedAgentPane(direction))
+                {
+                    _agentPaneLog("_AutoCreateHiddenAgentPaneShared: nested assistant could not restore the parent agent pane");
+                    return false;
+                }
+            }
+        }
         // Refuse if this tab already has an agent pane — caller should
         // have decided to focus / toggle / etc instead of creating again.
-        if (tab->FindAgentPane())
+        else if (tab->FindAgentPane())
         {
             _agentPaneLog("_AutoCreateHiddenAgentPaneShared: tab already has an agent pane");
             return false;
@@ -4296,6 +4332,15 @@ namespace winrt::TerminalApp::implementation
             _agentPaneLog("_AutoCreateHiddenAgentPaneShared: tab has no StableId");
             return false;
         }
+        // The nested helper must not share the parent helper's owner id.
+        // Master routes several tab-scoped operations to the first helper
+        // with that id, and this helper's layout projections must not
+        // stash or retarget the parent agent pane.
+        std::wstring ownerTabId{ std::wstring_view{ stableId } };
+        if (nestedAssistant)
+        {
+            ownerTabId.append(L"::assistant");
+        }
 
         // Build the wta-helper cmdline. The helper is a normal conpty
         // child; it connects to the master pipe and speaks ACP JSON-RPC.
@@ -4308,7 +4353,7 @@ namespace winrt::TerminalApp::implementation
         helperCmd.append(wtaPath);
         helperCmd.push_back(L'"');
         helperCmd.append(L" --connect-master \"").append(masterPipeName).append(L"\"");
-        helperCmd.append(L" --owner-tab-id \"").append(std::wstring_view{ stableId }).append(L"\"");
+        helperCmd.append(L" --owner-tab-id \"").append(ownerTabId).append(L"\"");
         helperCmd.append(L" --owner-window-id \"").append(std::to_wstring(_WindowProperties.WindowId())).append(L"\"");
 
         // The helper-side cmdline mirrors the per-pane subset of the
@@ -4580,8 +4625,30 @@ namespace winrt::TerminalApp::implementation
         // session saved before sizes were persisted), so fall back to an even
         // split rather than collapsing the pane.
         const auto splitSize = initialPaneSize > 0.0f && initialPaneSize < 1.0f ? initialPaneSize : 0.5f;
-        // A hidden prewarm must not leave a size animation running on the visible sibling.
-        tab->SplitPaneAtRoot(splitDirection, newPane, splitSize, !autoStash);
+        if (nestedAssistant)
+        {
+            // `[ Arena [ Agent ] ]` becomes
+            // `[ Arena-1 [ Agent-1/Arena-2 [ Agent-2 ] ] ]`: the shell and
+            // the new assistant share the inner arena, and the parent agent
+            // stays the outer one. All three leaves remain visible.
+            if (!tab->NestAgentArena(newPane))
+            {
+                _agentPaneLog("_AutoCreateHiddenAgentPaneShared: NestAgentArena failed");
+                return false;
+            }
+            // The helper process starts only after this pane's first
+            // LayoutUpdated. Run that pass now so the nested assistant is
+            // alive while all three panes are on screen.
+            if (const auto root = newPane->GetRootElement())
+            {
+                root.UpdateLayout();
+            }
+        }
+        else
+        {
+            // A hidden prewarm must not leave a size animation running on the visible sibling.
+            tab->SplitPaneAtRoot(splitDirection, newPane, splitSize, !autoStash);
+        }
         closeOnFailure.release();
         if (!autoStash)
         {
@@ -4668,8 +4735,30 @@ namespace winrt::TerminalApp::implementation
         // the new "agent pane open" state.
         _UpdateBottomBarState();
 
-        _agentPaneLog("_AutoCreateHiddenAgentPaneShared: done — helper conpty child spawned");
+        _agentPaneLog(nestedAssistant ?
+                          "_AutoCreateHiddenAgentPaneShared: done — nested assistant pane spawned" :
+                          "_AutoCreateHiddenAgentPaneShared: done — helper conpty child spawned");
         return true;
+    }
+
+    bool TerminalPage::_OpenNestedSubAgentAssistant(const winrt::com_ptr<Tab>& tab)
+    {
+        _agentPaneLog("_OpenNestedSubAgentAssistant: parent agent requested a nested assistant pane");
+        return _AutoCreateHiddenAgentPaneShared(tab,
+                                                /*intoSessionsView*/ false,
+                                                /*autoStash*/ false,
+                                                {},
+                                                {},
+                                                {},
+                                                {},
+                                                {},
+                                                0.0f,
+                                                // Keep focus on the parent agent. Focusing the
+                                                // new agent pane would clear the shell's
+                                                // source-of-agent mark.
+                                                /*focusPane*/ false,
+                                                {},
+                                                /*nestedAssistant*/ true);
     }
 
     // Subscribe to a freshly-created AgentPaneContent's StateChanged event
@@ -10171,6 +10260,13 @@ namespace winrt::TerminalApp::implementation
                 logSuffix += " pane_position=unchanged";
             }
         }
+        const bool openNestedAssistant = params.isMember("open_nested_assistant") &&
+                                         params["open_nested_assistant"].isBool() &&
+                                         params["open_nested_assistant"].asBool();
+        if (openNestedAssistant)
+        {
+            logSuffix += " open_nested_assistant=true";
+        }
         std::optional<Json::Value> usage;
         if (params.isMember("usage"))
         {
@@ -10181,6 +10277,14 @@ namespace winrt::TerminalApp::implementation
                                             " usage=invalid";
         }
         _agentPaneLog(std::string{ "OnAgentStateChanged:" } + logSuffix);
+
+        if (openNestedAssistant && _OpenNestedSubAgentAssistant(targetTab))
+        {
+            // A snapshot that still says the parent is closed must not stash
+            // it again. The shell, the parent agent, and the nested assistant
+            // have to stay visible together.
+            wantOpen = true;
+        }
 
         // Cache the WTA-owned runtime override on the Tab before applying
         // pane_open. Creation and restoration below must use the position

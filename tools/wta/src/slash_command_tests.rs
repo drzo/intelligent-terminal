@@ -1316,6 +1316,57 @@ fn slash_model_only_shows_selected_byok_while_byok_is_active() {
 }
 
 #[test]
+fn slash_assistant_requests_a_nested_pane_for_the_active_tab() {
+    let _capture = crate::wt_protocol_events::capture_test_published_events();
+    let mut app = test_app();
+
+    run_slash(&mut app, "assistant");
+
+    let events = crate::wt_protocol_events::take_test_published_events();
+    let event = events
+        .iter()
+        .find_map(|payload| serde_json::from_str::<serde_json::Value>(payload).ok())
+        .expect("nested assistant projection");
+    assert_eq!(event["method"], "agent_state_changed");
+    assert_eq!(event["params"]["tab_id"], "0");
+    assert_eq!(event["params"]["open_nested_assistant"], true);
+    assert!(matches!(
+        app.current_tab().messages.last(),
+        Some(ChatMessage::Notice {
+            kind: NoticeKind::Info,
+            ..
+        })
+    ));
+}
+
+#[test]
+fn slash_assistant_refuses_when_this_pane_is_already_nested() {
+    let _capture = crate::wt_protocol_events::capture_test_published_events();
+    let mut app = test_app();
+    app.tab_id = Some("tab-1::assistant".into());
+    app.tab_sessions
+        .entry("tab-1::assistant".to_string())
+        .or_default();
+
+    run_slash(&mut app, "assistant");
+
+    let events = crate::wt_protocol_events::take_test_published_events();
+    assert!(
+        events
+            .iter()
+            .all(|payload| !payload.contains("open_nested_assistant")),
+        "a nested assistant must not request another nested pane"
+    );
+    assert!(matches!(
+        app.current_tab().messages.last(),
+        Some(ChatMessage::Notice {
+            kind: NoticeKind::Warning,
+            ..
+        })
+    ));
+}
+
+#[test]
 fn slash_move_changes_only_the_active_tab() {
     let mut app = test_app();
     app.tab_sessions

@@ -294,6 +294,9 @@ system.agent_switch_unavailable: "Aracı geçişi, bir Windows Terminal sekmesin
 commands.model.summary: "Bu panel için modeli seçin (doğrudan geçmek için /model <id>)"  # {Locked="/model","<id>"}
 commands.config.summary: "Bu aracı oturumunu yapılandırın"  # Agent means an AI coding agent; shown for the /config command. {Locked="/config"}
 commands.move.summary: "Bu sekmenin aracı panelini taşı (/move <position>)"  # {Locked="/move","<position>"}
+commands.assistant.summary: "Open a nested assistant pane for this agent (/assistant)"  # {Locked="/assistant"}
+system.nested_assistant_requested: "Opening a nested assistant pane beside this agent."
+system.nested_assistant_unavailable: "This agent pane cannot open a nested assistant right now."
 model_picker.title: "Model seçin (↑ ↓ • Enter • Esc)"  # {Locked="↑","↓","Enter","Esc"}
 system.no_models: "Bağlı aracı seçilebilir hiçbir model duyurmadı."
 system.model_set: "Bu panel için model %{model} olarak ayarlandı."  # {Locked="%{model}"}
