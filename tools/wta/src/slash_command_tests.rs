@@ -1319,6 +1319,7 @@ fn slash_model_only_shows_selected_byok_while_byok_is_active() {
 fn slash_assistant_requests_a_nested_pane_for_the_active_tab() {
     let _capture = crate::wt_protocol_events::capture_test_published_events();
     let mut app = test_app();
+    app.current_tab_mut().pane_open = false;
 
     run_slash(&mut app, "assistant");
 
@@ -1330,6 +1331,8 @@ fn slash_assistant_requests_a_nested_pane_for_the_active_tab() {
     assert_eq!(event["method"], "agent_state_changed");
     assert_eq!(event["params"]["tab_id"], "0");
     assert_eq!(event["params"]["open_nested_assistant"], true);
+    assert_eq!(event["params"]["pane_open"], true);
+    assert!(app.current_tab().pane_open);
     assert!(matches!(
         app.current_tab().messages.last(),
         Some(ChatMessage::Notice {
@@ -1337,6 +1340,16 @@ fn slash_assistant_requests_a_nested_pane_for_the_active_tab() {
             ..
         })
     ));
+
+    app.project_active_tab_state();
+    let later = crate::wt_protocol_events::take_test_published_events();
+    let later_state = later
+        .iter()
+        .find_map(|payload| serde_json::from_str::<serde_json::Value>(payload).ok())
+        .expect("follow-up tab projection");
+    assert_eq!(later_state["method"], "agent_state_changed");
+    assert_eq!(later_state["params"]["pane_open"], true);
+    assert!(later_state["params"].get("open_nested_assistant").is_none());
 }
 
 #[test]
