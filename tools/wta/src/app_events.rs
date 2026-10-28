@@ -2501,6 +2501,11 @@ impl App {
                     responder: Some(responder),
                 });
             }
+            AppEvent::OpenNestedAssistant { responder } => {
+                let accepted = self.project_open_nested_assistant();
+                self.note_nested_assistant_request(accepted);
+                let _ = responder.send(accepted);
+            }
             AppEvent::CancelUserInputRequest {
                 request_id,
                 session_id,

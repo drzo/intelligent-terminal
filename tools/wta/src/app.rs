@@ -5717,6 +5717,7 @@ impl App {
             AppEvent::PermissionRequest { .. } => "permission_request",
             AppEvent::UserInputRequest { .. } => "user_input_request",
             AppEvent::CancelUserInputRequest { .. } => "cancel_user_input_request",
+            AppEvent::OpenNestedAssistant { .. } => "open_nested_assistant",
             AppEvent::SystemMessage(_) => "system_message",
             AppEvent::DebugPipeMessage(_) => "debug_pipe_message",
             AppEvent::WtEvent { .. } => "wt_event",
@@ -6732,6 +6733,7 @@ impl App {
             CommandKind::Model => self.cmd_model(cmd.rest),
             CommandKind::Config => self.cmd_config(),
             CommandKind::Move => self.cmd_move(cmd.rest),
+            CommandKind::Assistant => self.cmd_assistant(),
         }
     }
 
@@ -6941,6 +6943,24 @@ impl App {
 
         self.current_tab_mut().agent_pane_position = Some(position.pane_position);
         self.project_active_tab_state();
+    }
+
+    /// `/assistant` — ask the terminal to host a nested assistant pane beside
+    /// this agent. The terminal, this pane, and the nested assistant stay
+    /// visible together.
+    fn cmd_assistant(&mut self) {
+        let accepted = self.project_open_nested_assistant();
+        self.note_nested_assistant_request(accepted);
+    }
+
+    fn note_nested_assistant_request(&mut self, accepted: bool) {
+        let tab = self.current_tab_mut();
+        tab.messages.push(if accepted {
+            ChatMessage::info(t!("system.nested_assistant_requested").into_owned())
+        } else {
+            ChatMessage::warning(t!("system.nested_assistant_unavailable").into_owned())
+        });
+        tab.scroll_to_bottom();
     }
 
     pub(crate) fn apply_runtime_yolo_config(

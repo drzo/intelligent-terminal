@@ -304,6 +304,7 @@ mod tests {
             "run_command_in_current_shell",
             "create_workspace",
             "delegate_task_in_new_workspace",
+            "open_nested_assistant",
         ] {
             assert!(
                 EMBEDDED_DEFAULT_PROMPT.contains(tool),
@@ -317,7 +318,11 @@ mod tests {
         // Autofix is deliberately restricted to `run_command_in_current_shell` — the Helper
         // rejects any other action for an autofix turn — so naming workspace
         // or delegation tools there would invite a call that cannot be accepted.
-        for tool in ["create_workspace", "delegate_task_in_new_workspace"] {
+        for tool in [
+            "create_workspace",
+            "delegate_task_in_new_workspace",
+            "open_nested_assistant",
+        ] {
             assert!(
                 !EMBEDDED_AUTOFIX_PROMPT.contains(tool),
                 "autofix prompt must not name {tool}"

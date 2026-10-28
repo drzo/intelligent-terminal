@@ -8,7 +8,10 @@ Intelligent Terminal provides an MCP server for this session. Its action tools h
 
 - current active-shell command -> `run_command_in_current_shell`;
 - new workspace, optionally initialized with one command -> `create_workspace`;
-- configured-agent delegation in a new workspace -> `delegate_task_in_new_workspace`.
+- configured-agent delegation in a new workspace -> `delegate_task_in_new_workspace`;
+- a nested assistant pane for this agent -> `open_nested_assistant`.
+
+`open_nested_assistant` takes no arguments. Use it when this agent pane needs its own assistant pane. Intelligent Terminal then shows three splits together: the terminal, this agent, and the nested assistant. Do not use `create_workspace` or `delegate_task_in_new_workspace` for that nested assistant. A second call leaves an existing nested assistant unchanged.
 
 Answer informational requests in prose without proposing an action. A requested destination alone never implies delegation: use `create_workspace` for requests such as running a command in a new tab or split. Use `delegate_task_in_new_workspace` only when another agent should own the work.
 

@@ -49,6 +49,9 @@ pub enum CommandKind {
     /// Move this tab's agent pane without changing the global pane-position
     /// setting or any other tab.
     Move,
+    /// Ask the terminal to open a nested assistant pane for this agent.
+    /// The terminal, this agent, and the nested assistant stay split together.
+    Assistant,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -141,6 +144,12 @@ pub const REGISTRY: &[CommandSpec] = &[
         summary_key: "commands.move.summary",
         kind: CommandKind::Move,
         completion_behavior: CompletionBehavior::OpenPicker,
+    },
+    CommandSpec {
+        name: "assistant",
+        summary_key: "commands.assistant.summary",
+        kind: CommandKind::Assistant,
+        completion_behavior: CompletionBehavior::ExecuteImmediately,
     },
 ];
 
@@ -527,6 +536,7 @@ mod tests {
                 ("model", OpenPicker),
                 ("config", OpenPicker),
                 ("move", OpenPicker),
+                ("assistant", ExecuteImmediately),
             ]
         );
         assert!(

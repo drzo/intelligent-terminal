@@ -862,7 +862,13 @@ namespace winrt::TerminalApp::implementation
                                               std::wstring_view initialPanePosition = {},
                                               float initialPaneSize = 0.0f,
                                               bool focusPane = true,
-                                              std::wstring_view initialYoloControlOwner = {});
+                                              std::wstring_view initialYoloControlOwner = {},
+                                              bool nestedAssistant = false);
+        // The parent agent pane asked for its own assistant. Restore that
+        // parent if it is stashed, then host a second helper in the nested
+        // arena so the terminal, parent agent, and nested assistant are all
+        // visible.
+        bool _OpenNestedSubAgentAssistant(const winrt::com_ptr<Tab>& tab);
         winrt::hstring _GetAgentPaneIdentity(Tab* tab) const;
         winrt::hstring _GetAgentPaneCustomCommand(Tab* tab) const;
         void _ScheduleStartupStructureSettled() noexcept;

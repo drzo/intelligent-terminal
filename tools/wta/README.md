@@ -794,6 +794,12 @@ Split Pane and Duplicate Pane retain the original terminal behavior in both
 Tabs and Agents views. They use the ordinary split direction, size, and profile
 rules without inspecting agent/session identity or invoking WTA delegation.
 AI assistant panes remain fixed panels and cannot themselves be split.
+An agent pane can still open one nested assistant: `/assistant` in that pane,
+or the session MCP tool `open_nested_assistant`, asks the terminal to host a
+second helper. The tab then shows three visible panes — the terminal, the
+parent agent, and the nested assistant — using the nested arena
+`[ Arena-1 [ Agent-1/Arena-2 [ Agent-2 ] ] ]`. A further request does not add
+a third agent.
 
 Explicit CLI delegation can still split a live agent terminal:
 `wta delegate --split-pane <pane> --split-session <current-session>

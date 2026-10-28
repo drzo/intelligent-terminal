@@ -1580,7 +1580,7 @@ impl WtaClient {
                     .state
                     .proposal_channels
                     .validate_mcp_permission(&session_id),
-                SessionMcpTool::UserInput => Ok(()),
+                SessionMcpTool::UserInput | SessionMcpTool::NestedAssistant => Ok(()),
             };
             tracing::info!(
                 target: "session_mcp_permission",
@@ -2388,6 +2388,33 @@ impl WtaClient {
         let raw = serde_json::value::to_raw_value(&response).map_err(|error| {
             acp::Error::internal_error().data(format!("encode proposal response: {error}"))
         })?;
+        Ok(acp::schema::v1::ExtResponse::new(raw.into()))
+    }
+
+    async fn open_nested_assistant(
+        &self,
+        args: acp::schema::v1::ExtRequest,
+    ) -> acp::Result<acp::schema::v1::ExtResponse> {
+        let _request: crate::agent_tools::session_mcp::HelperRequest =
+            serde_json::from_str(args.params.get()).map_err(|error| {
+                acp::Error::invalid_params().data(format!(
+                    "invalid nested assistant request parameters: {error}"
+                ))
+            })?;
+        let (responder, response) = tokio::sync::oneshot::channel();
+        self.state
+            .event_tx
+            .send(AppEvent::OpenNestedAssistant { responder })
+            .map_err(|_| acp::Error::internal_error().data("Helper UI is unavailable"))?;
+        let accepted = match tokio::time::timeout(std::time::Duration::from_secs(5), response).await
+        {
+            Ok(Ok(accepted)) => accepted,
+            _ => false,
+        };
+        let raw = serde_json::value::to_raw_value(&serde_json::json!({ "accepted": accepted }))
+            .map_err(|error| {
+                acp::Error::internal_error().data(format!("encode nested assistant response: {error}"))
+            })?;
         Ok(acp::schema::v1::ExtResponse::new(raw.into()))
     }
 
@@ -3234,6 +3261,18 @@ pub async fn run_acp_client_over_pipe(
                                 conn::respond_enum(
                                     responder,
                                     c.cancel_user_input(a)
+                                        .await
+                                        .map(R::ExtMethodResponse),
+                                )
+                            }
+                            Q::ExtMethodRequest(a)
+                                if crate::agent_tools::session_mcp::nested_assistant_helper_method_matches(
+                                    &a.method,
+                                ) =>
+                            {
+                                conn::respond_enum(
+                                    responder,
+                                    c.open_nested_assistant(a)
                                         .await
                                         .map(R::ExtMethodResponse),
                                 )
@@ -7597,6 +7636,13 @@ mod tests {
                 dynamic
             ),
             Some(SessionMcpTool::UserInput)
+        );
+        assert_eq!(
+            SessionMcpTool::from_title(
+                Some(&format!("Use MCP tool: {dynamic}/open_nested_assistant")),
+                dynamic
+            ),
+            Some(SessionMcpTool::NestedAssistant)
         );
         for title in [
             "run_command_in_current_shell",

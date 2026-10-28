@@ -299,6 +299,12 @@ pub enum AppEvent {
         request_id: String,
         session_id: String,
     },
+    /// The agent in this pane asked for a nested assistant pane. The UI
+    /// projects one `open_nested_assistant` snapshot and reports whether
+    /// that projection was sent.
+    OpenNestedAssistant {
+        responder: tokio::sync::oneshot::Sender<bool>,
+    },
     SystemMessage(String),
     DebugPipeMessage(DebugMessage),
     WtEvent {

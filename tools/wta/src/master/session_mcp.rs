@@ -1046,10 +1046,14 @@ async fn serve_connection(
                 );
             }
             let action_capability = capability.clone();
+            let nested_capability = capability.clone();
             let response = crate::agent_tools::session_mcp::dispatch(
                 message,
                 |tool, arguments| submit_to_helper(&state, action_capability, tool, arguments),
                 |arguments| submit_user_input_to_helper(&state, capability, arguments),
+                |arguments| {
+                    submit_nested_assistant_to_helper(&state, nested_capability, arguments)
+                },
             );
             let response = if is_user_input {
                 tokio::pin!(response);
@@ -1284,6 +1288,29 @@ async fn resolve_helper(
         anyhow::bail!("owning Helper route has no forwarder");
     };
     Ok((route_key, route.helper_id, forwarder))
+}
+
+async fn submit_nested_assistant_to_helper(
+    state: &MasterStateInner,
+    capability: CapabilityResolution,
+    arguments: Value,
+) -> Result<bool> {
+    let (_session_id, response) = forward_to_helper(
+        state,
+        capability,
+        arguments,
+        crate::agent_tools::session_mcp::NESTED_ASSISTANT_TOOL_NAME,
+        "open_nested_assistant",
+        crate::agent_tools::session_mcp::NESTED_ASSISTANT_HELPER_REQUEST_METHOD,
+        HELPER_TIMEOUT,
+    )
+    .await?;
+    let parsed: Value =
+        serde_json::from_str(&response).context("decode nested assistant response")?;
+    Ok(parsed
+        .get("accepted")
+        .and_then(Value::as_bool)
+        .unwrap_or(false))
 }
 
 async fn forward_to_helper(
@@ -1677,6 +1704,7 @@ mod tests {
             serde_json::json!({"jsonrpc": "2.0", "id": 1, "method": "tools/list"}),
             |_, _| async { panic!("tools/list must not execute actions") },
             |_| async { panic!("tools/list must not request user input") },
+            |_| async { panic!("tools/list must not open a nested assistant") },
         )
         .await
         .unwrap();

@@ -74,6 +74,7 @@ The settings model is authoritative; check
 | Trigger | Behavior |
 | --- | --- |
 | `>Toggle AI assistant` | Stash or restore the current tab's agent pane |
+| `/assistant` in an agent pane, or MCP `open_nested_assistant` | Open one nested sub-agent pane as that agent's assistant. The terminal, parent agent, and nested assistant stay visible as three splits |
 | `?<prompt>` | Delegate a prompt through WTA |
 | `?` | No-op |
 | `&<prompt>` | Reserved background-task entry point; currently a no-op |

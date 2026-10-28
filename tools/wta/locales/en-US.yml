@@ -124,6 +124,9 @@ commands.agent.summary: "Pick the agent for this tab (/agent <id> to switch dire
 commands.model.summary: "Pick the model for this pane (/model <id> to switch directly)"  # {Locked="/model","<id>"}
 commands.config.summary: "Configure this agent session"  # Agent means an AI coding agent; shown for the /config command. {Locked="/config"}
 commands.move.summary: "Move this tab's agent pane (/move <position>)"  # {Locked="/move","<position>"}
+commands.assistant.summary: "Open a nested assistant pane for this agent (/assistant)"  # {Locked="/assistant"}
+system.nested_assistant_requested: "Opening a nested assistant pane beside this agent."
+system.nested_assistant_unavailable: "This agent pane cannot open a nested assistant right now."
 
 # ── Agent picker (src/ui/agent_popup.rs) ────────────────────────────────────
 # {Locked="↑","↓","Enter","Esc"} - key names, do not translate
